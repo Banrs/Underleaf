@@ -398,14 +398,16 @@ input:focus, select:focus { border-color: var(--accent); }
 .workspace.pdf-collapsed > .resizer-sync { display: none; }
 .pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
 
-/* ---------- floating layout (Settings → Floating panels) ---------- */
-/* Opt back into the inset, rounded, gapped look instead of edge-to-edge: the
-   sidebar and the editor/PDF card float with an 8px gap; the editor↔PDF divider
-   stays a hairline inside the content card. */
-.floating .shell { padding: 8px; }
-.floating .sidebar { border-radius: 12px; border: 1px solid var(--pane-border); }
-.floating .workspace { margin-top: 8px; border-radius: 12px; border: 1px solid var(--pane-border); }
-
+/* ---------- floating sidebar (Settings → Floating sidebar) ---------- */
+/* Finder-style: ONLY the sidebar floats — an inset, rounded, translucent glass
+   panel — while the editor/PDF content stays edge-to-edge (no second tile). */
+.floating .sidebar {
+  margin: 8px 0 8px 8px;   /* float away from the top/left/bottom edges */
+  border-radius: 12px;
+  border: 1px solid var(--pane-border);
+}
+/* The gap to the content becomes a small transparent lane (with a hover cue)
+   rather than a hairline; the editor↔PDF divider stays a hairline. */
 .floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
 .floating .resizer:not(.resizer-sync):hover { background: transparent; }
 .floating .resizer:not(.resizer-sync)::after {
@@ -422,9 +424,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
 .floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
 
-/* Electron: the shell's 8px top padding shifts the topbar down, so drop its
-   extra padding and re-clear the (fixed) traffic lights in the sidebar. */
-.floating.electron .topbar { padding-top: 0; }
+/* Sidebar floats down 8px, so nudge FILES up to keep it clear of the lights. */
 .floating.electron .sidebar-body { padding-top: 18px; }
 
 /* ---------- sidebar ---------- */

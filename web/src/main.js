@@ -1232,7 +1232,7 @@ function openSettings() {
         }, el('span', { class: 'knob' })),
       ),
       el('div', { class: 'settings-row' },
-        el('span', {}, 'Floating panels', el('div', { class: 'settings-hint' }, 'Inset, rounded cards with gaps (off = edge-to-edge)')),
+        el('span', {}, 'Floating sidebar', el('div', { class: 'settings-hint' }, 'Finder-style inset glass sidebar (off = docked edge-to-edge)')),
         el('button', {
           class: `switch ${state.floating ? 'on' : ''}`,
           role: 'switch',
