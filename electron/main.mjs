@@ -193,11 +193,12 @@ async function boot() {
       // The themed app chrome doubles as the title bar; the traffic lights are
       // positioned explicitly (below) so they center with the topbar row.
       titleBarStyle: 'hidden',
-      // Fixed 16px inset into the top-left corner. This position is used for BOTH
-      // the docked ("Golden Gate") and floating layouts — the lights never move
-      // when the sidebar style is toggled, matching native macOS apps. The CSS
-      // adjusts the title/FILES padding around these fixed coordinates instead.
-      trafficLightPosition: { x: 16, y: 16 },
+      // Fixed inset into the top-left corner: x=16, y=18 so the lights' centre
+      // (y≈24) lands on the middle of the 48px title row. This position is used for
+      // BOTH the docked ("Golden Gate") and floating layouts — the lights never
+      // move when the sidebar style is toggled, matching native macOS apps. The
+      // CSS adjusts the title/FILES padding around these fixed coordinates.
+      trafficLightPosition: { x: 16, y: 18 },
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,

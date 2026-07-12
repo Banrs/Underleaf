@@ -155,11 +155,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .sidebar .outline-item,
 .electron .sidebar .search-hit { -webkit-app-region: no-drag; }
 
-/* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
+/* The traffic lights (main.mjs, x16/y18) sit in the docked sidebar's top-left
    corner with FILES below; the topbar row's title vertically centers on the same
-   line (44px row → center at 22px ≈ the lights' centre). Sidebar-body padding
+   line (48px row → center at 24px = the lights' centre). Sidebar-body padding
    clears the lights. */
-.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 44px; }
+.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 48px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
 
@@ -200,6 +200,11 @@ input:focus, select:focus { border-color: var(--accent); }
    (32px / 16px) is for dense secondary clusters: sidebar header actions, steppers. */
 .icon-btn.sm { width: 32px; height: 32px; }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
+/* Text buttons in a toolbar (Compile, Insert, zoom) are the SAME 36px height as
+   the icon buttons, so a row's controls line up instead of the text pills sitting
+   short. Padding is symmetric-feeling: text vertically centred, 14px sides. */
+.editor-toolbar .btn,
+.pdf-toolbar .btn { height: 36px; padding: 0 14px; }
 
 .auto-btn {
   font-size: 13px;
@@ -601,7 +606,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 3px;
   padding: 3px 12px;
-  min-height: 44px;
+  min-height: 48px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -782,7 +787,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 4px;
   padding: 3px 12px;
-  min-height: 44px;
+  min-height: 48px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
