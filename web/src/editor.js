@@ -44,7 +44,11 @@ const baseTheme = EditorView.theme({
   // SYMMETRIC padding, so the digits sit balanced in the column and the gutter
   // auto-widens for 2- and 3-digit numbers without crowding one side.
   '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px', textAlign: 'right' },
-  '.cm-content': { paddingLeft: '6px' },
+  // The code inset lives on .cm-line (not .cm-content) so the active-line
+  // highlight — which paints the .cm-line box — runs continuously from the gutter
+  // divider through the code, with no un-highlighted gap (Overleaf/Xcode).
+  '.cm-content': { padding: '0' },
+  '.cm-line': { paddingLeft: '8px', paddingRight: '4px' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },
