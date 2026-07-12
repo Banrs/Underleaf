@@ -37,6 +37,10 @@
   /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
   --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
   --sidebar-bg: var(--bg-panel);
+  /* Editor line-number gutter fill — a hair of grey over the panel so the number
+     column reads as distinct from the code. Dark needs a stronger mix (below) to
+     land the same visible contrast a light gutter gets for free. */
+  --gutter-bg: color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel));
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
 }
@@ -64,6 +68,9 @@
   --warn: #fbbf24;
   --ok: #4ade80;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  /* Stronger mix in dark: 6% of a light-grey over a near-black panel is invisible,
+     so lift it to ~15% to match the light gutter's visible separation. */
+  --gutter-bg: color-mix(in srgb, var(--text-dim) 15%, var(--bg-panel));
 }
 
 * { box-sizing: border-box; }

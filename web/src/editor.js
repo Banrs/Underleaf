@@ -35,13 +35,16 @@ const jumpFlashField = StateField.define({
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)' },
   // Subtle rule between the line-number gutter and the text: a faint inset
-  // background plus a hairline border, so the two columns read as distinct.
+  // background plus a hairline border, so the two columns read as distinct in
+  // both themes (--gutter-bg carries the theme-specific contrast).
   '.cm-gutters': {
-    backgroundColor: 'color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel))',
+    backgroundColor: 'var(--gutter-bg)',
     borderRight: '1px solid var(--border)',
     color: 'var(--text-dim)',
   },
-  '.cm-lineNumbers .cm-gutterElement': { paddingRight: '10px' },
+  // Line numbers right-align against the gutter's inner edge (flush toward the
+  // code), the standard editor convention — CodeMirror won't do it on its own here.
+  '.cm-lineNumbers .cm-gutterElement': { paddingRight: '10px', textAlign: 'right' },
   '.cm-content': { paddingLeft: '4px' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
