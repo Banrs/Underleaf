@@ -1169,3 +1169,28 @@ input:focus, select:focus { border-color: var(--accent); }
   background: var(--accent);
 }
 .win .outline-item { font-size: 14px; }
+
+/* ============ iPadOS simulation (.ipad) — experimental touch scale ============
+   Preview only (nothing sets .ipad yet). iPadOS 26 pairs the floating Liquid
+   Glass sidebar (.floating) with 44pt touch targets, larger SF Pro type, a wider
+   pane, and NO window controls (no traffic lights / caption buttons). Groundwork
+   for a future iPad/iOS build — see docs/mobile-roadmap.md. */
+.ipad { font-size: 16px; }
+.ipad .sidebar { width: 300px; }
+.ipad .topbar { min-height: 56px; padding: 0 14px; }
+.ipad .sidebar-body { padding-top: 12px; }
+.ipad .sidebar-head { font-size: 13px; }
+.ipad .sidebar-search { min-height: 42px; }
+.ipad .sidebar-search-input { font-size: 16px; }
+.ipad .tree-item { min-height: 44px; font-size: 16px; gap: 10px; }
+.ipad .tree-item .ficon svg { width: 20px; height: 20px; }
+.ipad .tree-item[data-depth="0"] .ficon { width: 24px; }
+.ipad .tree-item[data-depth="0"] .ficon svg { width: 22px; height: 22px; }
+.ipad .outline-item { min-height: 40px; font-size: 15px; }
+.ipad .editor-toolbar,
+.ipad .pdf-toolbar { min-height: 56px; }
+.ipad .icon-btn { width: 44px; height: 44px; }
+.ipad .icon-btn .icon svg { width: 22px; height: 22px; }
+.ipad .icon-btn.sm { width: 40px; height: 40px; }
+.ipad .editor-toolbar .btn,
+.ipad .pdf-toolbar .btn { height: 44px; }
