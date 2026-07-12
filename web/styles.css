@@ -1080,3 +1080,72 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .toast.error { background: var(--danger); color: white; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* ============ Windows 11 / Fluent design language (.win) ============
+   Metrics pulled from the WinUI source of truth (microsoft/microsoft-ui-xaml
+   ThemeResources): Segoe UI Variable; ControlCornerRadius 4px / OverlayCornerRadius
+   8px; body 14px; NavigationView items 36px with a 3×16 r2 left accent pill;
+   caption buttons 46×32 (138px reserved right, drawn natively by titleBarOverlay);
+   accent #0078D4; Mica base flattened to solid Fluent neutrals for a reliable,
+   preview-able look. Overriding the theme variables re-skins most of the app; the
+   rules below handle the Fluent-specific structure. Placed last so it wins. */
+.win {
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, "Segoe UI Emoji", sans-serif;
+  --accent: #0078d4;
+  --accent-text: #ffffff;
+  --radius: 4px;                       /* Fluent ControlCornerRadius */
+  --bg: #f3f3f3;                       /* SolidBackgroundFillColorBase */
+  --bg-panel: #fbfbfb;                 /* Card/Layer over Mica */
+  --bg-inset: #f3f3f3;
+  --sidebar-bg: #eaeaea;               /* Mica-ish nav base */
+  --border: rgba(0, 0, 0, 0.08);       /* ControlStrokeColorDefault */
+  --pane-border: rgba(0, 0, 0, 0.08);
+}
+[data-theme="dark"].win {
+  --bg: #202020;
+  --bg-panel: #2b2b2b;
+  --bg-inset: #272727;
+  --sidebar-bg: #1c1c1c;
+  --border: rgba(255, 255, 255, 0.08);
+  --pane-border: rgba(255, 255, 255, 0.08);
+}
+
+/* Solid Fluent surfaces — no macOS vibrancy/transparency or blur. */
+.win #app,
+.win.electron, .win.electron body { background: var(--bg); }
+.win .sidebar { background: var(--sidebar-bg); backdrop-filter: none; }
+.win .sidebar-search { background: var(--bg-inset); backdrop-filter: none; }
+
+/* Window controls: Windows draws min/max/close natively at top-RIGHT (138px), and
+   there are no left traffic lights — so drop the mac left inset and reserve right. */
+.win.electron .topbar { padding-right: 138px; }
+.win.electron .sidebar-body { padding-top: 8px; }
+.win.electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 12px; }
+
+/* Fluent corner radii: 4px on every control (overrides mac 6–8px and Tahoe capsules). */
+.win .icon-btn,
+.win .btn,
+.win .sidebar-search,
+.win .tree-item,
+.win .outline-item,
+.win .editor-toolbar .btn,
+.win .pdf-toolbar .btn { border-radius: 4px; }
+
+/* NavigationView sidebar: 36px items at 14px body; selection is a subtle neutral
+   fill plus the signature 3×16px accent pill on the leading edge (not the mac
+   accent-tinted full highlight). */
+.win .tree-item { position: relative; min-height: 36px; font-size: 14px; }
+.win .tree-item.active { background: var(--bg-hover); color: var(--text); }
+.win .tree-item.active .ficon { color: var(--text-dim); }
+.win .tree-item.active::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.win .outline-item { font-size: 14px; }
