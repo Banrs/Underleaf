@@ -1171,26 +1171,45 @@ input:focus, select:focus { border-color: var(--accent); }
 .win .outline-item { font-size: 14px; }
 
 /* ============ iPadOS simulation (.ipad) — experimental touch scale ============
-   Preview only (nothing sets .ipad yet). iPadOS 26 pairs the floating Liquid
-   Glass sidebar (.floating) with 44pt touch targets, larger SF Pro type, a wider
-   pane, and NO window controls (no traffic lights / caption buttons). Groundwork
-   for a future iPad/iOS build — see docs/mobile-roadmap.md. */
-.ipad { font-size: 16px; }
-.ipad .sidebar { width: 300px; }
-.ipad .topbar { min-height: 56px; padding: 0 14px; }
-.ipad .sidebar-body { padding-top: 12px; }
-.ipad .sidebar-head { font-size: 13px; }
-.ipad .sidebar-search { min-height: 42px; }
-.ipad .sidebar-search-input { font-size: 16px; }
-.ipad .tree-item { min-height: 44px; font-size: 16px; gap: 10px; }
+   Preview only (nothing sets .ipad yet). IMPORTANT: iPadOS does NOT follow the
+   macOS HIG — it follows the *iOS* HIG. That means a different type scale (SF Pro
+   Dynamic Type: 17pt Body, 15pt Subhead, 13pt Footnote — NOT macOS's 13px body),
+   a wider standard sidebar column (320pt, per UISplitViewController), 20pt
+   regular-width layout margins (macOS uses ~14px), 44pt minimum touch targets,
+   and roomier line-height. The earlier version was "macOS but bigger," which read
+   as cramped because the paddings/margins/type were still macOS-tight — this
+   block resets them to iOS values. Pairs with the floating Liquid Glass sidebar
+   (.floating); no window controls. Groundwork — see docs/mobile-roadmap.md. */
+.ipad { font-size: 17px; line-height: 1.4; }               /* iOS Body = 17pt */
+
+/* 320pt primary column (UISplitViewController standard), 20pt layout margins. */
+.ipad .sidebar { width: 320px; }
+.ipad .sidebar-body { padding-top: 14px; }
+.ipad .topbar { min-height: 50px; padding: 0 20px; }        /* iPad nav bar ≈ 50pt */
+
+/* Section header: iOS grouped-list header = Footnote (13pt), semibold, 20pt inset. */
+.ipad .sidebar-head { font-size: 13px; font-weight: 600; padding: 14px 20px 6px; }
+
+/* Search: capsule, 44pt touch height, Body (17pt) input, 20pt inset. */
+.ipad .sidebar-search { min-height: 44px; margin: 0 20px 12px; padding: 8px 14px; }
+.ipad .sidebar-search-input { font-size: 17px; }
+
+/* List rows: 44pt min touch height, Body (17pt), 20pt leading margin (tree pad 12
+   + row pad 8), roomier icon-to-label gap. */
+.ipad .tree { padding: 0 12px 16px; }
+.ipad .tree-item { min-height: 44px; font-size: 17px; gap: 12px; padding: 10px 8px; }
 .ipad .tree-item .ficon svg { width: 20px; height: 20px; }
-.ipad .tree-item[data-depth="0"] .ficon { width: 24px; }
+.ipad .tree-item[data-depth="0"] .ficon { width: 26px; }
 .ipad .tree-item[data-depth="0"] .ficon svg { width: 22px; height: 22px; }
-.ipad .outline-item { min-height: 40px; font-size: 15px; }
+
+/* Outline rows: Subhead (15pt), still a 44pt touch target. */
+.ipad .outline-item { min-height: 44px; font-size: 15px; padding: 8px 20px; }
+
+/* Toolbars: 50pt (iOS nav/toolbar), 44pt touch controls, 22-24pt SF Symbols. */
 .ipad .editor-toolbar,
-.ipad .pdf-toolbar { min-height: 56px; }
+.ipad .pdf-toolbar { min-height: 50px; }
 .ipad .icon-btn { width: 44px; height: 44px; }
-.ipad .icon-btn .icon svg { width: 22px; height: 22px; }
+.ipad .icon-btn .icon svg { width: 23px; height: 23px; }
 .ipad .icon-btn.sm { width: 40px; height: 40px; }
 .ipad .editor-toolbar .btn,
-.ipad .pdf-toolbar .btn { height: 44px; }
+.ipad .pdf-toolbar .btn { height: 44px; font-size: 16px; }  /* Callout on buttons */

@@ -7,12 +7,17 @@ context compaction.
 ## Status
 
 - **iPadOS (simulated, experimental).** `.ipad` variant in `web/styles.css`
-  (last block). Pairs the floating Liquid Glass sidebar (`.floating`) with
-  iPadOS-26 touch scale: 44pt rows, 44pt icon buttons, 300px sidebar, 56px
-  toolbars, 16px body, and no window controls (no traffic lights / caption
-  buttons). Nothing sets `.ipad` at runtime yet — it's preview-only, injected
+  (last block). Key correction: **iPadOS follows the iOS HIG, not the macOS
+  HIG** — so the block uses iOS metrics, not "macOS but bigger" (an earlier
+  version did the latter and read as cramped). iOS values applied: SF Pro
+  **Dynamic Type** (17pt Body, 15pt Subhead, 13pt Footnote — vs macOS 13px
+  body), **320pt** sidebar column (UISplitViewController standard), **20pt**
+  regular-width layout margins (vs macOS ~14px), 1.4 line-height, 44pt minimum
+  touch targets, ~50pt nav/toolbars, and no window controls (no traffic lights
+  / caption buttons). Pairs with the floating Liquid Glass sidebar
+  (`.floating`). Nothing sets `.ipad` at runtime yet — preview-only, injected
   in screenshots. Verified at iPad Pro 11" (1194×834 @2x): rows 44px, sidebar
-  300px, buttons 44px.
+  320px.
 
 ## Planned: compact iOS (iPhone) version
 
