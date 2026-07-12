@@ -1,0 +1,1020 @@
+/* ---------- fonts ---------- */
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/dist/fonts-jbm/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/dist/fonts-jbm/jetbrains-mono-latin-400-italic.woff2') format('woff2');
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/dist/fonts-jbm/jetbrains-mono-latin-700-normal.woff2') format('woff2');
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
+/* ---------- design tokens ---------- */
+
+:root {
+  --bg: #fafafa;
+  --bg-panel: #ffffff;
+  --bg-inset: #f1f1f3;
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-active: rgba(37, 99, 235, 0.10);
+  --border: #e4e4e7;
+  --text: #18181b;
+  --text-dim: #71717a;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --danger: #dc2626;
+  --warn: #d97706;
+  --ok: #16a34a;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  --radius: 8px;
+  /* Standardized layout tokens (one place to tune; a UI-scale multiplier feeds
+     the root font-size so everything scales together). */
+  --edge-gap: 8px;      /* window edge → panes (tight Tahoe-style sidebar inset) */
+  --pane-gap: 8px;      /* gap between the floating sidebar and the content card */
+  --pane-radius: 12px;
+  --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
+  --scrollbar: 9px;
+  --sidebar-bg: var(--bg-panel);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
+}
+
+/* Cross-platform glass: the sidebar & topbar are translucent everywhere (CSS
+   blur over a subtly graded window background), and on macOS the native window
+   vibrancy shows through for the real liquid-glass look. */
+:root { --sidebar-bg: color-mix(in srgb, var(--bg-panel) 78%, transparent); color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+.electron, .electron body { background: transparent; }
+.electron { --sidebar-bg: color-mix(in srgb, var(--bg-panel) 52%, transparent); }
+
+[data-theme="dark"] {
+  --bg: #131316;
+  --bg-panel: #1b1b1f;
+  --bg-inset: #232327;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(96, 165, 250, 0.14);
+  --border: #2e2e33;
+  --text: #ececee;
+  --text-dim: #9d9da6;
+  --accent: #3b82f6;
+  --accent-text: #ffffff;
+  --danger: #f87171;
+  --warn: #fbbf24;
+  --ok: #4ade80;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  /* The window itself must never scroll — panes fit to the window and scroll
+     internally. Without this, fixed-width panes overflow and the whole app gets
+     a horizontal scrollbar at narrow widths. */
+  overflow: hidden;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+#app {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Subtle depth so translucent panels read as glass, even on a flat theme. */
+  background:
+    radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
+    linear-gradient(165deg, color-mix(in srgb, var(--text) 4%, var(--bg)), var(--bg) 62%);
+}
+.electron #app { background:
+    radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 55%),
+    transparent; }
+
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+input, select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 11px;
+  outline: none;
+}
+input:focus, select:focus { border-color: var(--accent); }
+
+/* Scrollbars: thin, always-visible, and theme-aware. The thumb is built from
+   var(--text-dim) (dark-grey in light mode, light-grey in dark mode) so it
+   adapts to the theme; a padding-box border keeps it slim over a clear track. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 42%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+  min-height: 32px;
+}
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-dim) 72%, transparent); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- Electron chrome (hiddenInset title bar) ---------- */
+
+.drag-strip {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 44px;
+  -webkit-app-region: drag;
+  z-index: 5;
+}
+/* In Electron the topbar sits at the traffic-light level (centered on them) and
+   the sidebar's top region holds the lights. Both are draggable; interactive
+   children opt out so clicks still land. */
+.electron .topbar { -webkit-app-region: drag; }
+.electron .topbar button,
+.electron .topbar select,
+.electron .topbar input,
+.electron .topbar .crumbs { -webkit-app-region: no-drag; }
+.electron .sidebar { -webkit-app-region: drag; }
+.electron .sidebar button,
+.electron .sidebar input,
+.electron .sidebar .tree-item,
+.electron .sidebar .outline-item,
+.electron .sidebar .search-hit { -webkit-app-region: no-drag; }
+
+/* Tahoe-style: shell keeps an equal --edge-gap (8px) on every side, so the
+   floating sidebar's gap is consistent top/side/bottom. The traffic lights
+   (main.mjs, symmetric 16px inset = 8px shell gap + 8px into the sidebar corner)
+   sit in the sidebar's top band with FILES below; the topbar row centers on the
+   same line. Sidebar-body padding clears the lights. */
+.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 34px; }
+.electron .sidebar-body { padding-top: 26px; }
+.electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
+
+/* ---------- shared buttons & icons ---------- */
+
+.icon { display: inline-flex; align-items: center; justify-content: center; }
+.icon svg { width: 18px; height: 18px; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  transition: background 0.12s;
+}
+.btn:hover { background: var(--bg-hover); }
+.btn.primary { background: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.primary:disabled { opacity: 0.55; cursor: default; filter: none; }
+.btn.ghost { color: var(--text-dim); }
+.btn.ghost:hover { color: var(--text); background: var(--bg-hover); }
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  color: var(--text-dim);
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+.icon-btn.sm { width: 29px; height: 29px; }
+.icon-btn.sm .icon svg { width: 16px; height: 16px; }
+
+.auto-btn {
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.auto-btn.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--bg-active);
+}
+
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.spacer { flex: 1; }
+
+/* ---------- home ---------- */
+
+.home {
+  width: 100%;
+  padding: 60px 48px 48px;
+  overflow-y: auto;
+}
+.electron .home { padding-top: 64px; }
+.home-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 16px; }
+.home h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: 15px; }
+.tex-banner {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  font-size: 13.5px;
+}
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.project-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.12s;
+  position: relative;
+}
+.project-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 5px; word-break: break-word; }
+.project-card .meta { color: var(--text-dim); font-size: 13px; }
+.project-card .card-actions { position: absolute; top: 12px; right: 12px; display: none; gap: 2px; }
+.project-card:hover .card-actions { display: flex; }
+.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: 15px; }
+
+/* ---------- editor layout ---------- */
+
+/* The topbar sits flat over the window background — no card, no border, so it
+   doesn't waste vertical space or double up rounded edges with the panes. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 12px horizontal matches the editor/PDF toolbars below, so the title row's
+     left control aligns with them and the right icons clear the window edge. */
+  padding: 8px 12px;
+  background: transparent;
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topbar::-webkit-scrollbar { display: none; }
+.topbar > *:not(.spacer):not(.crumbs) { flex-shrink: 0; }
+.topbar .proj-name { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+.tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
+.topbar .crumbs { min-width: 0; }
+.topbar select { padding: 6px 10px; font-size: 13.5px; }
+.save-state { font-size: 13px; color: var(--text-dim); text-align: right; flex: none; }
+
+/* Tahoe-style layout: the sidebar is a FLOATING translucent card, inset from
+   the window edges with all corners rounded and the vibrant window material
+   showing around and behind it; editor & PDF are floating cards too. */
+/* Symmetric outer padding = --pane-gap on every side; the resizers ARE the
+   inter-pane gaps (no extra flex gap stacking on top). */
+/* Golden-Gate edge-to-edge: no window padding — the docked sidebar and the
+   content fill the window, separated only by hairline dividers. */
+.shell { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Editor + PDF are two views of ONE document, sharing the content surface,
+   divided by a hairline. Fills to the window's right & bottom edges. */
+.workspace { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* Golden-Gate docked sidebar: edge-to-edge (flush left/top/bottom, no float,
+   no shadow, no rounded corners), but still translucent Liquid Glass. The
+   hairline resizer to its right is the only separator from the content. */
+.sidebar {
+  width: 232px;
+  flex: none;
+  position: relative;
+  background: var(--sidebar-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  overflow: hidden;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.18s ease, transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sidebar-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* Halves of the content surface — opaque backgrounds (so the sidebar's vibrancy
+   doesn't bleed through), divided by the hairline resizer. */
+.editor-pane, .pdf-pane { overflow: hidden; }
+.editor-pane { flex: 1; position: relative; min-width: 140px; background: var(--bg-panel); }
+.pdf-pane { flex: 1; background: var(--bg-inset); min-width: 140px; }
+/* Narrow windows: auto-hide the breadcrumb before it squeezes the title bar */
+@media (max-width: 900px) { .topbar .crumbs, .tb-divider { display: none; } }
+
+/* Collapsed sidebar is FULLY hidden (Finder-style): it slides out and the left
+   resizer disappears, so the editor + PDF get the entire width. */
+.sidebar.collapsed {
+  width: 0 !important;
+  border-width: 0;
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+/* Hide the resizer directly after a collapsed sidebar so no phantom gap is left
+   (class-aware — :first-of-type is type-based and never matched .resizer). */
+.sidebar.collapsed + .resizer { display: none; }
+
+.wc-pill {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  z-index: 5;
+  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Golden-Gate edge-to-edge: every divider (sidebar↔content and editor↔PDF) is a
+   persistent 1px hairline with a wider invisible grab zone, so panes sit flush
+   with no gaps — maximum usable space. */
+.resizer {
+  width: 1px;
+  flex: none;
+  background: var(--pane-border);
+  position: relative;
+  overflow: visible;
+  transition: background 0.14s ease;
+}
+.resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+  cursor: col-resize;
+}
+.resizer:hover { background: color-mix(in srgb, var(--text-dim) 45%, transparent); }
+.resizer.dragging { background: var(--accent); }
+
+/* Two-way sync arrows in a pill that rides the divider and drags vertically */
+.sync-pill {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  padding: 2px;
+  gap: 1px;
+  z-index: 10;
+  cursor: grab;
+}
+.sync-pill.dragging { cursor: grabbing; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22); }
+.sync-pill button {
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sync-pill button:hover { background: var(--bg-active); color: var(--accent); }
+.sync-pill .icon svg { width: 13px; height: 13px; }
+
+/* Fully collapse the PDF pane → full-width editor */
+.workspace.pdf-collapsed > .pdf-pane,
+.workspace.pdf-collapsed > .resizer-sync { display: none; }
+.pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
+
+/* ---------- sidebar ---------- */
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 12px 14px 8px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex: none;
+}
+.sidebar-head .actions { display: flex; gap: 3px; }
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 12px 10px;
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  flex: none;
+}
+.sidebar-search:focus-within { border-color: var(--accent); }
+.sidebar-search .icon svg { width: 15px; height: 15px; }
+.sidebar-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13.5px;
+  border-radius: 0;
+}
+
+.tree { flex: 1; overflow-y: auto; padding: 0 8px 12px; min-height: 60px; }
+.tree.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius); }
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7.5px 10px;
+  border-radius: 8px;
+  font-size: 14.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.tree-item:hover { background: var(--bg-hover); }
+.tree-item.active { background: var(--bg-active); color: var(--accent); }
+.tree-item .twisty { width: 14px; flex: none; color: var(--text-dim); transition: transform 0.1s; display: inline-flex; }
+.tree-item .twisty svg { width: 13px; height: 13px; }
+.tree-item .twisty.open { transform: rotate(90deg); }
+.tree-item .ficon { flex: none; width: 19px; color: var(--text-dim); display: inline-flex; justify-content: center; }
+.tree-item .ficon svg { width: 17px; height: 17px; }
+.tree-item.active .ficon { color: var(--accent); }
+.tree-item .label { overflow: hidden; text-overflow: ellipsis; }
+.tree-item .main-star { margin-left: auto; font-size: 12px; color: var(--warn); }
+.tree-children { padding-left: 17px; }
+
+.sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  flex: none;
+}
+
+/* ---------- outline ---------- */
+
+.outline-head { cursor: pointer; border-top: 1px solid var(--border); padding-top: 10px; justify-content: flex-start; }
+.outline-head:hover { color: var(--text); }
+.outline-twist { display: inline-flex; }
+.outline-twist .icon svg { width: 11px; height: 11px; transition: transform 0.1s; }
+.outline-twist .icon.open svg { transform: rotate(90deg); }
+.outline {
+  flex: none;
+  max-height: 34%;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+.outline-item {
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 13.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.outline-item:hover { background: var(--bg-hover); }
+.outline-empty { color: var(--text-dim); font-size: 12.5px; padding: 4px 10px 8px; }
+
+/* ---------- project search results ---------- */
+
+.search-results { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.search-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 10px 8px 3px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-count {
+  background: var(--bg-inset);
+  border-radius: 99px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.search-hit {
+  display: flex;
+  gap: 9px;
+  padding: 5.5px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  align-items: baseline;
+}
+.search-hit:hover { background: var(--bg-hover); }
+.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-preview mark {
+  background: color-mix(in srgb, var(--warn) 32%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
+/* ---------- editor toolbar & breadcrumbs ---------- */
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 12px;
+  min-height: 46px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.editor-toolbar::-webkit-scrollbar { display: none; }
+.editor-toolbar > * { flex-shrink: 0; }
+.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
+.tb-b { font-weight: 700; font-family: Georgia, serif; font-size: 15.5px; }
+.tb-i { font-style: italic; font-family: Georgia, serif; font-size: 15.5px; }
+.tb-m { font-size: 15.5px; }
+.tb-insert {
+  font-size: 13px;
+  padding: 5px 11px;
+  gap: 5px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tb-insert:hover { color: var(--text); }
+.tb-insert .icon svg { width: 14px; height: 14px; }
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.crumb { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.crumb:first-child { color: var(--text); font-weight: 500; }
+.crumb-sep { opacity: 0.5; flex: none; }
+
+/* ---------- editor ---------- */
+
+.editor-host { flex: 1; min-height: 0; overflow: hidden; }
+.editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
+.editor-host .cm-scroller { font-family: var(--mono); line-height: 1.6; }
+
+.cm-tooltip.cm-math-preview {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px 16px;
+  margin-bottom: 8px;
+  font-size: 15px;
+  color: var(--text);
+  max-width: 560px;
+  overflow-x: auto;
+  animation: pop-in 0.14s ease-out;
+}
+.editor-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  padding: 24px;
+  text-align: center;
+}
+.img-preview { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 20px; background: var(--bg-inset); }
+.img-preview img { max-width: 100%; max-height: 100%; box-shadow: var(--shadow); border-radius: 4px; }
+
+/* Line flash after a programmatic jump (outline / search / SyncTeX) */
+.cm-jump-flash { animation: jump-flash 1.8s ease-out; }
+@keyframes jump-flash {
+  0% { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  60% { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  100% { background: transparent; }
+}
+
+
+/* CodeMirror find/replace panel, themed */
+.cm-panels {
+  background: var(--bg-panel) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+.cm-panels .cm-textfield {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+.cm-panels .cm-button {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background-image: none;
+}
+.cm-panels .cm-button:hover { background: var(--bg-hover); }
+.cm-panels label { color: var(--text-dim); }
+
+/* ---------- logs (inside the PDF pane) ---------- */
+
+.logs-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--bg);
+}
+.logs-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.badge.err { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+.badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.logs-body { }
+
+.logs-btn { position: relative; }
+.logs-btn.active { color: var(--accent); background: var(--bg-active); }
+.logs-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+}
+.logs-badge.err { background: var(--danger); }
+.logs-badge.warn { background: var(--warn); }
+.log-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  align-items: baseline;
+}
+.log-item:hover { background: var(--bg-hover); }
+.log-item .type { flex: none; font-weight: 700; font-size: 11.5px; }
+.log-item.error .type { color: var(--danger); }
+.log-item.warning .type { color: var(--warn); }
+.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.log-raw {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+  padding: 8px;
+  margin: 0;
+}
+
+/* ---------- pdf pane ---------- */
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  min-height: 46px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-dim);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pdf-toolbar::-webkit-scrollbar { display: none; }
+.pdf-toolbar > * { flex-shrink: 0; }
+.pdf-toolbar .spacer { flex: 1 1 auto !important; min-width: 8px; }
+.pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.zoom-btn {
+  font-size: 12.5px;
+  padding: 5px 8px;
+  gap: 3px;
+  min-width: 62px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+#zoom-label { min-width: 34px; text-align: center; }
+.fit-caret { font-size: 9px; opacity: 0.6; }
+/* Reserve the scrollbar gutter so the scrollbar appearing/disappearing doesn't
+   change clientWidth — otherwise fit-width would re-render in a feedback loop. */
+.pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
+.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 3px; }
+.pdf-page-wrap:last-child { margin-bottom: 0; }
+.pdf-page-wrap canvas { display: block; }
+
+/* Selectable text layer (pdf.js): transparent glyphs positioned over the canvas */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+}
+.pdf-text-layer span,
+.pdf-text-layer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+.pdf-text-layer ::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.pdf-text-layer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: -1;
+  cursor: default;
+  user-select: none;
+}
+.pdf-page-wrap canvas { display: block; border-radius: 3px; background: white; }
+.sync-flash {
+  position: absolute;
+  background: rgba(255, 220, 0, 0.35);
+  border-radius: 2px;
+  pointer-events: none;
+  animation: fadeout 2.2s forwards;
+}
+@keyframes fadeout { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+.pdf-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px;
+}
+.pdf-empty-icon { opacity: 0.6; }
+.pdf-empty-icon svg { width: 38px; height: 38px; }
+
+/* ---------- modal / context menu / toast ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  z-index: 100;
+}
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  padding: 22px;
+}
+.modal h3 { margin: 0 0 16px; font-size: 17px; }
+.modal .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+.modal .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
+.modal .field input, .modal .field select { width: 100%; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.modal .row { display: flex; align-items: center; gap: 8px; }
+
+.ctx-menu {
+  position: fixed;
+  z-index: 200;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+  min-width: 185px;
+}
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 13.5px;
+}
+.ctx-menu button:hover { background: var(--bg-hover); }
+.ctx-menu button.danger { color: var(--danger); }
+.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 5px 4px; }
+
+/* ---------- settings ---------- */
+
+.corner-btn {
+  position: fixed;
+  bottom: 18px;
+  left: 18px;
+  z-index: 50;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+.corner-btn:hover { color: var(--text); transform: translateY(-1px); }
+
+.settings-modal { width: 460px; }
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 2px;
+  font-size: 14px;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--border); }
+.settings-hint { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.settings-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.seg-group {
+  display: flex;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.seg {
+  width: 38px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+.seg:hover { color: var(--text); }
+.seg.on { background: var(--bg-panel); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+.seg .icon svg { width: 16px; height: 16px; }
+
+.switch {
+  width: 40px;
+  height: 24px;
+  border-radius: 99px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.15s;
+  flex: none;
+}
+.switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s, background 0.15s;
+}
+.switch.on { background: var(--accent); border-color: var(--accent); }
+.switch.on .knob { transform: translateX(16px); background: #fff; }
+
+.stepper { display: flex; align-items: center; gap: 6px; }
+.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- animations ---------- */
+
+@keyframes pane-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.97) translateY(3px); } }
+.modal { animation: pop-in 0.16s ease-out; }
+.ctx-menu { animation: pop-in 0.12s ease-out; }
+.pdf-page-wrap { animation: pane-in 0.25s ease-out; }
+.logs-view { animation: pane-in 0.15s ease-out; }
+.sync-pill { animation: pop-in 0.2s ease-out; }
+.tex-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-variant: small-caps;
+  letter-spacing: 0.02em;
+}
+.tex-status:hover { color: var(--text); }
+.tex-status.warn { color: var(--warn); opacity: 0.8; }
+.tex-status .icon svg { width: 13px; height: 13px; }
+.log-duration { color: var(--text-dim); font-size: 12px; }
+.pdf-pages { will-change: transform; }
+
+#toast-root {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.toast {
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 18px;
+  border-radius: 99px;
+  font-size: 13.5px;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.18s ease-out;
+}
+.toast.error { background: var(--danger); color: white; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
