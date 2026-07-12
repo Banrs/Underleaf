@@ -430,11 +430,12 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
 .floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
 
-/* Shell's 8px padding shifts everything in; the traffic lights are moved to
-   (22,22) to match (main.js applyFloating), so center the title on their line
-   (≈y29) and keep FILES clear of them. */
-.floating.electron .topbar { padding-top: 4px; }
-.floating.electron .sidebar-body { padding-top: 20px; }
+/* The traffic lights stay pinned at (16,16) in BOTH layouts — they never move on
+   the toggle (native macOS behaviour). Floating only has to compensate for the
+   shell's 8px top inset: pull the title row and FILES header up by that 8px so
+   their distance from the fixed lights matches the docked layout exactly. */
+.floating.electron .topbar { padding-top: 0; }
+.floating.electron .sidebar-body { padding-top: 18px; }
 
 /* ---------- sidebar ---------- */
 
@@ -459,8 +460,12 @@ input:focus, select:focus { border-color: var(--accent); }
   gap: 7px;
   margin: 0 12px 10px;
   padding: 6px 10px;
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
+  /* Translucent glass, not an opaque inset: the sidebar's vibrancy shows through
+     the field so it reads as part of the Liquid Glass sidebar instead of a solid
+     rectangle punched into it. Matches the sidebar/topbar blur treatment. */
+  background: color-mix(in srgb, var(--bg-inset) 42%, transparent);
+  backdrop-filter: saturate(160%) blur(8px);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
   color: var(--text-dim);
   flex: none;

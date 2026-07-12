@@ -23,6 +23,17 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true },
 }]);
 
+// ---------- performance: hardware acceleration + threaded rendering ----------
+// Hardware acceleration is ON by default (we never call disableHardwareAcceleration),
+// and Chromium already runs a multi-process, multi-threaded pipeline (separate GPU,
+// renderer and utility processes; threaded compositor + raster). These switches make
+// sure the GPU path is actually taken instead of silently falling back to software
+// rendering, and turn on the extra raster threads — which is what keeps the blurred
+// vibrancy/glass layers and PDF scrolling smooth. Must be set before app is ready.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+
 const MIME = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.map': 'application/json', '.json': 'application/json', '.svg': 'image/svg+xml',
@@ -85,8 +96,9 @@ async function boot() {
   });
 
   handle('status', () => compile.texAvailable());
-  // Reposition the native traffic lights so they sit correctly for the current
-  // layout (docked vs the inset floating sidebar).
+  // Programmatic traffic-light repositioning. The layout toggle no longer calls
+  // this (the lights stay fixed across docked/floating — see trafficLightPosition
+  // above); kept as a thin bridge for any future explicit repositioning need.
   handle('window:lights', (pos) => {
     if (win && pos) {
       if (typeof win.setWindowButtonPosition === 'function') win.setWindowButtonPosition(pos);
@@ -181,14 +193,19 @@ async function boot() {
       // The themed app chrome doubles as the title bar; the traffic lights are
       // positioned explicitly (below) so they center with the topbar row.
       titleBarStyle: 'hidden',
-      // Equal 16px inset into the sidebar's top-left corner (tuned to the tighter
-      // 8px pane gaps), centered on the topbar title.
+      // Fixed 16px inset into the top-left corner. This position is used for BOTH
+      // the docked ("Golden Gate") and floating layouts — the lights never move
+      // when the sidebar style is toggled, matching native macOS apps. The CSS
+      // adjusts the title/FILES padding around these fixed coordinates instead.
       trafficLightPosition: { x: 16, y: 16 },
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         spellcheck: true,
+        // Keep the renderer at full frame rate even when unfocused/occluded, so
+        // the glass blur and PDF/scroll animations never stutter on refocus.
+        backgroundThrottling: false,
       },
     });
 
