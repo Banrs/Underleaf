@@ -444,7 +444,7 @@ async function renderProject(id) {
     el('span', { class: 'tb-sep' }),
     el('button', { class: 'icon-btn tb-b', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, 'B'),
     el('button', { class: 'icon-btn tb-i', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, 'I'),
-    el('button', { class: 'icon-btn tb-m', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, '∑'),
+    el('button', { class: 'icon-btn', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, icon('sigma')),
     el('span', { class: 'tb-sep' }),
     el('button', { class: 'btn ghost tb-insert', title: 'Insert an environment', onclick: insertMenu }, icon('plus'), 'Insert'),
     el('span', { class: 'spacer' }),

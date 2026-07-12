@@ -324,7 +324,9 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .topbar::-webkit-scrollbar { display: none; }
 .topbar > *:not(.spacer):not(.crumbs) { flex-shrink: 0; }
-.topbar .proj-name { font-weight: 600; font-size: var(--fs-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+/* line-height:1 so the flex row centres the glyph ink itself, not a taller line
+   box — otherwise SF's baseline metrics park the caps a hair above centre. */
+.topbar .proj-name { font-weight: 600; font-size: var(--fs-body); line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
 .tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
 .topbar .crumbs { min-width: 0; }
 .topbar select { padding: 6px 10px; font-size: var(--fs-subhead); }
@@ -669,11 +671,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 .editor-toolbar > * { flex-shrink: 0; }
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
-/* Text glyphs optically matched to the 18px SVG icons beside them: the serif
-   B/I carry more visual weight so sit a touch smaller than the lighter ∑. */
+/* B/I are serif text glyphs (Georgia — stable metrics, so they centre reliably);
+   ∑ is an SVG icon (icons.js: sigma), not a text glyph, because the system-font
+   ∑ character sat top-heavy. Sized to optically match the 18px SVG icons beside. */
 .tb-b { font-weight: 700; font-family: Georgia, serif; font-size: 16.5px; }
 .tb-i { font-style: italic; font-family: Georgia, serif; font-size: 16.5px; }
-.tb-m { font-size: 17.5px; }
 .tb-insert {
   font-size: var(--fs-body);
   padding: 5px 11px;
