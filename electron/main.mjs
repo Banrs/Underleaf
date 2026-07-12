@@ -198,12 +198,12 @@ async function boot() {
             vibrancy: 'sidebar',
             visualEffectState: 'followWindow',
             titleBarStyle: 'hidden',
-            trafficLightPosition: { x: 16, y: 18 },
+            trafficLightPosition: { x: 16, y: 20 },
           }
         : {
             backgroundMaterial: 'mica',
             titleBarStyle: 'hidden',
-            titleBarOverlay: { color: '#00000000', symbolColor: '#888888', height: 48 },
+            titleBarOverlay: { color: '#00000000', symbolColor: '#888888', height: 52 },
           }),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),

@@ -165,11 +165,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .sidebar .outline-item,
 .electron .sidebar .search-hit { -webkit-app-region: no-drag; }
 
-/* The traffic lights (main.mjs, x16/y18) sit in the docked sidebar's top-left
+/* The traffic lights (main.mjs, x16/y20) sit in the docked sidebar's top-left
    corner with FILES below; the topbar row's title vertically centers on the same
-   line (48px row → center at 24px = the lights' centre). Sidebar-body padding
-   clears the lights. */
-.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 48px; }
+   line. macOS 27 measured: unified toolbar 52px with 36px controls → lights
+   centre at 26px (y20). Sidebar-body padding clears the lights. */
+.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 52px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
 
@@ -317,7 +317,7 @@ input:focus, select:focus { border-color: var(--accent); }
    no shadow, no rounded corners), but still translucent Liquid Glass. The
    hairline resizer to its right is the only separator from the content. */
 .sidebar {
-  width: 232px;
+  width: 256px;                        /* measured macOS 27 docked sidebar pane */
   flex: none;
   position: relative;
   background: var(--sidebar-bg);
@@ -478,10 +478,12 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 12px 10px 6px;
+  /* Section container is inset 14px (measured); the selection pills below sit at
+     10px, i.e. 4px wider each side — the macOS 27 pill overshoot. */
+  padding: 12px 14px 6px;
   color: var(--text-dim);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;                    /* measured: 11px SF Pro Bold, title case */
   flex: none;
 }
 .sidebar-head .actions { display: flex; gap: 2px; }
@@ -490,7 +492,7 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 0 10px 10px;
+  margin: 0 14px 10px;                 /* section inset (pills below overshoot to 10px) */
   padding: 6px 12px;
   /* Translucent glass, not an opaque inset: the sidebar's vibrancy shows through
      the field so it reads as part of the Liquid Glass sidebar instead of a solid
@@ -630,7 +632,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 3px;
   padding: 3px 12px;
-  min-height: 48px;
+  min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -817,7 +819,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 4px;
   padding: 3px 12px;
-  min-height: 48px;
+  min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
