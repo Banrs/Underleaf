@@ -398,16 +398,22 @@ input:focus, select:focus { border-color: var(--accent); }
 .workspace.pdf-collapsed > .resizer-sync { display: none; }
 .pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
 
-/* ---------- floating sidebar (Settings → Floating sidebar) ---------- */
-/* Finder-style: ONLY the sidebar floats — an inset, rounded, translucent glass
-   panel — while the editor/PDF content stays edge-to-edge (no second tile). */
-.floating .sidebar {
-  margin: 8px 0 8px 8px;   /* float away from the top/left/bottom edges */
-  border-radius: 12px;
+/* ---------- floating layout (Settings → Floating sidebar) ---------- */
+/* macOS Tahoe / Xcode style: the sidebar AND the editor/PDF content float as
+   matching rounded panes, inset from the window with a soft lift shadow, so the
+   rounded sidebar isn't butting against a square-cornered content block (the
+   "concentricity" principle). The editor↔PDF divider stays a hairline inside
+   the content pane, so it's two panes, not three. */
+.floating .shell { padding: 8px; }
+.floating .sidebar,
+.floating .workspace {
+  border-radius: 11px;
   border: 1px solid var(--pane-border);
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
 }
-/* The gap to the content becomes a small transparent lane (with a hover cue)
-   rather than a hairline; the editor↔PDF divider stays a hairline. */
+.floating .workspace { margin-top: 8px; }
+
+/* Gap between the two panes (resizer) with a hover cue, not a hairline. */
 .floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
 .floating .resizer:not(.resizer-sync):hover { background: transparent; }
 .floating .resizer:not(.resizer-sync)::after {
@@ -424,8 +430,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
 .floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
 
-/* Sidebar floats down 8px, so nudge FILES up to keep it clear of the lights. */
-.floating.electron .sidebar-body { padding-top: 18px; }
+/* Shell's 8px padding shifts everything in; the traffic lights are moved to
+   (22,22) to match (main.js applyFloating), so center the title on their line
+   (≈y29) and keep FILES clear of them. */
+.floating.electron .topbar { padding-top: 4px; }
+.floating.electron .sidebar-body { padding-top: 20px; }
 
 /* ---------- sidebar ---------- */
 

@@ -68,6 +68,17 @@ function setThemeMode(mode) {
   applyTheme(resolveTheme(mode));
 }
 
+// Layout: edge-to-edge (default) vs the Finder/Xcode floating panes. In Electron
+// the native traffic lights can't move via CSS, so we reposition them to match:
+// docked sits them 16px into the window; floating shifts them into the inset
+// sidebar (clear of its rounded corner) and onto the shifted title's line.
+function applyFloating(on) {
+  document.documentElement.classList.toggle('floating', on);
+  if (window.texlocal) {
+    window.texlocal.invoke('window:lights', on ? { x: 22, y: 22 } : { x: 16, y: 16 }).catch(() => {});
+  }
+}
+
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (themeMode() === 'system') applyTheme(resolveTheme('system'));
 });
@@ -1240,7 +1251,7 @@ function openSettings() {
             state.floating = !state.floating;
             localStorage.setItem('texlocal-floating', state.floating ? '1' : '0');
             e.currentTarget.classList.toggle('on', state.floating);
-            document.documentElement.classList.toggle('floating', state.floating);
+            applyFloating(state.floating);
           },
         }, el('span', { class: 'knob' })),
       ),
@@ -1309,7 +1320,6 @@ function route() {
 applyTheme(resolveTheme(themeMode()));
 setEditorFontSize(editorFontSize());
 setUiScale(uiScale());
-// Layout: edge-to-edge (default) vs the floating/inset card look.
-document.documentElement.classList.toggle('floating', state.floating);
+applyFloating(state.floating);
 addEventListener('hashchange', route);
 route();

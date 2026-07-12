@@ -85,6 +85,15 @@ async function boot() {
   });
 
   handle('status', () => compile.texAvailable());
+  // Reposition the native traffic lights so they sit correctly for the current
+  // layout (docked vs the inset floating sidebar).
+  handle('window:lights', (pos) => {
+    if (win && pos) {
+      if (typeof win.setWindowButtonPosition === 'function') win.setWindowButtonPosition(pos);
+      else if (typeof win.setTrafficLightPosition === 'function') win.setTrafficLightPosition(pos);
+    }
+    return { ok: true };
+  });
   handle('projects:list', () => projects.listProjects());
   handle('projects:create', (name, template) => projects.createProject(name, template));
   handle('projects:rename', (id, name) => projects.renameProject(id, name));
