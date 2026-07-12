@@ -453,14 +453,20 @@ input:focus, select:focus { border-color: var(--accent); }
    capsules (radius = ½ height). Golden Gate (docked, base rules above) stays the
    tighter pre-Tahoe source list. Exact pt aren't Apple-published — these honour
    Apple's formulas and direction. Pane radius is set to 16px above. */
-.floating .tree-item { padding: 8px 8px; border-radius: 9px; }         /* larger rows + increased radius */
+/* Icon sizes, pill radius and capsule search below are the measured values from
+   Apple's macOS 27 Sketch kit: selection pill r8; top-level icon 18px with nested
+   2px smaller (16px); search + toolbar controls are capsules; macOS 27 toolbar
+   buttons are circular bezels. */
+.floating .tree-item { padding: 8px 8px; border-radius: 8px; }         /* larger rows; measured pill r8 */
 .floating .outline-item { padding: 6px 8px; border-radius: 8px; }
 .floating .tree-item[data-depth="0"] .ficon { width: 20px; }
-.floating .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; } /* top-level icons larger */
-.floating .tree-item:not([data-depth="0"]) .ficon svg { width: 15px; height: 15px; } /* nested smaller */
+.floating .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; } /* top-level icon 18 (measured) */
+.floating .tree-item:not([data-depth="0"]) .ficon svg { width: 16px; height: 16px; } /* nested = top-level − 2 */
 .floating .sidebar-search { border-radius: 999px; padding: 6px 12px; } /* capsule control */
 .floating .editor-toolbar .btn,
 .floating .pdf-toolbar .btn { border-radius: 999px; }                  /* bordered buttons → capsules */
+.floating .editor-toolbar .icon-btn,
+.floating .pdf-toolbar .icon-btn { border-radius: 999px; }             /* macOS 27 toolbar buttons are circular */
 
 /* ---------- sidebar ---------- */
 
@@ -1110,10 +1116,15 @@ input:focus, select:focus { border-color: var(--accent); }
   --pane-border: rgba(255, 255, 255, 0.08);
 }
 
-/* Solid Fluent surfaces — no macOS vibrancy/transparency or blur. */
-.win #app,
-.win.electron, .win.electron body { background: var(--bg); }
-.win .sidebar { background: var(--sidebar-bg); backdrop-filter: none; }
+/* Mica: on Windows the window is transparent with backgroundMaterial:'mica', so
+   the OS paints the desktop-tinted material behind the chrome. Keep the root,
+   body, topbar and sidebar translucent so that material shows through (the sidebar
+   is the Mica nav-pane layer); the editor/PDF panes stay solid so text sits on a
+   stable card. A plain browser has no Mica, so it falls back to a solid Fluent base. */
+.win #app { background: var(--bg); }                 /* non-Electron fallback */
+.win.electron, .win.electron body, .win.electron #app { background: transparent; }
+.win .sidebar { background: color-mix(in srgb, var(--sidebar-bg) 72%, transparent); backdrop-filter: none; }
+.win .topbar { background: transparent; }
 .win .sidebar-search { background: var(--bg-inset); backdrop-filter: none; }
 
 /* Window controls: Windows draws min/max/close natively at top-RIGHT (138px), and
