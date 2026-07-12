@@ -158,7 +158,7 @@ input:focus, select:focus { border-color: var(--accent); }
 /* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
    corner with FILES below; the topbar row's title centers on the same line.
    Sidebar-body padding clears the lights. */
-.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 34px; }
+.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 40px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
 
@@ -195,6 +195,20 @@ input:focus, select:focus { border-color: var(--accent); }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
 .icon-btn.sm { width: 29px; height: 29px; }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
+
+/* Top chrome (title bar + editor/PDF toolbars) shares ONE compact icon-button
+   size, so the three stacked control rows read as a single consistent system
+   instead of mixing 34px and 29px buttons across — and within — the rows. */
+.topbar .icon-btn,
+.editor-toolbar .icon-btn,
+.pdf-toolbar .icon-btn { width: 29px; height: 29px; }
+.topbar .icon-btn .icon svg,
+.editor-toolbar .icon-btn .icon svg,
+.pdf-toolbar .icon-btn .icon svg { width: 16px; height: 16px; }
+/* Text buttons (Compile, Insert, zoom) match that icon-button height too, so
+   every control in a toolbar row lines up and the row stays a uniform 40px. */
+.editor-toolbar .btn,
+.pdf-toolbar .btn { padding-top: 6px; padding-bottom: 6px; }
 
 .auto-btn {
   font-size: 13px;
@@ -444,7 +458,9 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 12px 14px 8px;
+  /* 12px left matches the search field and outline below it, so the sidebar's
+     header text shares one left column with the controls under it. */
+  padding: 12px 12px 8px;
   color: var(--text-dim);
   font-size: 11.5px;
   font-weight: 600;
@@ -594,7 +610,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 3px;
   padding: 5px 12px;
-  min-height: 46px;
+  min-height: 40px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -773,7 +789,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 4px;
   padding: 5px 12px;
-  min-height: 46px;
+  min-height: 40px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
