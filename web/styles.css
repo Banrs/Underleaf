@@ -417,7 +417,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .shell { padding: 8px; }
 .floating .sidebar,
 .floating .workspace {
-  border-radius: 11px;
+  border-radius: 16px;
   border: 1px solid var(--pane-border);
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
 }
@@ -446,11 +446,30 @@ input:focus, select:focus { border-color: var(--accent); }
    tweak — it already centres its title in the 44px row in both layouts. */
 .floating.electron .sidebar-body { padding-top: 18px; }
 
+/* ---------- Tahoe / Liquid Glass divergence (floating mode) ----------
+   macOS 26 direction (developer.apple.com "Adopting Liquid Glass" + WWDC25):
+   lists get larger row height & padding; sections get increased corner radius;
+   top-level sidebar icons are larger than nested ones; bordered controls become
+   capsules (radius = ½ height). Golden Gate (docked, base rules above) stays the
+   tighter pre-Tahoe source list. Exact pt aren't Apple-published — these honour
+   Apple's formulas and direction. Pane radius is set to 16px above. */
+.floating .tree-item { padding: 8px 8px; border-radius: 9px; }         /* larger rows + increased radius */
+.floating .outline-item { padding: 6px 8px; border-radius: 8px; }
+.floating .tree-item[data-depth="0"] .ficon { width: 20px; }
+.floating .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; } /* top-level icons larger */
+.floating .tree-item:not([data-depth="0"]) .ficon svg { width: 15px; height: 15px; } /* nested smaller */
+.floating .sidebar-search { border-radius: 999px; padding: 6px 12px; } /* capsule control */
+.floating .editor-toolbar .btn,
+.floating .pdf-toolbar .btn { border-radius: 999px; }                  /* bordered buttons → capsules */
+
 /* ---------- sidebar ---------- */
 
 /* Sidebar spacing follows one Apple source-list grid: every section keys its
    outer edge to a 10px inset from the pane, and pills/fields pad 8px inside that
    (so icons and text land on a shared ~18px column). Rows are ~28px, Finder-dense. */
+/* Section header: Big Sur+ macOS dropped the pre-11 ALL-CAPS source-list header
+   for 11px semibold Title Case in the secondary label colour (JS already passes
+   "Files"/"Outline" title-cased). Authentic to Golden Gate and carried into Tahoe. */
 .sidebar-head {
   display: flex;
   align-items: center;
@@ -458,10 +477,8 @@ input:focus, select:focus { border-color: var(--accent); }
   gap: 6px;
   padding: 12px 10px 6px;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   flex: none;
 }
 .sidebar-head .actions { display: flex; gap: 2px; }
@@ -478,7 +495,7 @@ input:focus, select:focus { border-color: var(--accent); }
   background: color-mix(in srgb, var(--bg-inset) 42%, transparent);
   backdrop-filter: saturate(160%) blur(8px);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text-dim);
   flex: none;
 }
@@ -501,8 +518,8 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 7px;
-  font-size: 13.5px;
+  border-radius: 6px;
+  font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
