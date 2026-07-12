@@ -586,7 +586,7 @@ function renderNode(node, depth = 0) {
     const isOpen = openDirs.has(node.path);
     const kids = el('div', { class: 'tree-children' },
       isOpen ? node.children.map((c) => renderNode(c, depth + 1)) : []);
-    const row = el('div', { class: 'tree-item', oncontextmenu: (e) => treeContext(e, node) },
+    const row = el('div', { class: 'tree-item', dataset: { depth }, oncontextmenu: (e) => treeContext(e, node) },
       el('span', { class: `twisty ${isOpen ? 'open' : ''}` }, icon('chevron')),
       el('span', { class: 'ficon' }, icon(isOpen ? 'folder-open' : 'folder')),
       el('span', { class: 'label' }, node.name),
@@ -602,7 +602,7 @@ function renderNode(node, depth = 0) {
   const isMain = node.path === state.settings?.mainFile;
   const row = el('div', {
     class: `tree-item ${node.path === state.openPath ? 'active' : ''}`,
-    dataset: { path: node.path },
+    dataset: { path: node.path, depth },
     onclick: () => openFile(node.path),
     oncontextmenu: (e) => treeContext(e, node),
   },
