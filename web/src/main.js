@@ -431,17 +431,17 @@ async function renderProject(id) {
 
   // --- editor pane (one compact toolbar row; word count floats over the editor) ---
   const editorToolbar = el('div', { class: 'editor-toolbar', id: 'editor-toolbar' },
-    el('button', { class: 'icon-btn sm', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
-    el('button', { class: 'icon-btn sm', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
+    el('button', { class: 'icon-btn', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
+    el('button', { class: 'icon-btn', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
     el('span', { class: 'tb-sep' }),
-    el('button', { class: 'icon-btn sm tb-b', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, 'B'),
-    el('button', { class: 'icon-btn sm tb-i', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, 'I'),
-    el('button', { class: 'icon-btn sm tb-m', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, '∑'),
+    el('button', { class: 'icon-btn tb-b', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, 'B'),
+    el('button', { class: 'icon-btn tb-i', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, 'I'),
+    el('button', { class: 'icon-btn tb-m', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, '∑'),
     el('span', { class: 'tb-sep' }),
     el('button', { class: 'btn ghost tb-insert', title: 'Insert an environment', onclick: insertMenu }, icon('plus'), 'Insert'),
     el('span', { class: 'spacer' }),
-    el('button', { class: 'icon-btn sm', title: 'Comment (⌘/)', onclick: () => state.editor?.toggleComment() }, icon('comment')),
-    el('button', { class: 'icon-btn sm', title: 'Find & replace in file (⌘F)', onclick: () => state.editor?.openSearch() }, icon('search')),
+    el('button', { class: 'icon-btn', title: 'Comment (⌘/)', onclick: () => state.editor?.toggleComment() }, icon('comment')),
+    el('button', { class: 'icon-btn', title: 'Find & replace in file (⌘F)', onclick: () => state.editor?.openSearch() }, icon('search')),
   );
   const editorHost = el('div', { class: 'editor-host', id: 'editor-host' });
   const wcPill = el('span', { class: 'wc-pill', id: 'word-count' });
@@ -469,9 +469,9 @@ async function renderProject(id) {
       el('button', { class: 'icon-btn logs-btn', id: 'logs-btn', title: 'Compile logs', onclick: () => { state.logOpen = !state.logOpen; renderLogsView(); } }, icon('terminal')),
       downloadBtn,
       el('span', { class: 'spacer' }),
-      el('button', { class: 'icon-btn sm', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1 / 1.15) }, '−'),
+      el('button', { class: 'icon-btn', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1 / 1.15) }, '−'),
       zoomBtn,
-      el('button', { class: 'icon-btn sm', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1.15) }, '＋'),
+      el('button', { class: 'icon-btn', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1.15) }, '＋'),
       el('span', { class: 'tb-sep' }),
       pageInd,
     ),

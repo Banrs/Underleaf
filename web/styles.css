@@ -156,9 +156,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .sidebar .search-hit { -webkit-app-region: no-drag; }
 
 /* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
-   corner with FILES below; the topbar row's title centers on the same line.
-   Sidebar-body padding clears the lights. */
-.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 40px; }
+   corner with FILES below; the topbar row's title vertically centers on the same
+   line (44px row → center at 22px ≈ the lights' centre). Sidebar-body padding
+   clears the lights. */
+.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 44px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
 
@@ -187,28 +188,18 @@ input:focus, select:focus { border-color: var(--accent); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 7px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   color: var(--text-dim);
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
-.icon-btn.sm { width: 29px; height: 29px; }
+/* Two-tier convention, both on a clean 2:1 button-to-glyph ratio (glyph fills
+   half the button, equal padding all round). .icon-btn (36px / 18px glyph) is the
+   standard toolbar control — title bar, editor toolbar, PDF toolbar. .icon-btn.sm
+   (32px / 16px) is for dense secondary clusters: sidebar header actions, steppers. */
+.icon-btn.sm { width: 32px; height: 32px; }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
-
-/* Top chrome (title bar + editor/PDF toolbars) shares ONE compact icon-button
-   size, so the three stacked control rows read as a single consistent system
-   instead of mixing 34px and 29px buttons across — and within — the rows. */
-.topbar .icon-btn,
-.editor-toolbar .icon-btn,
-.pdf-toolbar .icon-btn { width: 29px; height: 29px; }
-.topbar .icon-btn .icon svg,
-.editor-toolbar .icon-btn .icon svg,
-.pdf-toolbar .icon-btn .icon svg { width: 16px; height: 16px; }
-/* Text buttons (Compile, Insert, zoom) match that icon-button height too, so
-   every control in a toolbar row lines up and the row stays a uniform 40px. */
-.editor-toolbar .btn,
-.pdf-toolbar .btn { padding-top: 6px; padding-bottom: 6px; }
 
 .auto-btn {
   font-size: 13px;
@@ -425,7 +416,6 @@ input:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--pane-border);
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
 }
-.floating .workspace { margin-top: 8px; }
 
 /* Gap between the two panes (resizer) with a hover cue, not a hairline. */
 .floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
@@ -445,10 +435,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
 
 /* The traffic lights stay pinned at (16,16) in BOTH layouts — they never move on
-   the toggle (native macOS behaviour). Floating only has to compensate for the
-   shell's 8px top inset: pull the title row and FILES header up by that 8px so
-   their distance from the fixed lights matches the docked layout exactly. */
-.floating.electron .topbar { padding-top: 0; }
+   the toggle (native macOS behaviour). Floating compensates for the shell's 8px
+   top inset by pulling the FILES header up by that 8px, so its distance from the
+   fixed lights matches the docked layout (26 − 8 = 18). The topbar needs no such
+   tweak — it already centres its title in the 44px row in both layouts. */
 .floating.electron .sidebar-body { padding-top: 18px; }
 
 /* ---------- sidebar ---------- */
@@ -609,8 +599,8 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 5px 12px;
-  min-height: 40px;
+  padding: 3px 12px;
+  min-height: 44px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -788,8 +778,8 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
-  min-height: 40px;
+  padding: 3px 12px;
+  min-height: 44px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
