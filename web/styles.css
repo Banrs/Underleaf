@@ -43,8 +43,25 @@
      so it works over the one-dark editor colour in dark mode too. */
   --gutter-bg: rgba(0, 0, 0, 0.035);
   --gutter-border: var(--border);
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* System font only: -apple-system / BlinkMacSystemFont resolve to San Francisco
+     at the correct optical size + weight on macOS/iOS. We deliberately do NOT name
+     "SF Pro Text" — if Apple's SF Pro is installed (design resources), that family
+     can resolve to a light variable-font instance and render thin. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
+
+  /* Type ramp — ONE scale, keyed to the platform HIG. Everything below references
+     a *role* (--fs-body, --fs-footnote, …), never a raw px, so a given role is a
+     single size on a platform and the whole ramp switches wholesale between
+     platforms (.win → WinUI, .ipad → iOS). This block is macOS (AppKit points):
+     Body 13, Callout 12, Subheadline 11, Caption 10, Title 3 15. That header<body
+     relationship (11 vs 13) is the authentic macOS source-list hierarchy. */
+  --fs-headline: 15px;    /* macOS Title 3 — dialog titles, emphasized */
+  --fs-body: 13px;        /* macOS Body — the workhorse: rows, controls, menus */
+  --fs-subhead: 12px;     /* macOS Callout — secondary controls, breadcrumbs */
+  --fs-footnote: 11px;    /* macOS Subheadline — section headers, metadata */
+  --fs-caption: 10px;     /* macOS Caption — badges, counters */
+  --lh-ui: 1.35;
 }
 
 /* Cross-platform glass: the sidebar & topbar are translucent everywhere (CSS
@@ -86,7 +103,15 @@ html, body {
      a horizontal scrollbar at narrow widths. */
   overflow: hidden;
   font-family: var(--font);
-  font-size: 14px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-ui);
+  /* Render UI text like native AppKit: uniform grayscale AA. Without this, the
+     transparent (vibrancy) window makes Chromium fall back to grayscale on some
+     panes and subpixel on others, so weight looks inconsistent/off. Declaring it
+     makes every pane match, the native-macOS way. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   color: var(--text);
   background: var(--bg);
 }
@@ -220,7 +245,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .pdf-toolbar .icon-btn { border-radius: 999px; }
 
 .auto-btn {
-  font-size: 13px;
+  font-size: var(--fs-body);
   padding: 6px 12px;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -297,11 +322,11 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .topbar::-webkit-scrollbar { display: none; }
 .topbar > *:not(.spacer):not(.crumbs) { flex-shrink: 0; }
-.topbar .proj-name { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+.topbar .proj-name { font-weight: 600; font-size: var(--fs-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
 .tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
 .topbar .crumbs { min-width: 0; }
-.topbar select { padding: 6px 10px; font-size: 13.5px; }
-.save-state { font-size: 13px; color: var(--text-dim); text-align: right; flex: none; }
+.topbar select { padding: 6px 10px; font-size: var(--fs-subhead); }
+.save-state { font-size: var(--fs-subhead); color: var(--text-dim); text-align: right; flex: none; }
 
 /* Golden-Gate edge-to-edge: no window padding — the docked sidebar and the
    content fill the window, separated only by hairline dividers. */
@@ -359,7 +384,7 @@ input:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 99px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   color: var(--text-dim);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
@@ -482,8 +507,8 @@ input:focus, select:focus { border-color: var(--accent); }
      10px, i.e. 4px wider each side — the macOS 27 pill overshoot. */
   padding: 12px 14px 6px;
   color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 700;                    /* measured: 11px SF Pro Bold, title case */
+  font-size: var(--fs-footnote);       /* macOS source-list header tier (11px) */
+  font-weight: 700;                    /* measured: SF Pro Bold, title case */
   flex: none;
 }
 .sidebar-head .actions { display: flex; gap: 2px; }
@@ -512,7 +537,7 @@ input:focus, select:focus { border-color: var(--accent); }
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   border-radius: 0;
 }
 
@@ -525,7 +550,7 @@ input:focus, select:focus { border-color: var(--accent); }
   gap: 6px;
   padding: 8px 8px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -544,7 +569,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; }
 .tree-item.active .ficon { color: var(--accent); }
 .tree-item .label { overflow: hidden; text-overflow: ellipsis; }
-.tree-item .main-star { margin-left: auto; font-size: 12px; color: var(--warn); }
+.tree-item .main-star { margin-left: auto; font-size: var(--fs-footnote); color: var(--warn); }
 .tree-children { padding-left: 16px; }
 
 .sidebar-foot {
@@ -554,7 +579,7 @@ input:focus, select:focus { border-color: var(--accent); }
   padding: 9px 10px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   flex: none;
 }
 
@@ -574,14 +599,14 @@ input:focus, select:focus { border-color: var(--accent); }
 .outline-item {
   padding: 5px 8px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .outline-item:hover { background: var(--bg-hover); }
-.outline-empty { color: var(--text-dim); font-size: 12.5px; padding: 4px 8px 8px; }
+.outline-empty { color: var(--text-dim); font-size: var(--fs-footnote); padding: 4px 8px 8px; }
 
 /* ---------- project search results ---------- */
 
@@ -590,7 +615,7 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   font-weight: 600;
   padding: 10px 8px 3px;
   color: var(--text-dim);
@@ -602,7 +627,7 @@ input:focus, select:focus { border-color: var(--accent); }
   background: var(--bg-inset);
   border-radius: 99px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 .search-hit {
@@ -610,12 +635,12 @@ input:focus, select:focus { border-color: var(--accent); }
   gap: 8px;
   padding: 5.5px 8px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
   align-items: baseline;
 }
 .search-hit:hover { background: var(--bg-hover); }
-.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: var(--fs-footnote); }
 .search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-preview mark {
   background: color-mix(in srgb, var(--warn) 32%, transparent);
@@ -648,7 +673,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .tb-i { font-style: italic; font-family: Georgia, serif; font-size: 16.5px; }
 .tb-m { font-size: 17.5px; }
 .tb-insert {
-  font-size: 13px;
+  font-size: var(--fs-body);
   padding: 5px 11px;
   gap: 5px;
   color: var(--text-dim);
@@ -665,7 +690,7 @@ input:focus, select:focus { border-color: var(--accent); }
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   color: var(--text-dim);
 }
 .crumb { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
@@ -691,7 +716,7 @@ input:focus, select:focus { border-color: var(--accent); }
   box-shadow: var(--shadow);
   padding: 10px 16px;
   margin-bottom: 8px;
-  font-size: 15px;
+  font-size: var(--fs-headline);
   color: var(--text);
   max-width: 560px;
   overflow-x: auto;
@@ -753,7 +778,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-dim);
 }
 .badge {
@@ -763,7 +788,7 @@ input:focus, select:focus { border-color: var(--accent); }
   padding: 2px 9px;
   border-radius: 99px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
 }
 .badge.err { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
 .badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
@@ -780,7 +805,7 @@ input:focus, select:focus { border-color: var(--accent); }
   height: 15px;
   padding: 0 4px;
   border-radius: 99px;
-  font-size: 10px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   line-height: 15px;
   text-align: center;
@@ -794,17 +819,17 @@ input:focus, select:focus { border-color: var(--accent); }
   padding: 6px 9px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-body);
   align-items: baseline;
 }
 .log-item:hover { background: var(--bg-hover); }
-.log-item .type { flex: none; font-weight: 700; font-size: 11.5px; }
+.log-item .type { flex: none; font-weight: 700; font-size: var(--fs-footnote); }
 .log-item.error .type { color: var(--danger); }
 .log-item.warning .type { color: var(--warn); }
-.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: var(--fs-footnote); }
 .log-raw {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-footnote);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-dim);
@@ -822,7 +847,7 @@ input:focus, select:focus { border-color: var(--accent); }
   min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-dim);
   flex: none;
   overflow-x: auto;
@@ -833,7 +858,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .pdf-toolbar .spacer { flex: 1 1 auto !important; min-width: 8px; }
 .pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn {
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   padding: 5px 8px;
   gap: 3px;
   min-width: 62px;
@@ -841,7 +866,7 @@ input:focus, select:focus { border-color: var(--accent); }
   font-variant-numeric: tabular-nums;
 }
 #zoom-label { min-width: 34px; text-align: center; }
-.fit-caret { font-size: 9px; opacity: 0.6; }
+.fit-caret { font-size: var(--fs-caption); opacity: 0.6; }
 /* Reserve the scrollbar gutter so the scrollbar appearing/disappearing doesn't
    change clientWidth — otherwise fit-width would re-render in a feedback loop. */
 .pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
@@ -923,9 +948,9 @@ input:focus, select:focus { border-color: var(--accent); }
   max-width: calc(100vw - 40px);
   padding: 22px;
 }
-.modal h3 { margin: 0 0 16px; font-size: 17px; }
+.modal h3 { margin: 0 0 16px; font-size: var(--fs-headline); }
 .modal .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
-.modal .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
+.modal .field label { font-size: var(--fs-footnote); color: var(--text-dim); font-weight: 500; }
 .modal .field input, .modal .field select { width: 100%; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal .row { display: flex; align-items: center; gap: 8px; }
@@ -946,7 +971,7 @@ input:focus, select:focus { border-color: var(--accent); }
   text-align: left;
   padding: 8px 12px;
   border-radius: 7px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
 }
 .ctx-menu button:hover { background: var(--bg-hover); }
 .ctx-menu button.danger { color: var(--danger); }
@@ -979,10 +1004,10 @@ input:focus, select:focus { border-color: var(--accent); }
   justify-content: space-between;
   gap: 16px;
   padding: 13px 2px;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 .settings-row + .settings-row { border-top: 1px solid var(--border); }
-.settings-hint { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.settings-hint { font-size: var(--fs-footnote); color: var(--text-dim); margin-top: 2px; }
 .settings-foot {
   display: flex;
   align-items: center;
@@ -991,7 +1016,7 @@ input:focus, select:focus { border-color: var(--accent); }
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   color: var(--text-dim);
 }
 .settings-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1041,7 +1066,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .switch.on .knob { transform: translateX(16px); background: #fff; }
 
 .stepper { display: flex; align-items: center; gap: 6px; }
-.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -1061,7 +1086,7 @@ input:focus, select:focus { border-color: var(--accent); }
   background: none;
   border: none;
   padding: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   cursor: pointer;
   color: var(--text-dim);
   font-variant: small-caps;
@@ -1070,7 +1095,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .tex-status:hover { color: var(--text); }
 .tex-status.warn { color: var(--warn); opacity: 0.8; }
 .tex-status .icon svg { width: 13px; height: 13px; }
-.log-duration { color: var(--text-dim); font-size: 12px; }
+.log-duration { color: var(--text-dim); font-size: var(--fs-footnote); }
 .pdf-pages { will-change: transform; }
 
 #toast-root {
@@ -1089,7 +1114,7 @@ input:focus, select:focus { border-color: var(--accent); }
   color: var(--bg);
   padding: 10px 18px;
   border-radius: 99px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   box-shadow: var(--shadow);
   animation: toast-in 0.18s ease-out;
 }
@@ -1115,6 +1140,16 @@ input:focus, select:focus { border-color: var(--accent); }
   --sidebar-bg: #eaeaea;               /* Mica-ish nav base */
   --border: rgba(0, 0, 0, 0.08);       /* ControlStrokeColorDefault */
   --pane-border: rgba(0, 0, 0, 0.08);
+  /* WinUI type ramp (Segoe UI Variable): Body 14, Caption 12, Subtitle 20,
+     BodyLarge 18. The ramp is flatter than macOS — there's no 11/13 tier, so
+     secondary text is Caption 12 across the board. Overriding the tokens re-skins
+     every role at once (rows, headers, metadata) without per-element rules. */
+  --fs-headline: 20px;    /* Fluent Subtitle — dialog titles */
+  --fs-body: 14px;        /* Fluent Body — rows, controls, nav items */
+  --fs-subhead: 12px;     /* Fluent Caption — secondary controls */
+  --fs-footnote: 12px;    /* Fluent Caption — section headers, metadata */
+  --fs-caption: 11px;     /* smallest — badges, counters */
+  --lh-ui: 1.4;
 }
 [data-theme="dark"].win {
   --bg: #202020;
@@ -1151,10 +1186,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .win .editor-toolbar .btn,
 .win .pdf-toolbar .btn { border-radius: 4px; }
 
-/* NavigationView sidebar: 36px items at 14px body; selection is a subtle neutral
-   fill plus the signature 3×16px accent pill on the leading edge (not the mac
-   accent-tinted full highlight). */
-.win .tree-item { position: relative; min-height: 36px; font-size: 14px; }
+/* NavigationView sidebar: 36px items (Body 14 flows from --fs-body); selection is
+   a subtle neutral fill plus the signature 3×16px accent pill on the leading edge
+   (not the mac accent-tinted full highlight). */
+.win .tree-item { position: relative; min-height: 36px; }
 .win .tree-item.active { background: var(--bg-hover); color: var(--text); }
 .win .tree-item.active .ficon { color: var(--text-dim); }
 .win .tree-item.active::before {
@@ -1168,7 +1203,6 @@ input:focus, select:focus { border-color: var(--accent); }
   border-radius: 2px;
   background: var(--accent);
 }
-.win .outline-item { font-size: 14px; }
 
 /* ============ iPadOS simulation (.ipad) — experimental touch scale ============
    Preview only (nothing sets .ipad yet). IMPORTANT: iPadOS does NOT follow the
@@ -1180,30 +1214,42 @@ input:focus, select:focus { border-color: var(--accent); }
    as cramped because the paddings/margins/type were still macOS-tight — this
    block resets them to iOS values. Pairs with the floating Liquid Glass sidebar
    (.floating); no window controls. Groundwork — see docs/mobile-roadmap.md. */
-.ipad { font-size: 17px; line-height: 1.4; }               /* iOS Body = 17pt */
+/* iOS type ramp (SF Pro Dynamic Type, Large default): Body 17, Subhead 15,
+   Footnote 13, Caption 12, Title 3 20. Overriding the tokens re-sizes every role
+   at once — the earlier version hand-patched ~8 per-element font-sizes here
+   precisely because the sizes didn't switch with the platform; the ramp removes
+   that. Only the touch geometry (44pt targets, 320pt column, 20pt margins) stays
+   iPad-specific below. */
+.ipad {
+  --fs-headline: 20px;    /* iOS Title 3 */
+  --fs-body: 17px;        /* iOS Body */
+  --fs-subhead: 15px;     /* iOS Subhead */
+  --fs-footnote: 13px;    /* iOS Footnote — section headers, metadata */
+  --fs-caption: 12px;     /* iOS Caption 1 */
+  --lh-ui: 1.4;
+}
 
 /* 320pt primary column (UISplitViewController standard), 20pt layout margins. */
 .ipad .sidebar { width: 320px; }
 .ipad .sidebar-body { padding-top: 14px; }
 .ipad .topbar { min-height: 50px; padding: 0 20px; }        /* iPad nav bar ≈ 50pt */
 
-/* Section header: iOS grouped-list header = Footnote (13pt), semibold, 20pt inset. */
-.ipad .sidebar-head { font-size: 13px; font-weight: 600; padding: 14px 20px 6px; }
+/* Section header: iOS grouped-list header is Footnote (token), semibold, 20pt inset. */
+.ipad .sidebar-head { font-weight: 600; padding: 14px 20px 6px; }
 
-/* Search: capsule, 44pt touch height, Body (17pt) input, 20pt inset. */
+/* Search: capsule, 44pt touch height, 20pt inset (Body input flows from token). */
 .ipad .sidebar-search { min-height: 44px; margin: 0 20px 12px; padding: 8px 14px; }
-.ipad .sidebar-search-input { font-size: 17px; }
 
-/* List rows: 44pt min touch height, Body (17pt), 20pt leading margin (tree pad 12
-   + row pad 8), roomier icon-to-label gap. */
+/* List rows: 44pt min touch height, 20pt leading margin (tree pad 12 + row pad 8),
+   roomier icon-to-label gap (Body text flows from token). */
 .ipad .tree { padding: 0 12px 16px; }
-.ipad .tree-item { min-height: 44px; font-size: 17px; gap: 12px; padding: 10px 8px; }
+.ipad .tree-item { min-height: 44px; gap: 12px; padding: 10px 8px; }
 .ipad .tree-item .ficon svg { width: 20px; height: 20px; }
 .ipad .tree-item[data-depth="0"] .ficon { width: 26px; }
 .ipad .tree-item[data-depth="0"] .ficon svg { width: 22px; height: 22px; }
 
-/* Outline rows: Subhead (15pt), still a 44pt touch target. */
-.ipad .outline-item { min-height: 44px; font-size: 15px; padding: 8px 20px; }
+/* Outline rows: still a 44pt touch target (Subhead text flows from token). */
+.ipad .outline-item { min-height: 44px; padding: 8px 20px; }
 
 /* Toolbars: 50pt (iOS nav/toolbar), 44pt touch controls, 22-24pt SF Symbols. */
 .ipad .editor-toolbar,
@@ -1212,4 +1258,4 @@ input:focus, select:focus { border-color: var(--accent); }
 .ipad .icon-btn .icon svg { width: 23px; height: 23px; }
 .ipad .icon-btn.sm { width: 40px; height: 40px; }
 .ipad .editor-toolbar .btn,
-.ipad .pdf-toolbar .btn { height: 44px; font-size: 16px; }  /* Callout on buttons */
+.ipad .pdf-toolbar .btn { height: 44px; }
