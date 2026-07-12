@@ -7,8 +7,8 @@ Ships as a native macOS desktop app (Electron, no localhost ports) and also runs
 ## Quick start
 
 ```sh
-git clone https://github.com/danielmnho/texlocal.git
-cd texlocal
+git clone https://github.com/Banrs/Underleaf.git
+cd Underleaf
 npm install
 npm run dev          # builds the UI and serves http://localhost:3417
 ```
@@ -33,7 +33,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **PDF preview**: trackpad pinch zoom, zoom %, fit width/height, page tracking
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
 - **Settings popup** (`⌘,`): system/light/dark theme, auto-compile switch, editor font size, interface scale, per-project TeX engine
-- **Tahoe-style UI**: floating translucent sidebar (native macOS vibrancy), collapsible with `⌘\` (Finder-style full hide), light/dark/system themes
+- **Golden Gate edge-to-edge UI**: a docked translucent sidebar (native macOS vibrancy) and a unified editor/PDF surface fill the window with hairline dividers — no wasted gaps; sidebar collapsible with `⌘\` (Finder-style full hide), light/dark/system themes
 - Autosave, `⌘S` / `⌘⏎` compile, `⌘F` find & replace, `⌘/` comment, `⌘\` toggle sidebar, `⌘,` settings
 
 ## Requirements
@@ -59,7 +59,9 @@ Dev mode (Electron against live code): `npm run app`.
 npm run dev         # builds the frontend and serves http://localhost:3417
 ```
 
-Projects are plain folders in `~/Documents/TeXLocal` (desktop app) or `data/projects/` (browser mode) — override either with `TEXLOCAL_DATA=/path`. Everything is just files on disk; no databases, no lock-in.
+Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/` (browser mode) — override either with `TEXLOCAL_DATA=/path`. Everything is just files on disk; no databases, no lock-in.
+
+> The desktop app uses `~/TeXLocal` (home folder) rather than `~/Documents/TeXLocal` so it isn't blocked by macOS's Documents-folder privacy prompt on unsigned/dev builds.
 
 ## Project structure
 
@@ -75,7 +77,7 @@ assets/      App icon (.icns)
 
 ## Cross-platform status
 
-Developed on macOS (arm64). The code is written to be portable — TeX binary lookup covers per-platform locations (TeX Live / MiKTeX on Windows) via `path.delimiter`, and shortcuts bind both `Cmd` and `Ctrl`. A Windows build (`electron-packager . TeXLocal --platform win32 --arch x64`) needs one swap: ZIP export currently shells out to the `zip` binary — use a JS archiver (e.g. `archiver`) on Windows. Native window vibrancy is macOS-only and degrades gracefully to a solid sidebar elsewhere.
+Developed and runtime-tested on macOS (arm64). The compile core is portable — TeX binary lookup covers per-platform locations (TeX Live / MiKTeX on Windows) via `path.delimiter`, shortcuts bind both `Cmd` and `Ctrl`, and the data dir works cross-platform. The Electron **shell** (window chrome + translucency) and the ZIP export still need Windows-specific work: window controls (`titleBarOverlay`), Acrylic/Mica instead of macOS vibrancy, a JS zipper instead of the `zip` CLI, and SyncTeX path-separator normalization. These are itemized with fixes in **[WINDOWS.md](WINDOWS.md)** — code-reviewed, not yet runtime-tested on Windows.
 
 ## Security notes
 

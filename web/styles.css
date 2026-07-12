@@ -34,13 +34,8 @@
   --ok: #16a34a;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
   --radius: 8px;
-  /* Standardized layout tokens (one place to tune; a UI-scale multiplier feeds
-     the root font-size so everything scales together). */
-  --edge-gap: 8px;      /* window edge → panes (tight Tahoe-style sidebar inset) */
-  --pane-gap: 8px;      /* gap between the floating sidebar and the content card */
-  --pane-radius: 12px;
+  /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
   --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
-  --scrollbar: 9px;
   --sidebar-bg: var(--bg-panel);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
@@ -160,11 +155,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .sidebar .outline-item,
 .electron .sidebar .search-hit { -webkit-app-region: no-drag; }
 
-/* Tahoe-style: shell keeps an equal --edge-gap (8px) on every side, so the
-   floating sidebar's gap is consistent top/side/bottom. The traffic lights
-   (main.mjs, symmetric 16px inset = 8px shell gap + 8px into the sidebar corner)
-   sit in the sidebar's top band with FILES below; the topbar row centers on the
-   same line. Sidebar-body padding clears the lights. */
+/* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
+   corner with FILES below; the topbar row's title centers on the same line.
+   Sidebar-body padding clears the lights. */
 .electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 34px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
@@ -287,11 +280,6 @@ input:focus, select:focus { border-color: var(--accent); }
 .topbar select { padding: 6px 10px; font-size: 13.5px; }
 .save-state { font-size: 13px; color: var(--text-dim); text-align: right; flex: none; }
 
-/* Tahoe-style layout: the sidebar is a FLOATING translucent card, inset from
-   the window edges with all corners rounded and the vibrant window material
-   showing around and behind it; editor & PDF are floating cards too. */
-/* Symmetric outer padding = --pane-gap on every side; the resizers ARE the
-   inter-pane gaps (no extra flex gap stacking on top). */
 /* Golden-Gate edge-to-edge: no window padding — the docked sidebar and the
    content fill the window, separated only by hairline dividers. */
 .shell { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
@@ -409,6 +397,35 @@ input:focus, select:focus { border-color: var(--accent); }
 .workspace.pdf-collapsed > .pdf-pane,
 .workspace.pdf-collapsed > .resizer-sync { display: none; }
 .pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
+
+/* ---------- floating layout (Settings → Floating panels) ---------- */
+/* Opt back into the inset, rounded, gapped look instead of edge-to-edge: the
+   sidebar and the editor/PDF card float with an 8px gap; the editor↔PDF divider
+   stays a hairline inside the content card. */
+.floating .shell { padding: 8px; }
+.floating .sidebar { border-radius: 12px; border: 1px solid var(--pane-border); }
+.floating .workspace { margin-top: 8px; border-radius: 12px; border: 1px solid var(--pane-border); }
+
+.floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
+.floating .resizer:not(.resizer-sync):hover { background: transparent; }
+.floating .resizer:not(.resizer-sync)::after {
+  content: '';
+  position: absolute;
+  top: 8px; bottom: 8px; left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.14s ease, background 0.14s ease;
+}
+.floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
+.floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
+
+/* Electron: the shell's 8px top padding shifts the topbar down, so drop its
+   extra padding and re-clear the (fixed) traffic lights in the sidebar. */
+.floating.electron .topbar { padding-top: 0; }
+.floating.electron .sidebar-body { padding-top: 18px; }
 
 /* ---------- sidebar ---------- */
 

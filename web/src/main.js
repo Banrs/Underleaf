@@ -155,6 +155,7 @@ const state = {
   sidebarCollapsed: localStorage.getItem('texlocal-sidebar') === 'collapsed',
   pdfCollapsed: localStorage.getItem('texlocal-pdf') === 'collapsed',
   showWordCount: localStorage.getItem('texlocal-wordcount') !== '0',
+  floating: localStorage.getItem('texlocal-floating') === '1',
   outline: [],
   cursorLine: 1,
   searchQuery: '',
@@ -1231,6 +1232,19 @@ function openSettings() {
         }, el('span', { class: 'knob' })),
       ),
       el('div', { class: 'settings-row' },
+        el('span', {}, 'Floating panels', el('div', { class: 'settings-hint' }, 'Inset, rounded cards with gaps (off = edge-to-edge)')),
+        el('button', {
+          class: `switch ${state.floating ? 'on' : ''}`,
+          role: 'switch',
+          onclick: (e) => {
+            state.floating = !state.floating;
+            localStorage.setItem('texlocal-floating', state.floating ? '1' : '0');
+            e.currentTarget.classList.toggle('on', state.floating);
+            document.documentElement.classList.toggle('floating', state.floating);
+          },
+        }, el('span', { class: 'knob' })),
+      ),
+      el('div', { class: 'settings-row' },
         el('span', {}, 'Editor font size'),
         el('div', { class: 'stepper' },
           el('button', { class: 'icon-btn sm', onclick: () => stepFs(-1) }, '−'),
@@ -1295,5 +1309,7 @@ function route() {
 applyTheme(resolveTheme(themeMode()));
 setEditorFontSize(editorFontSize());
 setUiScale(uiScale());
+// Layout: edge-to-edge (default) vs the floating/inset card look.
+document.documentElement.classList.toggle('floating', state.floating);
 addEventListener('hashchange', route);
 route();
