@@ -26,7 +26,7 @@ const PATHS = {
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
   redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-  comment: '<path d="M7 8h10"/><path d="M7 12h6"/><path d="M21 12a9 9 0 0 1-13.2 8L3 21l1-4.8A9 9 0 1 1 21 12z"/>',
+  comment: '<path d="M7 9.5h10"/><path d="M7 13.5h6"/><path d="M21 12a9 9 0 0 1-13.2 8L3 21l1-4.8A9 9 0 1 1 21 12z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',

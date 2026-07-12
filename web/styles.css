@@ -223,23 +223,25 @@ input:focus, select:focus { border-color: var(--accent); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   color: var(--text-dim);
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
-/* Two-tier convention, both on a clean 2:1 button-to-glyph ratio (glyph fills
-   half the button, equal padding all round). .icon-btn (36px / 18px glyph) is the
-   standard toolbar control — title bar, editor toolbar, PDF toolbar. .icon-btn.sm
-   (32px / 16px) is for dense secondary clusters: sidebar header actions, steppers. */
-.icon-btn.sm { width: 32px; height: 32px; }
+/* Two control tiers. .icon-btn (32px, 18px glyph) is the standard toolbar control
+   — title bar, editor toolbar, PDF toolbar. .icon-btn.sm (28px, 16px glyph) is for
+   dense secondary clusters: sidebar header actions, steppers. The glyphs stay 18/16
+   — only the hover halo is sized to the control; a 32px well around an 18px SF
+   Symbol matches macOS 27's unified toolbar, and is a better fit for 13px labels
+   than the old 36px (which left too much air around the text). */
+.icon-btn.sm { width: 28px; height: 28px; }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
-/* Text buttons in a toolbar (Compile, Insert, zoom) are the SAME 36px height as
-   the icon buttons, so a row's controls line up instead of the text pills sitting
-   short. macOS 27 (measured) toolbar controls are capsules / circular bezels. */
+/* Text buttons in a toolbar (Compile, Insert, zoom) match the icon buttons' 32px
+   height, so a row's controls line up — no text pill sitting short — while fitting
+   the label snugly. macOS 27 toolbar controls are capsules / circular bezels. */
 .editor-toolbar .btn,
-.pdf-toolbar .btn { height: 36px; padding: 0 14px; border-radius: 999px; }
+.pdf-toolbar .btn { height: 32px; padding: 0 14px; border-radius: 999px; }
 .topbar .icon-btn,
 .editor-toolbar .icon-btn,
 .pdf-toolbar .icon-btn { border-radius: 999px; }
