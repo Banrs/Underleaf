@@ -10,7 +10,7 @@ import {
   fileTree, createFile, renameEntry, deleteEntry, scanSymbols, searchProject,
   readSettings, writeSettings, BUILD_DIR,
 } from './projects.js';
-import { compile, cleanBuild, texAvailable, synctexForward, synctexInverse } from './compile.js';
+import { compile, texAvailable, synctexForward, synctexInverse } from './compile.js';
 
 const PORT = process.env.PORT ?? 3417;
 const WEB_DIR = new URL('../web', import.meta.url).pathname;
@@ -141,11 +141,6 @@ app.post('/api/projects/:id/upload', upload.array('files'), wrap(async (req, res
 
 app.post('/api/projects/:id/compile', wrap(async (req, res) => {
   res.json(await compile(projectRoot(req.params.id), req.body ?? {}));
-}));
-
-app.post('/api/projects/:id/clean', wrap(async (req, res) => {
-  await cleanBuild(projectRoot(req.params.id));
-  res.json({ ok: true });
 }));
 
 app.get('/api/projects/:id/pdf', wrap(async (req, res) => {

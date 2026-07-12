@@ -6,14 +6,6 @@ import { icon } from './icons.js';
 const IS_ELECTRON = !!window.texlocal;
 if (IS_ELECTRON) document.documentElement.classList.add('electron');
 
-// Platform design language: macOS (traffic lights, vibrancy, Golden Gate/Tahoe)
-// vs Windows 11 (Fluent — right-side caption buttons, Mica, Segoe UI). Electron
-// exposes the real platform; in a plain browser fall back to a coarse UA sniff so
-// previews still theme. Everything Windows-specific keys off the `.win` class.
-const PLATFORM = window.texlocal?.platform
-  || (/Win/i.test(navigator.userAgent) ? 'win32' : 'darwin');
-document.documentElement.classList.add(PLATFORM === 'win32' ? 'win' : 'mac');
-
 // ---------- tiny DOM helpers ----------
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -74,16 +66,6 @@ function applyTheme(theme) {
 function setThemeMode(mode) {
   localStorage.setItem('texlocal-thememode', mode);
   applyTheme(resolveTheme(mode));
-}
-
-// Layout: edge-to-edge "Golden Gate" (default) vs the Finder/Xcode floating
-// panes. The native traffic lights stay pinned where the window created them
-// (16,16) in BOTH layouts — like every native macOS app, they don't jump when
-// the sidebar style changes — so the toggle only swaps CSS classes. The floating
-// rules pull the title row and FILES header up by the shell's inset to keep them
-// aligned with the unmoved lights.
-function applyFloating(on) {
-  document.documentElement.classList.toggle('floating', on);
 }
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -173,7 +155,6 @@ const state = {
   sidebarCollapsed: localStorage.getItem('texlocal-sidebar') === 'collapsed',
   pdfCollapsed: localStorage.getItem('texlocal-pdf') === 'collapsed',
   showWordCount: localStorage.getItem('texlocal-wordcount') !== '0',
-  floating: localStorage.getItem('texlocal-floating') === '1',
   outline: [],
   cursorLine: 1,
   searchQuery: '',
@@ -333,6 +314,7 @@ async function newProjectFlow() {
 
 function destroyProjectView() {
   clearTimeout(state.saveTimer);
+  clearInterval(state.texTimer);
   state.editor?.destroy();
   state.pdf?.destroy();
   Object.assign(state, {
@@ -462,10 +444,10 @@ async function renderProject(id) {
   const zoomBtn = el('button', { class: 'btn ghost zoom-btn', id: 'zoom-btn', title: 'Zoom', onclick: (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     contextMenu(r.left, r.bottom + 6, [
-      { label: 'Fit width', action: () => state.pdf.fitWidth() },
-      { label: 'Fit height', action: () => state.pdf.fitHeight() },
+      { label: 'Fit width', action: () => state.pdf?.fitWidth() },
+      { label: 'Fit height', action: () => state.pdf?.fitHeight() },
       '-',
-      ...[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => ({ label: `${z * 100}%`, action: () => state.pdf.setScale(z) })),
+      ...[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => ({ label: `${z * 100}%`, action: () => state.pdf?.setScale(z) })),
     ]);
   } }, el('span', { id: 'zoom-label' }, '–'), el('span', { class: 'fit-caret' }, '▾'));
   const pdfScroll = el('div', { class: 'pdf-scroll', id: 'pdf-scroll' });
@@ -477,9 +459,9 @@ async function renderProject(id) {
       el('button', { class: 'icon-btn logs-btn', id: 'logs-btn', title: 'Compile logs', onclick: () => { state.logOpen = !state.logOpen; renderLogsView(); } }, icon('terminal')),
       downloadBtn,
       el('span', { class: 'spacer' }),
-      el('button', { class: 'icon-btn', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1 / 1.15) }, '−'),
+      el('button', { class: 'icon-btn', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf?.zoomBy(1 / 1.15) }, '−'),
       zoomBtn,
-      el('button', { class: 'icon-btn', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1.15) }, '＋'),
+      el('button', { class: 'icon-btn', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf?.zoomBy(1.15) }, '＋'),
       el('span', { class: 'tb-sep' }),
       pageInd,
     ),
@@ -533,7 +515,8 @@ async function renderProject(id) {
 
 // TeX may get installed while the app is open — poll until it shows up.
 function watchForTex(compileBtn) {
-  const timer = setInterval(async () => {
+  clearInterval(state.texTimer);
+  const timer = state.texTimer = setInterval(async () => {
     if (!document.contains(compileBtn)) { clearInterval(timer); return; }
     try {
       const status = await api.status();
@@ -1161,8 +1144,6 @@ function setupResizer(handle, pane, mode, min, max, storageKey) {
   });
 }
 
-// ---------- theme toggle ----------
-
 // ---------- settings (⌘,) ----------
 
 const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18];
@@ -1250,19 +1231,6 @@ function openSettings() {
         }, el('span', { class: 'knob' })),
       ),
       el('div', { class: 'settings-row' },
-        el('span', {}, 'Floating sidebar', el('div', { class: 'settings-hint' }, 'Finder-style inset glass sidebar (off = docked edge-to-edge)')),
-        el('button', {
-          class: `switch ${state.floating ? 'on' : ''}`,
-          role: 'switch',
-          onclick: (e) => {
-            state.floating = !state.floating;
-            localStorage.setItem('texlocal-floating', state.floating ? '1' : '0');
-            e.currentTarget.classList.toggle('on', state.floating);
-            applyFloating(state.floating);
-          },
-        }, el('span', { class: 'knob' })),
-      ),
-      el('div', { class: 'settings-row' },
         el('span', {}, 'Editor font size'),
         el('div', { class: 'stepper' },
           el('button', { class: 'icon-btn sm', onclick: () => stepFs(-1) }, '−'),
@@ -1327,6 +1295,5 @@ function route() {
 applyTheme(resolveTheme(themeMode()));
 setEditorFontSize(editorFontSize());
 setUiScale(uiScale());
-applyFloating(state.floating);
 addEventListener('hashchange', route);
 route();

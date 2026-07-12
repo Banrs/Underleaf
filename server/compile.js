@@ -14,12 +14,8 @@ const ENGINE_FLAGS = {
 };
 
 // PATH for spawned TeX tools. GUI-launched apps often miss the TeX bin dirs,
-// so append the usual per-platform locations (uses path.delimiter so the same
-// code works on Windows/MiKTeX later).
-const TEX_DIRS = process.platform === 'win32'
-  ? ['C:\\texlive\\2026\\bin\\windows', 'C:\\texlive\\2025\\bin\\windows',
-     `${process.env.LOCALAPPDATA ?? ''}\\Programs\\MiKTeX\\miktex\\bin\\x64`]
-  : ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', '/usr/local/texlive/2026/bin'];
+// so append the usual macOS locations.
+const TEX_DIRS = ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', '/usr/local/texlive/2026/bin'];
 
 const TEX_PATH = [process.env.PATH ?? '', ...TEX_DIRS].filter(Boolean).join(path.delimiter);
 
@@ -167,10 +163,6 @@ export async function compile(root, overrides = {}) {
     warnings: issues.filter((i) => i.type === 'warning'),
     log: stdout.length > 200_000 ? stdout.slice(-200_000) : stdout,
   };
-}
-
-export async function cleanBuild(root) {
-  await fsp.rm(path.join(root, BUILD_DIR), { recursive: true, force: true });
 }
 
 // ---------- SyncTeX ----------

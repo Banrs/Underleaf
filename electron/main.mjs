@@ -96,16 +96,6 @@ async function boot() {
   });
 
   handle('status', () => compile.texAvailable());
-  // Programmatic traffic-light repositioning. The layout toggle no longer calls
-  // this (the lights stay fixed across docked/floating — see trafficLightPosition
-  // above); kept as a thin bridge for any future explicit repositioning need.
-  handle('window:lights', (pos) => {
-    if (win && pos) {
-      if (typeof win.setWindowButtonPosition === 'function') win.setWindowButtonPosition(pos);
-      else if (typeof win.setTrafficLightPosition === 'function') win.setTrafficLightPosition(pos);
-    }
-    return { ok: true };
-  });
   handle('projects:list', () => projects.listProjects());
   handle('projects:create', (name, template) => projects.createProject(name, template));
   handle('projects:rename', (id, name) => projects.renameProject(id, name));
@@ -179,7 +169,6 @@ async function boot() {
 
   // ---------- window ----------
   const createWindow = () => {
-    const mac = process.platform === 'darwin';
     win = new BrowserWindow({
       width: 1440,
       height: 900,
@@ -187,24 +176,13 @@ async function boot() {
       minHeight: 500,
       title: 'TeXLocal',
       backgroundColor: '#00000000',
-      // Chrome is platform-specific. macOS: transparent window + sidebar vibrancy
-      // (liquid glass), with the traffic lights repositioned into the title row —
-      // fixed at x=16,y=18 so their centre (y≈24) sits on the 48px row, unmoved
-      // across the Golden Gate/Tahoe toggle. Windows 11: the Mica backdrop tints
-      // the window and titleBarOverlay draws the native min/max/close caption
-      // buttons over the top-right (Fluent); the CSS reserves that space via `.win`.
-      ...(mac
-        ? {
-            vibrancy: 'sidebar',
-            visualEffectState: 'followWindow',
-            titleBarStyle: 'hidden',
-            trafficLightPosition: { x: 16, y: 20 },
-          }
-        : {
-            backgroundMaterial: 'mica',
-            titleBarStyle: 'hidden',
-            titleBarOverlay: { color: '#00000000', symbolColor: '#888888', height: 52 },
-          }),
+      // macOS chrome: transparent window + sidebar vibrancy (liquid glass), with the
+      // traffic lights repositioned into the title row — fixed at x=16,y=20 so their
+      // centre (y≈26) sits on the 52px toolbar row.
+      vibrancy: 'sidebar',
+      visualEffectState: 'followWindow',
+      titleBarStyle: 'hidden',
+      trafficLightPosition: { x: 16, y: 20 },
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,

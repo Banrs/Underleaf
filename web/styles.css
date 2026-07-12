@@ -50,12 +50,10 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
 
-  /* Type ramp — ONE scale, keyed to the platform HIG. Everything below references
-     a *role* (--fs-body, --fs-footnote, …), never a raw px, so a given role is a
-     single size on a platform and the whole ramp switches wholesale between
-     platforms (.win → WinUI, .ipad → iOS). This block is macOS (AppKit points):
-     Body 13, Callout 12, Subheadline 11, Caption 10, Title 3 15. That header<body
-     relationship (11 vs 13) is the authentic macOS source-list hierarchy. */
+  /* Type ramp — ONE scale (macOS AppKit points). Everything below references a
+     *role* (--fs-body, --fs-footnote, …), never a raw px: Body 13, Callout 12,
+     Subheadline 11, Caption 10, Title 3 15. The header<body relationship (11 vs 13)
+     is the authentic macOS source-list hierarchy. */
   --fs-headline: 15px;    /* macOS Title 3 — dialog titles, emphasized */
   --fs-body: 13px;        /* macOS Body — the workhorse: rows, controls, menus */
   --fs-subhead: 12px;     /* macOS Callout — secondary controls, breadcrumbs */
@@ -279,7 +277,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .home { padding-top: 64px; }
 .home-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 16px; }
 .home h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: 15px; }
+.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: var(--fs-headline); }
 .tex-banner {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
@@ -287,7 +285,7 @@ input:focus, select:focus { border-color: var(--accent); }
   border-radius: var(--radius);
   padding: 12px 16px;
   margin-bottom: 20px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
 }
 .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 .project-card {
@@ -301,10 +299,10 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .project-card:hover { border-color: var(--accent); transform: translateY(-1px); }
 .project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 5px; word-break: break-word; }
-.project-card .meta { color: var(--text-dim); font-size: 13px; }
+.project-card .meta { color: var(--text-dim); font-size: var(--fs-body); }
 .project-card .card-actions { position: absolute; top: 12px; right: 12px; display: none; gap: 2px; }
 .project-card:hover .card-actions { display: flex; }
-.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: 15px; }
+.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: var(--fs-headline); }
 
 /* ---------- editor layout ---------- */
 
@@ -450,50 +448,6 @@ input:focus, select:focus { border-color: var(--accent); }
 .workspace.pdf-collapsed > .resizer-sync { display: none; }
 .pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
 
-/* ---------- floating layout (Settings → Floating sidebar) ---------- */
-/* macOS Tahoe / Xcode style: the sidebar AND the editor/PDF content float as
-   matching rounded panes, inset from the window with a soft lift shadow, so the
-   rounded sidebar isn't butting against a square-cornered content block (the
-   "concentricity" principle). The editor↔PDF divider stays a hairline inside
-   the content pane, so it's two panes, not three. */
-.floating .shell { padding: 8px; }
-.floating .sidebar,
-.floating .workspace {
-  border-radius: 16px;
-  border: 1px solid var(--pane-border);
-  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
-}
-
-/* Gap between the two panes (resizer) with a hover cue, not a hairline. */
-.floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
-.floating .resizer:not(.resizer-sync):hover { background: transparent; }
-.floating .resizer:not(.resizer-sync)::after {
-  content: '';
-  position: absolute;
-  top: 8px; bottom: 8px; left: 50%;
-  width: 3px;
-  transform: translateX(-50%);
-  border-radius: 3px;
-  background: transparent;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease;
-}
-.floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
-.floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
-
-/* The traffic lights stay pinned at (16,16) in BOTH layouts — they never move on
-   the toggle (native macOS behaviour). Floating compensates for the shell's 8px
-   top inset by pulling the FILES header up by that 8px, so its distance from the
-   fixed lights matches the docked layout (26 − 8 = 18). The topbar needs no such
-   tweak — it already centres its title in the 44px row in both layouts. */
-.floating.electron .sidebar-body { padding-top: 18px; }
-
-/* Golden Gate (docked) and Tahoe (floating) share ONE control language — the
-   measured macOS 27 Sketch kit — and differ only by layout: docked is edge-to-edge
-   (base), floating adds the 8px inset, 16px pane radius and lift shadow (above).
-   The shared controls (8px selection pill, capsule search, circular toolbar
-   buttons, top-level/nested icon tiers, 32px rows) live in the base rules below. */
-
 /* ---------- sidebar ---------- */
 
 /* Sidebar spacing follows one Apple source-list grid: every section keys its
@@ -501,7 +455,7 @@ input:focus, select:focus { border-color: var(--accent); }
    (so icons and text land on a shared ~18px column). Rows are ~28px, Finder-dense. */
 /* Section header: Big Sur+ macOS dropped the pre-11 ALL-CAPS source-list header
    for 11px semibold Title Case in the secondary label colour (JS already passes
-   "Files"/"Outline" title-cased). Authentic to Golden Gate and carried into Tahoe. */
+   "Files"/"Outline" title-cased). */
 .sidebar-head {
   display: flex;
   align-items: center;
@@ -640,7 +594,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .search-hit {
   display: flex;
   gap: 8px;
-  padding: 5.5px 8px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: var(--fs-body);
   cursor: pointer;
@@ -799,7 +753,6 @@ input:focus, select:focus { border-color: var(--accent); }
 .badge.err { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
 .badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
-.logs-body { }
 
 .logs-btn { position: relative; }
 .logs-btn.active { color: var(--accent); background: var(--bg-active); }
@@ -861,7 +814,7 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .pdf-toolbar::-webkit-scrollbar { display: none; }
 .pdf-toolbar > * { flex-shrink: 0; }
-.pdf-toolbar .spacer { flex: 1 1 auto !important; min-width: 8px; }
+.pdf-toolbar .spacer { flex: 1 1 auto; min-width: 8px; }
 .pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn {
   font-size: var(--fs-subhead);
@@ -878,7 +831,6 @@ input:focus, select:focus { border-color: var(--accent); }
 .pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
 .pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 3px; }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
-.pdf-page-wrap canvas { display: block; }
 
 /* Selectable text layer (pdf.js): transparent glyphs positioned over the canvas */
 .pdf-text-layer {
@@ -1126,142 +1078,3 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .toast.error { background: var(--danger); color: white; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
-
-/* ============ Windows 11 / Fluent design language (.win) ============
-   Metrics pulled from the WinUI source of truth (microsoft/microsoft-ui-xaml
-   ThemeResources): Segoe UI Variable; ControlCornerRadius 4px / OverlayCornerRadius
-   8px; body 14px; NavigationView items 36px with a 3×16 r2 left accent pill;
-   caption buttons 46×32 (138px reserved right, drawn natively by titleBarOverlay);
-   accent #0078D4; Mica base flattened to solid Fluent neutrals for a reliable,
-   preview-able look. Overriding the theme variables re-skins most of the app; the
-   rules below handle the Fluent-specific structure. Placed last so it wins. */
-.win {
-  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, "Segoe UI Emoji", sans-serif;
-  --accent: #0078d4;
-  --accent-text: #ffffff;
-  --radius: 4px;                       /* Fluent ControlCornerRadius */
-  --bg: #f3f3f3;                       /* SolidBackgroundFillColorBase */
-  --bg-panel: #fbfbfb;                 /* Card/Layer over Mica */
-  --bg-inset: #f3f3f3;
-  --sidebar-bg: #eaeaea;               /* Mica-ish nav base */
-  --border: rgba(0, 0, 0, 0.08);       /* ControlStrokeColorDefault */
-  --pane-border: rgba(0, 0, 0, 0.08);
-  /* WinUI type ramp (Segoe UI Variable): Body 14, Caption 12, Subtitle 20,
-     BodyLarge 18. The ramp is flatter than macOS — there's no 11/13 tier, so
-     secondary text is Caption 12 across the board. Overriding the tokens re-skins
-     every role at once (rows, headers, metadata) without per-element rules. */
-  --fs-headline: 20px;    /* Fluent Subtitle — dialog titles */
-  --fs-body: 14px;        /* Fluent Body — rows, controls, nav items */
-  --fs-subhead: 12px;     /* Fluent Caption — secondary controls */
-  --fs-footnote: 12px;    /* Fluent Caption — section headers, metadata */
-  --fs-caption: 11px;     /* smallest — badges, counters */
-  --lh-ui: 1.4;
-}
-[data-theme="dark"].win {
-  --bg: #202020;
-  --bg-panel: #2b2b2b;
-  --bg-inset: #272727;
-  --sidebar-bg: #1c1c1c;
-  --border: rgba(255, 255, 255, 0.08);
-  --pane-border: rgba(255, 255, 255, 0.08);
-}
-
-/* Mica: on Windows the window is transparent with backgroundMaterial:'mica', so
-   the OS paints the desktop-tinted material behind the chrome. Keep the root,
-   body, topbar and sidebar translucent so that material shows through (the sidebar
-   is the Mica nav-pane layer); the editor/PDF panes stay solid so text sits on a
-   stable card. A plain browser has no Mica, so it falls back to a solid Fluent base. */
-.win #app { background: var(--bg); }                 /* non-Electron fallback */
-.win.electron, .win.electron body, .win.electron #app { background: transparent; }
-.win .sidebar { background: color-mix(in srgb, var(--sidebar-bg) 72%, transparent); backdrop-filter: none; }
-.win .topbar { background: transparent; }
-.win .sidebar-search { background: var(--bg-inset); backdrop-filter: none; }
-
-/* Window controls: Windows draws min/max/close natively at top-RIGHT (138px), and
-   there are no left traffic lights — so drop the mac left inset and reserve right. */
-.win.electron .topbar { padding-right: 138px; }
-.win.electron .sidebar-body { padding-top: 8px; }
-.win.electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 12px; }
-
-/* Fluent corner radii: 4px on every control (overrides mac 6–8px and Tahoe capsules). */
-.win .icon-btn,
-.win .btn,
-.win .sidebar-search,
-.win .tree-item,
-.win .outline-item,
-.win .editor-toolbar .btn,
-.win .pdf-toolbar .btn { border-radius: 4px; }
-
-/* NavigationView sidebar: 36px items (Body 14 flows from --fs-body); selection is
-   a subtle neutral fill plus the signature 3×16px accent pill on the leading edge
-   (not the mac accent-tinted full highlight). */
-.win .tree-item { position: relative; min-height: 36px; }
-.win .tree-item.active { background: var(--bg-hover); color: var(--text); }
-.win .tree-item.active .ficon { color: var(--text-dim); }
-.win .tree-item.active::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--accent);
-}
-
-/* ============ iPadOS simulation (.ipad) — experimental touch scale ============
-   Preview only (nothing sets .ipad yet). IMPORTANT: iPadOS does NOT follow the
-   macOS HIG — it follows the *iOS* HIG. That means a different type scale (SF Pro
-   Dynamic Type: 17pt Body, 15pt Subhead, 13pt Footnote — NOT macOS's 13px body),
-   a wider standard sidebar column (320pt, per UISplitViewController), 20pt
-   regular-width layout margins (macOS uses ~14px), 44pt minimum touch targets,
-   and roomier line-height. The earlier version was "macOS but bigger," which read
-   as cramped because the paddings/margins/type were still macOS-tight — this
-   block resets them to iOS values. Pairs with the floating Liquid Glass sidebar
-   (.floating); no window controls. Groundwork — see docs/mobile-roadmap.md. */
-/* iOS type ramp (SF Pro Dynamic Type, Large default): Body 17, Subhead 15,
-   Footnote 13, Caption 12, Title 3 20. Overriding the tokens re-sizes every role
-   at once — the earlier version hand-patched ~8 per-element font-sizes here
-   precisely because the sizes didn't switch with the platform; the ramp removes
-   that. Only the touch geometry (44pt targets, 320pt column, 20pt margins) stays
-   iPad-specific below. */
-.ipad {
-  --fs-headline: 20px;    /* iOS Title 3 */
-  --fs-body: 17px;        /* iOS Body */
-  --fs-subhead: 15px;     /* iOS Subhead */
-  --fs-footnote: 13px;    /* iOS Footnote — section headers, metadata */
-  --fs-caption: 12px;     /* iOS Caption 1 */
-  --lh-ui: 1.4;
-}
-
-/* 320pt primary column (UISplitViewController standard), 20pt layout margins. */
-.ipad .sidebar { width: 320px; }
-.ipad .sidebar-body { padding-top: 14px; }
-.ipad .topbar { min-height: 50px; padding: 0 20px; }        /* iPad nav bar ≈ 50pt */
-
-/* Section header: iOS grouped-list header is Footnote (token), semibold, 20pt inset. */
-.ipad .sidebar-head { font-weight: 600; padding: 14px 20px 6px; }
-
-/* Search: capsule, 44pt touch height, 20pt inset (Body input flows from token). */
-.ipad .sidebar-search { min-height: 44px; margin: 0 20px 12px; padding: 8px 14px; }
-
-/* List rows: 44pt min touch height, 20pt leading margin (tree pad 12 + row pad 8),
-   roomier icon-to-label gap (Body text flows from token). */
-.ipad .tree { padding: 0 12px 16px; }
-.ipad .tree-item { min-height: 44px; gap: 12px; padding: 10px 8px; }
-.ipad .tree-item .ficon svg { width: 20px; height: 20px; }
-.ipad .tree-item[data-depth="0"] .ficon { width: 26px; }
-.ipad .tree-item[data-depth="0"] .ficon svg { width: 22px; height: 22px; }
-
-/* Outline rows: still a 44pt touch target (Subhead text flows from token). */
-.ipad .outline-item { min-height: 44px; padding: 8px 20px; }
-
-/* Toolbars: 50pt (iOS nav/toolbar), 44pt touch controls, 22-24pt SF Symbols. */
-.ipad .editor-toolbar,
-.ipad .pdf-toolbar { min-height: 50px; }
-.ipad .icon-btn { width: 44px; height: 44px; }
-.ipad .icon-btn .icon svg { width: 23px; height: 23px; }
-.ipad .icon-btn.sm { width: 40px; height: 40px; }
-.ipad .editor-toolbar .btn,
-.ipad .pdf-toolbar .btn { height: 44px; }

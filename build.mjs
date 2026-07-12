@@ -9,7 +9,12 @@ fs.copyFileSync(
   'web/dist/pdf.worker.min.mjs',
 );
 fs.copyFileSync('node_modules/katex/dist/katex.min.css', 'web/dist/katex.min.css');
-fs.cpSync('node_modules/katex/dist/fonts', 'web/dist/fonts', { recursive: true });
+// woff2 only — Chromium/WKWebView both support it, so the .woff/.ttf duplicates
+// KaTeX ships (several MB) are never fetched. @font-face lists woff2 first.
+fs.mkdirSync('web/dist/fonts', { recursive: true });
+for (const f of fs.readdirSync('node_modules/katex/dist/fonts')) {
+  if (f.endsWith('.woff2')) fs.copyFileSync(`node_modules/katex/dist/fonts/${f}`, `web/dist/fonts/${f}`);
+}
 fs.mkdirSync('web/dist/fonts-jbm', { recursive: true });
 for (const f of [
   'jetbrains-mono-latin-400-normal.woff2',
