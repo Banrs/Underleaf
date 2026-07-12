@@ -179,26 +179,32 @@ async function boot() {
 
   // ---------- window ----------
   const createWindow = () => {
+    const mac = process.platform === 'darwin';
     win = new BrowserWindow({
       width: 1440,
       height: 900,
       minWidth: 800,
       minHeight: 500,
       title: 'TeXLocal',
-      // Native liquid-glass: macOS renders the vibrancy behind a transparent
-      // window; the sidebar leaves its background translucent to show it.
       backgroundColor: '#00000000',
-      vibrancy: 'sidebar',
-      visualEffectState: 'followWindow',
-      // The themed app chrome doubles as the title bar; the traffic lights are
-      // positioned explicitly (below) so they center with the topbar row.
-      titleBarStyle: 'hidden',
-      // Fixed inset into the top-left corner: x=16, y=18 so the lights' centre
-      // (y≈24) lands on the middle of the 48px title row. This position is used for
-      // BOTH the docked ("Golden Gate") and floating layouts — the lights never
-      // move when the sidebar style is toggled, matching native macOS apps. The
-      // CSS adjusts the title/FILES padding around these fixed coordinates.
-      trafficLightPosition: { x: 16, y: 18 },
+      // Chrome is platform-specific. macOS: transparent window + sidebar vibrancy
+      // (liquid glass), with the traffic lights repositioned into the title row —
+      // fixed at x=16,y=18 so their centre (y≈24) sits on the 48px row, unmoved
+      // across the Golden Gate/Tahoe toggle. Windows 11: the Mica backdrop tints
+      // the window and titleBarOverlay draws the native min/max/close caption
+      // buttons over the top-right (Fluent); the CSS reserves that space via `.win`.
+      ...(mac
+        ? {
+            vibrancy: 'sidebar',
+            visualEffectState: 'followWindow',
+            titleBarStyle: 'hidden',
+            trafficLightPosition: { x: 16, y: 18 },
+          }
+        : {
+            backgroundMaterial: 'mica',
+            titleBarStyle: 'hidden',
+            titleBarOverlay: { color: '#00000000', symbolColor: '#888888', height: 48 },
+          }),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,

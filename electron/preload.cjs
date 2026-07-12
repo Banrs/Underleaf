@@ -10,4 +10,4 @@ async function invoke(channel, ...args) {
   return res ? res.value : undefined;
 }
 
-contextBridge.exposeInMainWorld('texlocal', { invoke });
+contextBridge.exposeInMainWorld('texlocal', { invoke, platform: process.platform });

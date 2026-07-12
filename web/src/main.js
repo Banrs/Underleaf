@@ -6,6 +6,14 @@ import { icon } from './icons.js';
 const IS_ELECTRON = !!window.texlocal;
 if (IS_ELECTRON) document.documentElement.classList.add('electron');
 
+// Platform design language: macOS (traffic lights, vibrancy, Golden Gate/Tahoe)
+// vs Windows 11 (Fluent — right-side caption buttons, Mica, Segoe UI). Electron
+// exposes the real platform; in a plain browser fall back to a coarse UA sniff so
+// previews still theme. Everything Windows-specific keys off the `.win` class.
+const PLATFORM = window.texlocal?.platform
+  || (/Win/i.test(navigator.userAgent) ? 'win32' : 'darwin');
+document.documentElement.classList.add(PLATFORM === 'win32' ? 'win' : 'mac');
+
 // ---------- tiny DOM helpers ----------
 
 const $ = (sel, root = document) => root.querySelector(sel);
