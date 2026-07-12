@@ -1,0 +1,31 @@
+# electron-builder config. Run `npm run package` (on macOS) to produce the app.
+#
+# Size levers over the old electron-packager setup:
+#  - asar: true            → app code packed into one compressed archive
+#  - electronLanguages:[en]→ strips ~40 Chromium locale (.lproj) packs
+#  - files excludes node_modules entirely: the Electron app imports only
+#    electron + node built-ins + server/*.js; the whole frontend (CodeMirror,
+#    KaTeX, pdf.js) is pre-bundled by build.mjs into web/dist, so no runtime
+#    node_modules are needed. (express/multer are dev-server-only.)
+appId: com.texlocal.desktop
+productName: TeXLocal
+asar: true
+electronLanguages:
+  - en
+directories:
+  output: release
+# Only ship what the app actually loads at runtime.
+files:
+  - electron/**/*
+  - server/**/*.js
+  - web/index.html
+  - web/styles.css
+  - web/dist/**/*
+  - "!**/*.map"
+  - "!node_modules/**/*"
+mac:
+  target: dir          # unpacked .app in release/; switch to dmg/mas for distribution
+  arch:
+    - arm64            # single arch — never universal (that doubles the framework)
+  category: public.app-category.productivity
+  icon: assets/TeXLocal.icns
