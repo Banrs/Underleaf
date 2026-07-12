@@ -573,7 +573,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; }
 .tree-item.active .ficon { color: var(--accent); }
 .tree-item .label { overflow: hidden; text-overflow: ellipsis; }
-.tree-item .main-star { margin-left: auto; font-size: var(--fs-footnote); color: var(--warn); }
+/* Main-file marker: monotone, subtle (not the old amber emoji star). */
+.tree-item .main-star { margin-left: auto; display: inline-flex; color: var(--text-dim); }
+.tree-item .main-star svg { width: 14px; height: 14px; }
+.tree-item.active .main-star { color: var(--accent); }
 .tree-children { padding-left: 16px; }
 
 .sidebar-foot {
@@ -671,11 +674,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 .editor-toolbar > * { flex-shrink: 0; }
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
-/* B/I are serif text glyphs (Georgia — stable metrics, so they centre reliably);
-   ∑ is an SVG icon (icons.js: sigma), not a text glyph, because the system-font
-   ∑ character sat top-heavy. Sized to optically match the 18px SVG icons beside. */
-.tb-b { font-weight: 700; font-family: Georgia, serif; font-size: 16.5px; }
-.tb-i { font-style: italic; font-family: Georgia, serif; font-size: 16.5px; }
+/* Bold / Italic / Sigma are all SVG icons now (icons.js) — one centered grid, so
+   they align with each other and the undo/redo icons without any font-metric
+   nudging. (Text glyphs sat high by ~2px because caps ride above the line-box
+   centre; switching to icons is the reliable fix.) */
 .tb-insert {
   font-size: var(--fs-body);
   padding: 5px 11px;

@@ -40,15 +40,15 @@ const baseTheme = EditorView.theme({
   '.cm-gutters': {
     color: 'var(--text-dim)',
   },
-  // Line numbers right-align, flush toward the code (Xcode gutter). Tight padding
-  // (4px) so single digits sit close to the code instead of floating mid-gutter;
-  // the column still auto-widens for 2-/3-digit numbers.
-  '.cm-lineNumbers .cm-gutterElement': { padding: '0 4px', textAlign: 'right' },
+  // ONE editor inset (6px) on both sides of the gutter divider: line numbers
+  // right-align 6px from the divider, code sits 6px past it. Symmetric rhythm —
+  // tightening the number side tightens the text side too. Xcode gutter feel.
+  '.cm-lineNumbers .cm-gutterElement': { padding: '0 6px', textAlign: 'right' },
   // The code inset lives on .cm-line (not .cm-content) so the active-line
   // highlight — which paints the .cm-line box — runs continuously from the gutter
   // divider through the code, with no un-highlighted gap (Overleaf/Xcode).
   '.cm-content': { padding: '0' },
-  '.cm-line': { paddingLeft: '8px', paddingRight: '4px' },
+  '.cm-line': { paddingLeft: '6px', paddingRight: '6px' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },

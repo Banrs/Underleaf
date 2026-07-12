@@ -30,7 +30,13 @@ const PATHS = {
   // Summation Σ as geometry, not a text glyph: the ∑ character's vertical metrics
   // drift by font (it sat top-heavy in the system font), so draw it centered in the
   // 24×24 box like every other icon for consistent alignment across platforms.
-  sigma: '<path d="M18 7V4H6l6 8-6 8h12v-3"/>',
+  sigma: '<path d="M17 5H7l5 7-5 7h10"/>',
+  // Bold / italic as icons (not serif letters) so all three format-toolbar glyphs
+  // share one centered 24×24 grid — uniform alignment, no per-font nudging.
+  bold: '<path d="M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z"/>',
+  italic: '<path d="M19 4h-9"/><path d="M14 20H5"/><path d="M15 4 9 20"/>',
+  // Monotone outline star — marks the LaTeX main file (compilation entry point).
+  star: '<path d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',

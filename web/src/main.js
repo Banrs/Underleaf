@@ -442,8 +442,8 @@ async function renderProject(id) {
     el('button', { class: 'icon-btn', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
     el('button', { class: 'icon-btn', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
     el('span', { class: 'tb-sep' }),
-    el('button', { class: 'icon-btn tb-b', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, 'B'),
-    el('button', { class: 'icon-btn tb-i', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, 'I'),
+    el('button', { class: 'icon-btn', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, icon('bold')),
+    el('button', { class: 'icon-btn', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, icon('italic')),
     el('button', { class: 'icon-btn', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, icon('sigma')),
     el('span', { class: 'tb-sep' }),
     el('button', { class: 'btn ghost tb-insert', title: 'Insert an environment', onclick: insertMenu }, icon('plus'), 'Insert'),
@@ -617,7 +617,7 @@ function renderNode(node, depth = 0) {
     el('span', { class: 'twisty' }),
     el('span', { class: 'ficon' }, fileIcon(node.name)),
     el('span', { class: 'label' }, node.name),
-    isMain ? el('span', { class: 'main-star', title: 'Main file' }, '★') : null,
+    isMain ? el('span', { class: 'main-star', title: 'Main file — compiles as the document root' }, icon('star')) : null,
   );
   return row;
 }
