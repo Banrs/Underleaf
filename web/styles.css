@@ -37,10 +37,12 @@
   /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
   --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
   --sidebar-bg: var(--bg-panel);
-  /* Editor line-number gutter fill — a hair of grey over the panel so the number
-     column reads as distinct from the code. Dark needs a stronger mix (below) to
-     land the same visible contrast a light gutter gets for free. */
-  --gutter-bg: color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel));
+  /* Editor line-number gutter (Overleaf/Xcode style) — a translucent tint that
+     darkens whatever editor background sits behind it, so the number column reads
+     as distinct in either theme, plus a hairline divider. Overlay (not a solid)
+     so it works over the one-dark editor colour in dark mode too. */
+  --gutter-bg: rgba(0, 0, 0, 0.035);
+  --gutter-border: var(--border);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
 }
@@ -68,9 +70,10 @@
   --warn: #fbbf24;
   --ok: #4ade80;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  /* Stronger mix in dark: 6% of a light-grey over a near-black panel is invisible,
-     so lift it to ~15% to match the light gutter's visible separation. */
-  --gutter-bg: color-mix(in srgb, var(--text-dim) 15%, var(--bg-panel));
+  /* Darken more in dark so the column separates from the one-dark editor bg;
+     the divider is a faint light hairline. */
+  --gutter-bg: rgba(0, 0, 0, 0.22);
+  --gutter-border: rgba(255, 255, 255, 0.09);
 }
 
 * { box-sizing: border-box; }
@@ -209,9 +212,12 @@ input:focus, select:focus { border-color: var(--accent); }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
 /* Text buttons in a toolbar (Compile, Insert, zoom) are the SAME 36px height as
    the icon buttons, so a row's controls line up instead of the text pills sitting
-   short. Padding is symmetric-feeling: text vertically centred, 14px sides. */
+   short. macOS 27 (measured) toolbar controls are capsules / circular bezels. */
 .editor-toolbar .btn,
-.pdf-toolbar .btn { height: 36px; padding: 0 14px; }
+.pdf-toolbar .btn { height: 36px; padding: 0 14px; border-radius: 999px; }
+.topbar .icon-btn,
+.editor-toolbar .icon-btn,
+.pdf-toolbar .icon-btn { border-radius: 999px; }
 
 .auto-btn {
   font-size: 13px;
@@ -453,27 +459,11 @@ input:focus, select:focus { border-color: var(--accent); }
    tweak — it already centres its title in the 44px row in both layouts. */
 .floating.electron .sidebar-body { padding-top: 18px; }
 
-/* ---------- Tahoe / Liquid Glass divergence (floating mode) ----------
-   macOS 26 direction (developer.apple.com "Adopting Liquid Glass" + WWDC25):
-   lists get larger row height & padding; sections get increased corner radius;
-   top-level sidebar icons are larger than nested ones; bordered controls become
-   capsules (radius = ½ height). Golden Gate (docked, base rules above) stays the
-   tighter pre-Tahoe source list. Exact pt aren't Apple-published — these honour
-   Apple's formulas and direction. Pane radius is set to 16px above. */
-/* Icon sizes, pill radius and capsule search below are the measured values from
-   Apple's macOS 27 Sketch kit: selection pill r8; top-level icon 18px with nested
-   2px smaller (16px); search + toolbar controls are capsules; macOS 27 toolbar
-   buttons are circular bezels. */
-.floating .tree-item { padding: 8px 8px; border-radius: 8px; }         /* larger rows; measured pill r8 */
-.floating .outline-item { padding: 6px 8px; border-radius: 8px; }
-.floating .tree-item[data-depth="0"] .ficon { width: 20px; }
-.floating .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; } /* top-level icon 18 (measured) */
-.floating .tree-item:not([data-depth="0"]) .ficon svg { width: 16px; height: 16px; } /* nested = top-level − 2 */
-.floating .sidebar-search { border-radius: 999px; padding: 6px 12px; } /* capsule control */
-.floating .editor-toolbar .btn,
-.floating .pdf-toolbar .btn { border-radius: 999px; }                  /* bordered buttons → capsules */
-.floating .editor-toolbar .icon-btn,
-.floating .pdf-toolbar .icon-btn { border-radius: 999px; }             /* macOS 27 toolbar buttons are circular */
+/* Golden Gate (docked) and Tahoe (floating) share ONE control language — the
+   measured macOS 27 Sketch kit — and differ only by layout: docked is edge-to-edge
+   (base), floating adds the 8px inset, 16px pane radius and lift shadow (above).
+   The shared controls (8px selection pill, capsule search, circular toolbar
+   buttons, top-level/nested icon tiers, 32px rows) live in the base rules below. */
 
 /* ---------- sidebar ---------- */
 
@@ -501,14 +491,14 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 7px;
   margin: 0 10px 10px;
-  padding: 6px 8px;
+  padding: 6px 12px;
   /* Translucent glass, not an opaque inset: the sidebar's vibrancy shows through
      the field so it reads as part of the Liquid Glass sidebar instead of a solid
      rectangle punched into it. Matches the sidebar/topbar blur treatment. */
   background: color-mix(in srgb, var(--bg-inset) 42%, transparent);
   backdrop-filter: saturate(160%) blur(8px);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 6px;
+  border-radius: 999px;                /* measured macOS 27 search field is a capsule */
   color: var(--text-dim);
   flex: none;
 }
@@ -526,12 +516,13 @@ input:focus, select:focus { border-color: var(--accent); }
 
 .tree { flex: 1; overflow-y: auto; padding: 0 10px 12px; min-height: 60px; }
 .tree.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius); }
+/* Shared macOS 27 measured sidebar row: 32px (8px padding), 8px selection pill. */
 .tree-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: 8px 8px;
+  border-radius: 8px;
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
@@ -544,8 +535,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .tree-item .twisty { width: 12px; flex: none; color: var(--text-dim); transition: transform 0.1s; display: inline-flex; }
 .tree-item .twisty svg { width: 11px; height: 11px; }
 .tree-item .twisty.open { transform: rotate(90deg); }
+/* Icon tiers (measured): top-level 18px, nested 2px smaller (16px, the default). */
 .tree-item .ficon { flex: none; width: 18px; color: var(--text-dim); display: inline-flex; justify-content: center; }
 .tree-item .ficon svg { width: 16px; height: 16px; }
+.tree-item[data-depth="0"] .ficon { width: 20px; }
+.tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; }
 .tree-item.active .ficon { color: var(--accent); }
 .tree-item .label { overflow: hidden; text-overflow: ellipsis; }
 .tree-item .main-star { margin-left: auto; font-size: 12px; color: var(--warn); }
@@ -681,6 +675,12 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-host { flex: 1; min-height: 0; overflow: hidden; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
 .editor-host .cm-scroller { font-family: var(--mono); line-height: 1.6; }
+/* Gutter tint + divider. High specificity (three classes) so it wins over the
+   one-dark theme's runtime-injected gutter styling in dark mode. */
+.editor-host .cm-editor .cm-gutters {
+  background-color: var(--gutter-bg);
+  border-right: 1px solid var(--gutter-border);
+}
 
 .cm-tooltip.cm-math-preview {
   background: var(--bg-panel) !important;

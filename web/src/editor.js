@@ -34,12 +34,10 @@ const jumpFlashField = StateField.define({
 
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)' },
-  // Subtle rule between the line-number gutter and the text: a faint inset
-  // background plus a hairline border, so the two columns read as distinct in
-  // both themes (--gutter-bg carries the theme-specific contrast).
+  // Gutter background + divider live in styles.css (.editor-host .cm-editor
+  // .cm-gutters) so they can out-specify the one-dark theme in dark mode; here we
+  // only set the number colour, which one-dark leaves alone.
   '.cm-gutters': {
-    backgroundColor: 'var(--gutter-bg)',
-    borderRight: '1px solid var(--border)',
     color: 'var(--text-dim)',
   },
   // Line numbers right-align against the gutter's inner edge (flush toward the
