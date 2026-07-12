@@ -40,10 +40,11 @@ const baseTheme = EditorView.theme({
   '.cm-gutters': {
     color: 'var(--text-dim)',
   },
-  // Line numbers right-align against the gutter's inner edge (flush toward the
-  // code), the standard editor convention — CodeMirror won't do it on its own here.
-  '.cm-lineNumbers .cm-gutterElement': { paddingRight: '10px', textAlign: 'right' },
-  '.cm-content': { paddingLeft: '4px' },
+  // Line numbers right-align (flush toward the code, the editor standard) with
+  // SYMMETRIC padding, so the digits sit balanced in the column and the gutter
+  // auto-widens for 2- and 3-digit numbers without crowding one side.
+  '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px', textAlign: 'right' },
+  '.cm-content': { paddingLeft: '6px' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },
