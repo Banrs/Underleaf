@@ -424,7 +424,7 @@ async function renderProject(id) {
     el('button', { class: 'icon-btn', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
     el('button', { class: 'icon-btn', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
     el('span', { class: 'tb-sep' }),
-    el('button', { class: 'icon-btn', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, icon('bold')),
+    el('button', { class: 'icon-btn tb-bold', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, icon('bold')),
     el('button', { class: 'icon-btn', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, icon('italic')),
     el('button', { class: 'icon-btn', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, icon('sigma')),
     el('span', { class: 'tb-sep' }),

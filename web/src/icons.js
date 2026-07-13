@@ -29,9 +29,10 @@ const PATHS = {
   // font). Full-height 4→20, vertex at the centre (12,12); the bbox sits a touch
   // right of centre so the left-heavy diagonals read optically centred in the box.
   sigma: '<path d="M18 4H7l5 8-5 8h11"/>',
-  // Bold / italic as icons (not serif letters) so all three format-toolbar glyphs
-  // share one centered 24×24 grid — uniform alignment, no per-font nudging.
-  bold: '<path d="M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z"/>',
+  // Bold / italic as icons (not serif letters) so the format glyphs share one
+  // centered 24×24 grid. Bold is a SOLID glyph (rendered filled via .tb-bold CSS)
+  // so it actually reads bold; italic stays a stroked slash.
+  bold: '<path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/>',
   italic: '<path d="M19 4h-9"/><path d="M14 20H5"/><path d="M15 4 9 20"/>',
   // Star marking the LaTeX main file (compilation entry point). Rendered solid +
   // monotone via CSS (.main-star svg { fill: currentColor; stroke: none }).

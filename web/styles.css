@@ -317,8 +317,12 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 10px;
   /* 12px horizontal matches the editor/PDF toolbars below, so the title row's
-     left control aligns with them and the right icons clear the window edge. */
+     left control aligns with them and the right icons clear the window edge.
+     min-height 52 = the editor/PDF toolbar height, so the title bar is the same
+     size as the toolbar (and the traffic lights, tuned to centre in a 52px band,
+     sit right). In Electron the padding-top/bottom collapse to 0 (below). */
   padding: 8px 12px;
+  min-height: 52px;
   background: transparent;
   flex: none;
   overflow-x: auto;
@@ -632,10 +636,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 .editor-toolbar > * { flex-shrink: 0; }
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 8px; flex: none; }
-/* Bold / Italic / Sigma are all SVG icons now (icons.js) — one centered grid, so
-   they align with each other and the undo/redo icons without any font-metric
-   nudging. (Text glyphs sat high by ~2px because caps ride above the line-box
-   centre; switching to icons is the reliable fix.) */
+/* Bold / Italic / Sigma are SVG icons (icons.js) on one centered 24×24 grid, so
+   they align with each other and the undo/redo icons without font-metric nudging.
+   Bold is drawn as a SOLID glyph so it actually reads bold. */
+.tb-bold svg { fill: currentColor; stroke: none; transform: translateY(0.75px); }
 .tb-insert {
   font-size: var(--fs-body);
   padding: 6px 12px;
