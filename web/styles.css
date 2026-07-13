@@ -33,12 +33,37 @@
   --warn: #d97706;
   --ok: #16a34a;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  /* Spacing convention: all padding/margin/gap sit on an even grid (2, 4, 6, 8,
+     10, 12, 14, 16, 20, 24) — no odd px except 1px hairlines. Radii: 4 (tiny),
+     6 (small controls/menu items), --radius 8 (rows/panels), 10 (menus/segments),
+     14 (cards/modals), 999 (capsules). */
   --radius: 8px;
   /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
   --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
   --sidebar-bg: var(--bg-panel);
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Editor line-number gutter (Overleaf/Xcode style) — a translucent tint that
+     darkens whatever editor background sits behind it, so the number column reads
+     as distinct in either theme, plus a hairline divider. Overlay (not a solid)
+     so it works over the one-dark editor colour in dark mode too. */
+  --gutter-bg: rgba(0, 0, 0, 0.035);
+  --gutter-border: var(--border);
+  /* System font only: -apple-system / BlinkMacSystemFont resolve to San Francisco
+     at the correct optical size + weight on macOS/iOS. We deliberately do NOT name
+     "SF Pro Text" — if Apple's SF Pro is installed (design resources), that family
+     can resolve to a light variable-font instance and render thin. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
+
+  /* Type ramp — ONE scale (macOS AppKit points). Everything below references a
+     *role* (--fs-body, --fs-footnote, …), never a raw px: Body 13, Callout 12,
+     Subheadline 11, Caption 10, Title 3 15. The header<body relationship (11 vs 13)
+     is the authentic macOS source-list hierarchy. */
+  --fs-headline: 15px;    /* macOS Title 3 — dialog titles, emphasized */
+  --fs-body: 13px;        /* macOS Body — the workhorse: rows, controls, menus */
+  --fs-subhead: 12px;     /* macOS Callout — secondary controls, breadcrumbs */
+  --fs-footnote: 11px;    /* macOS Subheadline — section headers, metadata */
+  --fs-caption: 10px;     /* macOS Caption — badges, counters */
+  --lh-ui: 1.35;
 }
 
 /* Cross-platform glass: the sidebar & topbar are translucent everywhere (CSS
@@ -64,6 +89,10 @@
   --warn: #fbbf24;
   --ok: #4ade80;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  /* Darken more in dark so the column separates from the one-dark editor bg;
+     the divider is a faint light hairline. */
+  --gutter-bg: rgba(0, 0, 0, 0.22);
+  --gutter-border: rgba(255, 255, 255, 0.09);
 }
 
 * { box-sizing: border-box; }
@@ -76,7 +105,15 @@ html, body {
      a horizontal scrollbar at narrow widths. */
   overflow: hidden;
   font-family: var(--font);
-  font-size: 14px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-ui);
+  /* Render UI text like native AppKit: uniform grayscale AA. Without this, the
+     transparent (vibrancy) window makes Chromium fall back to grayscale on some
+     panes and subpixel on others, so weight looks inconsistent/off. Declaring it
+     makes every pane match, the native-macOS way. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   color: var(--text);
   background: var(--bg);
 }
@@ -111,7 +148,7 @@ input, select {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 11px;
+  padding: 8px 12px;
   outline: none;
 }
 input:focus, select:focus { border-color: var(--accent); }
@@ -155,10 +192,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .sidebar .outline-item,
 .electron .sidebar .search-hit { -webkit-app-region: no-drag; }
 
-/* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
-   corner with FILES below; the topbar row's title centers on the same line.
-   Sidebar-body padding clears the lights. */
-.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 34px; }
+/* The traffic lights (main.mjs, x16/y20) sit in the docked sidebar's top-left
+   corner with FILES below; the topbar row's title vertically centers on the same
+   line. macOS 27 measured: unified toolbar 52px with 36px controls → lights
+   centre at 26px (y20). Sidebar-body padding clears the lights. */
+.electron .topbar { padding-top: 0; padding-bottom: 0; min-height: 52px; }
 .electron .sidebar-body { padding-top: 26px; }
 .electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
 
@@ -170,7 +208,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 8px 16px;
   border-radius: var(--radius);
   font-weight: 500;
@@ -187,17 +225,31 @@ input:focus, select:focus { border-color: var(--accent); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 7px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   color: var(--text-dim);
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
-.icon-btn.sm { width: 29px; height: 29px; }
+/* Two control tiers. .icon-btn (32px, 18px glyph) is the standard toolbar control
+   — title bar, editor toolbar, PDF toolbar. .icon-btn.sm (28px, 16px glyph) is for
+   dense secondary clusters: sidebar header actions, steppers. The glyphs stay 18/16
+   — only the hover halo is sized to the control; a 32px well around an 18px SF
+   Symbol matches macOS 27's unified toolbar, and is a better fit for 13px labels
+   than the old 36px (which left too much air around the text). */
+.icon-btn.sm { width: 28px; height: 28px; }
 .icon-btn.sm .icon svg { width: 16px; height: 16px; }
+/* Text buttons in a toolbar (Compile, Insert, zoom) match the icon buttons' 32px
+   height, so a row's controls line up — no text pill sitting short — while fitting
+   the label snugly. macOS 27 toolbar controls are capsules / circular bezels. */
+.editor-toolbar .btn,
+.pdf-toolbar .btn { height: 32px; padding: 0 14px; border-radius: 999px; }
+.topbar .icon-btn,
+.editor-toolbar .icon-btn,
+.pdf-toolbar .icon-btn { border-radius: 999px; }
 
 .auto-btn {
-  font-size: 13px;
+  font-size: var(--fs-body);
   padding: 6px 12px;
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -229,7 +281,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .home { padding-top: 64px; }
 .home-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 16px; }
 .home h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: 15px; }
+.home .tagline { color: var(--text-dim); margin: 4px 0 32px; font-size: var(--fs-headline); }
 .tex-banner {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
@@ -237,7 +289,7 @@ input:focus, select:focus { border-color: var(--accent); }
   border-radius: var(--radius);
   padding: 12px 16px;
   margin-bottom: 20px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
 }
 .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 .project-card {
@@ -250,11 +302,11 @@ input:focus, select:focus { border-color: var(--accent); }
   position: relative;
 }
 .project-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 5px; word-break: break-word; }
-.project-card .meta { color: var(--text-dim); font-size: 13px; }
+.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 4px; word-break: break-word; }
+.project-card .meta { color: var(--text-dim); font-size: var(--fs-body); }
 .project-card .card-actions { position: absolute; top: 12px; right: 12px; display: none; gap: 2px; }
 .project-card:hover .card-actions { display: flex; }
-.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: 15px; }
+.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: var(--fs-headline); }
 
 /* ---------- editor layout ---------- */
 
@@ -265,8 +317,12 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 10px;
   /* 12px horizontal matches the editor/PDF toolbars below, so the title row's
-     left control aligns with them and the right icons clear the window edge. */
+     left control aligns with them and the right icons clear the window edge.
+     min-height 52 = the editor/PDF toolbar height, so the title bar is the same
+     size as the toolbar (and the traffic lights, tuned to centre in a 52px band,
+     sit right). In Electron the padding-top/bottom collapse to 0 (below). */
   padding: 8px 12px;
+  min-height: 52px;
   background: transparent;
   flex: none;
   overflow-x: auto;
@@ -274,11 +330,13 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .topbar::-webkit-scrollbar { display: none; }
 .topbar > *:not(.spacer):not(.crumbs) { flex-shrink: 0; }
-.topbar .proj-name { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+/* line-height:1 so the flex row centres the glyph ink itself, not a taller line
+   box — otherwise SF's baseline metrics park the caps a hair above centre. */
+.topbar .proj-name { font-weight: 600; font-size: var(--fs-body); line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
 .tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
 .topbar .crumbs { min-width: 0; }
-.topbar select { padding: 6px 10px; font-size: 13.5px; }
-.save-state { font-size: 13px; color: var(--text-dim); text-align: right; flex: none; }
+.topbar select { padding: 6px 10px; font-size: var(--fs-subhead); }
+.save-state { font-size: var(--fs-subhead); color: var(--text-dim); text-align: right; flex: none; }
 
 /* Golden-Gate edge-to-edge: no window padding — the docked sidebar and the
    content fill the window, separated only by hairline dividers. */
@@ -294,7 +352,7 @@ input:focus, select:focus { border-color: var(--accent); }
    no shadow, no rounded corners), but still translucent Liquid Glass. The
    hairline resizer to its right is the only separator from the content. */
 .sidebar {
-  width: 232px;
+  width: 256px;                        /* measured macOS 27 docked sidebar pane */
   flex: none;
   position: relative;
   background: var(--sidebar-bg);
@@ -336,7 +394,7 @@ input:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 99px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   color: var(--text-dim);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
@@ -372,7 +430,7 @@ input:focus, select:focus { border-color: var(--accent); }
   flex-direction: column;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
   padding: 2px;
   gap: 1px;
@@ -398,71 +456,42 @@ input:focus, select:focus { border-color: var(--accent); }
 .workspace.pdf-collapsed > .resizer-sync { display: none; }
 .pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
 
-/* ---------- floating layout (Settings → Floating sidebar) ---------- */
-/* macOS Tahoe / Xcode style: the sidebar AND the editor/PDF content float as
-   matching rounded panes, inset from the window with a soft lift shadow, so the
-   rounded sidebar isn't butting against a square-cornered content block (the
-   "concentricity" principle). The editor↔PDF divider stays a hairline inside
-   the content pane, so it's two panes, not three. */
-/* Float the panes via their own margins (NOT shell padding), so the topbar
-   stays pinned to the top exactly as in docked mode — the title lines up with
-   the fixed traffic lights the same way in both layouts. */
-.floating .sidebar,
-.floating .workspace {
-  border-radius: 11px;
-  border: 1px solid var(--pane-border);
-  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
-}
-.floating .sidebar { margin: 8px 0 8px 8px; }        /* float: inset top/left/bottom */
-.floating .workspace { margin: 8px 8px 8px 0; }      /* float: inset top/right/bottom */
-
-/* Gap between the two panes (resizer) with a hover cue, not a hairline. */
-.floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
-.floating .resizer:not(.resizer-sync):hover { background: transparent; }
-.floating .resizer:not(.resizer-sync)::after {
-  content: '';
-  position: absolute;
-  top: 8px; bottom: 8px; left: 50%;
-  width: 3px;
-  transform: translateX(-50%);
-  border-radius: 3px;
-  background: transparent;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease;
-}
-.floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
-.floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
-
-/* Topbar is unchanged in floating (it stays pinned to the top), so no topbar
-   override here. The sidebar floats down 8px, so nudge FILES up to match. */
-.floating.electron .sidebar-body { padding-top: 20px; }
-
 /* ---------- sidebar ---------- */
 
+/* Sidebar spacing follows one Apple source-list grid: every section keys its
+   outer edge to a 10px inset from the pane, and pills/fields pad 8px inside that
+   (so icons and text land on a shared ~18px column). Rows are ~28px, Finder-dense. */
+/* Section header: Big Sur+ macOS dropped the pre-11 ALL-CAPS source-list header
+   for 11px semibold Title Case in the secondary label colour (JS already passes
+   "Files"/"Outline" title-cased). */
 .sidebar-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 12px 14px 8px;
+  /* Section container is inset 14px (measured); the selection pills below sit at
+     10px, i.e. 4px wider each side — the macOS 27 pill overshoot. */
+  padding: 12px 14px 6px;
   color: var(--text-dim);
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--fs-footnote);       /* macOS source-list header tier (11px) */
+  font-weight: 700;                    /* measured: SF Pro Bold, title case */
   flex: none;
 }
-.sidebar-head .actions { display: flex; gap: 3px; }
+.sidebar-head .actions { display: flex; gap: 2px; }
 
 .sidebar-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 0 12px 10px;
-  padding: 6px 10px;
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 8px;
+  margin: 0 14px 10px;                 /* section inset (pills below overshoot to 10px) */
+  padding: 6px 12px;
+  /* Translucent glass, not an opaque inset: the sidebar's vibrancy shows through
+     the field so it reads as part of the Liquid Glass sidebar instead of a solid
+     rectangle punched into it. Matches the sidebar/topbar blur treatment. */
+  background: color-mix(in srgb, var(--bg-inset) 42%, transparent);
+  backdrop-filter: saturate(160%) blur(8px);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;                /* measured macOS 27 search field is a capsule */
   color: var(--text-dim);
   flex: none;
 }
@@ -474,19 +503,20 @@ input:focus, select:focus { border-color: var(--accent); }
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   border-radius: 0;
 }
 
-.tree { flex: 1; overflow-y: auto; padding: 0 8px 12px; min-height: 60px; }
+.tree { flex: 1; overflow-y: auto; padding: 0 10px 12px; min-height: 60px; }
 .tree.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius); }
+/* Shared macOS 27 measured sidebar row: 32px (8px padding), 8px selection pill. */
 .tree-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7.5px 10px;
+  gap: 6px;
+  padding: 8px 8px;
   border-radius: 8px;
-  font-size: 14.5px;
+  font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -495,24 +525,30 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .tree-item:hover { background: var(--bg-hover); }
 .tree-item.active { background: var(--bg-active); color: var(--accent); }
-.tree-item .twisty { width: 14px; flex: none; color: var(--text-dim); transition: transform 0.1s; display: inline-flex; }
-.tree-item .twisty svg { width: 13px; height: 13px; }
+.tree-item .twisty { width: 12px; flex: none; color: var(--text-dim); transition: transform 0.1s; display: inline-flex; }
+.tree-item .twisty svg { width: 11px; height: 11px; }
 .tree-item .twisty.open { transform: rotate(90deg); }
-.tree-item .ficon { flex: none; width: 19px; color: var(--text-dim); display: inline-flex; justify-content: center; }
-.tree-item .ficon svg { width: 17px; height: 17px; }
+/* Icon tiers (measured): top-level 18px, nested 2px smaller (16px, the default). */
+.tree-item .ficon { flex: none; width: 18px; color: var(--text-dim); display: inline-flex; justify-content: center; }
+.tree-item .ficon svg { width: 16px; height: 16px; }
+.tree-item[data-depth="0"] .ficon { width: 20px; }
+.tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; }
 .tree-item.active .ficon { color: var(--accent); }
 .tree-item .label { overflow: hidden; text-overflow: ellipsis; }
-.tree-item .main-star { margin-left: auto; font-size: 12px; color: var(--warn); }
-.tree-children { padding-left: 17px; }
+/* Main-file marker: solid, monotone (one flat colour — not the old amber emoji). */
+.tree-item .main-star { margin-left: auto; display: inline-flex; color: var(--text-dim); }
+.tree-item .main-star svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
+.tree-item.active .main-star { color: var(--accent); }
+.tree-children { padding-left: 16px; }
 
 .sidebar-foot {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   flex: none;
 }
 
@@ -527,30 +563,30 @@ input:focus, select:focus { border-color: var(--accent); }
   flex: none;
   max-height: 34%;
   overflow-y: auto;
-  padding: 0 8px 12px;
+  padding: 0 10px 12px;
 }
 .outline-item {
-  padding: 5px 10px;
-  border-radius: 7px;
-  font-size: 13.5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .outline-item:hover { background: var(--bg-hover); }
-.outline-empty { color: var(--text-dim); font-size: 12.5px; padding: 4px 10px 8px; }
+.outline-empty { color: var(--text-dim); font-size: var(--fs-footnote); padding: 4px 8px 8px; }
 
 /* ---------- project search results ---------- */
 
-.search-results { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.search-results { flex: 1; overflow-y: auto; padding: 0 10px 12px; }
 .search-file {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   font-weight: 600;
-  padding: 10px 8px 3px;
+  padding: 10px 8px 4px;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -559,26 +595,26 @@ input:focus, select:focus { border-color: var(--accent); }
 .search-count {
   background: var(--bg-inset);
   border-radius: 99px;
-  padding: 0 7px;
-  font-size: 11px;
+  padding: 0 8px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 .search-hit {
   display: flex;
-  gap: 9px;
-  padding: 5.5px 9px;
-  border-radius: 7px;
-  font-size: 13px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: var(--fs-body);
   cursor: pointer;
   align-items: baseline;
 }
 .search-hit:hover { background: var(--bg-hover); }
-.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: var(--fs-footnote); }
 .search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-preview mark {
   background: color-mix(in srgb, var(--warn) 32%, transparent);
   color: inherit;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0 1px;
   font-weight: 600;
 }
@@ -588,9 +624,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-toolbar {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 5px 12px;
-  min-height: 46px;
+  gap: 4px;
+  padding: 4px 12px;
+  min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -599,14 +635,15 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 .editor-toolbar > * { flex-shrink: 0; }
-.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
-.tb-b { font-weight: 700; font-family: Georgia, serif; font-size: 15.5px; }
-.tb-i { font-style: italic; font-family: Georgia, serif; font-size: 15.5px; }
-.tb-m { font-size: 15.5px; }
+.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 8px; flex: none; }
+/* Bold / Italic / Sigma are SVG icons (icons.js) on one centered 24×24 grid, so
+   they align with each other and the undo/redo icons without font-metric nudging.
+   Bold is drawn as a SOLID glyph so it actually reads bold. */
+.tb-bold svg { fill: currentColor; stroke: none; transform: translateY(0.75px); }
 .tb-insert {
-  font-size: 13px;
-  padding: 5px 11px;
-  gap: 5px;
+  font-size: var(--fs-body);
+  padding: 6px 12px;
+  gap: 6px;
   color: var(--text-dim);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -617,11 +654,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .crumbs {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   color: var(--text-dim);
 }
 .crumb { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
@@ -633,6 +670,12 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-host { flex: 1; min-height: 0; overflow: hidden; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
 .editor-host .cm-scroller { font-family: var(--mono); line-height: 1.6; }
+/* Gutter tint + divider. High specificity (three classes) so it wins over the
+   one-dark theme's runtime-injected gutter styling in dark mode. */
+.editor-host .cm-editor .cm-gutters {
+  background-color: var(--gutter-bg);
+  border-right: 1px solid var(--gutter-border);
+}
 
 .cm-tooltip.cm-math-preview {
   background: var(--bg-panel) !important;
@@ -641,7 +684,7 @@ input:focus, select:focus { border-color: var(--accent); }
   box-shadow: var(--shadow);
   padding: 10px 16px;
   margin-bottom: 8px;
-  font-size: 15px;
+  font-size: var(--fs-headline);
   color: var(--text);
   max-width: 560px;
   overflow-x: auto;
@@ -703,22 +746,21 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-dim);
 }
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 9px;
+  padding: 2px 8px;
   border-radius: 99px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-footnote);
 }
 .badge.err { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
 .badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
-.logs-body { }
 
 .logs-btn { position: relative; }
 .logs-btn.active { color: var(--accent); background: var(--bg-active); }
@@ -730,7 +772,7 @@ input:focus, select:focus { border-color: var(--accent); }
   height: 15px;
   padding: 0 4px;
   border-radius: 99px;
-  font-size: 10px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   line-height: 15px;
   text-align: center;
@@ -741,20 +783,20 @@ input:focus, select:focus { border-color: var(--accent); }
 .log-item {
   display: flex;
   gap: 8px;
-  padding: 6px 9px;
+  padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-body);
   align-items: baseline;
 }
 .log-item:hover { background: var(--bg-hover); }
-.log-item .type { flex: none; font-weight: 700; font-size: 11.5px; }
+.log-item .type { flex: none; font-weight: 700; font-size: var(--fs-footnote); }
 .log-item.error .type { color: var(--danger); }
 .log-item.warning .type { color: var(--warn); }
-.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
+.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: var(--fs-footnote); }
 .log-raw {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-footnote);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-dim);
@@ -768,11 +810,11 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
-  min-height: 46px;
+  padding: 4px 12px;
+  min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--text-dim);
   flex: none;
   overflow-x: auto;
@@ -780,24 +822,23 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .pdf-toolbar::-webkit-scrollbar { display: none; }
 .pdf-toolbar > * { flex-shrink: 0; }
-.pdf-toolbar .spacer { flex: 1 1 auto !important; min-width: 8px; }
+.pdf-toolbar .spacer { flex: 1 1 auto; min-width: 8px; }
 .pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn {
-  font-size: 12.5px;
-  padding: 5px 8px;
-  gap: 3px;
+  font-size: var(--fs-subhead);
+  padding: 6px 8px;
+  gap: 4px;
   min-width: 62px;
   justify-content: center;
   font-variant-numeric: tabular-nums;
 }
 #zoom-label { min-width: 34px; text-align: center; }
-.fit-caret { font-size: 9px; opacity: 0.6; }
+.fit-caret { font-size: var(--fs-caption); opacity: 0.6; }
 /* Reserve the scrollbar gutter so the scrollbar appearing/disappearing doesn't
    change clientWidth — otherwise fit-width would re-render in a feedback loop. */
 .pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
-.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 3px; }
+.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 4px; }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
-.pdf-page-wrap canvas { display: block; }
 
 /* Selectable text layer (pdf.js): transparent glyphs positioned over the canvas */
 .pdf-text-layer {
@@ -829,7 +870,7 @@ input:focus, select:focus { border-color: var(--accent); }
   cursor: default;
   user-select: none;
 }
-.pdf-page-wrap canvas { display: block; border-radius: 3px; background: white; }
+.pdf-page-wrap canvas { display: block; border-radius: 4px; background: white; }
 .sync-flash {
   position: absolute;
   background: rgba(255, 220, 0, 0.35);
@@ -873,9 +914,9 @@ input:focus, select:focus { border-color: var(--accent); }
   max-width: calc(100vw - 40px);
   padding: 22px;
 }
-.modal h3 { margin: 0 0 16px; font-size: 17px; }
+.modal h3 { margin: 0 0 16px; font-size: var(--fs-headline); }
 .modal .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
-.modal .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
+.modal .field label { font-size: var(--fs-footnote); color: var(--text-dim); font-weight: 500; }
 .modal .field input, .modal .field select { width: 100%; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal .row { display: flex; align-items: center; gap: 8px; }
@@ -887,20 +928,20 @@ input:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: var(--shadow);
-  padding: 5px;
-  min-width: 185px;
+  padding: 4px;
+  min-width: 184px;
 }
 .ctx-menu button {
   display: block;
   width: 100%;
   text-align: left;
   padding: 8px 12px;
-  border-radius: 7px;
-  font-size: 13.5px;
+  border-radius: 6px;
+  font-size: var(--fs-body);
 }
 .ctx-menu button:hover { background: var(--bg-hover); }
 .ctx-menu button.danger { color: var(--danger); }
-.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 5px 4px; }
+.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 4px; }
 
 /* ---------- settings ---------- */
 
@@ -928,11 +969,11 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 2px;
-  font-size: 14px;
+  padding: 12px 2px;
+  font-size: var(--fs-body);
 }
 .settings-row + .settings-row { border-top: 1px solid var(--border); }
-.settings-hint { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.settings-hint { font-size: var(--fs-footnote); color: var(--text-dim); margin-top: 2px; }
 .settings-foot {
   display: flex;
   align-items: center;
@@ -941,7 +982,7 @@ input:focus, select:focus { border-color: var(--accent); }
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-footnote);
   color: var(--text-dim);
 }
 .settings-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -951,7 +992,7 @@ input:focus, select:focus { border-color: var(--accent); }
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 3px;
+  padding: 4px;
   gap: 2px;
 }
 .seg {
@@ -991,7 +1032,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .switch.on .knob { transform: translateX(16px); background: #fff; }
 
 .stepper { display: flex; align-items: center; gap: 6px; }
-.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -1007,11 +1048,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .tex-status {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   background: none;
   border: none;
   padding: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-subhead);
   cursor: pointer;
   color: var(--text-dim);
   font-variant: small-caps;
@@ -1020,7 +1061,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .tex-status:hover { color: var(--text); }
 .tex-status.warn { color: var(--warn); opacity: 0.8; }
 .tex-status .icon svg { width: 13px; height: 13px; }
-.log-duration { color: var(--text-dim); font-size: 12px; }
+.log-duration { color: var(--text-dim); font-size: var(--fs-footnote); }
 .pdf-pages { will-change: transform; }
 
 #toast-root {
@@ -1039,7 +1080,7 @@ input:focus, select:focus { border-color: var(--accent); }
   color: var(--bg);
   padding: 10px 18px;
   border-radius: 99px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   box-shadow: var(--shadow);
   animation: toast-in 0.18s ease-out;
 }

@@ -23,6 +23,17 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true },
 }]);
 
+// ---------- performance: hardware acceleration + threaded rendering ----------
+// Hardware acceleration is ON by default (we never call disableHardwareAcceleration),
+// and Chromium already runs a multi-process, multi-threaded pipeline (separate GPU,
+// renderer and utility processes; threaded compositor + raster). These switches make
+// sure the GPU path is actually taken instead of silently falling back to software
+// rendering, and turn on the extra raster threads — which is what keeps the blurred
+// vibrancy/glass layers and PDF scrolling smooth. Must be set before app is ready.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+
 const MIME = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.map': 'application/json', '.json': 'application/json', '.svg': 'image/svg+xml',
@@ -60,10 +71,7 @@ async function boot() {
       // Everything lives on the texlocal://app origin — pdf.js XHRs the PDF,
       // and Chromium blocks cross-origin requests on custom schemes.
       if (segs[0] === '__pdf') {
-        const root = projects.projectRoot(segs[1]);
-        const settings = await projects.readSettings(root);
-        const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-        return fileResponse(path.join(root, projects.BUILD_DIR, `${base}.pdf`));
+        return fileResponse(await projects.compiledPdfPath(projects.projectRoot(segs[1])));
       }
       if (segs[0] === '__raw') {
         const root = projects.projectRoot(segs[1]);
@@ -141,10 +149,7 @@ async function boot() {
   });
 
   handle('pdf:saveAs', async (id) => {
-    const root = projects.projectRoot(id);
-    const settings = await projects.readSettings(root);
-    const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-    const src = path.join(root, projects.BUILD_DIR, `${base}.pdf`);
+    const src = await projects.compiledPdfPath(projects.projectRoot(id));
     if (!fs.existsSync(src)) throw new Error('No compiled PDF yet');
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath('downloads'), `${id}.pdf`),
@@ -164,20 +169,22 @@ async function boot() {
       minWidth: 800,
       minHeight: 500,
       title: 'TeXLocal',
-      // Native liquid-glass: macOS renders the vibrancy behind a transparent
-      // window; the sidebar leaves its background translucent to show it.
       backgroundColor: '#00000000',
+      // macOS chrome: transparent window + sidebar vibrancy (liquid glass).
       vibrancy: 'sidebar',
       visualEffectState: 'followWindow',
       // The themed app chrome doubles as the title bar. No trafficLightPosition
-      // override — the lights sit at the standard macOS default spot and stay
-      // there in every layout (docked or floating), like a native app.
+      // override — the lights sit at the standard macOS default spot, like a
+      // native app (verified on-device; don't reintroduce a custom offset).
       titleBarStyle: 'hidden',
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         spellcheck: true,
+        // Keep the renderer at full frame rate even when unfocused/occluded, so
+        // the glass blur and PDF/scroll animations never stutter on refocus.
+        backgroundThrottling: false,
       },
     });
 

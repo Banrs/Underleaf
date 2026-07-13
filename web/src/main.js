@@ -68,13 +68,6 @@ function setThemeMode(mode) {
   applyTheme(resolveTheme(mode));
 }
 
-// Layout: edge-to-edge (default) vs the Finder/Xcode floating panes. The native
-// traffic lights stay at the macOS default position in both — the toggle only
-// changes the panes, never the window controls (as in Golden Gate).
-function applyFloating(on) {
-  document.documentElement.classList.toggle('floating', on);
-}
-
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (themeMode() === 'system') applyTheme(resolveTheme('system'));
 });
@@ -162,7 +155,6 @@ const state = {
   sidebarCollapsed: localStorage.getItem('texlocal-sidebar') === 'collapsed',
   pdfCollapsed: localStorage.getItem('texlocal-pdf') === 'collapsed',
   showWordCount: localStorage.getItem('texlocal-wordcount') !== '0',
-  floating: localStorage.getItem('texlocal-floating') === '1',
   outline: [],
   cursorLine: 1,
   searchQuery: '',
@@ -322,6 +314,7 @@ async function newProjectFlow() {
 
 function destroyProjectView() {
   clearTimeout(state.saveTimer);
+  clearInterval(state.texTimer);
   state.editor?.destroy();
   state.pdf?.destroy();
   Object.assign(state, {
@@ -428,17 +421,17 @@ async function renderProject(id) {
 
   // --- editor pane (one compact toolbar row; word count floats over the editor) ---
   const editorToolbar = el('div', { class: 'editor-toolbar', id: 'editor-toolbar' },
-    el('button', { class: 'icon-btn sm', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
-    el('button', { class: 'icon-btn sm', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
+    el('button', { class: 'icon-btn', title: 'Undo (⌘Z)', onclick: () => state.editor?.undo() }, icon('undo')),
+    el('button', { class: 'icon-btn', title: 'Redo (⇧⌘Z)', onclick: () => state.editor?.redo() }, icon('redo')),
     el('span', { class: 'tb-sep' }),
-    el('button', { class: 'icon-btn sm tb-b', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, 'B'),
-    el('button', { class: 'icon-btn sm tb-i', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, 'I'),
-    el('button', { class: 'icon-btn sm tb-m', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, '∑'),
+    el('button', { class: 'icon-btn tb-bold', title: 'Bold — \\textbf{}', onclick: () => state.editor?.wrapSelection('\\textbf{', '}') }, icon('bold')),
+    el('button', { class: 'icon-btn', title: 'Italic — \\textit{}', onclick: () => state.editor?.wrapSelection('\\textit{', '}') }, icon('italic')),
+    el('button', { class: 'icon-btn', title: 'Inline math — $…$', onclick: () => state.editor?.wrapSelection('$', '$') }, icon('sigma')),
     el('span', { class: 'tb-sep' }),
     el('button', { class: 'btn ghost tb-insert', title: 'Insert an environment', onclick: insertMenu }, icon('plus'), 'Insert'),
     el('span', { class: 'spacer' }),
-    el('button', { class: 'icon-btn sm', title: 'Comment (⌘/)', onclick: () => state.editor?.toggleComment() }, icon('comment')),
-    el('button', { class: 'icon-btn sm', title: 'Find & replace in file (⌘F)', onclick: () => state.editor?.openSearch() }, icon('search')),
+    el('button', { class: 'icon-btn', title: 'Comment (⌘/)', onclick: () => state.editor?.toggleComment() }, icon('comment')),
+    el('button', { class: 'icon-btn', title: 'Find & replace in file (⌘F)', onclick: () => state.editor?.openSearch() }, icon('search')),
   );
   const editorHost = el('div', { class: 'editor-host', id: 'editor-host' });
   const wcPill = el('span', { class: 'wc-pill', id: 'word-count' });
@@ -451,10 +444,10 @@ async function renderProject(id) {
   const zoomBtn = el('button', { class: 'btn ghost zoom-btn', id: 'zoom-btn', title: 'Zoom', onclick: (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     contextMenu(r.left, r.bottom + 6, [
-      { label: 'Fit width', action: () => state.pdf.fitWidth() },
-      { label: 'Fit height', action: () => state.pdf.fitHeight() },
+      { label: 'Fit width', action: () => state.pdf?.fitWidth() },
+      { label: 'Fit height', action: () => state.pdf?.fitHeight() },
       '-',
-      ...[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => ({ label: `${z * 100}%`, action: () => state.pdf.setScale(z) })),
+      ...[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => ({ label: `${z * 100}%`, action: () => state.pdf?.setScale(z) })),
     ]);
   } }, el('span', { id: 'zoom-label' }, '–'), el('span', { class: 'fit-caret' }, '▾'));
   const pdfScroll = el('div', { class: 'pdf-scroll', id: 'pdf-scroll' });
@@ -466,9 +459,9 @@ async function renderProject(id) {
       el('button', { class: 'icon-btn logs-btn', id: 'logs-btn', title: 'Compile logs', onclick: () => { state.logOpen = !state.logOpen; renderLogsView(); } }, icon('terminal')),
       downloadBtn,
       el('span', { class: 'spacer' }),
-      el('button', { class: 'icon-btn sm', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1 / 1.15) }, '−'),
+      el('button', { class: 'icon-btn', title: 'Zoom out (or pinch on trackpad)', onclick: () => state.pdf?.zoomBy(1 / 1.15) }, '−'),
       zoomBtn,
-      el('button', { class: 'icon-btn sm', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf.zoomBy(1.15) }, '＋'),
+      el('button', { class: 'icon-btn', title: 'Zoom in (or pinch on trackpad)', onclick: () => state.pdf?.zoomBy(1.15) }, '＋'),
       el('span', { class: 'tb-sep' }),
       pageInd,
     ),
@@ -504,13 +497,7 @@ async function renderProject(id) {
       if (label) label.textContent = mode === 'width' ? 'Fit W' : mode === 'height' ? 'Fit H' : `${pct}%`;
     },
     onPageChange: (p, total) => { pageInd.textContent = `${p} / ${total}`; },
-    onSyncClick: async (page, x, y) => {
-      try {
-        const r = await api.syncInverse(id, page, Math.round(x), Math.round(y));
-        await openFile(r.file);
-        state.editor?.gotoLine(r.line);
-      } catch { toast('No source location found here'); }
-    },
+    onSyncClick: (page, x, y) => jumpToPdfSource(page, x, y, 'No source location found here'),
   });
 
   renderTree();
@@ -522,7 +509,8 @@ async function renderProject(id) {
 
 // TeX may get installed while the app is open — poll until it shows up.
 function watchForTex(compileBtn) {
-  const timer = setInterval(async () => {
+  clearInterval(state.texTimer);
+  const timer = state.texTimer = setInterval(async () => {
     if (!document.contains(compileBtn)) { clearInterval(timer); return; }
     try {
       const status = await api.status();
@@ -583,7 +571,7 @@ function renderNode(node, depth = 0) {
     const isOpen = openDirs.has(node.path);
     const kids = el('div', { class: 'tree-children' },
       isOpen ? node.children.map((c) => renderNode(c, depth + 1)) : []);
-    const row = el('div', { class: 'tree-item', oncontextmenu: (e) => treeContext(e, node) },
+    const row = el('div', { class: 'tree-item', dataset: { depth }, oncontextmenu: (e) => treeContext(e, node) },
       el('span', { class: `twisty ${isOpen ? 'open' : ''}` }, icon('chevron')),
       el('span', { class: 'ficon' }, icon(isOpen ? 'folder-open' : 'folder')),
       el('span', { class: 'label' }, node.name),
@@ -599,14 +587,14 @@ function renderNode(node, depth = 0) {
   const isMain = node.path === state.settings?.mainFile;
   const row = el('div', {
     class: `tree-item ${node.path === state.openPath ? 'active' : ''}`,
-    dataset: { path: node.path },
+    dataset: { path: node.path, depth },
     onclick: () => openFile(node.path),
     oncontextmenu: (e) => treeContext(e, node),
   },
     el('span', { class: 'twisty' }),
     el('span', { class: 'ficon' }, fileIcon(node.name)),
     el('span', { class: 'label' }, node.name),
-    isMain ? el('span', { class: 'main-star', title: 'Main file' }, '★') : null,
+    isMain ? el('span', { class: 'main-star', title: 'Main file — compiles as the document root' }, icon('star')) : null,
   );
   return row;
 }
@@ -780,7 +768,15 @@ function setSaveState(txt) {
   if (n) n.textContent = txt;
 }
 
-async function saveCurrent({ triggerCompile = true } = {}) {
+// Saves are serialized through one promise chain so two writes never overlap and
+// callers that `await saveCurrent()` (e.g. before switching files) always wait for
+// any in-flight write. doSave never rejects, so the chain can't break.
+let savePromise = Promise.resolve();
+function saveCurrent(opts) {
+  return (savePromise = savePromise.then(() => doSave(opts)));
+}
+
+async function doSave({ triggerCompile = true } = {}) {
   if (!state.dirty || !state.editor || !state.openPath) return;
   clearTimeout(state.saveTimer);
   const path = state.openPath;
@@ -789,9 +785,12 @@ async function saveCurrent({ triggerCompile = true } = {}) {
   setSaveState('Saving…');
   try {
     await api.writeFile(state.projectId, path, content);
-    setSaveState('Saved');
+    // If the user typed during the write, stay 'Unsaved' — a fresh save is queued.
+    if (!state.dirty) {
+      setSaveState('Saved');
+      if (triggerCompile && state.autoCompile) compileNow({ auto: true });
+    }
     refreshSymbols();
-    if (triggerCompile && state.autoCompile) compileNow({ auto: true });
   } catch (err) {
     state.dirty = true;
     setSaveState('Unsaved');
@@ -1093,16 +1092,19 @@ async function runSidebarSearch() {
 
 // ---------- synctex ----------
 
-async function pdfToSource() {
-  const loc = state.pdf?.currentLocation();
-  if (!loc) { toast('Compile first to produce a PDF'); return; }
+// Inverse SyncTeX (PDF → source), shared by the divider button and PDF clicks.
+async function jumpToPdfSource(page, x, y, failMsg) {
   try {
-    const r = await api.syncInverse(state.projectId, loc.page, loc.x, loc.y);
+    const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
     await openFile(r.file);
     state.editor?.gotoLine(r.line);
-  } catch {
-    toast('No source location found for this view');
-  }
+  } catch { toast(failMsg); }
+}
+
+function pdfToSource() {
+  const loc = state.pdf?.currentLocation();
+  if (!loc) { toast('Compile first to produce a PDF'); return; }
+  return jumpToPdfSource(loc.page, loc.x, loc.y, 'No source location found for this view');
 }
 
 async function forwardSync() {
@@ -1149,8 +1151,6 @@ function setupResizer(handle, pane, mode, min, max, storageKey) {
     handle.addEventListener('pointerup', onUp, { once: true });
   });
 }
-
-// ---------- theme toggle ----------
 
 // ---------- settings (⌘,) ----------
 
@@ -1239,19 +1239,6 @@ function openSettings() {
         }, el('span', { class: 'knob' })),
       ),
       el('div', { class: 'settings-row' },
-        el('span', {}, 'Floating sidebar', el('div', { class: 'settings-hint' }, 'Finder-style inset glass sidebar (off = docked edge-to-edge)')),
-        el('button', {
-          class: `switch ${state.floating ? 'on' : ''}`,
-          role: 'switch',
-          onclick: (e) => {
-            state.floating = !state.floating;
-            localStorage.setItem('texlocal-floating', state.floating ? '1' : '0');
-            e.currentTarget.classList.toggle('on', state.floating);
-            applyFloating(state.floating);
-          },
-        }, el('span', { class: 'knob' })),
-      ),
-      el('div', { class: 'settings-row' },
         el('span', {}, 'Editor font size'),
         el('div', { class: 'stepper' },
           el('button', { class: 'icon-btn sm', onclick: () => stepFs(-1) }, '−'),
@@ -1316,6 +1303,5 @@ function route() {
 applyTheme(resolveTheme(themeMode()));
 setEditorFontSize(editorFontSize());
 setUiScale(uiScale());
-applyFloating(state.floating);
 addEventListener('hashchange', route);
 route();

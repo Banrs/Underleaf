@@ -34,15 +34,21 @@ const jumpFlashField = StateField.define({
 
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)' },
-  // Subtle rule between the line-number gutter and the text: a faint inset
-  // background plus a hairline border, so the two columns read as distinct.
+  // Gutter background + divider live in styles.css (.editor-host .cm-editor
+  // .cm-gutters) so they can out-specify the one-dark theme in dark mode; here we
+  // only set the number colour, which one-dark leaves alone.
   '.cm-gutters': {
-    backgroundColor: 'color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel))',
-    borderRight: '1px solid var(--border)',
     color: 'var(--text-dim)',
   },
-  '.cm-lineNumbers .cm-gutterElement': { paddingRight: '10px' },
-  '.cm-content': { paddingLeft: '4px' },
+  // ONE editor inset (6px) on both sides of the gutter divider: line numbers
+  // right-align 6px from the divider, code sits 6px past it. Symmetric rhythm —
+  // tightening the number side tightens the text side too. Xcode gutter feel.
+  '.cm-lineNumbers .cm-gutterElement': { padding: '0 6px', textAlign: 'right' },
+  // The code inset lives on .cm-line (not .cm-content) so the active-line
+  // highlight — which paints the .cm-line box — runs continuously from the gutter
+  // divider through the code, with no un-highlighted gap (Overleaf/Xcode).
+  '.cm-content': { padding: '0' },
+  '.cm-line': { paddingLeft: '6px', paddingRight: '6px' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },

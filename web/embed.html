@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="dist/katex.min.css">
+  <style>
+    /* Panes-only: the sidebar/toolbar are native SwiftUI. Transparent root so the
+       native window/vibrancy shows; editor & PDF panes keep solid card backgrounds. */
+    html, body, #app { height: 100%; margin: 0; background: transparent; }
+    .workspace.embed { height: 100%; }
+    .embed .editor-pane, .embed .pdf-pane { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="dist/bundle-embed.js"></script>
+</body>
+</html>

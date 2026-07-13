@@ -19,21 +19,31 @@ const PATHS = {
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
   'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
-  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
-  crosshair: '<circle cx="12" cy="12" r="8"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/>',
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
   redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-  comment: '<path d="M7 8h10"/><path d="M7 12h6"/><path d="M21 12a9 9 0 0 1-13.2 8L3 21l1-4.8A9 9 0 1 1 21 12z"/>',
-  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-  list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  comment: '<path d="M7 9.5h10"/><path d="M7 13.5h6"/><path d="M21 12a9 9 0 0 1-13.2 8L3 21l1-4.8A9 9 0 1 1 21 12z"/>',
+  // Summation Σ as geometry, not a text glyph (the ∑ character's metrics drift by
+  // font). Full-height 4→20, vertex at the centre (12,12); the bbox sits a touch
+  // right of centre so the left-heavy diagonals read optically centred in the box.
+  sigma: '<path d="M18 4H7l5 8-5 8h11"/>',
+  // Bold / italic as icons (not serif letters) so the format glyphs share one
+  // centered 24×24 grid. Bold is a SOLID glyph (rendered filled via .tb-bold CSS)
+  // so it actually reads bold; italic stays a stroked slash.
+  bold: '<path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/>',
+  italic: '<path d="M19 4h-9"/><path d="M14 20H5"/><path d="M15 4 9 20"/>',
+  // Star marking the LaTeX main file (compilation entry point). Rendered solid +
+  // monotone via CSS (.main-star svg { fill: currentColor; stroke: none }).
+  star: '<path d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"/>',
   terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
   panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
   'panel-right': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
   warning: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 };
+// Settings gear is the same glyph as the file-type cog — alias, don't duplicate.
+PATHS.gear = PATHS.cog;
 
 export function icon(name) {
   const span = document.createElement('span');

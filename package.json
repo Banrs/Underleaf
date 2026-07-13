@@ -9,7 +9,7 @@
     "start": "node server/index.js",
     "dev": "node build.mjs && node server/index.js",
     "app": "electron .",
-    "package": "node build.mjs && electron-packager . TeXLocal --platform darwin --arch arm64 --icon assets/TeXLocal.icns --out release --overwrite --app-bundle-id com.texlocal.desktop --ignore '^/release' --ignore '^/data' --ignore '^/TeXLocal.app' --ignore '^/.claude' --ignore '^/node_modules($|/)' --ignore '^/web/src' --ignore '\\.map$'"
+    "package": "node build.mjs && electron-builder --mac --arm64"
   },
   "keywords": [
     "latex",
@@ -31,8 +31,6 @@
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.43.6",
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "codemirror": "^6.0.2",
-    "esbuild": "^0.28.1",
     "express": "^5.2.1",
     "katex": "^0.17.0",
     "multer": "^2.2.0",
@@ -40,7 +38,8 @@
   },
   "devDependencies": {
     "electron": "^43.1.0",
-    "electron-packager": "^17.1.2"
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.1"
   },
   "repository": {
     "type": "git",
