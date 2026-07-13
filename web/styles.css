@@ -33,6 +33,10 @@
   --warn: #d97706;
   --ok: #16a34a;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  /* Spacing convention: all padding/margin/gap sit on an even grid (2, 4, 6, 8,
+     10, 12, 14, 16, 20, 24) — no odd px except 1px hairlines. Radii: 4 (tiny),
+     6 (small controls/menu items), --radius 8 (rows/panels), 10 (menus/segments),
+     14 (cards/modals), 999 (capsules). */
   --radius: 8px;
   /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
   --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
@@ -144,7 +148,7 @@ input, select {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 11px;
+  padding: 8px 12px;
   outline: none;
 }
 input:focus, select:focus { border-color: var(--accent); }
@@ -204,7 +208,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 8px 16px;
   border-radius: var(--radius);
   font-weight: 500;
@@ -277,7 +281,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .electron .home { padding-top: 64px; }
 .home-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 16px; }
 .home h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: var(--fs-headline); }
+.home .tagline { color: var(--text-dim); margin: 4px 0 32px; font-size: var(--fs-headline); }
 .tex-banner {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
@@ -298,7 +302,7 @@ input:focus, select:focus { border-color: var(--accent); }
   position: relative;
 }
 .project-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 5px; word-break: break-word; }
+.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 4px; word-break: break-word; }
 .project-card .meta { color: var(--text-dim); font-size: var(--fs-body); }
 .project-card .card-actions { position: absolute; top: 12px; right: 12px; display: none; gap: 2px; }
 .project-card:hover .card-actions { display: flex; }
@@ -422,7 +426,7 @@ input:focus, select:focus { border-color: var(--accent); }
   flex-direction: column;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
   padding: 2px;
   gap: 1px;
@@ -474,7 +478,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .sidebar-search {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin: 0 14px 10px;                 /* section inset (pills below overshoot to 10px) */
   padding: 6px 12px;
   /* Translucent glass, not an opaque inset: the sidebar's vibrancy shows through
@@ -536,8 +540,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .sidebar-foot {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 10px;
+  gap: 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--border);
   color: var(--text-dim);
   font-size: var(--fs-subhead);
@@ -558,7 +562,7 @@ input:focus, select:focus { border-color: var(--accent); }
   padding: 0 10px 12px;
 }
 .outline-item {
-  padding: 5px 8px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: var(--fs-body);
   cursor: pointer;
@@ -578,7 +582,7 @@ input:focus, select:focus { border-color: var(--accent); }
   gap: 8px;
   font-size: var(--fs-footnote);
   font-weight: 600;
-  padding: 10px 8px 3px;
+  padding: 10px 8px 4px;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -587,7 +591,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .search-count {
   background: var(--bg-inset);
   border-radius: 99px;
-  padding: 0 7px;
+  padding: 0 8px;
   font-size: var(--fs-caption);
   font-weight: 600;
 }
@@ -606,7 +610,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .search-preview mark {
   background: color-mix(in srgb, var(--warn) 32%, transparent);
   color: inherit;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0 1px;
   font-weight: 600;
 }
@@ -616,8 +620,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .editor-toolbar {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 3px 12px;
+  gap: 4px;
+  padding: 4px 12px;
   min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
@@ -627,15 +631,15 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .editor-toolbar::-webkit-scrollbar { display: none; }
 .editor-toolbar > * { flex-shrink: 0; }
-.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
+.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 8px; flex: none; }
 /* Bold / Italic / Sigma are all SVG icons now (icons.js) — one centered grid, so
    they align with each other and the undo/redo icons without any font-metric
    nudging. (Text glyphs sat high by ~2px because caps ride above the line-box
    centre; switching to icons is the reliable fix.) */
 .tb-insert {
   font-size: var(--fs-body);
-  padding: 5px 11px;
-  gap: 5px;
+  padding: 6px 12px;
+  gap: 6px;
   color: var(--text-dim);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -646,7 +650,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .crumbs {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -745,7 +749,7 @@ input:focus, select:focus { border-color: var(--accent); }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 9px;
+  padding: 2px 8px;
   border-radius: 99px;
   font-weight: 600;
   font-size: var(--fs-footnote);
@@ -775,7 +779,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .log-item {
   display: flex;
   gap: 8px;
-  padding: 6px 9px;
+  padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
   font-size: var(--fs-body);
@@ -802,7 +806,7 @@ input:focus, select:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 12px;
+  padding: 4px 12px;
   min-height: 52px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
@@ -818,8 +822,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn {
   font-size: var(--fs-subhead);
-  padding: 5px 8px;
-  gap: 3px;
+  padding: 6px 8px;
+  gap: 4px;
   min-width: 62px;
   justify-content: center;
   font-variant-numeric: tabular-nums;
@@ -829,7 +833,7 @@ input:focus, select:focus { border-color: var(--accent); }
 /* Reserve the scrollbar gutter so the scrollbar appearing/disappearing doesn't
    change clientWidth — otherwise fit-width would re-render in a feedback loop. */
 .pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
-.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 3px; }
+.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 4px; }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
 
 /* Selectable text layer (pdf.js): transparent glyphs positioned over the canvas */
@@ -862,7 +866,7 @@ input:focus, select:focus { border-color: var(--accent); }
   cursor: default;
   user-select: none;
 }
-.pdf-page-wrap canvas { display: block; border-radius: 3px; background: white; }
+.pdf-page-wrap canvas { display: block; border-radius: 4px; background: white; }
 .sync-flash {
   position: absolute;
   background: rgba(255, 220, 0, 0.35);
@@ -920,20 +924,20 @@ input:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: var(--shadow);
-  padding: 5px;
-  min-width: 185px;
+  padding: 4px;
+  min-width: 184px;
 }
 .ctx-menu button {
   display: block;
   width: 100%;
   text-align: left;
   padding: 8px 12px;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: var(--fs-body);
 }
 .ctx-menu button:hover { background: var(--bg-hover); }
 .ctx-menu button.danger { color: var(--danger); }
-.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 5px 4px; }
+.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 4px; }
 
 /* ---------- settings ---------- */
 
@@ -961,7 +965,7 @@ input:focus, select:focus { border-color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 2px;
+  padding: 12px 2px;
   font-size: var(--fs-body);
 }
 .settings-row + .settings-row { border-top: 1px solid var(--border); }
@@ -984,7 +988,7 @@ input:focus, select:focus { border-color: var(--accent); }
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 3px;
+  padding: 4px;
   gap: 2px;
 }
 .seg {
@@ -1040,7 +1044,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .tex-status {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   background: none;
   border: none;
   padding: 0;
