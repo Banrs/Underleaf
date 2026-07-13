@@ -24,20 +24,23 @@ for (const f of [
   fs.copyFileSync(`node_modules/@fontsource/jetbrains-mono/files/${f}`, `web/dist/fonts-jbm/${f}`);
 }
 
-const opts = {
-  entryPoints: ['web/src/main.js'],
+const common = {
   bundle: true,
   format: 'esm',
-  outfile: 'web/dist/bundle.js',
   minify: !watch,
   // Sourcemap only in dev/watch — the production map is ~5MB of dead weight.
   sourcemap: watch,
   logLevel: 'info',
 };
+// Two bundles: the Electron/web app (main.js) and the panes-only entry the native
+// macOS shell loads in its WKWebView (embed.js). See mac/README.md.
+const builds = [
+  { ...common, entryPoints: ['web/src/main.js'], outfile: 'web/dist/bundle.js' },
+  { ...common, entryPoints: ['web/src/embed.js'], outfile: 'web/dist/bundle-embed.js' },
+];
 
 if (watch) {
-  const ctx = await esbuild.context(opts);
-  await ctx.watch();
+  for (const opts of builds) { const ctx = await esbuild.context(opts); await ctx.watch(); }
 } else {
-  await esbuild.build(opts);
+  await Promise.all(builds.map((opts) => esbuild.build(opts)));
 }

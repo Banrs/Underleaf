@@ -1,0 +1,76 @@
+// Panes-only entry for the native macOS hybrid (mac/). Renders ONLY the editor +
+// PDF (no sidebar/topbar — those are native SwiftUI). Driven by the Swift side via
+// window.TeXLocal.*, and reports back over window.webkit.messageHandlers.*.
+// See mac/README.md.
+import { createEditor } from './editor.js';
+import { PdfViewer } from './pdfview.js';
+
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === 'class' ? (n.className = v) : n.setAttribute(k, v);
+  for (const c of kids) if (c) n.append(c);
+  return n;
+};
+const post = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
+
+let editor = null, pdf = null, currentPath = null, dark = false, saveTimer = null;
+let host, pdfScroll;
+
+function setTheme() { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }
+
+function mountEditor(content) {
+  editor?.destroy();
+  host.replaceChildren();
+  editor = createEditor({
+    parent: host,
+    content,
+    dark,
+    getSymbols: () => ({ citations: [], labels: [] }), // TODO: symbols pushed from native
+    onChange: () => {
+      post('state', { dirty: true });
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        if (currentPath) post('save', { path: currentPath, content: editor.getContent() });
+      }, 800);
+    },
+    onCursor: () => {},
+  });
+  editor.focus();
+}
+
+function build() {
+  host = el('div', { class: 'editor-host', id: 'editor-host' });
+  pdfScroll = el('div', { class: 'pdf-scroll', id: 'pdf-scroll' });
+  document.getElementById('app').replaceChildren(
+    el('div', { class: 'shell' },
+      el('div', { class: 'workspace embed' },
+        el('div', { class: 'pane editor-pane' }, host),
+        el('div', { class: 'resizer' }),
+        el('div', { class: 'pane pdf-pane' }, pdfScroll),
+      ),
+    ),
+  );
+  pdf = new PdfViewer(pdfScroll, {
+    onSyncClick: (page, x, y) => post('syncClick', { page, x: Math.round(x), y: Math.round(y) }),
+  });
+}
+
+// Swift → web command surface.
+window.TeXLocal = {
+  open(path, content, isDark) { currentPath = path; dark = isDark; setTheme(); mountEditor(content); post('state', { dirty: false }); },
+  format(kind) {
+    if (!editor) return;
+    if (kind === 'bold') editor.wrapSelection('\\textbf{', '}');
+    else if (kind === 'italic') editor.wrapSelection('\\textit{', '}');
+    else if (kind === 'math') editor.wrapSelection('$', '$');
+    else if (kind === 'comment') editor.toggleComment();
+  },
+  undo() { editor?.undo(); },
+  redo() { editor?.redo(); },
+  find() { editor?.openSearch(); },
+  gotoLine(n) { editor?.gotoLine(n); },
+  reloadPdf(url) { pdf?.load(url).catch(() => {}); },
+  setDark(b) { dark = b; setTheme(); if (editor) mountEditor(editor.getContent()); }, // recreate for editor theme
+};
+
+build();
