@@ -25,10 +25,10 @@ const PATHS = {
   redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   comment: '<path d="M7 9.5h10"/><path d="M7 13.5h6"/><path d="M21 12a9 9 0 0 1-13.2 8L3 21l1-4.8A9 9 0 1 1 21 12z"/>',
-  // Summation Σ as geometry, not a text glyph: the ∑ character's vertical metrics
-  // drift by font (it sat top-heavy in the system font), so draw it centered in the
-  // 24×24 box like every other icon for consistent alignment across platforms.
-  sigma: '<path d="M17 5H7l5 7-5 7h10"/>',
+  // Summation Σ as geometry, not a text glyph (the ∑ character's metrics drift by
+  // font). Full-height 4→20, vertex at the centre (12,12); the bbox sits a touch
+  // right of centre so the left-heavy diagonals read optically centred in the box.
+  sigma: '<path d="M18 4H7l5 8-5 8h11"/>',
   // Bold / italic as icons (not serif letters) so all three format-toolbar glyphs
   // share one centered 24×24 grid — uniform alignment, no per-font nudging.
   bold: '<path d="M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z"/>',
