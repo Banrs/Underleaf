@@ -404,14 +404,17 @@ input:focus, select:focus { border-color: var(--accent); }
    rounded sidebar isn't butting against a square-cornered content block (the
    "concentricity" principle). The editor↔PDF divider stays a hairline inside
    the content pane, so it's two panes, not three. */
-.floating .shell { padding: 8px; }
+/* Float the panes via their own margins (NOT shell padding), so the topbar
+   stays pinned to the top exactly as in docked mode — the title lines up with
+   the fixed traffic lights the same way in both layouts. */
 .floating .sidebar,
 .floating .workspace {
   border-radius: 11px;
   border: 1px solid var(--pane-border);
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
 }
-.floating .workspace { margin-top: 8px; }
+.floating .sidebar { margin: 8px 0 8px 8px; }        /* float: inset top/left/bottom */
+.floating .workspace { margin: 8px 8px 8px 0; }      /* float: inset top/right/bottom */
 
 /* Gap between the two panes (resizer) with a hover cue, not a hairline. */
 .floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
@@ -430,10 +433,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
 .floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
 
-/* Shell's 8px padding shifts everything in; the traffic lights are moved to
-   (22,22) to match (main.js applyFloating), so center the title on their line
-   (≈y29) and keep FILES clear of them. */
-.floating.electron .topbar { padding-top: 4px; }
+/* Topbar is unchanged in floating (it stays pinned to the top), so no topbar
+   override here. The sidebar floats down 8px, so nudge FILES up to match. */
 .floating.electron .sidebar-body { padding-top: 20px; }
 
 /* ---------- sidebar ---------- */

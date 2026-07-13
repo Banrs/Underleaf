@@ -68,15 +68,11 @@ function setThemeMode(mode) {
   applyTheme(resolveTheme(mode));
 }
 
-// Layout: edge-to-edge (default) vs the Finder/Xcode floating panes. In Electron
-// the native traffic lights can't move via CSS, so we reposition them to match:
-// docked sits them 16px into the window; floating shifts them into the inset
-// sidebar (clear of its rounded corner) and onto the shifted title's line.
+// Layout: edge-to-edge (default) vs the Finder/Xcode floating panes. The native
+// traffic lights stay at the macOS default position in both — the toggle only
+// changes the panes, never the window controls (as in Golden Gate).
 function applyFloating(on) {
   document.documentElement.classList.toggle('floating', on);
-  if (window.texlocal) {
-    window.texlocal.invoke('window:lights', on ? { x: 22, y: 22 } : { x: 16, y: 16 }).catch(() => {});
-  }
 }
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

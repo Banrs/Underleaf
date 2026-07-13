@@ -85,15 +85,6 @@ async function boot() {
   });
 
   handle('status', () => compile.texAvailable());
-  // Reposition the native traffic lights so they sit correctly for the current
-  // layout (docked vs the inset floating sidebar).
-  handle('window:lights', (pos) => {
-    if (win && pos) {
-      if (typeof win.setWindowButtonPosition === 'function') win.setWindowButtonPosition(pos);
-      else if (typeof win.setTrafficLightPosition === 'function') win.setTrafficLightPosition(pos);
-    }
-    return { ok: true };
-  });
   handle('projects:list', () => projects.listProjects());
   handle('projects:create', (name, template) => projects.createProject(name, template));
   handle('projects:rename', (id, name) => projects.renameProject(id, name));
@@ -178,12 +169,10 @@ async function boot() {
       backgroundColor: '#00000000',
       vibrancy: 'sidebar',
       visualEffectState: 'followWindow',
-      // The themed app chrome doubles as the title bar; the traffic lights are
-      // positioned explicitly (below) so they center with the topbar row.
+      // The themed app chrome doubles as the title bar. No trafficLightPosition
+      // override — the lights sit at the standard macOS default spot and stay
+      // there in every layout (docked or floating), like a native app.
       titleBarStyle: 'hidden',
-      // Equal 16px inset into the sidebar's top-left corner (tuned to the tighter
-      // 8px pane gaps), centered on the topbar title.
-      trafficLightPosition: { x: 16, y: 16 },
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
