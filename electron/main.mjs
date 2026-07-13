@@ -170,13 +170,13 @@ async function boot() {
       minHeight: 500,
       title: 'TeXLocal',
       backgroundColor: '#00000000',
-      // macOS chrome: transparent window + sidebar vibrancy (liquid glass), with the
-      // traffic lights repositioned into the title row — fixed at x=16,y=20 so their
-      // centre (y≈26) sits on the 52px toolbar row.
+      // macOS chrome: transparent window + sidebar vibrancy (liquid glass).
       vibrancy: 'sidebar',
       visualEffectState: 'followWindow',
+      // The themed app chrome doubles as the title bar. No trafficLightPosition
+      // override — the lights sit at the standard macOS default spot, like a
+      // native app (verified on-device; don't reintroduce a custom offset).
       titleBarStyle: 'hidden',
-      trafficLightPosition: { x: 16, y: 20 },
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
