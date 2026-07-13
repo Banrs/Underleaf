@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { BUILD_DIR, HttpError, readSettings } from './projects.js';
+import { BUILD_DIR, HttpError, readSettings, compiledPdfPath } from './projects.js';
 
 const COMPILE_TIMEOUT_MS = 180_000;
 const ENGINE_FLAGS = {
@@ -13,9 +13,21 @@ const ENGINE_FLAGS = {
   lualatex: ['-lualatex'],
 };
 
-// PATH for spawned TeX tools. GUI-launched apps often miss the TeX bin dirs,
-// so append the usual macOS locations.
-const TEX_DIRS = ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', '/usr/local/texlive/2026/bin'];
+// PATH for spawned TeX tools. GUI-launched apps often miss the TeX bin dirs, so
+// append the usual macOS locations. /Library/TeX/texbin (MacTeX's year-agnostic
+// symlink) is the reliable one; also discover any /usr/local/texlive/<year>/bin/<arch>
+// so a plain TeX Live install keeps working without hardcoding the year.
+function texliveBins() {
+  try {
+    return fs.readdirSync('/usr/local/texlive')
+      .filter((y) => /^\d{4}$/.test(y)).sort().reverse()
+      .flatMap((y) => {
+        const bin = `/usr/local/texlive/${y}/bin`;
+        try { return fs.readdirSync(bin).map((arch) => `${bin}/${arch}`); } catch { return []; }
+      });
+  } catch { return []; }
+}
+const TEX_DIRS = ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', ...texliveBins()];
 
 const TEX_PATH = [process.env.PATH ?? '', ...TEX_DIRS].filter(Boolean).join(path.delimiter);
 
@@ -168,9 +180,7 @@ export async function compile(root, overrides = {}) {
 // ---------- SyncTeX ----------
 
 async function pdfFor(root) {
-  const settings = await readSettings(root);
-  const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-  const pdf = path.join(root, BUILD_DIR, `${base}.pdf`);
+  const pdf = await compiledPdfPath(root);
   if (!fs.existsSync(pdf)) throw new HttpError(404, 'No compiled PDF yet');
   return pdf;
 }

@@ -11,7 +11,6 @@ import * as pdfjs from 'pdfjs-dist';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
-const H_PAD = 20;   // must track .pdf-scroll horizontal padding (for fit-width)
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 4;
 
@@ -82,9 +81,14 @@ export class PdfViewer {
 
   #fitScale(page) {
     const base = page.getViewport({ scale: 1 });
+    // Derive the pane's inset from its computed padding so fit-to-width/height
+    // stays correct if the .pdf-scroll padding changes — no hardcoded magic number.
+    const cs = getComputedStyle(this.scrollEl);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
     const w = this.scrollEl.clientWidth || 700;
     const h = this.scrollEl.clientHeight || 800;
-    const avail = this.fitMode === 'height' ? (h - H_PAD) / base.height : (w - H_PAD) / base.width;
+    const avail = this.fitMode === 'height' ? (h - padY) / base.height : (w - padX) / base.width;
     return Math.max(MIN_SCALE, Math.min(MAX_SCALE, avail));
   }
 

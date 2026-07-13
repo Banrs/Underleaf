@@ -71,10 +71,7 @@ async function boot() {
       // Everything lives on the texlocal://app origin — pdf.js XHRs the PDF,
       // and Chromium blocks cross-origin requests on custom schemes.
       if (segs[0] === '__pdf') {
-        const root = projects.projectRoot(segs[1]);
-        const settings = await projects.readSettings(root);
-        const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-        return fileResponse(path.join(root, projects.BUILD_DIR, `${base}.pdf`));
+        return fileResponse(await projects.compiledPdfPath(projects.projectRoot(segs[1])));
       }
       if (segs[0] === '__raw') {
         const root = projects.projectRoot(segs[1]);
@@ -152,10 +149,7 @@ async function boot() {
   });
 
   handle('pdf:saveAs', async (id) => {
-    const root = projects.projectRoot(id);
-    const settings = await projects.readSettings(root);
-    const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-    const src = path.join(root, projects.BUILD_DIR, `${base}.pdf`);
+    const src = await projects.compiledPdfPath(projects.projectRoot(id));
     if (!fs.existsSync(src)) throw new Error('No compiled PDF yet');
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath('downloads'), `${id}.pdf`),

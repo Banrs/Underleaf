@@ -68,6 +68,14 @@ export async function writeSettings(root, settings) {
   return next;
 }
 
+// The compiled PDF path for a project — the ONE place this is derived. mainFile
+// "paper.tex" → "<root>/build/paper.pdf". Callers (compile, __pdf protocol,
+// pdf:saveAs, REST /pdf) all route through here instead of recomputing it.
+export async function compiledPdfPath(root) {
+  const { mainFile } = await readSettings(root);
+  return path.join(root, BUILD_DIR, `${path.basename(mainFile, path.extname(mainFile))}.pdf`);
+}
+
 // ---------- projects ----------
 
 export async function listProjects() {

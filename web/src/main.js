@@ -497,13 +497,7 @@ async function renderProject(id) {
       if (label) label.textContent = mode === 'width' ? 'Fit W' : mode === 'height' ? 'Fit H' : `${pct}%`;
     },
     onPageChange: (p, total) => { pageInd.textContent = `${p} / ${total}`; },
-    onSyncClick: async (page, x, y) => {
-      try {
-        const r = await api.syncInverse(id, page, Math.round(x), Math.round(y));
-        await openFile(r.file);
-        state.editor?.gotoLine(r.line);
-      } catch { toast('No source location found here'); }
-    },
+    onSyncClick: (page, x, y) => jumpToPdfSource(page, x, y, 'No source location found here'),
   });
 
   renderTree();
@@ -774,7 +768,15 @@ function setSaveState(txt) {
   if (n) n.textContent = txt;
 }
 
-async function saveCurrent({ triggerCompile = true } = {}) {
+// Saves are serialized through one promise chain so two writes never overlap and
+// callers that `await saveCurrent()` (e.g. before switching files) always wait for
+// any in-flight write. doSave never rejects, so the chain can't break.
+let savePromise = Promise.resolve();
+function saveCurrent(opts) {
+  return (savePromise = savePromise.then(() => doSave(opts)));
+}
+
+async function doSave({ triggerCompile = true } = {}) {
   if (!state.dirty || !state.editor || !state.openPath) return;
   clearTimeout(state.saveTimer);
   const path = state.openPath;
@@ -783,9 +785,12 @@ async function saveCurrent({ triggerCompile = true } = {}) {
   setSaveState('Saving…');
   try {
     await api.writeFile(state.projectId, path, content);
-    setSaveState('Saved');
+    // If the user typed during the write, stay 'Unsaved' — a fresh save is queued.
+    if (!state.dirty) {
+      setSaveState('Saved');
+      if (triggerCompile && state.autoCompile) compileNow({ auto: true });
+    }
     refreshSymbols();
-    if (triggerCompile && state.autoCompile) compileNow({ auto: true });
   } catch (err) {
     state.dirty = true;
     setSaveState('Unsaved');
@@ -1087,16 +1092,19 @@ async function runSidebarSearch() {
 
 // ---------- synctex ----------
 
-async function pdfToSource() {
-  const loc = state.pdf?.currentLocation();
-  if (!loc) { toast('Compile first to produce a PDF'); return; }
+// Inverse SyncTeX (PDF → source), shared by the divider button and PDF clicks.
+async function jumpToPdfSource(page, x, y, failMsg) {
   try {
-    const r = await api.syncInverse(state.projectId, loc.page, loc.x, loc.y);
+    const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
     await openFile(r.file);
     state.editor?.gotoLine(r.line);
-  } catch {
-    toast('No source location found for this view');
-  }
+  } catch { toast(failMsg); }
+}
+
+function pdfToSource() {
+  const loc = state.pdf?.currentLocation();
+  if (!loc) { toast('Compile first to produce a PDF'); return; }
+  return jumpToPdfSource(loc.page, loc.x, loc.y, 'No source location found for this view');
 }
 
 async function forwardSync() {

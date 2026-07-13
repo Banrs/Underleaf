@@ -527,9 +527,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .tree-item[data-depth="0"] .ficon svg { width: 18px; height: 18px; }
 .tree-item.active .ficon { color: var(--accent); }
 .tree-item .label { overflow: hidden; text-overflow: ellipsis; }
-/* Main-file marker: monotone, subtle (not the old amber emoji star). */
+/* Main-file marker: solid, monotone (one flat colour — not the old amber emoji). */
 .tree-item .main-star { margin-left: auto; display: inline-flex; color: var(--text-dim); }
-.tree-item .main-star svg { width: 14px; height: 14px; }
+.tree-item .main-star svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
 .tree-item.active .main-star { color: var(--accent); }
 .tree-children { padding-left: 16px; }
 
