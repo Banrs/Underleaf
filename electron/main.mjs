@@ -184,21 +184,37 @@ async function boot() {
     catch (err) { console.error('menu build failed:', err.message); }
   });
 
-  // ---------- quit-save handshake ----------
-  // On quit, give the renderer one chance to flush an unsaved buffer; proceed
-  // when it acknowledges or after a short timeout so quit can never hang.
-  let readyToQuit = false;
-  app.on('before-quit', (e) => {
-    if (readyToQuit || !win || win.isDestroyed()) return;
-    e.preventDefault();
-    const proceed = () => {
-      if (readyToQuit) return;
-      readyToQuit = true;
-      app.quit();
+  // ---------- flush-before-exit handshake ----------
+  // Give the renderer one chance to write a pending edit, then continue when it
+  // acknowledges or after a short timeout so neither exit path can hang.
+  //
+  // Closing the window needs this as much as quitting does: on macOS closing is
+  // NOT quitting (see window-all-closed below), so a Cmd-W with an unsaved buffer
+  // used to rely on the renderer's `beforeunload` firing an un-awaited save and
+  // losing the race with its own teardown.
+  const FLUSH_TIMEOUT_MS = 1500;
+  const flushRenderer = (w, done) => {
+    if (!w || w.isDestroyed() || w.__flushed) { done(); return; }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      w.__flushed = true;
+      clearTimeout(timer);
+      // `once` has already detached if the ack won; this covers the timeout
+      // winning, which otherwise left the listener registered for good.
+      ipcMain.removeListener('app:ready-to-quit', finish);
+      done();
     };
-    ipcMain.once('app:ready-to-quit', proceed);
-    setTimeout(proceed, 1500);
-    win.webContents.send('app:before-quit');
+    const timer = setTimeout(finish, FLUSH_TIMEOUT_MS);
+    ipcMain.once('app:ready-to-quit', finish);
+    w.webContents.send('app:before-quit');
+  };
+
+  app.on('before-quit', (e) => {
+    if (!win || win.isDestroyed() || win.__flushed) return;
+    e.preventDefault();
+    flushRenderer(win, () => app.quit());
   });
 
   // ---------- window ----------
@@ -254,6 +270,15 @@ async function boot() {
     });
 
     win.loadURL('texlocal://app/index.html');
+
+    // Flush before the window goes away, then destroy() — which does not re-fire
+    // `close`, so this can't loop.
+    win.on('close', (e) => {
+      const w = win;
+      if (!w || w.isDestroyed() || w.__flushed) return;
+      e.preventDefault();
+      flushRenderer(w, () => { if (!w.isDestroyed()) w.destroy(); });
+    });
     win.on('closed', () => { win = null; });
   };
 

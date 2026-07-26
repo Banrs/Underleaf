@@ -148,12 +148,30 @@ function matches(accel, e) {
   const parts = accel.split('+');
   const key = parts.pop().toLowerCase();
   const want = new Set(parts.map((p) => p.toLowerCase()));
-  const mod = want.has('cmdorctrl') || want.has('cmd') || want.has('command');
-  if (mod !== (e.metaKey || e.ctrlKey)) return false;
-  if (want.has('shift') !== e.shiftKey) return false;
+
+  // Resolve the accelerator to the physical modifiers it actually needs before
+  // comparing. CmdOrCtrl is ⌘ on macOS and Ctrl elsewhere; an explicit Ctrl is
+  // Ctrl everywhere. Collapsing both into one "primary modifier" test made a
+  // Ctrl-only accelerator unmatchable — the SyncTeX pair (Ctrl+Return,
+  // Ctrl+Shift+Return) never fired in browser mode — and let Ctrl+key trigger a
+  // ⌘+key command on macOS.
+  const wantPrimary = want.has('cmdorctrl') || want.has('cmd') || want.has('command');
+  const needMeta = wantPrimary && MAC;
+  const needCtrl = want.has('ctrl') || want.has('control') || (wantPrimary && !MAC);
+  if (needMeta !== e.metaKey || needCtrl !== e.ctrlKey) return false;
   if ((want.has('alt') || want.has('option')) !== e.altKey) return false;
+
+  // On most layouts '+' is Shift+= and '_' is Shift+-, so an accelerator written
+  // as Plus/Minus has to accept the unshifted key as well as the shifted glyph —
+  // and must not then insist on a matching Shift state, or Cmd+Shift+= (the
+  // natural way to type Cmd++) would fail to zoom.
   const pressed = e.key === 'Enter' ? 'return' : e.key.toLowerCase();
-  return pressed === key || (key === 'plus' && pressed === '=') || (key === 'minus' && pressed === '-');
+  const shifted = (key === 'plus' && pressed === '+') || (key === 'minus' && pressed === '_');
+  const keyMatches = pressed === key || shifted
+    || (key === 'plus' && pressed === '=')
+    || (key === 'minus' && pressed === '-');
+  if (!keyMatches) return false;
+  return shifted || want.has('shift') === e.shiftKey;
 }
 
 export function installBrowserShortcuts() {

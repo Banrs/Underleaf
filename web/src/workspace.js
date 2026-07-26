@@ -518,7 +518,7 @@ async function forwardSync() {
 }
 
 async function inverseSync() {
-  const loc = state.pdf?.currentLocation();
+  const loc = await state.pdf?.currentLocation();
   if (!loc) { toast('Compile first to produce a PDF'); return; }
   try {
     const r = await api.syncInverse(state.projectId, loc.page, loc.x, loc.y);
@@ -581,15 +581,26 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
       applyWidth(w);
       state.pdf?.liveResize?.();
     };
+    // pointercancel matters as much as pointerup: the OS or the browser can end a
+    // pointer sequence without one, and this teardown is what clears the viewer's
+    // `_resizing` flag. Leaving it set disables the PDF's re-fit observer for the
+    // rest of the session, and leaves pointermove attached so the divider keeps
+    // tracking a pointer with no button held.
+    let done = false;
     const onUp = () => {
+      if (done) return;
+      done = true;
       handle.classList.remove('dragging');
       pane.style.transition = prevTransition;
       handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
       state.pdf?.endLiveResize?.();
       prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
     };
     handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp, { once: true });
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
   });
 }
 
@@ -608,13 +619,19 @@ function makeSyncPillDraggable(pill) {
       const pct = Math.max(4, Math.min(92, ((ev.clientY - r.top) / r.height) * 100));
       pill.style.top = `${pct}%`;
     };
+    let done = false;
     const onUp = () => {
+      if (done) return;
+      done = true;
       pill.classList.remove('dragging');
       pill.removeEventListener('pointermove', onMove);
+      pill.removeEventListener('pointerup', onUp);
+      pill.removeEventListener('pointercancel', onUp);
       prefs.syncPillTop = Math.round(parseFloat(pill.style.top));
     };
     pill.addEventListener('pointermove', onMove);
-    pill.addEventListener('pointerup', onUp, { once: true });
+    pill.addEventListener('pointerup', onUp);
+    pill.addEventListener('pointercancel', onUp);
   });
 }
 

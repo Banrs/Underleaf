@@ -327,10 +327,23 @@ export class PdfViewer {
     const dpr = window.devicePixelRatio || 1;
     for (const i of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
-      if (this.pages[i]._painted) continue;
+      const p = this.pages[i];
+      // `_failed` stops a page that genuinely can't render from being retried on
+      // every scroll; a re-render builds fresh page objects, so it resets there.
+      if (p._painted || p._failed) continue;
       // One cancelled page is not a reason to abandon the others — the guard
-      // above is what decides whether this pass is still the current one.
-      if (await this.#paintCanvas(this.pages[i], dpr)) this.#buildTextLayer(this.pages[i], seq);
+      // above is what decides whether this pass is still the current one. A real
+      // error is contained here too: this method is called bare from the scroll
+      // and visibilitychange handlers, where a throw would surface only as an
+      // unhandled rejection and leave the rest of the viewport blank.
+      let ok = false;
+      try {
+        ok = await this.#paintCanvas(p, dpr);
+      } catch (err) {
+        p._failed = true;
+        console.error(`PDF page ${p.n} failed to render:`, err);
+      }
+      if (ok) this.#buildTextLayer(p, seq);
     }
   }
 
@@ -597,9 +610,13 @@ export class PdfViewer {
   // land on a glyph box; a geometric guess (page-centre, view-third) usually
   // hits whitespace and 404s. So snap to the first text-layer span at/below the
   // viewport top and use its centre, mirroring the (working) double-click math.
-  currentLocation() {
+  async currentLocation() {
     const p = this.pages[this.currentPage() - 1];
     if (!p) return null;
+    // Text layers are built with the canvas, so a page the reader has only just
+    // scrolled to may not have one yet. Build it on demand rather than dropping to
+    // the geometric fallback below, which usually lands on whitespace and 404s.
+    if (!p.textLayer.childElementCount) await this.#buildTextLayer(p, this.seq);
     const scRect = this.scrollEl.getBoundingClientRect();
     const canvasRect = p.canvas.getBoundingClientRect();
     const viewTopY = scRect.top + scRect.height * 0.2;

@@ -68,8 +68,15 @@ function runBuild(sourceRoot) {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Both pipes must be drained. Leaving stdout unread meant a build that wrote
+    // more than the OS pipe buffer (~64KB) blocked mid-write and was eventually
+    // SIGKILLed by the timeout below, reported as a spurious "build timed out".
+    // Capped so a runaway build can't grow this without bound.
+    const CAP = 64_000;
     let err = '';
-    child.stderr.on('data', (d) => { err += d; });
+    let out = '';
+    child.stdout.on('data', (d) => { if (out.length < CAP) out += d; });
+    child.stderr.on('data', (d) => { if (err.length < CAP) err += d; });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`build timed out after ${BUILD_TIMEOUT_MS / 1000}s`));
@@ -78,27 +85,57 @@ function runBuild(sourceRoot) {
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(err.trim() || `build exited with ${code}`));
+      else reject(new Error(err.trim() || out.trim() || `build exited with ${code}`));
     });
   });
 }
 
-// Stage each tree beside its destination and swap it in, so a failure part-way
-// through leaves the previous copy intact rather than a half-updated app.
-async function syncInto(sourceRoot, appPath) {
+// If a swap was interrupted, a tree can be left parked in `.previous` with
+// nothing at the destination. Put it back before doing anything else — this is
+// the recovery half of swapIn below, and it has to run first because one of the
+// destinations is the code this process runs from.
+function repairInterruptedSwap(appPath) {
   for (const rel of SYNC_PATHS) {
+    const to = path.join(appPath, rel);
+    const previous = `${to}.previous`;
+    if (fs.existsSync(to) || !fs.existsSync(previous)) continue;
+    try { fs.renameSync(previous, to); } catch { /* leave it for the next launch */ }
+  }
+}
+
+// Stage a tree beside its destination and swap it in. POSIX has no atomic
+// directory exchange, so the destination is briefly absent between the two
+// renames; a failure there is rolled back immediately, and a crash there is
+// recovered by repairInterruptedSwap on the next launch. (A power cut inside that
+// window while `electron/` is being replaced is the one case neither covers —
+// `npm run install-app` is the way back from that.)
+async function swapIn(from, to) {
+  const staged = `${to}.incoming`;
+  const previous = `${to}.previous`;
+  await fsp.rm(staged, { recursive: true, force: true });
+  await fsp.mkdir(path.dirname(to), { recursive: true });
+  await fsp.cp(from, staged, { recursive: true });
+  await fsp.rm(previous, { recursive: true, force: true });
+
+  const had = fs.existsSync(to);
+  if (had) await fsp.rename(to, previous);
+  try {
+    await fsp.rename(staged, to);
+  } catch (err) {
+    if (had) await fsp.rename(previous, to).catch(() => {});
+    throw err;
+  }
+  await fsp.rm(previous, { recursive: true, force: true });
+}
+
+async function syncInto(sourceRoot, appPath) {
+  // `electron` holds the entry point, so it goes last: every other tree is
+  // already in place by the time the riskiest swap happens.
+  const order = [...SYNC_PATHS].sort((a, b) => (a === 'electron' ? 1 : 0) - (b === 'electron' ? 1 : 0));
+  for (const rel of order) {
     const from = path.join(sourceRoot, rel);
     if (!fs.existsSync(from)) continue;
-    const to = path.join(appPath, rel);
-    const staged = `${to}.incoming`;
-    await fsp.rm(staged, { recursive: true, force: true });
-    await fsp.mkdir(path.dirname(to), { recursive: true });
-    await fsp.cp(from, staged, { recursive: true });
-    const previous = `${to}.previous`;
-    await fsp.rm(previous, { recursive: true, force: true });
-    if (fs.existsSync(to)) await fsp.rename(to, previous);
-    await fsp.rename(staged, to);
-    await fsp.rm(previous, { recursive: true, force: true });
+    await swapIn(from, path.join(appPath, rel));
   }
 }
 
@@ -119,6 +156,8 @@ export async function rebuildIfStale({ appPath, isPackaged, log = console.log })
     return 'ok';
   }
 
+  repairInterruptedSwap(appPath);
+
   if (!info?.sourceRoot) return 'skipped';
   const { sourceRoot } = info;
   if (!fs.existsSync(path.join(sourceRoot, 'build.mjs'))) {
@@ -135,8 +174,11 @@ export async function rebuildIfStale({ appPath, isPackaged, log = console.log })
     const pkg = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'package.json'), 'utf8'));
     wanted = (pkg.devDependencies?.electron ?? '').replace(/^[^\d]*/, '').split('.')[0];
   } catch { /* treat as unknown */ }
-  const running = process.versions.electron.split('.')[0];
-  if (wanted && wanted !== running) {
+  // Optional chaining because this module is also loadable under plain Node (tests
+  // and tooling), where `versions.electron` is absent — the check below already
+  // treats an unknown version as "don't block".
+  const running = process.versions.electron?.split('.')[0];
+  if (wanted && running && wanted !== running) {
     log(`Source targets Electron ${wanted} but this app runs ${running} — run "npm run package" to update the binary.`);
     return 'skipped';
   }
