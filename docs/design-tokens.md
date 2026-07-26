@@ -8,7 +8,9 @@ extracted spec that `web/styles.css` implements.
 
 ## Typography — SF Pro
 
-macOS's base UI size is **13px**, not the 14px web default.
+macOS's base *control* size is 13px — but see the roles below: a list-dense
+window uses 15px for its rows, and treating 13 as the app-wide size is what makes
+a Mac app look shrunken.
 
 **The scale is expressed as five roles, not five sizes** (`--fs-title`,
 `--fs-body`, `--fs-header`, `--fs-control`, `--fs-small`, `--fs-micro` plus
@@ -45,17 +47,12 @@ is *Medium*, not Regular, and titles are heavier than web defaults):
 | Dialog form label | 13 Regular (primary color, not dimmed) |
 | Alert title / informative | 14–15 Bold / 11 Medium |
 
-| Style | Size / line-height | Used for |
-| --- | --- | --- |
-| Large Title | 26 / 32 | project picker heading |
-| Title 1 | 22 / 26 | — |
-| Title 2 | 17 / 22 | dialog titles |
-| Title 3 | 15 / 20 | — |
-| Headline | 13 / 16 semibold | row emphasis, project names |
-| **Body** | **13 / 16** | **base UI text** |
-| Callout | 12 / 15 | secondary rows |
-| Subheadline | 11 / 14 | sidebar section headers |
-| Footnote / Caption | 10 / 13 | badges, counts |
+The kit's full named ramp, for reference when a new role is needed:
+Large Title 26/32 · Title 1 22/26 · Title 2 17/22 · Title 3 15/20 ·
+Headline 13/16 Bold · Body 13/16 · Callout 12/15 · Subheadline 11/14 ·
+Footnote & Caption 10/13. Note that "Body 13" is the *control* text size; a
+list-based app at the Large density uses Title 3 (15/20) for its rows, which is
+why `--fs-body` here is 15 rather than 13.
 
 ## Color — semantic, not literal
 
@@ -114,23 +111,15 @@ per style:
 bar, **28** for every interactive control below it (toolbar buttons, inputs,
 segmented controls, steppers, search). No mini/small controls anywhere.
 
-Two type roles, and the distinction matters:
-- **Controls: 13pt** — the macOS control standard (buttons, fields, menus).
-- **Lists and content: 15pt** — the Large-variant size (sidebar rows, outline,
-  recents, Settings row labels). Using Medium's 13pt here is what made the
-  interface read undersized against Finder and Preview.
-- 12/11pt only as genuinely secondary text (hints, timestamps, section headers,
-  status), never as a control or list label.
-
 Components keeping their own kit spec: switch 54×24, scrollbar 12, menu text
-13 Medium (row box follows the app's list density).
+13 Medium (the row box follows this app's list density at 28).
 
 Touch/iPad sizing is deliberately out of scope for this build (future SwiftUI
 effort).
 
 **Corner radius is `height / 4`.** Measured off the text-field set (16→4, 20→5,
-24→6, 28→7, 36→9) and confirmed by the sidebar row (32→8). One rule, so nothing
-needs an ad-hoc radius.
+24→6, 28→7, 36→9) and confirmed by the sidebar rows (32→8, 40→10). One rule, so
+nothing needs an ad-hoc radius.
 
 | Element | Value |
 | --- | --- |
@@ -139,11 +128,11 @@ needs an ad-hoc radius.
 | Sidebar | **256** wide |
 | Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
 | Sidebar content inset | 14 (selection pill bleeds to 10) |
-| Sidebar section header | 18 tall + 14 gap below |
+| Sidebar section header | Large: 20 tall, 13 Bold, 16 gap below |
 | Traffic lights | 68 × 14 at x **18**, y **19** (centred in the 52 bar) |
-| Menu row | 24 tall, radius 8, min-width 160, separator 11 |
+| Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
 | Switch (regular) | 54 × 24 |
-| Dialog | 390 wide, 20 inset, 24-tall rows |
+| Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
 | Scrollbar | 12 |
 
 ## Platform abstraction
