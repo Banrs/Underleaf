@@ -4,11 +4,16 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { TEMPLATES } from './templates.js';
 
+// fileURLToPath, not URL.pathname: pathname keeps percent-encoding, so a repo
+// checked out under a directory with a space in it resolved to a literal
+// "My%20Repo" path that doesn't exist. It is also the only form that yields a
+// valid path on Windows.
 export const DATA_DIR = process.env.TEXLOCAL_DATA
   ? path.resolve(process.env.TEXLOCAL_DATA)
-  : path.resolve(new URL('../data/projects', import.meta.url).pathname);
+  : path.resolve(fileURLToPath(new URL('../data/projects', import.meta.url)));
 
 export const BUILD_DIR = 'build'; // compile output subdir inside each project
 const SETTINGS_FILE = '.texlocal.json';
@@ -42,6 +47,19 @@ export function safePath(root, rel) {
   return abs;
 }
 
+// A path inside the project, in a form that is safe to hand to a command line:
+// relative, no escape, and with no segment a tool could read as an option. The
+// main file becomes an argv element for latexmk, where a leading "-" would be
+// parsed as a flag rather than a filename.
+export function safeRelFile(root, rel) {
+  const out = path.relative(root, safePath(root, rel));
+  if (!out || out.startsWith('..') || path.isAbsolute(out)) throw new HttpError(400, 'Path escapes project');
+  if (out.split(path.sep).some((seg) => seg.startsWith('-'))) {
+    throw new HttpError(400, 'Path segments cannot start with "-"');
+  }
+  return out;
+}
+
 function sanitizeName(name) {
   const clean = String(name ?? '').trim().replace(/[/\\:*?"<>|]/g, '').slice(0, 80);
   if (!clean || clean.startsWith('.')) throw new HttpError(400, 'Invalid name');
@@ -50,7 +68,25 @@ function sanitizeName(name) {
 
 // ---------- settings ----------
 
+export const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
+
 const DEFAULT_SETTINGS = { mainFile: 'main.tex', engine: 'pdflatex', shellEscape: false };
+
+// Settings arrive from a request body, and two of them are dangerous taken as
+// given: `mainFile` becomes an argv element for latexmk, and `shellEscape` turns
+// on arbitrary shell execution during a compile. Accept only known keys, and
+// validate each one rather than merging whatever was sent.
+function validateSettings(root, patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, 'Invalid settings');
+  const out = {};
+  if ('engine' in patch) {
+    if (!ENGINES.includes(patch.engine)) throw new HttpError(400, `Unknown engine: ${patch.engine}`);
+    out.engine = patch.engine;
+  }
+  if ('shellEscape' in patch) out.shellEscape = !!patch.shellEscape;
+  if ('mainFile' in patch) out.mainFile = safeRelFile(root, patch.mainFile);
+  return out;
+}
 
 export async function readSettings(root) {
   try {
@@ -63,7 +99,7 @@ export async function readSettings(root) {
 
 export async function writeSettings(root, settings) {
   const current = await readSettings(root);
-  const next = { ...current, ...settings };
+  const next = { ...current, ...validateSettings(root, settings) };
   await fsp.writeFile(path.join(root, SETTINGS_FILE), JSON.stringify(next, null, 2));
   return next;
 }

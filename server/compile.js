@@ -4,9 +4,12 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { BUILD_DIR, HttpError, readSettings } from './projects.js';
+import { BUILD_DIR, HttpError, readSettings, safeRelFile } from './projects.js';
 
 const COMPILE_TIMEOUT_MS = 180_000;
+// Cap what we hold from a child. A runaway document can print for the whole
+// timeout window, and the accumulated string was previously unbounded.
+const MAX_OUTPUT = 1_000_000;
 const ENGINE_FLAGS = {
   pdflatex: ['-pdf'],
   xelatex: ['-xelatex'],
@@ -25,13 +28,26 @@ const TEX_PATH = [process.env.PATH ?? '', ...TEX_DIRS].filter(Boolean).join(path
 
 const ENV = { ...process.env, PATH: TEX_PATH };
 
+// latexmk drives pdflatex/biber as children of its own; killing just latexmk
+// leaves those running. Spawning it in its own process group lets the whole tree
+// be signalled at once. (Windows has no process groups in this sense, so it falls
+// back to killing the one process.)
+const DETACH = process.platform !== 'win32';
+
+function killTree(child) {
+  try {
+    if (DETACH && child.pid) process.kill(-child.pid, 'SIGKILL');
+    else child.kill('SIGKILL');
+  } catch { /* already gone */ }
+}
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { ...opts, env: ENV });
+    const child = spawn(cmd, args, { ...opts, env: ENV, detached: DETACH });
     let stdout = '', stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), opts.timeout ?? COMPILE_TIMEOUT_MS);
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
+    const timer = setTimeout(() => killTree(child), opts.timeout ?? COMPILE_TIMEOUT_MS);
+    child.stdout.on('data', (d) => { if (stdout.length < MAX_OUTPUT) stdout += d; });
+    child.stderr.on('data', (d) => { if (stderr.length < MAX_OUTPUT) stderr += d; });
     child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, stdout, stderr: String(err) }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
   });
@@ -110,9 +126,14 @@ export async function compile(root, overrides = {}) {
 
   const engineFlags = ENGINE_FLAGS[engine];
   if (!engineFlags) throw new HttpError(400, `Unknown engine: ${engine}`);
-  if (!fs.existsSync(path.join(root, mainFile))) {
-    throw new HttpError(400, `Main file not found: ${mainFile}`);
+  // Re-validate rather than trusting the stored value: .texlocal.json is a plain
+  // file the user can edit, and this string is about to become an argv element.
+  const mainRel = safeRelFile(root, mainFile);
+  if (!fs.existsSync(path.join(root, mainRel))) {
+    throw new HttpError(400, `Main file not found: ${mainRel}`);
   }
+  // "./" so latexmk reads it as a path no matter what it contains.
+  const mainArg = `./${mainRel.split(path.sep).join('/')}`;
 
   // One compile per project: kill any in-flight run first.
   running.get(root)?.();
@@ -130,30 +151,31 @@ export async function compile(root, overrides = {}) {
     '-halt-on-error',
     `-outdir=${BUILD_DIR}`,
     ...(shellEscape ? ['-shell-escape'] : []),
-    mainFile,
+    mainArg,
   ];
 
   const startedAt = Date.now();
-  const child = spawn('latexmk', args, { cwd: root, env: ENV });
+  const child = spawn('latexmk', args, { cwd: root, env: ENV, detached: DETACH });
   let stdout = '';
   let killed = false;
-  running.set(root, () => { killed = true; child.kill('SIGKILL'); });
-  child.stdout.on('data', (d) => (stdout += d));
-  child.stderr.on('data', (d) => (stdout += d));
+  running.set(root, () => { killed = true; killTree(child); });
+  const collect = (d) => { if (stdout.length < MAX_OUTPUT) stdout += d; };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
 
   const code = await new Promise((resolve) => {
-    const timer = setTimeout(() => child.kill('SIGKILL'), COMPILE_TIMEOUT_MS);
+    const timer = setTimeout(() => killTree(child), COMPILE_TIMEOUT_MS);
     child.on('error', () => { clearTimeout(timer); resolve(-1); });
     child.on('close', (c) => { clearTimeout(timer); resolve(c); });
   });
   if (running.get(root) && !killed) running.delete(root);
 
-  const base = path.basename(mainFile, path.extname(mainFile));
+  const base = path.basename(mainRel, path.extname(mainRel));
   const logPath = path.join(outdir, `${base}.log`);
   let log = stdout;
   try { log = await fsp.readFile(logPath, 'utf8'); } catch { /* fall back to stdout */ }
 
-  const issues = parseLog(log, mainFile);
+  const issues = parseLog(log, mainRel);
   const pdfPath = path.join(outdir, `${base}.pdf`);
   const pdfExists = fs.existsSync(pdfPath);
 

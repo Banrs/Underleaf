@@ -269,8 +269,14 @@ function setupDropzone(treeEl) {
   treeEl.addEventListener('drop', async (e) => {
     e.preventDefault();
     treeEl.classList.remove('drop-target');
-    const files = await collectDroppedFiles(e.dataTransfer);
-    if (files.length) await upload(files);
+    // Walking the dropped entries can reject (an unreadable folder, a permission
+    // refusal). Without this the drop failed silently as an unhandled rejection.
+    try {
+      const files = await collectDroppedFiles(e.dataTransfer);
+      if (files.length) await upload(files);
+    } catch (err) {
+      toast(err?.message || 'Could not read the dropped items', 'error');
+    }
   });
 }
 
