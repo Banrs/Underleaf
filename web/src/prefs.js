@@ -16,6 +16,7 @@ const DEFS = {
   sidebarCollapsed: { key: 'sidebar-collapsed', def: false, type: 'bool' },
   pdfCollapsed: { key: 'pdf-collapsed', def: false, type: 'bool' },
   editorFontSize: { key: 'fontsize', def: 14, type: 'num' },
+  editorFont: { key: 'editorfont', def: 'system', values: ['system', 'jetbrains'] },
   uiScale: { key: 'uiscale', def: 100, type: 'num' },
   sidebarWidth: { key: 'w-side', def: 0, type: 'num' },
   pdfWidth: { key: 'w-pdf', def: 0, type: 'num' },
@@ -101,6 +102,7 @@ export function applyAppearance({ onTheme } = {}) {
   root.classList.toggle('pdf-dark', pdfPaperIsDark());
   root.classList.toggle('floating', prefs.floating);
   root.style.setProperty('--editor-fs', `${prefs.editorFontSize}px`);
+  root.style.setProperty('--editor-font', prefs.editorFont === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
   document.body.style.zoom = prefs.uiScale / 100;
   onTheme?.(root.dataset.theme);
 }

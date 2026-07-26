@@ -5,11 +5,11 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import katex from 'katex';
 import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
-import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
+import { StreamLanguage, syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion } from '@codemirror/autocomplete';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES } from './latex-data.js';
 
 const themeCompartment = new Compartment();
@@ -32,16 +32,78 @@ const jumpFlashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+// Xcode 27's own Default (Light) and Default (Dark), read out of
+// Xcode-beta.app/Contents/SharedFrameworks/DVTUserInterfaceKit.framework/
+// Resources/FontAndColorThemes/*.xccolortheme — not sampled by eye. The editor
+// used to ship CodeMirror's generic default in light and One Dark in dark, so the
+// largest surface in the app was the one thing that looked nothing like macOS.
+//
+// `background` is deliberately NOT taken from the theme (Xcode's is #FFFFFF /
+// #1F1F24): the editor sits flush against this app's own panels, so it follows
+// the panel token and a one-value difference can't show up as a seam.
+const XCODE_THEME = {
+  light: {
+    plain: '#000000', comment: '#5D6C79', keyword: '#9B2393', string: '#C41A16',
+    number: '#1C00CF', macro: '#643820', type: '#1C464A', variable: '#326D74',
+    attribute: '#815F03', url: '#0E0EFF',
+    selection: '#A4CDFF', currentLine: '#E8F2FF', invisible: '#CCCCCC',
+  },
+  dark: {
+    plain: '#FFFFFF', comment: '#6C7986', keyword: '#FC5FA3', string: '#FC6A5D',
+    number: '#D0BF69', macro: '#FD8F3F', type: '#9EF1DD', variable: '#67B7A4',
+    attribute: '#BF8555', url: '#5482FF',
+    selection: '#515B70', currentLine: '#23252B', invisible: '#424D5B',
+  },
+};
+
+// The LaTeX (stex) mode's tokens mapped to Xcode's categories by meaning, read
+// off the mode's source rather than guessed:
+//   tagName             \commands and \% escapes        → keyword
+//   atom                braced arguments — environment, class, package, label,
+//                       ref and cite names             → type
+//   keyword             math-mode delimiters $ $$ \[ \( → macro; they switch mode
+//                       the way a preprocessor directive does, and having them
+//                       stand out is worth more than category purity here
+//   special(variableName) identifiers inside math       → variable
+// Brackets and punctuation stay in the plain colour, as they are in Xcode.
+const xcodeHighlight = (c) => HighlightStyle.define([
+  { tag: tags.tagName, color: c.keyword },
+  { tag: tags.atom, color: c.type },
+  { tag: tags.keyword, color: c.macro },
+  { tag: tags.special(tags.variableName), color: c.variable },
+  { tag: tags.standard(tags.variableName), color: c.variable },
+  { tag: tags.number, color: c.number },
+  { tag: tags.string, color: c.string },
+  { tag: tags.comment, color: c.comment },
+  { tag: tags.attributeName, color: c.attribute },
+  { tag: tags.link, color: c.url, textDecoration: 'underline' },
+  { tag: tags.bracket, color: c.plain },
+  { tag: tags.invalid, color: 'var(--red)' },
+]);
+
+const surfaceTheme = (c) => EditorView.theme({
+  '.cm-content': { caretColor: 'var(--accent)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+  // Xcode tints the current line and the selection blue rather than grey.
+  '.cm-activeLine': { backgroundColor: c.currentLine },
+  '.cm-activeLineGutter': { backgroundColor: c.currentLine },
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: c.selection },
+  '.cm-specialChar': { color: c.invisible },
+});
+
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)' },
-  // Subtle rule between the line-number gutter and the text: a faint inset
-  // background plus a hairline border. !important because oneDark also styles
-  // .cm-gutters (border: none) and would otherwise erase the rule in dark mode.
+  // Xcode's gutter carries no fill and no rule — it is the editor surface with
+  // dimmer numbers on it, and the current line's number brightens.
+  // (This block previously mixed `--text-dim` and `--border`, neither of which
+  // exists in the token set, so every declaration in it was invalid and dropped.
+  // The grey that showed up came from One Dark, not from here.)
   '.cm-gutters': {
-    backgroundColor: 'color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel)) !important',
-    borderRight: '1px solid var(--border) !important',
-    color: 'var(--text-dim)',
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: 'var(--label-3)',
   },
+  '.cm-activeLineGutter': { color: 'var(--label)' },
   // Right-align the line numbers with tabular figures so 1-, 2- and 3-digit
   // numbers line up on their last digit instead of looking ragged/left-leaning.
   '.cm-lineNumbers .cm-gutterElement': {
@@ -52,15 +114,11 @@ const baseTheme = EditorView.theme({
   // No extra left padding on the content: the code (and its active-line
   // highlight) sits flush against the gutter — no un-highlighted strip.
   '.cm-content': { paddingLeft: '0' },
-  '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
-  '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },
 });
 
-const lightTheme = [baseTheme, syntaxHighlighting(defaultHighlightStyle)];
-// oneDark bundles its own gutter styling (border: none), so layer baseTheme
-// AFTER it to keep the subtle gutter divider + panel-matched background in dark.
-const darkTheme = [oneDark, baseTheme];
+const lightTheme = [baseTheme, surfaceTheme(XCODE_THEME.light), syntaxHighlighting(xcodeHighlight(XCODE_THEME.light))];
+const darkTheme = [baseTheme, surfaceTheme(XCODE_THEME.dark), syntaxHighlighting(xcodeHighlight(XCODE_THEME.dark))];
 
 // ---------- live equation preview ----------
 // When the cursor sits inside math ($…$, \[…\], $$…$$, or a math environment),

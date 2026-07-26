@@ -140,6 +140,10 @@ export function openSettings() {
           toggle(() => prefs.autoCompile, (v) => { prefs.autoCompile = v; })),
         row('Word count', 'Show words and lines over the editor',
           toggle(() => prefs.showWordCount, (v) => { prefs.showWordCount = v; })),
+        row('Editor font', 'The system monospace matches Xcode; JetBrains Mono is bundled', segmented([
+          { value: 'system', label: 'System' },
+          { value: 'jetbrains', label: 'JetBrains' },
+        ], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
         row('Editor font size', null,
           stepper(FONT_SIZES, () => prefs.editorFontSize, (v) => { prefs.editorFontSize = v; }, (v) => `${v} pt`)),
         row('Interface scale', null,

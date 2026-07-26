@@ -112,7 +112,13 @@
   --shadow-pane: 0 0.5px 1px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.1);
 
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, system-ui, sans-serif;
-  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* System monospace first: `ui-monospace` resolves to SF Mono on macOS, which is
+     what Xcode sets, and to Cascadia Mono on Windows. JetBrains Mono is bundled
+     and stays selectable in Settings, but it is no longer the default — an app
+     that should read as native shouldn't ship its own code face ahead of the
+     platform's. */
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --mono-jetbrains: "JetBrains Mono", var(--mono);
 }
 
 [data-theme="dark"] {
@@ -564,15 +570,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
 .sidebar.collapsed + .divider { display: none; }
 
-/* Section header: Subheadline 11/14, secondary, 18px tall with a 14px gap
-   below — the kit's sidebar section metrics. */
+/* Section header, measured off the kit's Sidebars/Large/Header symbol: a 20-tall
+   band whose 16-tall content sits centred in it (y=2), 13 Bold, and — per the
+   Large/Section group, where the first Item starts at y=20 — NO gap before the
+   rows. Trailing accessories in that symbol are 20 wide, so the action buttons
+   below are sized to fit inside the band rather than stretching it (they were
+   28px, which made this header 28 tall while the Outline header stayed 20). */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
-  min-height: 20px;
-  margin: 0 0 var(--sp-1);
+  height: 20px;
+  margin: 0;
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
   font-size: var(--fs-header);
@@ -581,9 +591,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* kit section gap */
+.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
+/* Square 20px targets so the header keeps its 20px band; the kit's own trailing
+   accessories are 20 wide, and a square is a kinder pointer target than its 16
+   tall without changing any layout. */
+.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-small); }
+.section-actions .icon-btn svg { width: 14px; height: 14px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
 .twisty svg { width: 13px; height: 13px; transition: transform 0.14s ease; }
@@ -654,7 +669,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .tree-children { padding-left: var(--sp-4); }
 
 .outline-row {
-  height: 32px;
+  /* Same row height as the file tree. Both carry 15/20 text, and the kit's Large
+     Items master — the variant that pairs with 15/20 — is 40 tall; two densities
+     in one sidebar was the mismatch, not the type size. */
+  height: var(--h-row);
   padding-right: var(--sp-2);
   color: var(--label);
   white-space: nowrap;
@@ -667,12 +685,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .outline-row:hover { background-color: var(--fill-4); }
 
+/* A toolbar band, so it gets the kit's toolbar height rather than the 46px that
+   asymmetric padding happened to add up to. 44 = a 28 control with 8 above and
+   below. */
 .sidebar-footer {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   flex: none;
-  padding: var(--sp-2) 10px calc(var(--sp-2) + 2px);
+  height: var(--h-toolbar);
+  padding: 0 10px;
   box-shadow: inset 0 0.5px 0 var(--separator);
 }
 .engine-status {
@@ -787,7 +809,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .editor-host { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
-.editor-host .cm-scroller { font-family: var(--mono); line-height: 1.6; }
+/* 1.45 rather than 1.6: code wants tighter leading than prose, Xcode's own is
+   about 1.3, and 1.6 was costing a visible line of context per screen. */
+.editor-host .cm-scroller { font-family: var(--editor-font, var(--mono)); line-height: 1.45; }
 .editor-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--label-2); padding: var(--sp-6); text-align: center; }
 
 .image-preview { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: var(--sp-5); background: var(--bg-recessed); }

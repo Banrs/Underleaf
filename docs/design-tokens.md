@@ -32,6 +32,11 @@ Section headers scale with the variant too: Small/Medium use 11 Bold in an 18px
 box, **Large uses 13 Bold in a 20px box** — pairing an 11px header with 15px rows
 is the mismatch that reads wrong.
 
+**Row height follows the text size, so one sidebar gets one row height.** The
+outline used 32px rows next to the file tree's 40px while both rendered 15/20
+text; the kit's Large `Items` master — the variant that carries 15/20 — is 40, so
+both are 40 now. Two densities in one pane was the mismatch, not the type size.
+
 **Measured component text** (weights matter as much as sizes — most control text
 is *Medium*, not Regular, and titles are heavier than web defaults):
 
@@ -128,12 +133,71 @@ nothing needs an ad-hoc radius.
 | Sidebar | **256** wide |
 | Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
 | Sidebar content inset | 14 (selection pill bleeds to 10) |
-| Sidebar section header | Large: 20 tall, 13 Bold, 16 gap below |
+| Sidebar section header | 20 tall, 13 Bold, content 16 tall centred (y=2), **no gap before the rows** |
+| Section header accessory | 20 wide (kit's `Headers - Trailing`); square here for a kinder target |
+| Sidebar footer | 44 — a toolbar band, not the 46 that asymmetric padding produced |
 | Traffic lights | 68 × 14 at x **18**, y **19** (centred in the 52 bar) |
 | Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
 | Switch (regular) | 54 × 24 |
 | Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
 | Scrollbar | 12 |
+
+## The editor: Xcode 27's Default themes
+
+The reference app for this one is Xcode, so the editor uses **Xcode 27's own
+Default (Light) and Default (Dark)**, read out of the installed beta rather than
+sampled by eye:
+
+```
+/Applications/Xcode-beta.app/Contents/SharedFrameworks/
+  DVTUserInterfaceKit.framework/Versions/A/Resources/FontAndColorThemes/
+    Default (Light).xccolortheme      # plists; DVTSourceTextSyntaxColors
+    Default (Dark).xccolortheme       # holds "r g b a" component strings
+```
+
+It previously shipped CodeMirror's generic `defaultHighlightStyle` in light and
+**One Dark** in dark, so the largest surface in the app was the one that looked
+least like macOS.
+
+The LaTeX (`stex`) mode's tokens are mapped to Xcode's categories **by meaning**,
+read off the mode's source rather than guessed at:
+
+| stex token | What it is in LaTeX | Xcode category | Light | Dark |
+| --- | --- | --- | --- | --- |
+| `tagName` | `\commands`, `\%` escapes | keyword | `#9B2393` | `#FC5FA3` |
+| `atom` | braced args — environment, class, package, label, ref, cite | identifier.type | `#1C464A` | `#9EF1DD` |
+| `keyword` | math delimiters `$ $$ \[ \(` | preprocessor | `#643820` | `#FD8F3F` |
+| `special(variableName)` | identifiers inside math | identifier.variable | `#326D74` | `#67B7A4` |
+| `number` | numbers in math | number | `#1C00CF` | `#D0BF69` |
+| `comment` | `%…` | comment | `#5D6C79` | `#6C7986` |
+| `string` | quoted | string | `#C41A16` | `#FC6A5D` |
+| `bracket` | `{}` `[]` | *plain* — Xcode leaves punctuation uncoloured | | |
+
+Math delimiters get the preprocessor colour because they switch mode the way a
+preprocessor directive does, and having them stand out is worth more here than
+category purity.
+
+Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
+invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's
+(`#FFFFFF`/`#1F1F24`) — the editor sits flush against this app's panels, so it
+follows `--bg-panel` and a one-value difference can't show as a seam.
+
+Gutter: no fill, no rule, dim numbers, and the current line's number brightens —
+Xcode's treatment. (The previous rule mixed `--text-dim` and `--border`, neither
+of which exists in the token set, so every declaration in it was invalid and
+dropped; the grey that appeared came from One Dark.)
+
+**Monospace: the platform's, not a bundled one.** `--mono` starts at
+`ui-monospace`, which resolves to SF Mono on macOS (what Xcode sets) and Cascadia
+Mono on Windows. JetBrains Mono stays bundled and selectable in Settings, but an
+app that should read as native shouldn't ship its own code face ahead of the
+platform's. Leading is 1.45 — code wants tighter than prose, Xcode's is about 1.3,
+and 1.6 was costing a line of context per screen.
+
+**Xcode has no semantic colour catalogue to copy.** Its `Assets.car` holds only 27
+unnamed branding colours (`assetutil --info` will show them); the chrome is drawn
+with system `NSColor`s. So the macOS 27 UI Kit stays the authority for everything
+outside the editor, and matching "Xcode" means matching the system.
 
 ## Platform abstraction
 
