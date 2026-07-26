@@ -11,11 +11,15 @@ import * as pdfjs from 'pdfjs-dist';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
-const H_PAD = 20;   // must track .pdf-scroll horizontal padding
-const V_PAD = 68;   // must track .pdf-scroll vertical padding (44px toolbar + 12 top, 12 bottom)
-const PAGE_GAP = 10;
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 4;
+const PINCH_SETTLE_MS = 220;
+// How far one gesture may stretch the already-rendered canvases before it
+// settles into a sharp re-render. Beyond this the preview looks soft.
+const PINCH_MIN = 0.4;
+const PINCH_MAX = 2.5;
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 export class PdfViewer {
   constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
@@ -32,68 +36,73 @@ export class PdfViewer {
     this.scale = null;          // explicit scale, or null → use fitMode
     this.fitMode = 'width';     // 'width' | 'height' when scale is null
     this.seq = 0;
-    this.tasks = [];            // in-flight pdf.js RenderTasks
-    this.pinch = 1;
+    this._paintPass = 0;        // guards against overlapping lazy-paint passes
     this.lastFitW = 0;
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
     this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
     this._anchor = null;          // PDF point to pin across a pinch re-render
+    this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
+    this._padL = 0;               // scroller padding, cached by #metrics
+    this._padT = 0;
+    this._padR = 0;
+    this._padB = 0;
 
-    scrollEl.addEventListener('scroll', () => this.#reportPage());
+    // Scrolling now has to drive painting, since only the pages near the viewport
+    // hold pixels. Debounced so a flick doesn't queue a paint for every page it
+    // passes over.
+    scrollEl.addEventListener('scroll', () => {
+      this.#reportPage();
+      clearTimeout(this._paintTimer);
+      this._paintTimer = setTimeout(() => { if (!this.rendering) this.#paintNear(this.seq); }, 90);
+    });
 
-    // Pinch or Command/Ctrl-scroll follows the pointer on each scrollable axis.
-    // If an axis fits, that axis pivots around the viewport centre instead.
+    // Pinch (or Command/Ctrl-scroll) keeps the content point under the fingers
+    // under the fingers, and centres an axis once the content fits it. Both come
+    // out of one clamp on the content offset rather than two pivot "modes", so
+    // the transition is continuous — see #pinchOffset.
     scrollEl.addEventListener('wheel', (e) => {
       if (!(e.ctrlKey || e.metaKey) || !this.pagesEl) return;
       e.preventDefault();
       const rect = this.scrollEl.getBoundingClientRect();
-      const pointerX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-      const pointerY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-      const generation = ++this._pinchGeneration;
+      // A gesture that arrives while its own settle render is still in flight
+      // simply continues: bumping the generation aborts that render, and the
+      // existing gesture state still describes what is on screen. (Deriving
+      // "gesture start" from `pinch === 1` used to miss this case and re-pivot
+      // on a stale pointer position — the "forgets to work if I go fast" bug.)
+      const g = this._pinch ?? this.#beginPinch(rect, e);
+      this._pinchGeneration++;
 
-      if (this.pinch === 1) {
-        const modes = this.#pinchModes(null, null);
-        this._pinchModeX = modes.x;
-        this._pinchModeY = modes.y;
-        this.#setPinchPivot(pointerX, pointerY, modes.x, modes.y);
-      }
+      // Mouse wheels report much larger deltas than trackpad pinch events. Cap
+      // one event at roughly a 22% step while keeping pinch movement fluid, and
+      // never let the preview run past the absolute limits, or settling would
+      // snap back to them.
+      const base = this.currentScale();
+      const delta = clamp(e.deltaY * (e.deltaMode === 1 ? 8 : 1), -20, 20);
+      g.k = clamp(
+        g.k * Math.exp(-delta * 0.01),
+        Math.max(PINCH_MIN, MIN_SCALE / base),
+        Math.min(PINCH_MAX, MAX_SCALE / base),
+      );
 
-      // Mouse wheels can report much larger deltas than trackpad pinch events.
-      // Cap one event at roughly a 22% step while keeping pinch movement fluid.
-      const delta = Math.max(-20, Math.min(20, e.deltaY * (e.deltaMode === 1 ? 8 : 1)));
-      this.pinch = Math.max(0.4, Math.min(2.5, this.pinch * Math.exp(-delta * 0.01)));
-      this.pagesEl.style.transformOrigin = `${this._pinchOriginX}px ${this._pinchOriginY}px`;
-      this.pagesEl.style.transform = `scale(${this.pinch})`;
+      // Where the anchored content point should sit: under the fingers now (the
+      // trackpad midpoint travels during a pinch, so this pans as it zooms).
+      const box = this.#contentBox();
+      g.offX = this.#pinchOffset(e.clientX - rect.left - g.padL - g.qX * g.k, box.w - g.W * g.k);
+      g.offY = this.#pinchOffset(e.clientY - rect.top - g.padT - g.qY * g.k, box.h - g.H * g.k);
+      this.#applyPinch(g);
 
-      // Re-evaluate both axes after every scale step. Crossing the fit boundary
-      // changes only that axis: fitting content recentres immediately; newly
-      // overflowing content starts following the pointer without a visual jump.
-      const modes = this.#pinchModes(this._pinchModeX, this._pinchModeY);
-      if (modes.x !== this._pinchModeX || modes.y !== this._pinchModeY) {
-        this.#setPinchPivot(
-          pointerX,
-          pointerY,
-          modes.x,
-          modes.y,
-          modes.x && !this._pinchModeX,
-          modes.y && !this._pinchModeY,
-        );
-        this._pinchModeX = modes.x;
-        this._pinchModeY = modes.y;
-      }
-
-      this.onZoomChange?.(Math.round(this.currentScale() * this.pinch * 100), null);
+      this.onZoomChange?.(Math.round(base * g.k * 100), null);
       clearTimeout(this._pinchTimer);
-      this._pinchTimer = setTimeout(() => this.#settlePinch(generation), 220);
+      this._pinchTimer = setTimeout(() => this.#settlePinch(g), PINCH_SETTLE_MS);
     }, { passive: false });
 
     // Re-fit only on genuine pane-width changes. Guards: ignore while a render
     // is in flight, ignore sub-scrollbar jitter, and debounce — together these
     // prevent the scrollbar-toggles-width feedback loop.
     this.ro = new ResizeObserver(() => {
-      if (this.scale !== null || !this.doc || this.rendering || this._resizing) return;
+      if (this.scale !== null || !this.doc || this.rendering || this._resizing || this._pinch) return;
       const w = this.scrollEl.clientWidth;
       if (Math.abs(w - this.lastFitW) < 16) return;
       this.lastFitW = w;
@@ -101,6 +110,13 @@ export class PdfViewer {
       this._roTimer = setTimeout(() => { if (!this.rendering) this.render(); }, 200);
     });
     this.ro.observe(scrollEl);
+
+    // A hidden or fully occluded window does not rasterize, and a page render
+    // issued while it is in that state never settles — so a reader who switches
+    // away mid-render and comes back would find blank pages. Repaint on the way
+    // back in.
+    this._onVisible = () => { if (!document.hidden && this.doc) this.#paintNear(this.seq); };
+    document.addEventListener('visibilitychange', this._onVisible);
   }
 
   get numPages() { return this.doc?.numPages ?? 0; }
@@ -116,22 +132,74 @@ export class PdfViewer {
     await this.render();
   }
 
+  // The scroller's padding and the content box inside it, read from the
+  // stylesheet instead of mirrored as constants here. The mirrors had drifted:
+  // the gap constant said 10 where the CSS said 8, and the vertical padding was
+  // assumed to be split evenly when it is 56 top / 12 bottom. Caches the padding
+  // for the hot paths (#reportPage runs on every scroll event).
+  #metrics() {
+    const cs = getComputedStyle(this.scrollEl);
+    this._padL = parseFloat(cs.paddingLeft) || 0;
+    this._padT = parseFloat(cs.paddingTop) || 0;
+    this._padR = parseFloat(cs.paddingRight) || 0;
+    this._padB = parseFloat(cs.paddingBottom) || 0;
+    const { w, h } = this.#contentBox();
+    return { padL: this._padL, padT: this._padT, cvw: w, cvh: h };
+  }
+
+  // Read live rather than cached for the duration of a gesture: a horizontal
+  // scrollbar appears once the content is wider than the pane and takes ~11px of
+  // height with it, so a gesture holding the box it started with would centre
+  // the vertical axis against the wrong height.
+  #contentBox() {
+    return {
+      w: Math.max(1, (this.scrollEl.clientWidth || 700) - this._padL - this._padR),
+      h: Math.max(1, (this.scrollEl.clientHeight || 800) - this._padT - this._padB),
+    };
+  }
+
+  // Content coordinates are the pages element's own space — exactly what
+  // offsetLeft/offsetTop report, given that .pdf-pages is positioned. This maps a
+  // point measured from the scroller's top-left corner into that space; the
+  // padding is accounted for here and nowhere else.
+  #toContent(x, y) {
+    return {
+      x: x - this._padL + this.scrollEl.scrollLeft,
+      y: y - this._padT + this.scrollEl.scrollTop,
+    };
+  }
+
   #fitScale(page) {
     const base = page.getViewport({ scale: 1 });
-    const w = this.scrollEl.clientWidth || 700;
-    const h = this.scrollEl.clientHeight || 800;
-    const avail = this.fitMode === 'height' ? (h - V_PAD) / base.height : (w - H_PAD) / base.width;
-    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, avail));
+    const { cvw, cvh } = this.#metrics();
+    const avail = this.fitMode === 'height' ? cvh / base.height : cvw / base.width;
+    return clamp(avail, MIN_SCALE, MAX_SCALE);
   }
 
   async render(pinchGeneration = null) {
     if (!this.doc) return;
     const seq = ++this.seq;
     this.rendering = true;
-    for (const t of this.tasks) t.cancel();
-    this.tasks = [];
+    this.#cancelPaints();
+    // Every early return inside the pass means a newer pass took over. Clearing
+    // the flag in `finally` stops an abandoned pass from locking the re-fit
+    // observer out for the rest of the session, which is what happened whenever
+    // a fresh pinch aborted the previous gesture's settle render.
+    try {
+      await this.#renderPass(seq, pinchGeneration);
+    } finally {
+      if (seq === this.seq) this.rendering = false;
+    }
+  }
 
+  #stale(seq, pinchGeneration) {
+    return seq !== this.seq
+      || (pinchGeneration !== null && pinchGeneration !== this._pinchGeneration);
+  }
+
+  async #renderPass(seq, pinchGeneration) {
     const dpr = window.devicePixelRatio || 1;
+    this.#metrics();   // refresh the cached padding; a fixed zoom never calls #fitScale
     const oldH = this.scrollEl.scrollHeight;
     const ratio = oldH ? this.scrollEl.scrollTop / oldH : 0;
     const oldW = this.scrollEl.scrollWidth;
@@ -140,9 +208,6 @@ export class PdfViewer {
       : 0.5;
     const anchor = this._anchor;
     this._anchor = null;
-    // The page under the viewport in the OLD layout — painted first after the
-    // swap so the visible area fills in before anything off-screen.
-    const keepPage = anchor?.pageIndex ?? Math.max(0, this.currentPage() - 1);
 
     // Build the page shells (one scale for the whole pass).
     const pagesEl = document.createElement('div');
@@ -150,7 +215,7 @@ export class PdfViewer {
     const pages = [];
     let scale = null;
     for (let n = 1; n <= this.doc.numPages; n++) {
-      if (seq !== this.seq) return;
+      if (this.#stale(seq, pinchGeneration)) return;
       const page = await this.doc.getPage(n);
       scale = scale ?? (this.scale ?? this.#fitScale(page));
       const viewport = page.getViewport({ scale });
@@ -159,9 +224,11 @@ export class PdfViewer {
       wrap.className = 'pdf-page-wrap';
       wrap.dataset.page = n;
 
+      // Laid out at full size but with no backing store yet: #paintCanvas
+      // allocates the pixels only for the pages that need them.
       const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.width = 0;
+      canvas.height = 0;
       canvas.style.width = `${viewport.width}px`;
       canvas.style.height = `${viewport.height}px`;
       wrap.appendChild(canvas);
@@ -180,143 +247,181 @@ export class PdfViewer {
       pagesEl.appendChild(wrap);
       pages.push({ n, page, wrap, canvas, textLayer, viewport, scale });
     }
-    if (seq !== this.seq || (pinchGeneration !== null && pinchGeneration !== this._pinchGeneration)) return;
-
-    // Which pages the new scale can expose — these are painted first after the
-    // swap. Painting only the current page and its successor leaves blank
-    // canvases in view when a zoom-out reveals several pages at once.
-    const viewportH = this.scrollEl.clientHeight;
-    const anchorPageTop = anchor
-      ? pages.slice(0, anchor.pageIndex).reduce((h, p) => h + p.viewport.height + PAGE_GAP, V_PAD / 2)
-      : 0;
-    const estimatedTop = anchor
-      ? Math.max(0, anchorPageTop + anchor.pageY * scale - anchor.viewY)
-      : ratio * (V_PAD + pages.reduce((h, p) => h + p.viewport.height + PAGE_GAP, -PAGE_GAP));
-    let pageTop = V_PAD / 2;
-    const ready = new Set([keepPage]);
-    for (let i = 0; i < pages.length; i++) {
-      const pageBottom = pageTop + pages[i].viewport.height;
-      if (pageBottom >= estimatedTop - viewportH && pageTop <= estimatedTop + viewportH * 2) ready.add(i);
-      pageTop = pageBottom + PAGE_GAP;
-    }
-    if (seq !== this.seq || (pinchGeneration !== null && pinchGeneration !== this._pinchGeneration)) return;
+    if (this.#stale(seq, pinchGeneration)) return;
 
     // Swap the (still blank) pages in and restore the position in the same frame.
     // Canvases must be attached AND visible before page.render(): Chromium does
     // not rasterize a detached or `visibility: hidden` canvas, so painting into an
     // off-screen buffer first leaves render() pending forever.
-    if (pinchGeneration !== null) this.pinch = 1;
+    //
+    // Committing ends any gesture: its preview transform lives on the element
+    // this swap discards, and its cached geometry describes the old scale.
+    this._pinch = null;
     this.pagesEl = pagesEl;
     this.scrollEl.replaceChildren(pagesEl);
     this.pages = pages;
-    if (anchor) {
-      this.#restoreAnchor(anchor, pages, scale);
-    } else {
-      this.scrollEl.scrollLeft = Math.max(
-        0,
-        centerRatioX * this.scrollEl.scrollWidth - this.scrollEl.clientWidth / 2,
-      );
+    if (!(anchor && this.#restoreAnchor(anchor, pages))) {
+      this.scrollEl.scrollLeft = centerRatioX * this.scrollEl.scrollWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollTop = ratio * this.scrollEl.scrollHeight;
     }
-    if (this.scale === null) this.lastFitW = this.scrollEl.clientWidth;
+    this.lastFitW = this.scrollEl.clientWidth;
     this.onZoomChange?.(Math.round(scale * 100), this.scale === null ? this.fitMode : null);
     this.#reportPage();
 
-    // Paint what the viewport can expose first, then the remainder top-to-bottom,
-    // so the visible page appears immediately on a long document.
-    for (const i of [...ready, ...pages.keys()]) {
-      if (i < 0 || i >= pages.length) continue;
-      if (seq !== this.seq) return;
-      if (pages[i]._painted) continue;
-      if (!(await this.#paintCanvas(pages[i], dpr))) return;
-      this.#buildTextLayer(pages[i], seq);
-    }
+    await this.#paintNear(seq);
     this.#reportPage();
-    if (seq === this.seq) { this.rendering = false; this.lastFitW = this.scrollEl.clientWidth; }
   }
 
-  #restoreAnchor(anchor, pages, scale) {
-    const target = pages[anchor.pageIndex];
-    if (!target) return;
+  // ---------- painting ----------
 
-    const scrollRect = this.scrollEl.getBoundingClientRect();
-    const pageRect = target.wrap.getBoundingClientRect();
-    const anchorX = pageRect.left + anchor.pageX * scale - scrollRect.left;
-    const anchorY = pageRect.top + anchor.pageY * scale - scrollRect.top;
-    const nextLeft = this.scrollEl.scrollLeft + anchorX - anchor.viewX;
-    const maxLeft = Math.max(0, this.scrollEl.scrollWidth - this.scrollEl.clientWidth);
-    this.scrollEl.scrollLeft = Math.max(0, Math.min(maxLeft, nextLeft));
-    const nextTop = this.scrollEl.scrollTop + anchorY - anchor.viewY;
-    const maxTop = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
-    this.scrollEl.scrollTop = Math.max(0, Math.min(maxTop, nextTop));
-  }
-
-  async #settlePinch(generation) {
-    if (generation !== this._pinchGeneration || this.pinch === 1) return;
-    const factor = this.pinch;
-    this._anchor = this._pinchAnchor;
-    this.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, this.currentScale() * factor));
-    await this.render(generation);
-  }
-
-  #pinchModes(previousX, previousY) {
-    const page = this.pages[this.currentPage() - 1] ?? this.pages[0];
-    const first = this.pages[0]?.wrap.getBoundingClientRect();
-    const last = this.pages.at(-1)?.wrap.getBoundingClientRect();
-    const pageWidth = page?.wrap.getBoundingClientRect().width ?? 0;
-    const documentHeight = first && last ? last.bottom - first.top : 0;
-    const threshold = 2;
-    return {
-      x: previousX === null
-        ? pageWidth > this.scrollEl.clientWidth
-        : pageWidth > this.scrollEl.clientWidth + (previousX ? -threshold : threshold),
-      y: previousY === null
-        ? documentHeight > this.scrollEl.clientHeight
-        : documentHeight > this.scrollEl.clientHeight + (previousY ? -threshold : threshold),
-    };
-  }
-
-  #setPinchPivot(pointerX, pointerY, usePointerX, usePointerY, preserveX = false, preserveY = false) {
-    const scrollRect = this.scrollEl.getBoundingClientRect();
-    const viewX = usePointerX ? pointerX : scrollRect.width / 2;
-    const viewY = usePointerY ? pointerY : scrollRect.height / 2;
-    const anchor = this.#viewAnchor(viewX, viewY, this.currentScale() * this.pinch);
-    if (!anchor) return;
-
-    const target = this.pages[anchor.pageIndex]?.wrap;
-    const before = target?.getBoundingClientRect();
-    const pagesRect = this.pagesEl.getBoundingClientRect();
-    this._pinchOriginX = (scrollRect.left + viewX - pagesRect.left) / this.pinch;
-    this._pinchOriginY = (scrollRect.top + viewY - pagesRect.top) / this.pinch;
-    this.pagesEl.style.transformOrigin = `${this._pinchOriginX}px ${this._pinchOriginY}px`;
-
-    // Enabling pointer mode must not jump at the boundary. Disabling it is
-    // intentionally uncompensated so the fitting axis recentres immediately.
-    if (before && (preserveX || preserveY)) {
-      const after = target.getBoundingClientRect();
-      if (preserveX) this.scrollEl.scrollLeft += after.left - before.left;
-      if (preserveY) this.scrollEl.scrollTop += after.top - before.top;
+  // Pages within this many viewport heights of the scroll position hold a painted
+  // backing store; the rest are released. Painting the whole document is what
+  // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
+  // enough to stall the compositor for seconds per zoom step.
+  #nearPages() {
+    const top = this.scrollEl.scrollTop - this._padT;
+    const vh = this.scrollEl.clientHeight;
+    const near = [];
+    for (const [i, p] of this.pages.entries()) {
+      if (p.wrap.offsetTop + p.wrap.offsetHeight >= top - vh * 1.5 && p.wrap.offsetTop <= top + vh * 2.5) near.push(i);
     }
-    this._pinchAnchor = this.#viewAnchor(viewX, viewY, this.currentScale() * this.pinch);
+    return near;
   }
 
-  #viewAnchor(viewX = this.scrollEl.clientWidth / 2, viewY = this.scrollEl.clientHeight / 2, scale = this.currentScale()) {
-    const scrollRect = this.scrollEl.getBoundingClientRect();
-    const clientY = scrollRect.top + viewY;
-    const page = this.pages.find((p) => {
-      const r = p.wrap.getBoundingClientRect();
-      return clientY >= r.top && clientY <= r.bottom;
-    }) ?? this.pages[this.currentPage() - 1];
-    if (!page) return null;
+  // Paint what is near the viewport and free the pixel buffers of what is not.
+  // Only the buffer is released — the canvas stays attached, visible and at its
+  // full CSS size, because pdf.js silently never settles on a canvas that is
+  // detached or hidden, and because the layout has to stay put for the page
+  // geometry (and so the scroll position) to remain valid.
+  // Stop every in-flight page render. Concurrent render() calls on one page proxy
+  // deadlock pdf.js, so a new pass must clear the old one before re-rendering the
+  // same pages at a new scale.
+  #cancelPaints() {
+    for (const p of this.pages) {
+      p._task?.cancel();
+      p._task = null;
+    }
+  }
 
-    const pageRect = page.wrap.getBoundingClientRect();
+  async #paintNear(seq) {
+    // Only the newest pass proceeds. Scrolling quickly starts a pass per stop,
+    // and without this they all keep going, each awaiting pages the reader has
+    // already left behind.
+    const pass = ++this._paintPass;
+    const near = new Set(this.#nearPages());
+
+    for (const [i, p] of this.pages.entries()) {
+      if (near.has(i)) continue;
+      // Stop work already in flight on a page that has gone off-screen, rather
+      // than letting it finish into a buffer about to be thrown away.
+      p._task?.cancel();
+      p._task = null;
+      if (!p.canvas.width) continue;
+      p.canvas.width = 0;
+      p.canvas.height = 0;
+      p._painted = false;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    for (const i of near) {
+      if (seq !== this.seq || pass !== this._paintPass) return;
+      if (this.pages[i]._painted) continue;
+      // One cancelled page is not a reason to abandon the others — the guard
+      // above is what decides whether this pass is still the current one.
+      if (await this.#paintCanvas(this.pages[i], dpr)) this.#buildTextLayer(this.pages[i], seq);
+    }
+  }
+
+  // ---------- pinch ----------
+  //
+  // One equation governs the whole gesture: a content point q appears at content
+  // box position `off + q * k`, where k is the gesture's scale and `off` is the
+  // pages element's offset. Driving `off` directly — rather than moving a
+  // transform-origin around and patching up the scroll afterwards — is what makes
+  // the gesture exact. Nothing here reads a bounding rect, so nothing accumulates
+  // error, and the whole thing costs two scroll reads per frame instead of a
+  // forced layout over every page.
+
+  #beginPinch(rect, e) {
+    const g = { ...this.#metrics(), k: 1, offX: 0, offY: 0 };
+    g.W = this.pagesEl.offsetWidth;
+    g.H = this.pagesEl.offsetHeight;
+    // The content point under the fingers, held there for the whole gesture.
+    const q = this.#toContent(e.clientX - rect.left, e.clientY - rect.top);
+    g.qX = q.x;
+    g.qY = q.y;
+    this._pinch = g;
+    return g;
+  }
+
+  // `slack` is viewport minus scaled content: negative while the axis overflows
+  // (so the offset is a pan, bounded by the edges), positive once it fits (so the
+  // axis is centred). The two cases meet at slack = 0, where the pan range has
+  // collapsed to exactly the centred offset — which is why the hand-off from
+  // following the fingers to pivoting on the window centre has no jump, and no
+  // mode flag that can get stuck on the wrong side of a threshold.
+  #pinchOffset(want, slack) {
+    return slack >= 0 ? slack / 2 : clamp(want, slack, 0);
+  }
+
+  // Scroll is re-read every frame on purpose: a transform feeds the scroller's
+  // overflow, so the browser quietly clamps scrollTop/scrollLeft as the content
+  // shrinks mid-gesture. Deriving the translation from the live scroll absorbs
+  // that; treating the gesture-start scroll as fixed drifts by exactly it.
+  #applyPinch(g) {
+    this.pagesEl.style.transformOrigin = '0 0';
+    this.pagesEl.style.transform =
+      `translate(${g.offX + this.scrollEl.scrollLeft}px, ${g.offY + this.scrollEl.scrollTop}px) scale(${g.k})`;
+  }
+
+  async #settlePinch(g) {
+    if (g !== this._pinch || g.k === 1) return;
+    this._anchor = this.#pinchAnchor(g);
+    this.scale = clamp(this.currentScale() * g.k, MIN_SCALE, MAX_SCALE);
+    await this.render(this._pinchGeneration);
+  }
+
+  // Freeze the gesture as a page-relative anchor: the PDF point that was pinned,
+  // and the content box position it must land back on. Resolving it against a
+  // page (rather than the document as a whole) is what keeps a long document
+  // accurate — the inter-page gaps and the centring margins don't scale with the
+  // zoom, so a document-relative anchor drifts by them, one gap per page.
+  #pinchAnchor(g) {
+    const at = this.#pageAt(g.qX, g.qY);
+    return at && { ...at, viewX: g.offX + g.qX * g.k, viewY: g.offY + g.qY * g.k };
+  }
+
+  // Which page owns a content point, and where on it in PDF points. Deliberately
+  // unclamped: a pinch centred on the gap between two pages, or on the grey
+  // margin beside one, still resolves to an exact point that survives the
+  // re-render. Clamping it into the page box was itself a visible drift.
+  #pageAt(x, y) {
+    const p = this.pages.find((q) => y <= q.wrap.offsetTop + q.wrap.offsetHeight) ?? this.pages.at(-1);
+    if (!p) return null;
     return {
-      pageIndex: page.n - 1,
-      pageX: Math.max(0, Math.min(pageRect.width, scrollRect.left + viewX - pageRect.left)) / scale,
-      pageY: Math.max(0, Math.min(pageRect.height, clientY - pageRect.top)) / scale,
-      viewX,
-      viewY,
+      pageIndex: p.n - 1,
+      pageX: (x - p.wrap.offsetLeft) / p.scale,
+      pageY: (y - p.wrap.offsetTop) / p.scale,
     };
+  }
+
+  // The centre of the viewport — what a zoom command or menu pivots on.
+  #centerAnchor() {
+    const { padL, padT, cvw, cvh } = this.#metrics();
+    const q = this.#toContent(padL + cvw / 2, padT + cvh / 2);
+    const at = this.#pageAt(q.x, q.y);
+    return at && { ...at, viewX: cvw / 2, viewY: cvh / 2 };
+  }
+
+  // Put the anchor's PDF point back where it was. The new pages carry no
+  // transform, so a content point sits at `point - scroll`; out-of-range
+  // assignments clamp themselves. False if the anchor's page is gone.
+  #restoreAnchor(anchor, pages) {
+    const target = pages[anchor.pageIndex];
+    if (!target) return false;
+    this.scrollEl.scrollLeft = target.wrap.offsetLeft + anchor.pageX * target.scale - anchor.viewX;
+    this.scrollEl.scrollTop = target.wrap.offsetTop + anchor.pageY * target.scale - anchor.viewY;
+    return true;
   }
 
   // Paint one page's canvas (dpr-scaled). Returns false if this render pass was
@@ -336,7 +441,7 @@ export class PdfViewer {
       const ctx = p.canvas.getContext('2d');
       ctx.scale(dpr, dpr);
       const task = p.page.render({ canvasContext: ctx, viewport: p.viewport });
-      this.tasks.push(task);
+      p._task = task;
       try {
         await task.promise;
       } catch (err) {
@@ -344,6 +449,7 @@ export class PdfViewer {
         throw err;
       } finally {
         p._paint = null;
+        if (p._task === task) p._task = null;
       }
       p._painted = true;
       return true;
@@ -385,14 +491,14 @@ export class PdfViewer {
   currentScale() { return this.pages[0]?.scale ?? 1; }
 
   async zoomBy(factor) {
-    this._anchor ??= this.#viewAnchor();
-    this.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, this.currentScale() * factor));
+    this._anchor ??= this.#centerAnchor();
+    this.scale = clamp(this.currentScale() * factor, MIN_SCALE, MAX_SCALE);
     await this.render();
   }
 
   async setScale(scale) {
-    this._anchor ??= this.#viewAnchor();
-    this.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+    this._anchor ??= this.#centerAnchor();
+    this.scale = clamp(scale, MIN_SCALE, MAX_SCALE);
     await this.render();
   }
 
@@ -433,8 +539,13 @@ export class PdfViewer {
 
   // ---------- page tracking ----------
 
+  // A third of the way down the viewport, in content coordinates.
+  #viewMark() {
+    return this.scrollEl.scrollTop - this._padT + this.scrollEl.clientHeight / 3;
+  }
+
   currentPage() {
-    const mid = this.scrollEl.scrollTop + this.scrollEl.clientHeight / 3;
+    const mid = this.#viewMark();
     let best = 1;
     for (const p of this.pages) if (p.wrap.offsetTop <= mid) best = p.n;
     return best;
@@ -470,8 +581,7 @@ export class PdfViewer {
     }
     // No text on this page (e.g. a figure-only page): fall back to a point in
     // the text column at the viewport top.
-    const mid = this.scrollEl.scrollTop + this.scrollEl.clientHeight / 3;
-    const yPts = Math.max(5, (mid - p.wrap.offsetTop) / p.scale);
+    const yPts = Math.max(5, (this.#viewMark() - p.wrap.offsetTop) / p.scale);
     const pageHeightPts = p.viewport.height / p.scale;
     const pageWidthPts = p.viewport.width / p.scale;
     return { page: p.n, x: Math.round(pageWidthPts / 2.5), y: Math.round(Math.min(yPts, pageHeightPts - 5)) };
@@ -490,16 +600,21 @@ export class PdfViewer {
     flash.style.width = `${Math.max(24, (loc.width ?? 0) * s) + 4}px`;
     flash.style.height = `${h + 4}px`;
     p.wrap.appendChild(flash);
-    const targetTop = p.wrap.offsetTop + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
+    const targetTop = this._padT + p.wrap.offsetTop + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
     setTimeout(() => flash.remove(), 2400);
   }
 
   destroy() {
     this.seq++;
-    for (const t of this.tasks) t.cancel();
-    this.tasks = [];
+    this._pinchGeneration++;
+    clearTimeout(this._pinchTimer);
+    clearTimeout(this._roTimer);
+    clearTimeout(this._paintTimer);
+    this._pinch = null;
+    this.#cancelPaints();
     this.ro?.disconnect();
+    document.removeEventListener('visibilitychange', this._onVisible);
     this.loadingTask?.destroy().catch(() => {});
     this.loadingTask = null;
     this.doc = null;

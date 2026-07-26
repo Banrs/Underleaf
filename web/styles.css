@@ -858,7 +858,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    and fit-width re-renders in a feedback loop. Top padding = 40px bar + 12px,
    mirrored by V_PAD in pdfview.js. */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
-.pdf-pages { display: flex; min-height: 100%; flex-direction: column; justify-content: center; }
+/* Sized to the widest page but never below the viewport, so offsetWidth/Height
+   are the true content extents the pinch gesture clamps against, and so the CSS
+   centring below agrees with a zero offset.
+   `position: relative` is load-bearing, not decoration: in Blink any transform —
+   even an identity one — makes an element the offsetParent of its descendants,
+   so without it every page's offsetTop would silently gain and lose this
+   scroller's 56px top padding depending on whether a pinch had run. Positioning
+   it pins offsetTop to this element in both states. */
+.pdf-pages { position: relative; display: flex; width: max-content; min-width: 100%; min-height: 100%; flex-direction: column; justify-content: center; }
 .pdf-page-wrap { position: relative; margin: 0 auto var(--sp-2); width: fit-content; border-radius: 3px; box-shadow: 0 0 0 0.5px var(--label-4), 0 2px 8px rgba(0, 0, 0, 0.14); }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
 .pdf-page-wrap canvas { display: block; border-radius: 3px; background: #fff; }
