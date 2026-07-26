@@ -65,8 +65,23 @@
      Large is the comfortable desktop density; Medium reads undersized on a
      large display. Controls stay at the 13pt control standard. */
   --h-row: 40px;
-  --fs-row: 15px;
-  --lh-row: 20px;
+
+  /* Type roles. Five sizes, each with one job — every font-size in this file
+     refers to one of these, so nothing drifts. Sizes are the kit's; the roles
+     are what keeps 11px from leaking into places that need 13 or 15.
+       title     window + dialog titles (Bold)
+       body      lists, rows, content, form labels  ← the app's dominant size
+       header    sidebar/group section headers (Bold, kit "Large" header)
+       control   buttons, fields, menus, toolbars, breadcrumbs, status
+       small     hints, timestamps, metadata, log text
+       micro     count badges only */
+  --fs-large-title: 26px; --lh-large-title: 32px;   /* welcome heading */
+  --fs-title: 15px;   --lh-title: 20px;
+  --fs-body: 15px;    --lh-body: 20px;
+  --fs-header: 13px;  --lh-header: 16px;
+  --fs-control: 13px; --lh-control: 16px;
+  --fs-small: 12px;   --lh-small: 15px;
+  --fs-micro: 11px;   --lh-micro: 14px;
 
   /* Corner radius is height / 4 throughout — one rule, no ad-hoc values. */
   --r-small: 5px;
@@ -167,7 +182,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .spacer { flex: 1 1 auto; min-width: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
-.placeholder { color: var(--label-2); font-size: 13px; line-height: 16px; padding: var(--sp-2) 10px; }
+.placeholder { color: var(--label-2); font-size: var(--fs-small); line-height: var(--lh-small); padding: var(--sp-2) 10px; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--r-small); }
 
@@ -196,6 +211,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   flex: none;
   height: var(--h-titlebar);
   padding: 0 var(--sp-2);
+  /* The title sits a control-gap away from the navigation buttons. */
+  --title-gap: var(--sp-2);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
 }
@@ -208,9 +225,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   padding: 0 var(--sp-2);
 }
 
-.window-title { font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+.window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--title-gap, 0); }
 .title-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 var(--sp-1); }
-.save-state { font-size: 11px; line-height: 14px; font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
+.save-state { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
 
 /* One toggle exists in each band; only the relevant one shows. */
 .icon-btn.sidebar-toggle-fallback { display: none; }
@@ -223,9 +240,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 11px;
-  line-height: 14px;
-  font-weight: 500;
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
   color: var(--label-2);
 }
 .crumb { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
@@ -274,7 +290,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   padding: 0 var(--sp-4);
   border-radius: var(--r-xl);
   background: var(--fill-3);
-  font-size: 13px;
+  font-size: var(--fs-control);
   font-weight: 500;
   white-space: nowrap;
   transition: background-color 0.12s ease, color 0.12s ease;
@@ -297,7 +313,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   height: var(--h-control);
   padding: 0 10px;
   border-radius: var(--r-control);
-  font-size: 13px;
+  font-size: var(--fs-control);
 }
 .btn.small .icon svg { width: 14px; height: 14px; }
 
@@ -338,7 +354,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--fs-control);
   font-weight: 500;
   color: var(--label-2);
   transition: background-color 0.12s ease, color 0.12s ease;
@@ -393,8 +409,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   height: 20px;
   padding: 0 var(--sp-2);
   border-radius: var(--r-pill);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
   font-weight: 600;
 }
 .badge.error { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
@@ -407,8 +423,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-radius: var(--r-pill);
   background: var(--fill-2);
   color: var(--label-2);
-  font-size: 10px;
-  line-height: 15px;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
   font-weight: 600;
   text-align: center;
 }
@@ -421,7 +437,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   height: 14px;
   padding: 0 3px;
   border-radius: var(--r-pill);
-  font-size: 10px;
+  font-size: var(--fs-micro);
   line-height: 14px;
   font-weight: 600;
   text-align: center;
@@ -439,12 +455,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   margin-bottom: var(--sp-4);
   border-radius: var(--r-container);
   background: color-mix(in srgb, var(--orange) 12%, transparent);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: var(--fs-control);
+  line-height: 18px;
 }
 .notice-icon { color: var(--orange); }
 .notice-icon svg { width: 15px; height: 15px; }
-.notice code { font-family: var(--mono); font-size: 11px; background: var(--fill-3); padding: 1px 4px; border-radius: 4px; }
+.notice code { font-family: var(--mono); font-size: var(--fs-small); background: var(--fill-3); padding: 1px 4px; border-radius: 4px; }
 
 /* ---------- home ---------- */
 
@@ -469,14 +485,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .brand-mark { color: var(--accent); display: inline-flex; margin-bottom: var(--sp-4); }
 .brand-mark svg { width: 64px; height: 64px; }
 /* Large Title, 26/32 — the kit's largest style. */
-.brand-name { font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; }
-.brand-sub { margin-top: var(--sp-2); font-size: var(--fs-row); line-height: 21px; color: var(--label-2); }
+.brand-name { font-size: var(--fs-large-title); line-height: var(--lh-large-title); font-weight: 700; letter-spacing: -0.01em; }
+.brand-sub { margin-top: var(--sp-2); font-size: var(--fs-body); line-height: var(--lh-body); color: var(--label-2); }
 .brand-actions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-5); align-items: flex-start; }
 .brand-actions .btn { width: 100%; justify-content: flex-start; gap: var(--sp-2); }
 
 .home-recents { display: flex; flex-direction: column; min-height: 0; padding-top: var(--sp-5); }
 /* Subheadline 11 Bold, matching the sidebar's section headers. */
-.recents-heading { font-size: 11px; line-height: 14px; font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-2); padding-left: var(--sp-3); }
+.recents-heading { font-size: var(--fs-header); line-height: var(--lh-header); font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-2); padding-left: var(--sp-3); }
 /* Sizes to its rows rather than stretching, so two projects don't leave a tall
    empty box; scrolls once the rows exceed the column. */
 .home-recents .doc-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
@@ -508,8 +524,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .doc-icon { color: var(--accent); display: inline-flex; }
 .doc-icon svg { width: 22px; height: 22px; }
 .doc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.doc-name { font-size: var(--fs-row); line-height: var(--lh-row); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-meta { font-size: 13px; line-height: 16px; color: var(--label-2); }
+.doc-name { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-meta { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
 /* Row actions appear on hover or keyboard focus — never only on hover. */
 .row-actions { opacity: 0; transition: opacity 0.1s ease; }
 .doc-row:hover .row-actions,
@@ -555,17 +571,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
-  min-height: 18px;
+  min-height: 20px;
   margin: 0 0 var(--sp-1);
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--fs-header);
+  line-height: var(--lh-header);
   font-weight: 700;
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-3); cursor: default; }
+.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* kit section gap */
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
 
@@ -579,7 +595,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   gap: 5px;
   flex: none;
   height: var(--h-control);
-  margin: 0 10px var(--sp-3);
+  margin: 0 10px var(--sp-4);
   padding: 0 var(--sp-2);
   border-radius: var(--r-control);
   background: var(--fill-3);
@@ -594,7 +610,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border: none;
   background: none;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--fs-control);
   border-radius: 0;
 }
 .search-input:focus-visible { outline: none; }
@@ -603,8 +619,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Rows: 32 tall, radius 8, selection pill inset 10 from the sidebar edge, icon
    20 wide with a 4px gap to the label — all kit values. */
 .tree, .outline, .search-results { overflow-y: auto; padding: 0 10px var(--sp-3); }
-.tree { flex: 1; min-height: 60px; }
-.outline { flex: none; max-height: 34%; }
+.tree { flex: 1 1 auto; min-height: 120px; }
+.outline { flex: 0 1 auto; max-height: 40%; padding-bottom: var(--sp-2); }
 .search-results { flex: 1; }
 .tree.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-row); }
 
@@ -613,8 +629,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   width: 100%;
   border-radius: var(--r-row);
-  font-size: var(--fs-row);
-  line-height: var(--lh-row);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   text-align: left;
   color: inherit;
   cursor: default;
@@ -656,7 +672,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   gap: var(--sp-1);
   flex: none;
-  padding: var(--sp-2) 10px;
+  padding: var(--sp-2) 10px calc(var(--sp-2) + 2px);
   box-shadow: inset 0 0.5px 0 var(--separator);
 }
 .engine-status {
@@ -667,8 +683,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   padding: 0 var(--sp-2);
   border-radius: var(--r-menu);
   color: var(--label-2);
-  font-size: 12px;
-  line-height: 15px;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
   font-weight: 500;
 }
 .engine-status:hover { background: var(--fill-3); color: var(--label); }
@@ -681,15 +697,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-1) var(--sp-1);
-  font-size: 11px;
-  line-height: 14px;
-  font-weight: 600;
+  font-size: var(--fs-header);
+  line-height: var(--lh-header);
+  font-weight: 700;
   color: var(--label-2);
 }
 .search-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-hit { gap: var(--sp-2); padding: var(--sp-2) var(--sp-1); align-items: baseline; }
-.search-line { flex: none; min-width: 26px; text-align: right; color: var(--label-3); font-family: var(--mono); font-size: 11px; }
-.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 16px; }
+.search-line { flex: none; min-width: 30px; text-align: right; color: var(--label-3); font-family: var(--mono); font-size: var(--fs-small); }
+.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-control); line-height: var(--lh-control); }
 .search-preview mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 3px; }
 
 /* ---------- dividers ---------- */
@@ -739,10 +755,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
   flex: none;
   min-height: var(--h-toolbar);
   padding: 0 var(--sp-2);
+  gap: var(--sp-1);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
   overflow-x: auto;
@@ -762,7 +778,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-content) 72%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
 }
-.page-indicator { padding: 0 var(--sp-2); font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }
 .logs-btn, [data-command="view.toggleLogs"] { position: relative; }
@@ -787,8 +803,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-content) 82%, transparent);
   backdrop-filter: blur(8px);
   box-shadow: 0 0 0 0.5px var(--label-4);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
   color: var(--label-2);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
@@ -841,7 +857,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
    and fit-width re-renders in a feedback loop. Top padding = 40px bar + 12px,
    mirrored by V_PAD in pdfview.js. */
-.pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: 52px 10px var(--sp-3); scrollbar-gutter: stable; }
+.pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
 .pdf-pages { display: flex; min-height: 100%; flex-direction: column; justify-content: center; }
 .pdf-page-wrap { position: relative; margin: 0 auto var(--sp-2); width: fit-content; border-radius: 3px; box-shadow: 0 0 0 0.5px var(--label-4), 0 2px 8px rgba(0, 0, 0, 0.14); }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
@@ -877,18 +893,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- compile log ---------- */
 
-.logs { position: absolute; inset: 0; overflow-y: auto; padding: 52px var(--sp-4) var(--sp-3); background: var(--bg-recessed); }
+.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); }
 .logs-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .logs-summary { display: flex; align-items: center; gap: var(--sp-2); }
-.logs-duration { color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.logs-duration { color: var(--label-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .log-item {
   display: flex;
   gap: var(--sp-2);
   width: 100%;
   padding: 5px var(--sp-2);
   border-radius: var(--r-menu);
-  font-size: 12px;
-  line-height: 15px;
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
   text-align: left;
   align-items: baseline;
   color: inherit;
@@ -898,9 +914,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .log-kind { flex: none; font-weight: 600; }
 .log-item.error .log-kind { color: var(--red); }
 .log-item.warning .log-kind { color: var(--orange); }
-.log-loc { flex: none; color: var(--label-2); font-family: var(--mono); font-size: 11px; }
+.log-loc { flex: none; color: var(--label-2); font-family: var(--mono); font-size: var(--fs-small); }
 .log-message { min-width: 0; }
-.logs-raw { font-family: var(--mono); font-size: 11px; line-height: 16px; white-space: pre-wrap; word-break: break-all; color: var(--label-2); margin: 0; }
+.logs-raw { font-family: var(--mono); font-size: var(--fs-small); line-height: 17px; white-space: pre-wrap; word-break: break-all; color: var(--label-2); margin: 0; }
 
 /* ---------- floating panes ---------- */
 
@@ -956,33 +972,33 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: var(--shadow-dialog);
   animation: pop-in 0.16s ease-out;
 }
-.modal-title { font-size: 15px; line-height: 20px; font-weight: 700; margin-bottom: var(--sp-4); }
-.modal-body { color: var(--label-2); font-size: 11px; line-height: 15px; font-weight: 500; }
+.modal-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; margin-bottom: var(--sp-4); }
+.modal-body { color: var(--label-2); font-size: var(--fs-small); line-height: var(--lh-small); }
 .modal .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: var(--sp-3); }
-.modal .field label { font-size: 13px; line-height: 16px; color: var(--label); }
+.modal .field label { font-size: var(--fs-control); line-height: var(--lh-control); color: var(--label-2); font-weight: 500; }
 .modal .field input, .modal .field select { width: 100%; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-5); }
 
-.settings-dialog { width: 460px; }
+.settings-dialog { width: 520px; }
 .settings-body { overflow-y: auto; margin: 0 calc(-1 * var(--sp-1)); padding: 0 var(--sp-1); }
 .settings-group + .settings-group { margin-top: var(--sp-5); }
-.settings-group-title { font-size: 11px; line-height: 14px; font-weight: 600; color: var(--label-2); margin-bottom: 5px; padding-left: var(--sp-3); }
+.settings-group-title { font-size: var(--fs-header); line-height: var(--lh-header); font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-1); padding-left: var(--sp-4); }
 .settings-card { border: 0.5px solid var(--separator); border-radius: var(--r-container); overflow: hidden; }
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  min-height: 48px;
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-row);
-  line-height: var(--lh-row);
+  min-height: 52px;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
 }
 .settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.settings-hint { font-size: 12px; line-height: 15px; color: var(--label-2); }
+.settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
 .settings-foot { justify-content: space-between; }
-.settings-status { font-size: 11px; line-height: 14px; color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-status { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Menus use the vibrant material and the kit's 24px rows with radius 8. */
 .menu {
@@ -1004,8 +1020,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   width: 100%;
   height: var(--h-menu-row);
   padding: 0 var(--sp-2) 0 0;
-  border-radius: var(--r-row);
-  font-size: 13px;
+  border-radius: var(--r-menu);
+  font-size: var(--fs-control);
   font-weight: 500;
   text-align: left;
   color: var(--label);
@@ -1013,7 +1029,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .menu-item:hover, .menu-item:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
 .menu-item.danger { color: var(--red); }
 .menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--red); color: #fff; }
-.menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: 11px; }
+.menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: var(--fs-control); }
 .menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
 
 #toast-root {
@@ -1035,8 +1051,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow: var(--shadow-menu);
   color: var(--label);
-  font-size: 12px;
-  line-height: 15px;
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
   font-weight: 500;
   animation: toast-in 0.18s ease-out;
 }

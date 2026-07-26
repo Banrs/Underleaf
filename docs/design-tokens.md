@@ -10,6 +10,26 @@ extracted spec that `web/styles.css` implements.
 
 macOS's base UI size is **13px**, not the 14px web default.
 
+**The scale is expressed as five roles, not five sizes** (`--fs-title`,
+`--fs-body`, `--fs-header`, `--fs-control`, `--fs-small`, `--fs-micro` plus
+`--fs-large-title`). Every `font-size` in `web/styles.css` refers to a role, so a
+value can't drift: the earlier pass had 15 separate uses of 11px against 2 of
+15px, which is what made the interface read small no matter what the row spec was.
+
+| Role | Size | Used for |
+| --- | --- | --- |
+| large-title | 26 / 32 | welcome heading |
+| title | 15 / 20 Bold | window title, dialog titles |
+| **body** | **15 / 20** | **lists, rows, content, form rows** |
+| header | 13 / 16 Bold | section headers (kit Large header, 20px box) |
+| control | 13 / 16 | buttons, fields, menus, toolbars, breadcrumb, status |
+| small | 12 / 15 | hints, timestamps, metadata, log text |
+| micro | 11 / 14 | count badges only |
+
+Section headers scale with the variant too: Small/Medium use 11 Bold in an 18px
+box, **Large uses 13 Bold in a 20px box** — pairing an 11px header with 15px rows
+is the mismatch that reads wrong.
+
 **Measured component text** (weights matter as much as sizes — most control text
 is *Medium*, not Regular, and titles are heavier than web defaults):
 

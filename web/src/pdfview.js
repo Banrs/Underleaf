@@ -12,7 +12,7 @@ import * as pdfjs from 'pdfjs-dist';
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
 const H_PAD = 20;   // must track .pdf-scroll horizontal padding
-const V_PAD = 64;   // must track .pdf-scroll vertical padding (52 under the glass toolbar + 12)
+const V_PAD = 68;   // must track .pdf-scroll vertical padding (44px toolbar + 12 top, 12 bottom)
 const PAGE_GAP = 10;
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 4;
