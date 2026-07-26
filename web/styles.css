@@ -1,3 +1,8 @@
+/* TeXLocal interface.
+   Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
+   extraction. Platform-specific chrome is gated on html.mac / html.win so the
+   Windows shell is additive rather than a rewrite. */
+
 /* ---------- fonts ---------- */
 
 @font-face {
@@ -16,795 +21,831 @@
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
-/* ---------- design tokens ---------- */
+/* ---------- tokens ---------- */
 
 :root {
-  --bg: #fafafa;
-  --bg-panel: #ffffff;
-  --bg-inset: #f1f1f3;
-  --bg-hover: rgba(0, 0, 0, 0.045);
-  --bg-active: rgba(37, 99, 235, 0.10);
-  --border: #e4e4e7;
-  --text: #18181b;
-  --text-dim: #71717a;
-  --accent: #2563eb;
-  --accent-text: #ffffff;
-  --danger: #dc2626;
-  --warn: #d97706;
-  --ok: #16a34a;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-  --radius: 8px;
-  /* Hairline dividing the docked sidebar from the content, and editor from PDF. */
-  --pane-border: color-mix(in srgb, var(--border) 60%, transparent);
-  --sidebar-bg: var(--bg-panel);
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace;
-}
+  color-scheme: light;
 
-/* Cross-platform glass: the sidebar & topbar are translucent everywhere (CSS
-   blur over a subtly graded window background), and on macOS the native window
-   vibrancy shows through for the real liquid-glass look. */
-:root { --sidebar-bg: color-mix(in srgb, var(--bg-panel) 78%, transparent); color-scheme: light; }
-[data-theme="dark"] { color-scheme: dark; }
-.electron, .electron body { background: transparent; }
-.electron { --sidebar-bg: color-mix(in srgb, var(--bg-panel) 52%, transparent); }
+  /* Labels and fills are alpha over the window background, which is what lets
+     them read correctly on both opaque panels and vibrant materials. */
+  --label: rgba(0, 0, 0, 0.85);
+  --label-2: rgba(0, 0, 0, 0.5);
+  --label-3: rgba(0, 0, 0, 0.25);
+  --label-4: rgba(0, 0, 0, 0.1);
+  --fill-1: rgba(0, 0, 0, 0.1);
+  --fill-2: rgba(0, 0, 0, 0.08);
+  --fill-3: rgba(0, 0, 0, 0.05);
+  --fill-4: rgba(0, 0, 0, 0.03);
+  --fill-5: rgba(0, 0, 0, 0.02);
+  --separator: rgba(60, 60, 67, 0.29);
+
+  --bg-window: #ffffff;
+  --bg-content: #ffffff;
+  --bg-recessed: #f2f2f4;
+  --material: rgba(236, 236, 236, 0.63);   /* "regular" */
+  --material-thin: rgba(236, 236, 236, 0.5);
+
+  --accent: #0088ff;
+  --on-accent: #ffffff;
+  --red: #ff383c;
+  --orange: #ff8d28;
+  --yellow: #ffcc00;
+  --green: #34c759;
+  --gray: #8e8e93;
+
+  /* Control sizes, standardized to two from the kit's ramp (16/20/24/28/36):
+     --h-control (28) for every interactive control below the title bar, and
+     --h-xl (36) for the title-bar row — desktop-comfortable, no mini/small UI.
+     Components with their own kit spec keep it: menu rows 24, switch 54×24,
+     sidebar rows 32. --h-menu-row exists for those, not for controls. */
+  --h-control: 28px;
+  --h-xl: 36px;
+  --h-menu-row: 24px;
+
+  /* Corner radius is height / 4 throughout — one rule, no ad-hoc values. */
+  --r-small: 5px;
+  --r-control: 7px;    /* --h-control / 4 */
+  --r-menu: 6px;
+  --r-xl: 9px;
+  --r-row: 8px;          /* 32px list row */
+  --r-container: 10px;   /* grouped lists, menus, popovers */
+  --r-window: 12px;      /* floating panes, dialogs */
+  --r-pill: 999px;
+
+  /* Bars: the unified window titlebar, and the lighter in-pane toolbars. */
+  --h-titlebar: 52px;
+  --h-toolbar: 40px;
+  --w-sidebar: 256px;
+
+  /* 4px rhythm. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* Two-part shadows: a tight contact shadow plus a soft ambient one. */
+  --shadow-menu: 0 0 0 0.5px var(--label-4), 0 4px 12px rgba(0, 0, 0, 0.12), 0 12px 32px rgba(0, 0, 0, 0.1);
+  --shadow-dialog: 0 0 0 0.5px var(--label-4), 0 12px 28px rgba(0, 0, 0, 0.18), 0 32px 64px rgba(0, 0, 0, 0.14);
+  --shadow-pane: 0 0.5px 1px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.1);
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
 
 [data-theme="dark"] {
-  --bg: #131316;
-  --bg-panel: #1b1b1f;
-  --bg-inset: #232327;
-  --bg-hover: rgba(255, 255, 255, 0.06);
-  --bg-active: rgba(96, 165, 250, 0.14);
-  --border: #2e2e33;
-  --text: #ececee;
-  --text-dim: #9d9da6;
-  --accent: #3b82f6;
-  --accent-text: #ffffff;
-  --danger: #f87171;
-  --warn: #fbbf24;
-  --ok: #4ade80;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+
+  --label: #ffffff;
+  --label-2: rgba(255, 255, 255, 0.55);
+  --label-3: rgba(255, 255, 255, 0.25);
+  --label-4: rgba(255, 255, 255, 0.1);
+  --fill-1: rgba(255, 255, 255, 0.1);
+  --fill-2: rgba(255, 255, 255, 0.08);
+  --fill-3: rgba(255, 255, 255, 0.05);
+  --fill-4: rgba(255, 255, 255, 0.03);
+  --fill-5: rgba(255, 255, 255, 0.02);
+  --separator: rgba(255, 255, 255, 0.15);
+
+  --bg-window: #1e1e1e;
+  --bg-content: #1e1e1e;
+  --bg-recessed: #171717;
+  --material: rgba(44, 44, 44, 0.61);
+  --material-thin: rgba(41, 41, 41, 0.49);
+
+  --accent: #0091ff;
+  --red: #ff4245;
+  --orange: #ff9230;
+  --yellow: #ffd600;
+  --green: #30d158;
+  --gray: #98989d;
+
+  --shadow-menu: 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-dialog: 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 12px 28px rgba(0, 0, 0, 0.5), 0 32px 64px rgba(0, 0, 0, 0.5);
+  --shadow-pane: 0 0.5px 1px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.4);
 }
+
+/* ---------- base ---------- */
 
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   height: 100%;
-  /* The window itself must never scroll — panes fit to the window and scroll
-     internally. Without this, fixed-width panes overflow and the whole app gets
-     a horizontal scrollbar at narrow widths. */
+  /* The window itself never scrolls: panes fit to the window and scroll
+     internally, so no fixed-width pane can overflow the whole app. */
   overflow: hidden;
-  font-family: var(--font);
-  font-size: 14px;
-  color: var(--text);
-  background: var(--bg);
+  /* macOS's base UI size is 13/16, not the 14px web default. */
+  font: 13px/16px var(--font);
+  color: var(--label);
+  background: var(--bg-window);
+  -webkit-font-smoothing: antialiased;
 }
 
-#app {
-  height: 100%;
-  overflow: hidden;
+#app { height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+
+/* On macOS the native window vibrancy shows through a transparent window; the
+   sidebar leaves its background translucent to reveal it. */
+.electron.mac, .electron.mac body { background: transparent; }
+
+h1, h2, h3, p { margin: 0; }
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* Thin native scrollbars: `scrollbar-width: thin` gives the slim macOS bar
+   rather than Chromium's chunky fallback, and with no ::-webkit rules it still
+   fades like a native overlay when the OS setting is "When scrolling". */
+* { scrollbar-width: thin; scrollbar-color: var(--label-3) transparent; }
+
+.spacer { flex: 1 1 auto; min-width: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.placeholder { color: var(--label-2); font-size: 12px; line-height: 15px; padding: var(--sp-2) 10px; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--r-small); }
+
+/* ---------- window chrome ---------- */
+
+/* On macOS the title bar is the app's own chrome, so the bands are draggable and
+   the controls inside them opt out. */
+.electron.mac .titlebar,
+.electron.mac .sidebar-titlebar { -webkit-app-region: drag; }
+.electron.mac .titlebar button,
+.electron.mac .titlebar input,
+.electron.mac .titlebar select,
+.electron.mac .titlebar .crumbs,
+.electron.mac .sidebar-titlebar button { -webkit-app-region: no-drag; }
+
+/* The traffic lights sit at x18/y19 in a 52px band (kit values), so the sidebar
+   band keeps its leading end clear of controls. */
+.electron.mac .sidebar-titlebar { padding-left: 96px; }
+/* With the sidebar hidden, the lights move over the content title bar. */
+.electron.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
+
+.titlebar {
   display: flex;
-  flex-direction: column;
-  /* Subtle depth so translucent panels read as glass, even on a flat theme. */
-  background:
-    radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
-    linear-gradient(165deg, color-mix(in srgb, var(--text) 4%, var(--bg)), var(--bg) 62%);
-}
-.electron #app { background:
-    radial-gradient(120% 80% at 15% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 55%),
-    transparent; }
-
-
-button {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  cursor: pointer;
-  border-radius: var(--radius);
-}
-
-input, select {
-  font: inherit;
-  color: var(--text);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 11px;
-  outline: none;
-}
-input:focus, select:focus { border-color: var(--accent); }
-
-/* Scrollbars: thin, always-visible, and theme-aware. The thumb is built from
-   var(--text-dim) (dark-grey in light mode, light-grey in dark mode) so it
-   adapts to the theme; a padding-box border keeps it slim over a clear track. */
-::-webkit-scrollbar { width: 11px; height: 11px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-dim) 42%, transparent);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-  border-radius: 99px;
-  min-height: 32px;
-}
-::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-dim) 72%, transparent); background-clip: padding-box; }
-::-webkit-scrollbar-corner { background: transparent; }
-
-/* ---------- Electron chrome (hiddenInset title bar) ---------- */
-
-.drag-strip {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  height: 44px;
-  -webkit-app-region: drag;
-  z-index: 5;
-}
-/* In Electron the topbar sits at the traffic-light level (centered on them) and
-   the sidebar's top region holds the lights. Both are draggable; interactive
-   children opt out so clicks still land. */
-.electron .topbar { -webkit-app-region: drag; }
-.electron .topbar button,
-.electron .topbar select,
-.electron .topbar input,
-.electron .topbar .crumbs { -webkit-app-region: no-drag; }
-.electron .sidebar { -webkit-app-region: drag; }
-.electron .sidebar button,
-.electron .sidebar input,
-.electron .sidebar .tree-item,
-.electron .sidebar .outline-item,
-.electron .sidebar .search-hit { -webkit-app-region: no-drag; }
-
-/* The traffic lights (main.mjs, 16px inset) sit in the docked sidebar's top-left
-   corner with FILES below; the topbar row's title centers on the same line.
-   Sidebar-body padding clears the lights. */
-.electron .topbar { padding-top: 6px; padding-bottom: 0; min-height: 34px; }
-.electron .sidebar-body { padding-top: 26px; }
-.electron .shell:has(.sidebar.collapsed) .topbar { padding-left: 78px; }
-
-/* ---------- shared buttons & icons ---------- */
-
-.icon { display: inline-flex; align-items: center; justify-content: center; }
-.icon svg { width: 18px; height: 18px; }
-
-.btn {
-  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 16px;
-  border-radius: var(--radius);
-  font-weight: 500;
-  transition: background 0.12s;
+  gap: var(--sp-1);
+  flex: none;
+  height: var(--h-titlebar);
+  padding: 0 var(--sp-2);
+  background: var(--bg-content);
+  box-shadow: inset 0 -1px 0 var(--separator);
 }
-.btn:hover { background: var(--bg-hover); }
-.btn.primary { background: var(--accent); color: var(--accent-text); }
-.btn.primary:hover { filter: brightness(1.1); }
-.btn.primary:disabled { opacity: 0.55; cursor: default; filter: none; }
-.btn.ghost { color: var(--text-dim); }
-.btn.ghost:hover { color: var(--text); background: var(--bg-hover); }
 
+.sidebar-titlebar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: var(--h-titlebar);
+  padding: 0 var(--sp-2);
+}
+
+.window-title { font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
+.title-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 var(--sp-1); }
+.save-state { font-size: 11px; line-height: 14px; font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
+
+/* One toggle exists in each band; only the relevant one shows. */
+.icon-btn.sidebar-toggle-fallback { display: none; }
+.shell:has(.sidebar.collapsed) .icon-btn.sidebar-toggle-fallback { display: inline-flex; }
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  color: var(--label-2);
+}
+.crumb { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.crumb:first-child { color: var(--label); }
+.crumb-separator { color: var(--label-3); flex: none; }
+
+/* ---------- controls ---------- */
+
+.icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.icon svg { width: 16px; height: 16px; display: block; }
+
+/* XL (36) in the title bar, regular (24) inside panes — the kit's two toolbar
+   scales. Radius follows height / 4. */
 .icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 7px;
-  color: var(--text-dim);
+  width: var(--h-xl);
+  height: var(--h-xl);
+  border-radius: var(--r-xl);
+  color: var(--label-2);
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
-.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
-.icon-btn.sm { width: 29px; height: 29px; }
-.icon-btn.sm .icon svg { width: 16px; height: 16px; }
+.icon-btn .icon svg { width: 16px; height: 16px; }
+.icon-btn:hover:not(:disabled) { background: var(--fill-3); color: var(--label); }
+.icon-btn:active:not(:disabled) { background: var(--fill-2); }
+.icon-btn:disabled { color: var(--label-3); cursor: default; }
+.icon-btn.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
-.auto-btn {
+/* "Small" here is the in-pane toolbar size. Native pane toolbars (Preview,
+   Finder) use ~28px regular controls with 13pt labels, not the 24px small
+   size — matching that keeps our chrome from reading under-scaled. */
+.icon-btn.small {
+  width: var(--h-control);
+  height: var(--h-control);
+  border-radius: var(--r-control);
+}
+.icon-btn.small .icon svg { width: 16px; height: 16px; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  height: var(--h-xl);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-xl);
+  background: var(--fill-3);
   font-size: 13px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
-.auto-btn.on {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: var(--bg-active);
+.btn:hover:not(:disabled) { background: var(--fill-2); }
+.btn:active:not(:disabled) { background: var(--fill-1); }
+.btn:disabled { color: var(--label-3); cursor: default; }
+.btn .icon svg { width: 15px; height: 15px; }
+
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
+.btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 78%, black); }
+.btn.primary:disabled { background: var(--fill-2); color: var(--label-3); }
+
+.btn.destructive { background: var(--red); color: #fff; }
+.btn.destructive:hover { background: color-mix(in srgb, var(--red) 88%, black); }
+
+/* In-pane toolbar button: 28px with the 13pt control label, like Preview's. */
+.btn.small {
+  height: var(--h-control);
+  padding: 0 10px;
+  border-radius: var(--r-control);
+  font-size: 13px;
 }
+.btn.small .icon svg { width: 14px; height: 14px; }
+
+.toolbar .btn.primary { height: var(--h-control); border-radius: var(--r-control); padding: 0 var(--sp-3); }
+
+input, select, textarea {
+  font: inherit;
+  font-weight: 500;             /* kit: field values are SF Pro Medium */
+  color: var(--label);
+  background: var(--bg-content);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
+  height: var(--h-control);
+  padding: 0 var(--sp-2);
+  outline: none;
+}
+select { padding-right: var(--sp-1); }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+/* Segmented control: 2px inset track, selected segment lifts to the panel
+   colour (kit's control-area segmented style). */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--fill-3);
+  border-radius: var(--r-xl);
+}
+.segment {
+  min-width: var(--h-xl);
+  height: var(--h-control);
+  padding: 0 10px;
+  border-radius: var(--r-control);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--label-2);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.segment:hover { color: var(--label); }
+.segment .icon svg { width: 15px; height: 15px; }
+.segment[aria-checked="true"] {
+  background: var(--bg-content);
+  color: var(--label);
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--label-4);
+}
+
+/* Switch: the kit's regular size is 54 × 24 with a 20px knob. */
+.switch {
+  width: 54px;
+  height: var(--h-menu-row);
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  position: relative;
+  transition: background-color 0.18s ease;
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.16), 0 2px 4px rgba(0, 0, 0, 0.12);
+  transition: transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"] .switch-knob { transform: translateX(30px); }
+
+.stepper { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.stepper-value { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; color: var(--label-2); }
 
 .spinner {
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,0.35);
+  width: 13px; height: 13px;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
   border-top-color: #fff;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.spacer { flex: 1; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+}
+.badge.error { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+.badge.warning { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange); }
+.badge.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+
+.count-badge {
+  min-width: var(--sp-4);
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  color: var(--label-2);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.badge-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  text-align: center;
+  color: #fff;
+  box-shadow: 0 0 0 1.5px var(--bg-content);
+}
+.badge-count.error { background: var(--red); }
+.badge-count.warning { background: var(--orange); }
+
+.notice {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  border-radius: var(--r-container);
+  background: color-mix(in srgb, var(--orange) 12%, transparent);
+  font-size: 12px;
+  line-height: 17px;
+}
+.notice-icon { color: var(--orange); }
+.notice-icon svg { width: 15px; height: 15px; }
+.notice code { font-family: var(--mono); font-size: 11px; background: var(--fill-3); padding: 1px 4px; border-radius: 4px; }
 
 /* ---------- home ---------- */
 
-.home {
-  width: 100%;
-  padding: 60px 48px 48px;
-  overflow-y: auto;
-}
-.electron .home { padding-top: 64px; }
-.home-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 16px; }
-.home h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-.home .tagline { color: var(--text-dim); margin: 4px 0 30px; font-size: 15px; }
-.tex-banner {
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
-  color: var(--text);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  margin-bottom: 20px;
-  font-size: 13.5px;
-}
-.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-.project-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
-  cursor: pointer;
-  transition: border-color 0.12s, transform 0.12s;
-  position: relative;
-}
-.project-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.project-card .name { font-weight: 600; font-size: 16px; margin-bottom: 5px; word-break: break-word; }
-.project-card .meta { color: var(--text-dim); font-size: 13px; }
-.project-card .card-actions { position: absolute; top: 12px; right: 12px; display: none; gap: 2px; }
-.project-card:hover .card-actions { display: flex; }
-.empty-state { color: var(--text-dim); text-align: center; padding: 60px 0; font-size: 15px; }
+.home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
+.electron.mac .home-titlebar { padding-left: 96px; }
 
-/* ---------- editor layout ---------- */
+/* Two columns like the Xcode/Pages welcome window: branding + primary actions on
+   the leading side, recents filling the trailing side. The old single centred
+   column left most of the window empty. */
+.home-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: var(--sp-6);
+  padding: 0 var(--sp-6) var(--sp-6);
+  overflow: hidden;
+}
 
-/* The topbar sits flat over the window background — no card, no border, so it
-   doesn't waste vertical space or double up rounded edges with the panes. */
-.topbar {
+.home-brand { display: flex; flex-direction: column; padding-top: var(--sp-5); min-width: 0; }
+.brand-mark { color: var(--accent); display: inline-flex; margin-bottom: var(--sp-4); }
+.brand-mark svg { width: 56px; height: 56px; }
+/* Large Title, 26/32 — the kit's largest style. */
+.brand-name { font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-sub { margin-top: var(--sp-2); font-size: 13px; line-height: 18px; color: var(--label-2); }
+.brand-actions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-5); align-items: flex-start; }
+.brand-actions .btn { width: 100%; justify-content: flex-start; gap: var(--sp-2); }
+
+.home-recents { display: flex; flex-direction: column; min-height: 0; padding-top: var(--sp-5); }
+/* Subheadline 11 Bold, matching the sidebar's section headers. */
+.recents-heading { font-size: 11px; line-height: 14px; font-weight: 700; color: var(--label-2); margin-bottom: 5px; padding-left: var(--sp-3); }
+/* Sizes to its rows rather than stretching, so two projects don't leave a tall
+   empty box; scrolls once the rows exceed the column. */
+.home-recents .doc-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+
+/* Single-column below the two-column threshold, so nothing gets cramped. */
+@media (max-width: 720px) {
+  .home-body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .home-brand { padding-top: var(--sp-3); }
+  .brand-mark svg { width: 40px; height: 40px; }
+  .brand-actions { flex-direction: row; }
+  .brand-actions .btn { width: auto; }
+  .home-recents { padding-top: 0; }
+}
+
+/* Grouped list of recent documents — no lifting cards, no shadows. */
+.doc-list { border: 0.5px solid var(--separator); border-radius: var(--r-container); overflow: hidden; background: var(--bg-content); }
+.doc-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  /* 12px horizontal matches the editor/PDF toolbars below, so the title row's
-     left control aligns with them and the right icons clear the window edge. */
-  padding: 8px 12px;
-  background: transparent;
-  flex: none;
-  overflow-x: auto;
-  scrollbar-width: none;
+  gap: var(--sp-3);
+  height: 48px;
+  padding: 0 var(--sp-3);
+  cursor: default;
+  transition: background-color 0.1s ease;
 }
-.topbar::-webkit-scrollbar { display: none; }
-.topbar > *:not(.spacer):not(.crumbs) { flex-shrink: 0; }
-.topbar .proj-name { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; }
-.tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
-.topbar .crumbs { min-width: 0; }
-.topbar select { padding: 6px 10px; font-size: 13.5px; }
-.save-state { font-size: 13px; color: var(--text-dim); text-align: right; flex: none; }
+.doc-row + .doc-row { box-shadow: inset 0 0.5px 0 var(--separator); }
+.doc-row:hover { background: var(--fill-4); }
+.doc-row:active { background: var(--fill-3); }
+.doc-icon { color: var(--accent); display: inline-flex; }
+.doc-icon svg { width: 19px; height: 19px; }
+.doc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.doc-name { font-size: 13px; line-height: 16px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-meta { font-size: 12px; line-height: 15px; color: var(--label-2); }
+/* Row actions appear on hover or keyboard focus — never only on hover. */
+.row-actions { opacity: 0; transition: opacity 0.1s ease; }
+.doc-row:hover .row-actions,
+.doc-row:focus-visible .row-actions,
+.row-actions:focus-within { opacity: 1; }
 
-/* Golden-Gate edge-to-edge: no window padding — the docked sidebar and the
-   content fill the window, separated only by hairline dividers. */
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); padding: var(--sp-6); color: var(--label-2); }
+
+/* ---------- shell ---------- */
+
 .shell { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
-.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-/* Editor + PDF are two views of ONE document, sharing the content surface,
-   divided by a hairline. Fills to the window's right & bottom edges. */
+.main-column { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .workspace { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
-
 .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
-/* Golden-Gate docked sidebar: edge-to-edge (flush left/top/bottom, no float,
-   no shadow, no rounded corners), but still translucent Liquid Glass. The
-   hairline resizer to its right is the only separator from the content. */
-.sidebar {
-  width: 232px;
-  flex: none;
-  position: relative;
-  background: var(--sidebar-bg);
-  backdrop-filter: saturate(180%) blur(20px);
-  overflow: hidden;
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.18s ease, transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.sidebar-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-
-/* Halves of the content surface — opaque backgrounds (so the sidebar's vibrancy
-   doesn't bleed through), divided by the hairline resizer. */
-.editor-pane, .pdf-pane { overflow: hidden; }
-.editor-pane { flex: 1; position: relative; min-width: 140px; background: var(--bg-panel); }
-.pdf-pane { flex: 1; background: var(--bg-inset); min-width: 140px; }
-/* Narrow windows: auto-hide the breadcrumb before it squeezes the title bar */
-@media (max-width: 900px) { .topbar .crumbs, .tb-divider { display: none; } }
-
-/* Collapsed sidebar is FULLY hidden (Finder-style): it slides out and the left
-   resizer disappears, so the editor + PDF get the entire width. */
-.sidebar.collapsed {
-  width: 0 !important;
-  border-width: 0;
-  opacity: 0;
-  transform: translateX(-8px);
-  pointer-events: none;
-}
-/* Hide the resizer directly after a collapsed sidebar so no phantom gap is left
-   (class-aware — :first-of-type is type-based and never matched .resizer). */
-.sidebar.collapsed + .resizer { display: none; }
-
-.wc-pill {
-  position: absolute;
-  right: 16px;
-  bottom: 12px;
-  z-index: 5;
-  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-  pointer-events: none;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Golden-Gate edge-to-edge: every divider (sidebar↔content and editor↔PDF) is a
-   persistent 1px hairline with a wider invisible grab zone, so panes sit flush
-   with no gaps — maximum usable space. */
-.resizer {
-  width: 1px;
-  flex: none;
-  background: var(--pane-border);
-  position: relative;
-  overflow: visible;
-  transition: background 0.14s ease;
-}
-.resizer::before {
-  content: '';
-  position: absolute;
-  inset: 0 -5px;
-  cursor: col-resize;
-}
-.resizer:hover { background: color-mix(in srgb, var(--text-dim) 45%, transparent); }
-.resizer.dragging { background: var(--accent); }
-
-/* Two-way sync arrows in a pill that rides the divider and drags vertically */
-.sync-pill {
-  position: absolute;
-  top: 42%;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
-  padding: 2px;
-  gap: 1px;
-  z-index: 10;
-  cursor: grab;
-}
-.sync-pill.dragging { cursor: grabbing; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22); }
-.sync-pill button {
-  width: 24px;
-  height: 22px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.sync-pill button:hover { background: var(--bg-active); color: var(--accent); }
-.sync-pill .icon svg { width: 13px; height: 13px; }
-
-/* Fully collapse the PDF pane → full-width editor */
+.editor-pane { flex: 1; position: relative; min-width: 180px; background: var(--bg-content); overflow: hidden; }
+.pdf-pane { flex: 1; position: relative; min-width: 220px; background: var(--bg-recessed); overflow: hidden; }
 .workspace.pdf-collapsed > .pdf-pane,
-.workspace.pdf-collapsed > .resizer-sync { display: none; }
-.pdf-toggle.active { color: var(--accent); background: var(--bg-active); }
-
-/* ---------- floating layout (Settings → Floating sidebar) ---------- */
-/* macOS Tahoe / Xcode style: the sidebar AND the editor/PDF content float as
-   matching rounded panes, inset from the window with a soft lift shadow, so the
-   rounded sidebar isn't butting against a square-cornered content block (the
-   "concentricity" principle). The editor↔PDF divider stays a hairline inside
-   the content pane, so it's two panes, not three. */
-/* Float the panes via their own margins (NOT shell padding), so the topbar
-   stays pinned to the top exactly as in docked mode — the title lines up with
-   the fixed traffic lights the same way in both layouts. */
-.floating .sidebar,
-.floating .workspace {
-  border-radius: 11px;
-  border: 1px solid var(--pane-border);
-  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 5px 16px rgba(0, 0, 0, 0.13);
-}
-.floating .sidebar { margin: 8px 0 8px 8px; }        /* float: inset top/left/bottom */
-.floating .workspace { margin: 8px 8px 8px 0; }      /* float: inset top/right/bottom */
-
-/* Gap between the two panes (resizer) with a hover cue, not a hairline. */
-.floating .resizer:not(.resizer-sync) { width: 8px; background: transparent; }
-.floating .resizer:not(.resizer-sync):hover { background: transparent; }
-.floating .resizer:not(.resizer-sync)::after {
-  content: '';
-  position: absolute;
-  top: 8px; bottom: 8px; left: 50%;
-  width: 3px;
-  transform: translateX(-50%);
-  border-radius: 3px;
-  background: transparent;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease;
-}
-.floating .resizer:not(.resizer-sync):hover::after { background: color-mix(in srgb, var(--text-dim) 55%, transparent); opacity: 1; }
-.floating .resizer:not(.resizer-sync).dragging::after { background: var(--accent); opacity: 1; }
-
-/* Topbar is unchanged in floating (it stays pinned to the top), so no topbar
-   override here. The sidebar floats down 8px, so nudge FILES up to match. */
-.floating.electron .sidebar-body { padding-top: 20px; }
+.workspace.pdf-collapsed > .divider-sync { display: none; }
 
 /* ---------- sidebar ---------- */
 
-.sidebar-head {
+.sidebar {
+  width: var(--w-sidebar);
+  flex: none;
+  position: relative;
+  overflow: hidden;
+  background: var(--material-thin);
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease;
+}
+/* Native vibrancy already renders behind the transparent window on macOS, so the
+   sidebar only needs to stay out of the way. Elsewhere it blurs the app itself. */
+.electron.mac .sidebar { background: transparent; }
+:not(.electron) .sidebar, .win .sidebar { background: var(--bg-recessed); }
+
+.sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
+.sidebar.collapsed + .divider { display: none; }
+
+/* Section header: Subheadline 11/14, secondary, 18px tall with a 14px gap
+   below — the kit's sidebar section metrics. */
+.section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 12px 14px 8px;
-  color: var(--text-dim);
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  gap: var(--sp-1);
+  width: 100%;
+  min-height: 18px;
+  margin: 0 0 var(--sp-1);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  color: var(--label-2);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 700;
   flex: none;
+  text-align: left;
 }
-.sidebar-head .actions { display: flex; gap: 3px; }
+.section-header.disclosure { margin-top: var(--sp-3); cursor: default; }
+.section-header.disclosure:hover { color: var(--label); }
+.section-actions { display: flex; gap: 1px; }
+
+.twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
+.twisty svg { width: 12px; height: 12px; transition: transform 0.14s ease; }
+.twisty.open svg { transform: rotate(90deg); }
 
 .sidebar-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 0 12px 10px;
-  padding: 6px 10px;
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-dim);
+  gap: 5px;
   flex: none;
+  height: var(--h-control);
+  margin: 0 10px var(--sp-3);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-control);
+  background: var(--fill-3);
+  color: var(--label-2);
 }
-.sidebar-search:focus-within { border-color: var(--accent); }
-.sidebar-search .icon svg { width: 15px; height: 15px; }
-.sidebar-search-input {
+.sidebar-search:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+.search-icon svg { width: 13px; height: 13px; }
+.search-input {
   flex: 1;
   min-width: 0;
+  height: 100%;
   border: none;
-  background: transparent;
+  background: none;
   padding: 0;
-  font-size: 13.5px;
+  font-size: 13px;
   border-radius: 0;
 }
+.search-input:focus-visible { outline: none; }
+.search-input::-webkit-search-cancel-button { appearance: none; }
 
-.tree { flex: 1; overflow-y: auto; padding: 0 8px 12px; min-height: 60px; }
-.tree.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius); }
-.tree-item {
+/* Rows: 32 tall, radius 8, selection pill inset 10 from the sidebar edge, icon
+   20 wide with a 4px gap to the label — all kit values. */
+.tree, .outline, .search-results { overflow-y: auto; padding: 0 10px var(--sp-3); }
+.tree { flex: 1; min-height: 60px; }
+.outline { flex: none; max-height: 34%; }
+.search-results { flex: 1; }
+.tree.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-row); }
+
+.tree-row, .outline-row, .search-hit {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7.5px 10px;
-  border-radius: 8px;
-  font-size: 14.5px;
-  cursor: pointer;
+  width: 100%;
+  border-radius: var(--r-row);
+  font-size: 13px;
+  line-height: 16px;
+  text-align: left;
+  color: inherit;
+  cursor: default;
+}
+.tree-row {
+  gap: var(--sp-1);
+  height: 32px;
+  padding: 0 var(--sp-1);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tree-row:hover, .outline-row:hover, .search-hit:hover { background: var(--fill-4); }
+.tree-row.selected { background: var(--fill-2); }
+.tree-row[aria-expanded] .row-label { font-weight: 500; }   /* folders: kit uses Medium */
+.row-icon { display: inline-flex; justify-content: center; width: 20px; flex: none; color: var(--label-2); }
+.row-icon svg { width: 15px; height: 15px; }
+.tree-row.selected .row-icon { color: var(--accent); }
+.row-label { overflow: hidden; text-overflow: ellipsis; }
+.row-badge { margin-left: auto; display: inline-flex; color: var(--yellow); }
+.row-badge svg { width: 12px; height: 12px; }
+.tree-children { padding-left: var(--sp-4); }
+
+.outline-row {
+  height: 28px;
+  padding-right: var(--sp-2);
+  color: var(--label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  user-select: none;
+  /* Nesting rails are per-row background gradients set in sidebar.js, so hover
+     uses background-COLOR to layer over them rather than erase them. */
+  background-repeat: no-repeat;
+  display: block;
 }
-.tree-item:hover { background: var(--bg-hover); }
-.tree-item.active { background: var(--bg-active); color: var(--accent); }
-.tree-item .twisty { width: 14px; flex: none; color: var(--text-dim); transition: transform 0.1s; display: inline-flex; }
-.tree-item .twisty svg { width: 13px; height: 13px; }
-.tree-item .twisty.open { transform: rotate(90deg); }
-.tree-item .ficon { flex: none; width: 19px; color: var(--text-dim); display: inline-flex; justify-content: center; }
-.tree-item .ficon svg { width: 17px; height: 17px; }
-.tree-item.active .ficon { color: var(--accent); }
-.tree-item .label { overflow: hidden; text-overflow: ellipsis; }
-.tree-item .main-star { margin-left: auto; font-size: 12px; color: var(--warn); }
-.tree-children { padding-left: 17px; }
+.outline-row:hover { background-color: var(--fill-4); }
 
-.sidebar-foot {
+.sidebar-footer {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 12px;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 12.5px;
+  gap: var(--sp-1);
   flex: none;
+  padding: var(--sp-2) 10px;
+  box-shadow: inset 0 0.5px 0 var(--separator);
 }
-
-/* ---------- outline ---------- */
-
-.outline-head { cursor: pointer; border-top: 1px solid var(--border); padding-top: 10px; justify-content: flex-start; }
-.outline-head:hover { color: var(--text); }
-.outline-twist { display: inline-flex; }
-.outline-twist .icon svg { width: 11px; height: 11px; transition: transform 0.1s; }
-.outline-twist .icon.open svg { transform: rotate(90deg); }
-.outline {
-  flex: none;
-  max-height: 34%;
-  overflow-y: auto;
-  padding: 0 8px 12px;
+.engine-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: var(--h-menu-row);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-menu);
+  color: var(--label-2);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
 }
-.outline-item {
-  padding: 5px 10px;
-  border-radius: 7px;
-  font-size: 13.5px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.outline-item:hover { background: var(--bg-hover); }
-.outline-empty { color: var(--text-dim); font-size: 12.5px; padding: 4px 10px 8px; }
+.engine-status:hover { background: var(--fill-3); color: var(--label); }
+.engine-status.warn { color: var(--orange); }
+.engine-status svg { width: 12px; height: 12px; }
 
-/* ---------- project search results ---------- */
-
-.search-results { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+/* Project search results */
 .search-file {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 10px 8px 3px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.search-count {
-  background: var(--bg-inset);
-  border-radius: 99px;
-  padding: 0 7px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-1) var(--sp-1);
   font-size: 11px;
+  line-height: 14px;
   font-weight: 600;
+  color: var(--label-2);
 }
-.search-hit {
-  display: flex;
-  gap: 9px;
-  padding: 5.5px 9px;
-  border-radius: 7px;
-  font-size: 13px;
-  cursor: pointer;
-  align-items: baseline;
-}
-.search-hit:hover { background: var(--bg-hover); }
-.search-line { flex: none; min-width: 28px; text-align: right; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
-.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.search-preview mark {
-  background: color-mix(in srgb, var(--warn) 32%, transparent);
-  color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
-  font-weight: 600;
-}
+.search-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-hit { gap: var(--sp-2); padding: 5px var(--sp-1); align-items: baseline; }
+.search-line { flex: none; min-width: 26px; text-align: right; color: var(--label-3); font-family: var(--mono); font-size: 11px; }
+.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 15px; }
+.search-preview mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 3px; }
 
-/* ---------- editor toolbar & breadcrumbs ---------- */
+/* ---------- dividers ---------- */
 
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 5px 12px;
-  min-height: 46px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+.divider {
+  width: 1px;
   flex: none;
-  overflow-x: auto;
-  scrollbar-width: none;
+  background: var(--separator);
+  position: relative;
+  overflow: visible;
+  transition: background-color 0.12s ease;
 }
-.editor-toolbar::-webkit-scrollbar { display: none; }
-.editor-toolbar > * { flex-shrink: 0; }
-.tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 7px; flex: none; }
-.tb-b { font-weight: 700; font-family: Georgia, serif; font-size: 15.5px; }
-.tb-i { font-style: italic; font-family: Georgia, serif; font-size: 15.5px; }
-.tb-m { font-size: 15.5px; }
-.tb-insert {
-  font-size: 13px;
-  padding: 5px 11px;
-  gap: 5px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.tb-insert:hover { color: var(--text); }
-.tb-insert .icon svg { width: 14px; height: 14px; }
+/* A wider invisible grab zone, so a 1px hairline is still easy to hit. */
+.divider::before { content: ''; position: absolute; inset: 0 -4px; cursor: col-resize; }
+.divider:hover:not(:has(.sync-pill:hover)) { background: var(--label-3); }
+.divider.dragging { background: var(--accent); }
 
-.crumbs {
+.sync-pill {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px;
+  border-radius: var(--r-container);
+  background: var(--bg-content);
+  box-shadow: var(--shadow-menu);
+  z-index: 10;
+  cursor: grab;
+}
+.sync-pill.dragging { cursor: grabbing; }
+.sync-pill button {
+  width: var(--h-menu-row);
+  height: var(--h-menu-row);
+  border-radius: var(--r-menu);
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 12.5px;
-  color: var(--text-dim);
+  justify-content: center;
+  color: var(--label-2);
 }
-.crumb { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
-.crumb:first-child { color: var(--text); font-weight: 500; }
-.crumb-sep { opacity: 0.5; flex: none; }
+.sync-pill button:hover { background: var(--fill-3); color: var(--accent); }
+.sync-pill svg { width: 13px; height: 13px; }
+
+/* ---------- in-pane toolbars ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  min-height: var(--h-toolbar);
+  padding: 0 var(--sp-2);
+  background: var(--bg-content);
+  box-shadow: inset 0 -1px 0 var(--separator);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.toolbar > * { flex-shrink: 0; }
+.toolbar .spacer { flex: 1 1 auto; min-width: var(--sp-2); }
+.toolbar-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 5px; }
+
+/* The PDF toolbar is a glass bar the document scrolls under — the kit's
+   scroll-edge effect. The scroll view fills the pane; its top padding keeps
+   content clear of the bar at rest. */
+.pdf-pane .toolbar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 3;
+  background: color-mix(in srgb, var(--bg-content) 72%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+.page-indicator { padding: 0 var(--sp-2); font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.zoom-btn { min-width: 68px; }
+.zoom-value { font-variant-numeric: tabular-nums; }
+.logs-btn, [data-command="view.toggleLogs"] { position: relative; }
 
 /* ---------- editor ---------- */
 
-.editor-host { flex: 1; min-height: 0; overflow: hidden; }
+.editor-host { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
 .editor-host .cm-scroller { font-family: var(--mono); line-height: 1.6; }
+.editor-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--label-2); padding: var(--sp-6); text-align: center; }
+
+.image-preview { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: var(--sp-5); background: var(--bg-recessed); }
+.image-preview img { max-width: 100%; max-height: 100%; border-radius: var(--r-menu); box-shadow: var(--shadow-pane); }
+
+.word-count {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-3);
+  z-index: 5;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bg-content) 82%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 0 0.5px var(--label-4);
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--label-2);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Line flash after a programmatic jump (outline / search / SyncTeX) */
+.cm-jump-flash { animation: jump-flash 1.6s ease-out; }
+@keyframes jump-flash {
+  0% { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  60% { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  100% { background: transparent; }
+}
 
 .cm-tooltip.cm-math-preview {
-  background: var(--bg-panel) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  padding: 10px 16px;
-  margin-bottom: 8px;
-  font-size: 15px;
-  color: var(--text);
+  background: var(--bg-content) !important;
+  border: none !important;
+  border-radius: var(--r-container);
+  box-shadow: var(--shadow-menu);
+  padding: var(--sp-2) var(--sp-4);
+  margin-bottom: var(--sp-2);
+  color: var(--label);
   max-width: 560px;
   overflow-x: auto;
   animation: pop-in 0.14s ease-out;
 }
-.editor-placeholder {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  padding: 24px;
-  text-align: center;
-}
-.img-preview { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 20px; background: var(--bg-inset); }
-.img-preview img { max-width: 100%; max-height: 100%; box-shadow: var(--shadow); border-radius: 4px; }
 
-/* Line flash after a programmatic jump (outline / search / SyncTeX) */
-.cm-jump-flash { animation: jump-flash 1.8s ease-out; }
-@keyframes jump-flash {
-  0% { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-  60% { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  100% { background: transparent; }
-}
-
-
-/* CodeMirror find/replace panel, themed */
-.cm-panels {
-  background: var(--bg-panel) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-}
+/* CodeMirror's own find panel, matched to the app's controls. */
+.cm-panels { background: var(--bg-recessed) !important; color: var(--label) !important; border-color: var(--separator) !important; }
 .cm-panels .cm-textfield {
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
+  background: var(--bg-content);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
+  color: var(--label);
+  height: var(--h-control);
 }
+.cm-panels .cm-textfield:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .cm-panels .cm-button {
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
+  background: var(--fill-3);
+  border: none;
   background-image: none;
+  border-radius: var(--r-menu);
+  color: var(--label);
+  padding: 3px 10px;
 }
-.cm-panels .cm-button:hover { background: var(--bg-hover); }
-.cm-panels label { color: var(--text-dim); }
+.cm-panels .cm-button:hover { background: var(--fill-2); }
+.cm-panels label { color: var(--label-2); }
 
-/* ---------- logs (inside the PDF pane) ---------- */
+/* ---------- PDF ---------- */
 
-.logs-view {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px;
-  background: var(--bg);
-}
-.logs-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 9px;
-  border-radius: 99px;
-  font-weight: 600;
-  font-size: 12px;
-}
-.badge.err { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
-.badge.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
-.badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
-.logs-body { }
-
-.logs-btn { position: relative; }
-.logs-btn.active { color: var(--accent); background: var(--bg-active); }
-.logs-badge {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
-  border-radius: 99px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 15px;
-  text-align: center;
-  color: #fff;
-}
-.logs-badge.err { background: var(--danger); }
-.logs-badge.warn { background: var(--warn); }
-.log-item {
-  display: flex;
-  gap: 8px;
-  padding: 6px 9px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  align-items: baseline;
-}
-.log-item:hover { background: var(--bg-hover); }
-.log-item .type { flex: none; font-weight: 700; font-size: 11.5px; }
-.log-item.error .type { color: var(--danger); }
-.log-item.warning .type { color: var(--warn); }
-.log-item .loc { flex: none; color: var(--text-dim); font-family: var(--mono); font-size: 11.5px; }
-.log-raw {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--text-dim);
-  padding: 8px;
-  margin: 0;
-}
-
-/* ---------- pdf pane ---------- */
-
-.pdf-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 12px;
-  min-height: 46px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-  color: var(--text-dim);
-  flex: none;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.pdf-toolbar::-webkit-scrollbar { display: none; }
-.pdf-toolbar > * { flex-shrink: 0; }
-.pdf-toolbar .spacer { flex: 1 1 auto !important; min-width: 8px; }
-.pdf-toolbar .page-ind { margin: 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.zoom-btn {
-  font-size: 12.5px;
-  padding: 5px 8px;
-  gap: 3px;
-  min-width: 62px;
-  justify-content: center;
-  font-variant-numeric: tabular-nums;
-}
-#zoom-label { min-width: 34px; text-align: center; }
-.fit-caret { font-size: 9px; opacity: 0.6; }
-/* Reserve the scrollbar gutter so the scrollbar appearing/disappearing doesn't
-   change clientWidth — otherwise fit-width would re-render in a feedback loop. */
-.pdf-scroll { flex: 1; overflow: auto; padding: 12px 10px; scrollbar-gutter: stable; }
-.pdf-page-wrap { position: relative; margin: 0 auto 10px; width: fit-content; box-shadow: 0 2px 10px rgba(0,0,0,0.16); border-radius: 3px; }
+/* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
+   and fit-width re-renders in a feedback loop. Top padding = 40px bar + 12px,
+   mirrored by V_PAD in pdfview.js. */
+.pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: 52px 10px var(--sp-3); scrollbar-gutter: stable; }
+.pdf-pages { display: flex; min-height: 100%; flex-direction: column; justify-content: center; }
+.pdf-page-wrap { position: relative; margin: 0 auto var(--sp-2); width: fit-content; border-radius: 3px; box-shadow: 0 0 0 0.5px var(--label-4), 0 2px 8px rgba(0, 0, 0, 0.14); }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
-.pdf-page-wrap canvas { display: block; }
+.pdf-page-wrap canvas { display: block; border-radius: 3px; background: #fff; }
 
-/* Selectable text layer (pdf.js): transparent glyphs positioned over the canvas */
+/* Selectable text layer (pdf.js): transparent glyphs over the canvas */
 .pdf-text-layer {
   position: absolute;
   inset: 0;
   overflow: clip;
-  opacity: 1;
   line-height: 1;
   text-align: initial;
   text-size-adjust: none;
@@ -812,236 +853,210 @@ input:focus, select:focus { border-color: var(--accent); }
   transform-origin: 0 0;
   z-index: 2;
 }
-.pdf-text-layer span,
-.pdf-text-layer br {
-  color: transparent;
-  position: absolute;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0 0;
-}
-.pdf-text-layer ::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
-.pdf-text-layer .endOfContent {
-  display: block;
-  position: absolute;
-  inset: 100% 0 0;
-  z-index: -1;
-  cursor: default;
-  user-select: none;
-}
-.pdf-page-wrap canvas { display: block; border-radius: 3px; background: white; }
-.sync-flash {
-  position: absolute;
-  background: rgba(255, 220, 0, 0.35);
-  border-radius: 2px;
-  pointer-events: none;
-  animation: fadeout 2.2s forwards;
-}
-@keyframes fadeout { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
-.pdf-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  text-align: center;
-  padding: 24px;
-}
-.pdf-empty-icon { opacity: 0.6; }
-.pdf-empty-icon svg { width: 38px; height: 38px; }
+.pdf-text-layer span, .pdf-text-layer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.pdf-text-layer ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+.pdf-text-layer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; cursor: default; user-select: none; }
 
-/* ---------- modal / context menu / toast ---------- */
+/* Dark paper is an explicit reading preference, not the default appearance:
+   invert the canvas and hue-rotate so coloured figures stay roughly true. */
+.pdf-dark .pdf-page-wrap canvas { filter: invert(1) hue-rotate(180deg); }
+.pdf-dark .pdf-scroll { background: #1a1a1a; }
+
+.sync-flash { position: absolute; background: color-mix(in srgb, var(--yellow) 40%, transparent); border-radius: 2px; pointer-events: none; animation: fade-out 2.2s forwards; }
+@keyframes fade-out { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+.pdf-empty { min-height: 100%; display: flex; flex-direction: column; gap: var(--sp-3); align-items: center; justify-content: center; color: var(--label-2); text-align: center; padding: var(--sp-6); }
+.pdf-empty-icon { color: var(--label-3); }
+.pdf-empty-icon svg { width: 32px; height: 32px; }
+
+/* ---------- compile log ---------- */
+
+.logs { position: absolute; inset: 0; overflow-y: auto; padding: 52px var(--sp-4) var(--sp-3); background: var(--bg-recessed); }
+.logs-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.logs-summary { display: flex; align-items: center; gap: var(--sp-2); }
+.logs-duration { color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.log-item {
+  display: flex;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 5px var(--sp-2);
+  border-radius: var(--r-menu);
+  font-size: 12px;
+  line-height: 15px;
+  text-align: left;
+  align-items: baseline;
+  color: inherit;
+  cursor: default;
+}
+.log-item:hover { background: var(--fill-3); }
+.log-kind { flex: none; font-weight: 600; }
+.log-item.error .log-kind { color: var(--red); }
+.log-item.warning .log-kind { color: var(--orange); }
+.log-loc { flex: none; color: var(--label-2); font-family: var(--mono); font-size: 11px; }
+.log-message { min-width: 0; }
+.logs-raw { font-family: var(--mono); font-size: 11px; line-height: 16px; white-space: pre-wrap; word-break: break-all; color: var(--label-2); margin: 0; }
+
+/* ---------- floating panes ---------- */
+
+/* Inset rounded panes (Finder / Xcode style). Concentric: the sidebar and the
+   content pane float as a matching pair rather than a rounded pane butting
+   against a square one. */
+.floating .sidebar, .floating .workspace {
+  border-radius: var(--r-window);
+  box-shadow: var(--shadow-pane);
+}
+.floating .sidebar { margin: var(--sp-2) 0 var(--sp-2) var(--sp-2); }
+.floating .workspace { margin: var(--sp-2) var(--sp-2) var(--sp-2) 0; }
+.floating .sidebar-footer { border-radius: 0 0 var(--r-window) var(--r-window); }
+/* The gap between floating panes replaces the hairline, with a hover cue. */
+.floating .divider:not(.divider-sync) { width: var(--sp-2); background: transparent; }
+.floating .divider:not(.divider-sync)::after {
+  content: '';
+  position: absolute;
+  top: var(--sp-2); bottom: var(--sp-2); left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: var(--r-pill);
+  background: transparent;
+  transition: background-color 0.14s ease;
+}
+.floating .divider:not(.divider-sync):hover { background: transparent; }
+.floating .divider:not(.divider-sync):hover::after { background: var(--label-3); }
+.floating .divider:not(.divider-sync).dragging::after { background: var(--accent); }
+.floating.electron.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
+
+/* ---------- dialogs, menus, toasts ---------- */
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 14vh;
-  z-index: 100;
+  padding: 12vh var(--sp-5) var(--sp-5);
+  background: rgba(0, 0, 0, 0.2);
 }
+
 .modal {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  width: 420px;
-  max-width: calc(100vw - 40px);
-  padding: 22px;
-}
-.modal h3 { margin: 0 0 16px; font-size: 17px; }
-.modal .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
-.modal .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
-.modal .field input, .modal .field select { width: 100%; }
-.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.modal .row { display: flex; align-items: center; gap: 8px; }
-
-.ctx-menu {
-  position: fixed;
-  z-index: 200;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  padding: 5px;
-  min-width: 185px;
-}
-.ctx-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 12px;
-  border-radius: 7px;
-  font-size: 13.5px;
-}
-.ctx-menu button:hover { background: var(--bg-hover); }
-.ctx-menu button.danger { color: var(--danger); }
-.ctx-menu hr { border: none; border-top: 1px solid var(--border); margin: 5px 4px; }
-
-/* ---------- settings ---------- */
-
-.corner-btn {
-  position: fixed;
-  bottom: 18px;
-  left: 18px;
-  z-index: 50;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.14);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
+  flex-direction: column;
+  width: 390px;                       /* kit dialog width */
+  max-width: 100%;
+  max-height: 100%;
+  padding: var(--sp-5);
+  border-radius: var(--r-window);
+  background: var(--bg-window);
+  box-shadow: var(--shadow-dialog);
+  animation: pop-in 0.16s ease-out;
 }
-.corner-btn:hover { color: var(--text); transform: translateY(-1px); }
+.modal-title { font-size: 15px; line-height: 20px; font-weight: 700; margin-bottom: var(--sp-4); }
+.modal-body { color: var(--label-2); font-size: 11px; line-height: 15px; font-weight: 500; }
+.modal .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: var(--sp-3); }
+.modal .field label { font-size: 13px; line-height: 16px; color: var(--label); }
+.modal .field input, .modal .field select { width: 100%; }
+.modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-5); }
 
-.settings-modal { width: 460px; }
+.settings-dialog { width: 460px; }
+.settings-body { overflow-y: auto; margin: 0 calc(-1 * var(--sp-1)); padding: 0 var(--sp-1); }
+.settings-group + .settings-group { margin-top: var(--sp-5); }
+.settings-group-title { font-size: 11px; line-height: 14px; font-weight: 600; color: var(--label-2); margin-bottom: 5px; padding-left: var(--sp-3); }
+.settings-card { border: 0.5px solid var(--separator); border-radius: var(--r-container); overflow: hidden; }
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 13px 2px;
-  font-size: 14px;
+  gap: var(--sp-4);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3);
 }
-.settings-row + .settings-row { border-top: 1px solid var(--border); }
-.settings-hint { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.settings-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-dim);
+.settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
+.settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.settings-hint { font-size: 11px; line-height: 14px; color: var(--label-2); }
+.settings-foot { justify-content: space-between; }
+.settings-status { font-size: 11px; line-height: 14px; color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Menus use the vibrant material and the kit's 24px rows with radius 8. */
+.menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  padding: var(--sp-1);
+  border-radius: var(--r-container);
+  background: var(--material);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow-menu);
+  animation: pop-in 0.12s ease-out;
 }
-.settings-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.seg-group {
-  display: flex;
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px;
-  gap: 2px;
-}
-.seg {
-  width: 38px;
-  height: 30px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-}
-.seg:hover { color: var(--text); }
-.seg.on { background: var(--bg-panel); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
-.seg .icon svg { width: 16px; height: 16px; }
-
-.switch {
-  width: 40px;
-  height: 24px;
-  border-radius: 99px;
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  position: relative;
-  transition: background 0.15s;
-  flex: none;
-}
-.switch .knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  transition: transform 0.15s, background 0.15s;
-}
-.switch.on { background: var(--accent); border-color: var(--accent); }
-.switch.on .knob { transform: translateX(16px); background: #fff; }
-
-.stepper { display: flex; align-items: center; gap: 6px; }
-.fs-label { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
-
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* ---------- animations ---------- */
-
-@keyframes pane-in { from { opacity: 0; transform: translateY(4px); } }
-@keyframes pop-in { from { opacity: 0; transform: scale(0.97) translateY(3px); } }
-.modal { animation: pop-in 0.16s ease-out; }
-.ctx-menu { animation: pop-in 0.12s ease-out; }
-.pdf-page-wrap { animation: pane-in 0.25s ease-out; }
-.logs-view { animation: pane-in 0.15s ease-out; }
-.sync-pill { animation: pop-in 0.2s ease-out; }
-.tex-status {
+.win .menu, :not(.electron) .menu { background: var(--bg-window); }
+.menu-item {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 12.5px;
-  cursor: pointer;
-  color: var(--text-dim);
-  font-variant: small-caps;
-  letter-spacing: 0.02em;
+  width: 100%;
+  height: var(--h-menu-row);
+  padding: 0 var(--sp-2) 0 0;
+  border-radius: var(--r-row);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--label);
 }
-.tex-status:hover { color: var(--text); }
-.tex-status.warn { color: var(--warn); opacity: 0.8; }
-.tex-status .icon svg { width: 13px; height: 13px; }
-.log-duration { color: var(--text-dim); font-size: 12px; }
-.pdf-pages { will-change: transform; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
+.menu-item.danger { color: var(--red); }
+.menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--red); color: #fff; }
+.menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: 11px; }
+.menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
 
 #toast-root {
   position: fixed;
-  bottom: 22px;
+  bottom: var(--sp-6);
   left: 50%;
   transform: translateX(-50%);
   z-index: 300;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
+  pointer-events: none;
 }
 .toast {
-  background: var(--text);
-  color: var(--bg);
-  padding: 10px 18px;
-  border-radius: 99px;
-  font-size: 13.5px;
-  box-shadow: var(--shadow);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--material);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow-menu);
+  color: var(--label);
+  font-size: 12px;
+  line-height: 15px;
+  font-weight: 500;
   animation: toast-in 0.18s ease-out;
 }
-.toast.error { background: var(--danger); color: white; }
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+.toast.error { background: var(--red); color: #fff; }
+
+/* ---------- motion ---------- */
+
+/* Short, restrained entrances for surfaces that appear. Nothing lifts on hover
+   and nothing scales on press — that reads as a web page, not an app. */
+@keyframes pop-in { from { opacity: 0; transform: scale(0.98) translateY(2px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fade-in { from { opacity: 0; } }
+.logs { animation: fade-in 0.14s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- narrow windows ---------- */
+
+@media (max-width: 900px) {
+  .crumbs, .title-separator { display: none; }
+}
+
+/* iPad/touch: intentionally absent. This build targets desktop pointers on
+   macOS and Windows; the touch-sized (≥44pt) iPad experience is a separate,
+   likely SwiftUI, effort — see docs/roadmap.md. */

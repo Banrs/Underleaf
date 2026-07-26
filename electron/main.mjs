@@ -8,9 +8,13 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildMenu, buildFallbackMenu } from './menu.mjs';
+import { rebuildIfStale } from './rebuild.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEB_DIR = path.join(__dirname, '..', 'web');
+const APP_ROOT = path.join(__dirname, '..');
+const WEB_DIR = path.join(APP_ROOT, 'web');
+const IS_MAC = process.platform === 'darwin';
 
 // Projects live in ~/TeXLocal — visible in Finder's Home, syncable, and (unlike
 // ~/Documents, ~/Desktop, ~/Downloads) NOT behind macOS's privacy gate, so the
@@ -45,6 +49,24 @@ let win = null;
 
 async function boot() {
   await app.whenReady();
+
+  // ---------- rebuild-on-launch ----------
+  // If the source tree this app was built from has changed, refresh the bundle
+  // before showing a window. Never fatal: a failed rebuild runs the app as-is.
+  try {
+    const result = await rebuildIfStale({
+      appPath: APP_ROOT,
+      isPackaged: app.isPackaged,
+      log: (m) => console.log(`[rebuild] ${m}`),
+    });
+    if (result === 'relaunch') {
+      app.relaunch();
+      app.exit(0);
+      return;
+    }
+  } catch (err) {
+    console.error('[rebuild] failed, running the existing build:', err.message);
+  }
 
   // Server modules read TEXLOCAL_DATA at import time, so import them late.
   const projects = await import('../server/projects.js');
@@ -156,6 +178,29 @@ async function boot() {
     return { ok: true };
   });
 
+  // ---------- native menu, driven by the renderer's command model ----------
+  ipcMain.on('menu:set', (_e, spec) => {
+    try { buildMenu(spec, win); }
+    catch (err) { console.error('menu build failed:', err.message); }
+  });
+
+  // ---------- quit-save handshake ----------
+  // On quit, give the renderer one chance to flush an unsaved buffer; proceed
+  // when it acknowledges or after a short timeout so quit can never hang.
+  let readyToQuit = false;
+  app.on('before-quit', (e) => {
+    if (readyToQuit || !win || win.isDestroyed()) return;
+    e.preventDefault();
+    const proceed = () => {
+      if (readyToQuit) return;
+      readyToQuit = true;
+      app.quit();
+    };
+    ipcMain.once('app:ready-to-quit', proceed);
+    setTimeout(proceed, 1500);
+    win.webContents.send('app:before-quit');
+  });
+
   // ---------- window ----------
   const createWindow = () => {
     win = new BrowserWindow({
@@ -164,15 +209,19 @@ async function boot() {
       minWidth: 800,
       minHeight: 500,
       title: 'TeXLocal',
-      // Native liquid-glass: macOS renders the vibrancy behind a transparent
-      // window; the sidebar leaves its background translucent to show it.
-      backgroundColor: '#00000000',
-      vibrancy: 'sidebar',
-      visualEffectState: 'followWindow',
-      // The themed app chrome doubles as the title bar. No trafficLightPosition
-      // override — the lights sit at the standard macOS default spot and stay
-      // there in every layout (docked or floating), like a native app.
-      titleBarStyle: 'hidden',
+      // Native liquid-glass on macOS: the window is transparent and vibrancy
+      // renders behind it; the sidebar leaves its background translucent.
+      ...(IS_MAC ? {
+        backgroundColor: '#00000000',
+        vibrancy: 'sidebar',
+        visualEffectState: 'followWindow',
+        // The app's chrome doubles as the title bar. The lights sit in the
+        // 52px title band (kit: x=18, centred vertically → y=19).
+        titleBarStyle: 'hidden',
+        trafficLightPosition: { x: 18, y: 19 },
+      } : {
+        backgroundColor: '#1e1e1e',
+      }),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
@@ -180,6 +229,8 @@ async function boot() {
         spellcheck: true,
       },
     });
+
+    buildFallbackMenu(win);
 
     // Native spellcheck suggestions on right-click.
     win.webContents.on('context-menu', (_event, params) => {
@@ -198,8 +249,8 @@ async function boot() {
 
     // External links (e.g. hyperref URLs opened from the PDF) go to the system browser.
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('http')) { shell.openExternal(url); return { action: 'deny' }; }
-      return { action: 'allow' };
+      if (/^(https?:|mailto:)/i.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
     });
 
     win.loadURL('texlocal://app/index.html');

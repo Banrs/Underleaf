@@ -4,6 +4,28 @@ Status: **code-reviewed, not runtime-tested on Windows.** The compilation core i
 portable; the Electron shell (window chrome + translucency) and the ZIP export are
 the real Windows work. Each item below lists the file, the problem, and the fix.
 
+**Already done in the platform-abstraction pass (July 2026):**
+- `html.mac` / `html.win` / `html.electron` classes on the root, set from
+  `process.platform` via the preload bridge — all macOS-only CSS (vibrancy
+  backgrounds, traffic-light insets, transparent window) is gated on `.mac`
+  (covers the CSS half of #3 and #7 below).
+- macOS-only `BrowserWindow` options (`vibrancy`, `titleBarStyle: 'hidden'`,
+  `trafficLightPosition`, transparent background) apply only on darwin; other
+  platforms get an opaque window with the OS title bar (safe default until #2
+  adds `titleBarOverlay`).
+- The native menu (`electron/menu.mjs`) branches per platform: Windows/Linux get
+  Settings + Quit in File and skip the macOS app menu; all accelerators use
+  `CmdOrCtrl`, and shortcut glyphs degrade to `Ctrl+X` text off-macOS.
+- Design tokens (`web/styles.css`) are platform-neutral; the font stack includes
+  `Segoe UI Variable`.
+
+**Still to do (this file):** #1 export, #2 `titleBarOverlay` + reserve space for
+the caption buttons, #3 Mica/acrylic or opaque fallback (the window-options half),
+#4 SyncTeX separators, #5 TeX discovery paths, #6 `taskkill`, plus a
+`--platform win32` packaging target and a Windows equivalent of
+`scripts/install-app.mjs` (the self-rebuild in `electron/rebuild.mjs` itself is
+portable Node).
+
 Legend: 🔴 breaks a feature · 🟠 misbehaves in some cases · 🟢 minor / hardening
 
 ---

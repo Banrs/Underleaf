@@ -35,14 +35,23 @@ const jumpFlashField = StateField.define({
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-panel)' },
   // Subtle rule between the line-number gutter and the text: a faint inset
-  // background plus a hairline border, so the two columns read as distinct.
+  // background plus a hairline border. !important because oneDark also styles
+  // .cm-gutters (border: none) and would otherwise erase the rule in dark mode.
   '.cm-gutters': {
-    backgroundColor: 'color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel))',
-    borderRight: '1px solid var(--border)',
+    backgroundColor: 'color-mix(in srgb, var(--text-dim) 6%, var(--bg-panel)) !important',
+    borderRight: '1px solid var(--border) !important',
     color: 'var(--text-dim)',
   },
-  '.cm-lineNumbers .cm-gutterElement': { paddingRight: '10px' },
-  '.cm-content': { paddingLeft: '4px' },
+  // Right-align the line numbers with tabular figures so 1-, 2- and 3-digit
+  // numbers line up on their last digit instead of looking ragged/left-leaning.
+  '.cm-lineNumbers .cm-gutterElement': {
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+    padding: '0 8px 0 12px',
+  },
+  // No extra left padding on the content: the code (and its active-line
+  // highlight) sits flush against the gutter — no un-highlighted strip.
+  '.cm-content': { paddingLeft: '0' },
   '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
   '&.cm-focused': { outline: 'none' },

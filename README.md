@@ -13,7 +13,7 @@ npm install
 npm run dev          # builds the UI and serves http://localhost:3417
 ```
 
-For the standalone desktop app: `npm run package` → `release/TeXLocal-darwin-arm64/TeXLocal.app`.
+For the standalone desktop app: `npm run install-app` — packages the app, installs it to `/Applications/TeXLocal.app`, and stamps it with this checkout's path so it **rebuilds itself on launch** whenever the source here is newer (fully offline; an Electron version bump still needs a re-run of `install-app`).
 
 You also need a TeX distribution — see [Requirements](#requirements).
 
@@ -30,11 +30,13 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Native OS spellcheck** in the editor (red squiggles + right-click suggestions)
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns
 - **Logs in the PDF pane** (Overleaf-style): badge on the toolbar, parsed errors click through to source, raw log view
-- **PDF preview**: trackpad pinch zoom, zoom %, fit width/height, page tracking
+- **PDF preview**: trackpad pinch or ⌘-scroll zoom, zoom %, fit width/height, page tracking
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
-- **Settings popup** (`⌘,`): system/light/dark theme, auto-compile switch, editor font size, interface scale, per-project TeX engine
-- **Golden Gate edge-to-edge UI**: a docked translucent sidebar (native macOS vibrancy) and a unified editor/PDF surface fill the window with hairline dividers — no wasted gaps; sidebar collapsible with `⌘\` (Finder-style full hide), light/dark/system themes
-- Autosave, `⌘S` / `⌘⏎` compile, `⌘F` find & replace, `⌘/` comment, `⌘\` toggle sidebar, `⌘,` settings
+- **Native macOS menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
+- **Settings** (`⌘,`): grouped System-Settings-style dialog — theme, PDF paper (white by default; dark inversion as a night-reading option), auto-compile, editor font size, interface scale, per-project TeX engine
+- **macOS-native interface** built from Apple's macOS UI kit values ([docs/design-tokens.md](docs/design-tokens.md)): 52px unified title bar, 256px vibrant sidebar, HIG type ramp and system colors; edge-to-edge by default with an optional Floating-panels layout
+- **Rebuild-on-launch**: the installed app rebuilds itself from your checkout when the source is newer — no manual repackaging during development
+- Autosave, `⌘S` save / `⌘⏎` compile, `⌘F` find & replace, `⌘⇧F` find in project, `⌘/` comment, `⌘\` toggle sidebar, `⌘⇧\` toggle PDF, `⌘,` settings
 
 ## Requirements
 
@@ -47,7 +49,9 @@ You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Run
 
-**Standalone app (recommended):** build with `npm run package`, then move `release/TeXLocal-darwin-arm64/TeXLocal.app` to `/Applications`. It's self-contained — no server, no ports; the UI talks to the Electron main process over IPC and files are served via a custom `texlocal://` protocol. Native macOS spellcheck with right-click suggestions works in the editor.
+**Standalone app (recommended):** `npm run install-app` packages and installs `/Applications/TeXLocal.app`. It's self-contained — no server, no ports; the UI talks to the Electron main process over IPC and files are served via a custom `texlocal://` protocol. Native macOS spellcheck with right-click suggestions works in the editor.
+
+The installed app remembers where it was built from (`build-info.json` in the bundle). On every launch it compares that source tree's modification times against its own build stamp; if the source is newer it rebuilds the bundle with the repo's own `build.mjs` (using Electron's bundled Node), swaps the new files in atomically, and relaunches. If the rebuild fails or the checkout has moved, it just runs the existing build. `npm run package` alone still produces a plain non-self-updating bundle in `release/`.
 
 > The generated app is ad-hoc signed — fine on your own machine. Distributing it to others needs an Apple Developer ID (code signing + notarization), otherwise Gatekeeper will warn.
 
@@ -67,17 +71,23 @@ Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/` (br
 
 ```
 server/      Express API + LaTeX compile/SyncTeX/project logic (shared by both modes)
-electron/    Electron main process + preload (desktop app; talks to server modules over IPC)
-web/         Frontend — index.html, styles.css, src/*.js (bundled by esbuild into web/dist)
+electron/    Electron main (main.mjs), native menu (menu.mjs), self-rebuild (rebuild.mjs), preload
+web/src/     Frontend modules, bundled by esbuild into web/dist:
+             main.js (bootstrap/routing) · commands.js (shared command model) ·
+             home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
+             settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
+             dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) · state.js
+docs/        design-tokens.md (extracted Apple UI-kit values) · windows.md · roadmap.md
+scripts/     install-app.mjs (package + install + self-update stamp)
 build.mjs    esbuild bundler + asset copy (KaTeX, fonts, pdf.js worker)
 assets/      App icon (.icns)
 ```
 
-`npm run build` bundles the frontend; `npm run dev` builds then serves the browser app; `npm run app` runs Electron against live code; `npm run package` builds the distributable `.app`.
+`npm run build` bundles the frontend; `npm run dev` builds then serves the browser app; `npm run app` runs Electron against live code; `npm run package` builds the distributable `.app`; `npm run install-app` packages and installs it with self-update enabled.
 
 ## Cross-platform status
 
-Developed and runtime-tested on macOS (arm64). The compile core is portable — TeX binary lookup covers per-platform locations (TeX Live / MiKTeX on Windows) via `path.delimiter`, shortcuts bind both `Cmd` and `Ctrl`, and the data dir works cross-platform. The Electron **shell** (window chrome + translucency) and the ZIP export still need Windows-specific work: window controls (`titleBarOverlay`), Acrylic/Mica instead of macOS vibrancy, a JS zipper instead of the `zip` CLI, and SyncTeX path-separator normalization. These are itemized with fixes in **[WINDOWS.md](WINDOWS.md)** — code-reviewed, not yet runtime-tested on Windows.
+Developed and runtime-tested on macOS (arm64), structured for a Windows port: platform chrome is gated on `html.mac` / `html.win` classes (set from `process.platform`), macOS-only window options (vibrancy, hidden title bar, traffic-light inset) are applied only on darwin, menu accelerators use `CmdOrCtrl`, and the design tokens are platform-neutral. What remains for Windows is itemized in **[docs/windows.md](docs/windows.md)** — window controls (`titleBarOverlay`), Mica instead of vibrancy, a JS zipper instead of the `zip` CLI, SyncTeX path normalization, and a Windows packaging target.
 
 ## Security notes
 
