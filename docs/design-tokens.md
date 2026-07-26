@@ -69,14 +69,44 @@ Materials (the fill behind a `backdrop-filter`), light / dark:
 
 **Control size ramp** — mini 16, small 20, regular 24, large 28, XL 36.
 
-**Standardization (this app):** desktop-comfortable, two control sizes only —
-**36 (XL)** in the 52px title bar, **28** for every interactive control below it
-(toolbar buttons, inputs, segmented controls, steppers, search). No mini/small
-controls anywhere. Components whose kit spec is its own: menu rows 24, switch
-54×24, sidebar rows 32, scrollbar 12. Control text is 13pt throughout — the
-same size Finder and Preview use; 12/11/10pt appear only as secondary text
-(Callout/Subheadline/Caption), never as control labels. Touch/iPad sizing is
-deliberately out of scope for this build (future SwiftUI effort).
+**Sidebar/list variants — text scales with row height.** This is the decision
+that sets the app's overall legibility:
+
+| Variant | Row | Leading icon | Title |
+| --- | --- | --- | --- |
+| Small | 24 | 16 | 11 Medium |
+| Medium | 32 | 20 | 13 Regular |
+| **Large ← used here** | **40** | **24** | **15 Regular** |
+
+**Toolbar band heights**, measured off every window style in the kit — these are
+the only correct values, so "what height should the toolbar be?" has one answer
+per style:
+
+| Window style | Bands |
+| --- | --- |
+| Default (title only) | titlebar 52 (32 without title) |
+| **Unified toolbar ← title bar here** | one band, **52** |
+| Unified *compact* | one band, 40 |
+| **Expanded toolbar ← in-pane bars here** | titlebar 32 + toolbar **44** |
+| Utility panel | 56 |
+
+**Standardization (this app):** two control sizes — **36 (XL)** in the 52px title
+bar, **28** for every interactive control below it (toolbar buttons, inputs,
+segmented controls, steppers, search). No mini/small controls anywhere.
+
+Two type roles, and the distinction matters:
+- **Controls: 13pt** — the macOS control standard (buttons, fields, menus).
+- **Lists and content: 15pt** — the Large-variant size (sidebar rows, outline,
+  recents, Settings row labels). Using Medium's 13pt here is what made the
+  interface read undersized against Finder and Preview.
+- 12/11pt only as genuinely secondary text (hints, timestamps, section headers,
+  status), never as a control or list label.
+
+Components keeping their own kit spec: switch 54×24, scrollbar 12, menu text
+13 Medium (row box follows the app's list density).
+
+Touch/iPad sizing is deliberately out of scope for this build (future SwiftUI
+effort).
 
 **Corner radius is `height / 4`.** Measured off the text-field set (16→4, 20→5,
 24→6, 28→7, 36→9) and confirmed by the sidebar row (32→8). One rule, so nothing
@@ -85,9 +115,9 @@ needs an ad-hoc radius.
 | Element | Value |
 | --- | --- |
 | Unified titlebar + toolbar | **52** tall, XL (36) controls inset 8 |
-| In-pane toolbar | **40** tall, regular (24) controls (kit's "Medium" toolbar) |
+| In-pane toolbar | **44** tall, 28 controls (kit's Expanded-toolbar band) |
 | Sidebar | **256** wide |
-| Sidebar row | 32 tall, radius 8, icon 20, icon→label gap 4 |
+| Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
 | Sidebar content inset | 14 (selection pill bleeds to 10) |
 | Sidebar section header | 18 tall + 14 gap below |
 | Traffic lights | 68 × 14 at x **18**, y **19** (centred in the 52 bar) |

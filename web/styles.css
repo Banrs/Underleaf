@@ -56,25 +56,31 @@
   /* Control sizes, standardized to two from the kit's ramp (16/20/24/28/36):
      --h-control (28) for every interactive control below the title bar, and
      --h-xl (36) for the title-bar row — desktop-comfortable, no mini/small UI.
-     Components with their own kit spec keep it: menu rows 24, switch 54×24,
-     sidebar rows 32. --h-menu-row exists for those, not for controls. */
+     Components with their own kit spec keep it: menu rows 24, switch 54×24. */
   --h-control: 28px;
   --h-xl: 36px;
-  --h-menu-row: 24px;
+  --h-menu-row: 28px;
+  /* Lists use the kit's "Large" sidebar variant — 40px rows with 15pt text —
+     rather than "Medium" (32/13). Text scales with row height in the kit, and
+     Large is the comfortable desktop density; Medium reads undersized on a
+     large display. Controls stay at the 13pt control standard. */
+  --h-row: 40px;
+  --fs-row: 15px;
+  --lh-row: 20px;
 
   /* Corner radius is height / 4 throughout — one rule, no ad-hoc values. */
   --r-small: 5px;
   --r-control: 7px;    /* --h-control / 4 */
   --r-menu: 6px;
   --r-xl: 9px;
-  --r-row: 8px;          /* 32px list row */
+  --r-row: 10px;         /* --h-row / 4 */
   --r-container: 10px;   /* grouped lists, menus, popovers */
   --r-window: 12px;      /* floating panes, dialogs */
   --r-pill: 999px;
 
   /* Bars: the unified window titlebar, and the lighter in-pane toolbars. */
   --h-titlebar: 52px;
-  --h-toolbar: 40px;
+  --h-toolbar: 44px;
   --w-sidebar: 256px;
 
   /* 4px rhythm. */
@@ -161,7 +167,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .spacer { flex: 1 1 auto; min-width: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
-.placeholder { color: var(--label-2); font-size: 12px; line-height: 15px; padding: var(--sp-2) 10px; }
+.placeholder { color: var(--label-2); font-size: 13px; line-height: 16px; padding: var(--sp-2) 10px; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--r-small); }
 
@@ -453,24 +459,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: var(--sp-6);
-  padding: 0 var(--sp-6) var(--sp-6);
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 40px;
+  padding: 0 40px 40px;
   overflow: hidden;
 }
 
 .home-brand { display: flex; flex-direction: column; padding-top: var(--sp-5); min-width: 0; }
 .brand-mark { color: var(--accent); display: inline-flex; margin-bottom: var(--sp-4); }
-.brand-mark svg { width: 56px; height: 56px; }
+.brand-mark svg { width: 64px; height: 64px; }
 /* Large Title, 26/32 — the kit's largest style. */
 .brand-name { font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; }
-.brand-sub { margin-top: var(--sp-2); font-size: 13px; line-height: 18px; color: var(--label-2); }
+.brand-sub { margin-top: var(--sp-2); font-size: var(--fs-row); line-height: 21px; color: var(--label-2); }
 .brand-actions { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-5); align-items: flex-start; }
 .brand-actions .btn { width: 100%; justify-content: flex-start; gap: var(--sp-2); }
 
 .home-recents { display: flex; flex-direction: column; min-height: 0; padding-top: var(--sp-5); }
 /* Subheadline 11 Bold, matching the sidebar's section headers. */
-.recents-heading { font-size: 11px; line-height: 14px; font-weight: 700; color: var(--label-2); margin-bottom: 5px; padding-left: var(--sp-3); }
+.recents-heading { font-size: 11px; line-height: 14px; font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-2); padding-left: var(--sp-3); }
 /* Sizes to its rows rather than stretching, so two projects don't leave a tall
    empty box; scrolls once the rows exceed the column. */
 .home-recents .doc-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
@@ -491,7 +497,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 48px;
+  height: 56px;
   padding: 0 var(--sp-3);
   cursor: default;
   transition: background-color 0.1s ease;
@@ -500,10 +506,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .doc-row:hover { background: var(--fill-4); }
 .doc-row:active { background: var(--fill-3); }
 .doc-icon { color: var(--accent); display: inline-flex; }
-.doc-icon svg { width: 19px; height: 19px; }
+.doc-icon svg { width: 22px; height: 22px; }
 .doc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.doc-name { font-size: 13px; line-height: 16px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-meta { font-size: 12px; line-height: 15px; color: var(--label-2); }
+.doc-name { font-size: var(--fs-row); line-height: var(--lh-row); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-meta { font-size: 13px; line-height: 16px; color: var(--label-2); }
 /* Row actions appear on hover or keyboard focus — never only on hover. */
 .row-actions { opacity: 0; transition: opacity 0.1s ease; }
 .doc-row:hover .row-actions,
@@ -564,7 +570,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .section-actions { display: flex; gap: 1px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
-.twisty svg { width: 12px; height: 12px; transition: transform 0.14s ease; }
+.twisty svg { width: 13px; height: 13px; transition: transform 0.14s ease; }
 .twisty.open svg { transform: rotate(90deg); }
 
 .sidebar-search {
@@ -607,15 +613,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   width: 100%;
   border-radius: var(--r-row);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: var(--fs-row);
+  line-height: var(--lh-row);
   text-align: left;
   color: inherit;
   cursor: default;
 }
 .tree-row {
   gap: var(--sp-1);
-  height: 32px;
+  height: var(--h-row);
   padding: 0 var(--sp-1);
   white-space: nowrap;
   overflow: hidden;
@@ -623,16 +629,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .tree-row:hover, .outline-row:hover, .search-hit:hover { background: var(--fill-4); }
 .tree-row.selected { background: var(--fill-2); }
 .tree-row[aria-expanded] .row-label { font-weight: 500; }   /* folders: kit uses Medium */
-.row-icon { display: inline-flex; justify-content: center; width: 20px; flex: none; color: var(--label-2); }
-.row-icon svg { width: 15px; height: 15px; }
+.row-icon { display: inline-flex; justify-content: center; width: 24px; flex: none; color: var(--label-2); }
+.row-icon svg { width: 17px; height: 17px; }
 .tree-row.selected .row-icon { color: var(--accent); }
 .row-label { overflow: hidden; text-overflow: ellipsis; }
 .row-badge { margin-left: auto; display: inline-flex; color: var(--yellow); }
-.row-badge svg { width: 12px; height: 12px; }
+.row-badge svg { width: 14px; height: 14px; }
 .tree-children { padding-left: var(--sp-4); }
 
 .outline-row {
-  height: 28px;
+  height: 32px;
   padding-right: var(--sp-2);
   color: var(--label);
   white-space: nowrap;
@@ -661,13 +667,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   padding: 0 var(--sp-2);
   border-radius: var(--r-menu);
   color: var(--label-2);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 15px;
   font-weight: 500;
 }
 .engine-status:hover { background: var(--fill-3); color: var(--label); }
 .engine-status.warn { color: var(--orange); }
-.engine-status svg { width: 12px; height: 12px; }
+.engine-status svg { width: 13px; height: 13px; }
 
 /* Project search results */
 .search-file {
@@ -681,9 +687,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   color: var(--label-2);
 }
 .search-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.search-hit { gap: var(--sp-2); padding: 5px var(--sp-1); align-items: baseline; }
+.search-hit { gap: var(--sp-2); padding: var(--sp-2) var(--sp-1); align-items: baseline; }
 .search-line { flex: none; min-width: 26px; text-align: right; color: var(--label-3); font-family: var(--mono); font-size: 11px; }
-.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 15px; }
+.search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 16px; }
 .search-preview mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 3px; }
 
 /* ---------- dividers ---------- */
@@ -967,12 +973,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  min-height: 44px;
+  min-height: 48px;
   padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-row);
+  line-height: var(--lh-row);
 }
 .settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.settings-hint { font-size: 11px; line-height: 14px; color: var(--label-2); }
+.settings-hint { font-size: 12px; line-height: 15px; color: var(--label-2); }
 .settings-foot { justify-content: space-between; }
 .settings-status { font-size: 11px; line-height: 14px; color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
