@@ -88,9 +88,11 @@ export class PdfViewer {
 
       // Where the anchored content point should sit: under the fingers now (the
       // trackpad midpoint travels during a pinch, so this pans as it zooms).
+      // Measured from the page block's own corner, not the pages element's — see
+      // #beginPinch for why the difference matters.
       const box = this.#contentBox();
-      g.offX = this.#pinchOffset(e.clientX - rect.left - g.padL - g.qX * g.k, box.w - g.W * g.k);
-      g.offY = this.#pinchOffset(e.clientY - rect.top - g.padT - g.qY * g.k, box.h - g.H * g.k);
+      g.offX = this.#pinchOffset(e.clientX - rect.left - g.padL - (g.qX - g.cx) * g.k, box.w - g.W * g.k);
+      g.offY = this.#pinchOffset(e.clientY - rect.top - g.padT - (g.qY - g.cy) * g.k, box.h - g.H * g.k);
       this.#applyPinch(g);
 
       this.onZoomChange?.(Math.round(base * g.k * 100), null);
@@ -344,8 +346,23 @@ export class PdfViewer {
 
   #beginPinch(rect, e) {
     const g = { ...this.#metrics(), k: 1, offX: 0, offY: 0 };
-    g.W = this.pagesEl.offsetWidth;
-    g.H = this.pagesEl.offsetHeight;
+    // The block the pages actually occupy, NOT the pages element: that element is
+    // floored to the pane size (`min-width/min-height: 100%`), so a page narrower
+    // than the pane leaves empty margin inside it. Measuring the element counted
+    // that margin as content, so zooming in from a fitting page immediately looked
+    // like an overflow and started panning instead of growing about the centre —
+    // which is what went wrong when the fingers were outside the page border.
+    // Measured off bounding rects rather than offsetLeft/offsetWidth because
+    // those are rounded to whole pixels, and the gesture multiplies the block's
+    // width by k — so a half-pixel here shows up as a visibly lopsided centring
+    // once zoomed in. A gesture only ever starts on an untransformed element
+    // (committing a render clears the gesture), so these rects are the layout.
+    const origin = this.pagesEl.getBoundingClientRect();
+    const boxes = this.pages.map((p) => p.wrap.getBoundingClientRect());
+    g.cx = Math.min(...boxes.map((b) => b.left)) - origin.left;
+    g.cy = Math.min(...boxes.map((b) => b.top)) - origin.top;
+    g.W = Math.max(...boxes.map((b) => b.right)) - origin.left - g.cx;
+    g.H = Math.max(...boxes.map((b) => b.bottom)) - origin.top - g.cy;
     // The content point under the fingers, held there for the whole gesture.
     const q = this.#toContent(e.clientX - rect.left, e.clientY - rect.top);
     g.qX = q.x;
@@ -369,13 +386,27 @@ export class PdfViewer {
   // shrinks mid-gesture. Deriving the translation from the live scroll absorbs
   // that; treating the gesture-start scroll as fixed drifts by exactly it.
   #applyPinch(g) {
+    // offX/offY position the page block; the transform positions the element that
+    // contains it, hence the shift back by the block's own inset.
+    const tx = g.offX - g.cx * g.k + this.scrollEl.scrollLeft;
+    const ty = g.offY - g.cy * g.k + this.scrollEl.scrollTop;
     this.pagesEl.style.transformOrigin = '0 0';
-    this.pagesEl.style.transform =
-      `translate(${g.offX + this.scrollEl.scrollLeft}px, ${g.offY + this.scrollEl.scrollTop}px) scale(${g.k})`;
+    this.pagesEl.style.transform = `translate(${tx}px, ${ty}px) scale(${g.k})`;
   }
 
   async #settlePinch(g) {
-    if (g !== this._pinch || g.k === 1) return;
+    if (g !== this._pinch) return;
+    // Pinned against a zoom limit, so there is nothing to commit. The gesture
+    // still has to END: leaving it live meant the next pinch reused this one's
+    // geometry and anchor, which at a fixed k is a pure translation — the page
+    // slid hundreds of pixels without zooming, and no settle ever undid it.
+    // Dropping the transform here also preserves the invariant that a gesture
+    // only ever begins measuring an untransformed element.
+    if (g.k === 1) {
+      this.pagesEl.style.transform = '';
+      this._pinch = null;
+      return;
+    }
     this._anchor = this.#pinchAnchor(g);
     this.scale = clamp(this.currentScale() * g.k, MIN_SCALE, MAX_SCALE);
     await this.render(this._pinchGeneration);
@@ -388,7 +419,11 @@ export class PdfViewer {
   // zoom, so a document-relative anchor drifts by them, one gap per page.
   #pinchAnchor(g) {
     const at = this.#pageAt(g.qX, g.qY);
-    return at && { ...at, viewX: g.offX + g.qX * g.k, viewY: g.offY + g.qY * g.k };
+    return at && {
+      ...at,
+      viewX: g.offX + (g.qX - g.cx) * g.k,
+      viewY: g.offY + (g.qY - g.cy) * g.k,
+    };
   }
 
   // Which page owns a content point, and where on it in PDF points. Deliberately
