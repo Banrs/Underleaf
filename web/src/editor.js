@@ -5,11 +5,13 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import katex from 'katex';
 import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
-import { StreamLanguage, syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
+import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion } from '@codemirror/autocomplete';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { prefs } from './prefs.js';
 import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES } from './latex-data.js';
 
 const themeCompartment = new Compartment();
@@ -92,16 +94,21 @@ const surfaceTheme = (c) => EditorView.theme({
 });
 
 const baseTheme = EditorView.theme({
-  '&': { backgroundColor: 'var(--bg-panel)' },
+  // --bg-content is the editor pane's own colour. (This was `--bg-panel`, a token
+  // that doesn't exist, so the declaration was dropped and the editor simply let
+  // the pane show through — right result, by accident.)
+  '&': { backgroundColor: 'var(--bg-content)' },
   // Xcode's gutter carries no fill and no rule — it is the editor surface with
   // dimmer numbers on it, and the current line's number brightens.
   // (This block previously mixed `--text-dim` and `--border`, neither of which
   // exists in the token set, so every declaration in it was invalid and dropped.
   // The grey that showed up came from One Dark, not from here.)
+  // --label-2, not --label-3: at 25% over the panel the numbers land near 2.6:1,
+  // under the 4.5:1 they need to stay readable at this size.
   '.cm-gutters': {
     backgroundColor: 'transparent',
     border: 'none',
-    color: 'var(--label-3)',
+    color: 'var(--label-2)',
   },
   '.cm-activeLineGutter': { color: 'var(--label)' },
   // Right-align the line numbers with tabular figures so 1-, 2- and 3-digit
@@ -117,8 +124,24 @@ const baseTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
 });
 
-const lightTheme = [baseTheme, surfaceTheme(XCODE_THEME.light), syntaxHighlighting(xcodeHighlight(XCODE_THEME.light))];
-const darkTheme = [baseTheme, surfaceTheme(XCODE_THEME.dark), syntaxHighlighting(xcodeHighlight(XCODE_THEME.dark))];
+// Syntax colouring is a matter of taste, so it is a preference rather than a
+// house style. One Dark is the default because it is what this editor has always
+// looked like; the Xcode set is there for anyone who wants the chrome and the code
+// to come from the same place. baseTheme goes last either way — One Dark styles
+// .cm-gutters itself, and the flush gutter should survive.
+const THEMES = {
+  onedark: {
+    // One Dark has no light counterpart, so light keeps the colours it had.
+    light: [syntaxHighlighting(defaultHighlightStyle), baseTheme],
+    dark: [oneDark, baseTheme],
+  },
+  xcode: {
+    light: [surfaceTheme(XCODE_THEME.light), syntaxHighlighting(xcodeHighlight(XCODE_THEME.light)), baseTheme],
+    dark: [surfaceTheme(XCODE_THEME.dark), syntaxHighlighting(xcodeHighlight(XCODE_THEME.dark)), baseTheme],
+  },
+};
+
+const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 'dark' : 'light'];
 
 // ---------- live equation preview ----------
 // When the cursor sits inside math ($…$, \[…\], $$…$$, or a math environment),
@@ -311,7 +334,7 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
         { key: 'Mod-/', run: toggleLatexComment },
         ...closeBracketsKeymap, ...completionKeymap, ...searchKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab,
       ]),
-      themeCompartment.of(dark ? darkTheme : lightTheme),
+      themeCompartment.of(themeFor(dark)),
       // Native OS spellcheck (red squiggles + right-click suggestions)
       EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'off', autocapitalize: 'off', lang: 'en' }),
       EditorView.updateListener.of((u) => {
@@ -329,7 +352,7 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
     view,
     getContent: () => view.state.doc.toString(),
     setTheme(isDark) {
-      view.dispatch({ effects: themeCompartment.reconfigure(isDark ? darkTheme : lightTheme) });
+      view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },
     gotoLine(line, col = 1) {
       const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));

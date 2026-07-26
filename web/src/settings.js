@@ -140,6 +140,10 @@ export function openSettings() {
           toggle(() => prefs.autoCompile, (v) => { prefs.autoCompile = v; })),
         row('Word count', 'Show words and lines over the editor',
           toggle(() => prefs.showWordCount, (v) => { prefs.showWordCount = v; })),
+        row('Syntax colours', 'Xcode uses Xcode 27’s own Default themes', segmented([
+          { value: 'onedark', label: 'One Dark' },
+          { value: 'xcode', label: 'Xcode' },
+        ], () => prefs.editorTheme, (v) => { prefs.editorTheme = v; })),
         row('Editor font', 'The system monospace matches Xcode; JetBrains Mono is bundled', segmented([
           { value: 'system', label: 'System' },
           { value: 'jetbrains', label: 'JetBrains' },

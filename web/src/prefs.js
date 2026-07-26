@@ -17,6 +17,7 @@ const DEFS = {
   pdfCollapsed: { key: 'pdf-collapsed', def: false, type: 'bool' },
   editorFontSize: { key: 'fontsize', def: 14, type: 'num' },
   editorFont: { key: 'editorfont', def: 'system', values: ['system', 'jetbrains'] },
+  editorTheme: { key: 'editortheme', def: 'onedark', values: ['onedark', 'xcode'] },
   uiScale: { key: 'uiscale', def: 100, type: 'num' },
   sidebarWidth: { key: 'w-side', def: 0, type: 'num' },
   pdfWidth: { key: 'w-pdf', def: 0, type: 'num' },
