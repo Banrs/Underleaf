@@ -23,12 +23,20 @@ let ui = {};              // mounted elements
 let disposeCommands = null;
 let texWatcher = null;
 let pendingCompile = false;
+let workspaceGeneration = 0;
+let openGeneration = 0;
+let savePromise = Promise.resolve();
 
 // ---------- mount / unmount ----------
 
 export function destroyWorkspace() {
+  workspaceGeneration++;
+  openGeneration++;
   clearInterval(texWatcher);
   texWatcher = null;
+  clearTimeout(symbolsTimer);
+  clearTimeout(docMetaTimer);
+  pendingCompile = false;
   disposeCommands?.();
   disposeCommands = null;
   state.editor?.destroy();
@@ -39,25 +47,31 @@ export function destroyWorkspace() {
 
 export async function renderWorkspace(id) {
   destroyWorkspace();
+  const generation = workspaceGeneration;
   state.projectId = id;
 
-  let status;
+  let settings, tree, symbols, status;
   try {
-    [state.settings, state.tree, state.symbols, status] = await Promise.all([
+    [settings, tree, symbols, status] = await Promise.all([
       api.settings(id), api.tree(id), api.symbols(id), api.status(),
     ]);
   } catch (err) {
+    if (generation !== workspaceGeneration) return;
     toast(err.message, 'error');
     location.hash = '#/';
     return;
   }
-  state.tex = status;
+  if (generation !== workspaceGeneration) return;
+  Object.assign(state, { settings, tree, symbols, tex: status });
 
   buildChrome(id);
   disposeCommands = registerCommands(commandDefs());
   setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
     state.pdf?.refreshAppearance?.();
+    updateDocMeta();
+    refreshSidebarChrome();
+    refreshCommands();
   });
 
   renderTree();
@@ -66,7 +80,9 @@ export async function renderWorkspace(id) {
   if (!state.tex.available) watchForTex();
 
   await openFile(state.settings.mainFile).catch(() => {});
+  if (generation !== workspaceGeneration) return;
   const hasPdf = await loadPdf();
+  if (generation !== workspaceGeneration) return;
   if (!hasPdf && prefs.autoCompile && state.tex.available) compile({ auto: true });
   refreshCommands();
 }
@@ -81,6 +97,14 @@ function buildChrome(id) {
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
+    beforePathMutation: () => saveCurrent({ triggerCompile: false }),
+    closeOpenFile: () => {
+      openGeneration++;
+      clearTimeout(state.saveTimer);
+      state.dirty = false;
+      state.openPath = null;
+      showEditorPlaceholder('Select a file to edit');
+    },
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.classList.toggle('collapsed', prefs.sidebarCollapsed);
 
@@ -307,9 +331,13 @@ export function showEditorPlaceholder(message) {
 
 export async function openFile(path) {
   if (!path) return;
+  const request = ++openGeneration;
+  const generation = workspaceGeneration;
   if (state.dirty) await saveCurrent();
+  if (request !== openGeneration || generation !== workspaceGeneration) return;
   const host = ui.editorHost;
   if (!host) return;
+  const projectId = state.projectId;
   state.openPath = path;
   renderTree();
 
@@ -330,8 +358,17 @@ export async function openFile(path) {
   }
 
   let text;
-  try { ({ text } = await api.readFile(state.projectId, path)); }
-  catch (err) { toast(err.message, 'error'); return; }
+  try { ({ text } = await api.readFile(projectId, path)); }
+  catch (err) {
+    if (request === openGeneration && generation === workspaceGeneration) toast(err.message, 'error');
+    return;
+  }
+  if (
+    request !== openGeneration
+    || generation !== workspaceGeneration
+    || state.projectId !== projectId
+    || host !== ui.editorHost
+  ) return;
 
   state.editor?.destroy();
   host.replaceChildren();
@@ -360,30 +397,47 @@ export async function openFile(path) {
   refreshCommands();
 }
 
-export async function saveCurrent({ triggerCompile = true } = {}) {
+export function saveCurrent(options = {}) {
+  savePromise = savePromise.then(() => doSave(options));
+  return savePromise;
+}
+
+async function doSave({ triggerCompile = true } = {}) {
   if (!state.dirty || !state.editor || !state.openPath) return;
   clearTimeout(state.saveTimer);
+  const projectId = state.projectId;
   const path = state.openPath;
-  const content = state.editor.getContent();
+  const editor = state.editor;
+  const content = editor.getContent();
   state.dirty = false;
   setSaveState('Saving…');
   try {
-    await api.writeFile(state.projectId, path, content);
-    setSaveState('Saved');
-    refreshSymbols();
-    if (triggerCompile && prefs.autoCompile) compile({ auto: true });
+    await api.writeFile(projectId, path, content);
+    const current = state.projectId === projectId && state.openPath === path && state.editor === editor;
+    if (current && !state.dirty) {
+      setSaveState('Saved');
+      if (triggerCompile && prefs.autoCompile) compile({ auto: true });
+    }
+    if (current) refreshSymbols();
   } catch (err) {
-    state.dirty = true;
-    setSaveState('Unsaved');
-    toast(`Save failed: ${err.message}`, 'error');
+    if (state.projectId === projectId && state.openPath === path && state.editor === editor) {
+      state.dirty = true;
+      setSaveState('Unsaved');
+      toast(`Save failed: ${err.message}`, 'error');
+    }
   }
 }
 
 let symbolsTimer;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
+  const projectId = state.projectId;
+  const generation = workspaceGeneration;
   symbolsTimer = setTimeout(async () => {
-    try { state.symbols = await api.symbols(state.projectId); } catch { /* own server: unlikely */ }
+    try {
+      const symbols = await api.symbols(projectId);
+      if (generation === workspaceGeneration && state.projectId === projectId) state.symbols = symbols;
+    } catch { /* own server: unlikely */ }
   }, 500);
 }
 
@@ -427,19 +481,24 @@ function renderCrumbs() {
 async function compile({ auto = false } = {}) {
   if (!state.projectId || !state.tex.available) return;
   if (state.compiling) { pendingCompile = true; return; }
+  const generation = workspaceGeneration;
+  const projectId = state.projectId;
   await saveCurrent({ triggerCompile: false });
+  if (generation !== workspaceGeneration || state.projectId !== projectId) return;
   state.compiling = true;
   refreshCommands();
   const btn = ui.compileButton;
+  const viewer = state.pdf;
   if (btn) { btn.disabled = true; btn.replaceChildren(el('span', { class: 'spinner' }), 'Compiling'); }
   try {
-    const result = await api.compile(state.projectId);
+    const result = await api.compile(projectId);
+    if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
     // A failed compile surfaces the log; a success returns to the document.
     state.logOpen = !result.ok;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });
-    if (result.pdf) await state.pdf.load(api.pdfUrl(state.projectId));
-    else if (!state.pdf.doc) showPdfEmpty();
+    if (result.pdf) await viewer.load(api.pdfUrl(projectId));
+    else if (!viewer.doc) showPdfEmpty();
     // Auto-compiles report through the log badge; only manual runs toast.
     if (!auto) {
       if (result.ok) {
@@ -450,9 +509,11 @@ async function compile({ auto = false } = {}) {
       }
     }
   } catch (err) {
+    if (generation !== workspaceGeneration || state.projectId !== projectId) return;
     if (!auto) toast(err.message, 'error');
     else console.error('Auto-compile failed:', err);
   } finally {
+    if (generation !== workspaceGeneration || state.projectId !== projectId) return;
     state.compiling = false;
     if (btn) { btn.disabled = !state.tex.available; btn.replaceChildren('Compile'); }
     refreshCommands();
@@ -468,10 +529,16 @@ function toggleLogs() {
 
 // TeX may get installed while the app is open — poll until it shows up.
 function watchForTex() {
+  const generation = workspaceGeneration;
+  const projectId = state.projectId;
   texWatcher = setInterval(async () => {
-    if (!state.projectId) { clearInterval(texWatcher); return; }
+    if (generation !== workspaceGeneration || state.projectId !== projectId) {
+      clearInterval(texWatcher);
+      return;
+    }
     try {
       const status = await api.status();
+      if (generation !== workspaceGeneration || state.projectId !== projectId) return;
       if (!status.available) return;
       clearInterval(texWatcher);
       state.tex = status;
@@ -486,11 +553,14 @@ function watchForTex() {
 // ---------- PDF ----------
 
 async function loadPdf() {
+  const generation = workspaceGeneration;
+  const projectId = state.projectId;
+  const viewer = state.pdf;
   try {
-    await state.pdf.load(api.pdfUrl(state.projectId));
-    return true;
+    await viewer.load(api.pdfUrl(projectId));
+    return generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
   } catch {
-    showPdfEmpty();
+    if (generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer) showPdfEmpty();
     return false;
   }
 }

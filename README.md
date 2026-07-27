@@ -2,7 +2,9 @@
 
 A fully offline LaTeX editor — an Overleaf alternative that runs entirely on your machine. No accounts, no cloud, no network needed.
 
-Ships as a native macOS desktop app (Electron, no localhost ports) and also runs as a local web app in any browser. Built with open-source components only.
+Ships as an Electron desktop app (no localhost ports), runs as a local web app
+in any browser, and includes a parallel native SwiftUI/WKWebView macOS target.
+Built with open-source components only.
 
 ## Quick start
 
@@ -40,7 +42,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Requirements
 
-- **Node.js** ≥ 20
+- **Node.js** ≥ 22.12
 - **TeX Live** (provides `latexmk`, `pdflatex`, `synctex`):
   ```sh
   brew install --cask mactex-no-gui
@@ -72,6 +74,7 @@ Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/` (br
 ```
 server/      Express API + LaTeX compile/SyncTeX/project logic (shared by both modes)
 electron/    Electron main (main.mjs), native menu (menu.mjs), self-rebuild (rebuild.mjs), preload
+mac/         Parallel SwiftUI macOS shell + Swift backend (generated with XcodeGen)
 web/src/     Frontend modules, bundled by esbuild into web/dist:
              main.js (bootstrap/routing) · commands.js (shared command model) ·
              home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
@@ -79,11 +82,15 @@ web/src/     Frontend modules, bundled by esbuild into web/dist:
              dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) · state.js
 docs/        design-tokens.md (extracted Apple UI-kit values) · windows.md · roadmap.md
 scripts/     install-app.mjs (package + install + self-update stamp)
-build.mjs    esbuild bundler + asset copy (KaTeX, fonts, pdf.js worker)
+build.mjs    esbuild bundler (full app + native embed) and shared asset copy
 assets/      App icon (.icns)
 ```
 
 `npm run build` bundles the frontend; `npm run dev` builds then serves the browser app; `npm run app` runs Electron against live code; `npm run package` builds the distributable `.app`; `npm run install-app` packages and installs it with self-update enabled.
+
+The native target is intentionally separate from the Electron release path.
+After `npm run build`, run `xcodegen generate` in `mac/` and open the generated
+project in Xcode; see [mac/README.md](mac/README.md).
 
 ## Cross-platform status
 

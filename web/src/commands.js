@@ -46,6 +46,39 @@ export const MENU = [
   },
 ];
 
+// Native menus keep readable labels even when a view has not registered the
+// command (those entries remain disabled, but should never expose internal IDs).
+const FALLBACK_TITLES = {
+  'project.new': 'New Project…',
+  'file.new': 'New File…',
+  'file.newFolder': 'New Folder…',
+  'file.upload': 'Add Files…',
+  'project.close': 'Close Project',
+  'pdf.save': 'Save PDF As…',
+  'project.export': 'Export Project as ZIP…',
+  'edit.undo': 'Undo',
+  'edit.redo': 'Redo',
+  'edit.find': 'Find & Replace',
+  'project.search': 'Find in Project',
+  'edit.bold': 'Bold',
+  'edit.italic': 'Italic',
+  'edit.math': 'Inline Math',
+  'edit.comment': 'Toggle Comment',
+  'view.toggleSidebar': 'Toggle Sidebar',
+  'view.togglePdf': 'Toggle PDF',
+  'view.toggleLogs': 'Compile Log',
+  'view.zoomIn': 'Zoom In',
+  'view.zoomOut': 'Zoom Out',
+  'view.fitWidth': 'Fit Width',
+  'view.fitHeight': 'Fit Height',
+  'view.uiScaleUp': 'Increase Interface Size',
+  'view.uiScaleDown': 'Decrease Interface Size',
+  'compile.run': 'Compile',
+  'compile.toggleAuto': 'Compile Automatically',
+  'sync.forward': 'Go to PDF Position',
+  'sync.inverse': 'Go to Source Position',
+};
+
 let notifyHost = () => {};
 
 // Views call this on mount and dispose on unmount, so commands that need a
@@ -91,7 +124,7 @@ function publish() {
       const c = registry.get(it.id);
       return {
         id: it.id,
-        label: c ? commandTitle(it.id) : it.id,
+        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
         accelerator: c?.accel,
         enabled: !!c && (c.enabled ? !!c.enabled() : true),
         checked: c?.checked?.(),

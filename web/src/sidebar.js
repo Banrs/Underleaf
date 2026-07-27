@@ -12,9 +12,18 @@ import { accelLabel } from './commands.js';
 let host = {};          // { openFile, gotoLine, onMainFileChange }
 let nodes = {};         // cached elements for the mounted sidebar
 
-const openDirs = new Set(prefs.openDirs);
+const storedOpenDirs = prefs.openDirs;
+const openDirs = new Set(Array.isArray(storedOpenDirs) ? storedOpenDirs : []);
 
 function persistOpenDirs() { prefs.openDirs = [...openDirs]; }
+function containsPath(parent, candidate) {
+  return candidate === parent
+    || candidate?.startsWith(`${parent}/`)
+    || candidate?.startsWith(`${parent}\\`);
+}
+function remapPath(candidate, from, to) {
+  return containsPath(from, candidate) ? to + candidate.slice(from.length) : candidate;
+}
 
 // ---------- construction ----------
 
@@ -208,9 +217,19 @@ function rowMenu(e, node) {
         const to = await promptModal({ title: `Rename “${node.name}”`, label: 'Path', value: node.path, confirm: 'Rename' });
         if (!to || to === node.path) return;
         try {
-          await api.renameEntry(state.projectId, node.path, to);
-          if (state.openPath === node.path) state.openPath = to;
+          await host.beforePathMutation?.();
+          const result = await api.renameEntry(state.projectId, node.path, to);
+          state.openPath = remapPath(state.openPath, node.path, to);
+          const oldMain = state.settings?.mainFile;
+          if (result?.mainFile) state.settings = { ...state.settings, mainFile: result.mainFile };
+          for (const dir of [...openDirs]) {
+            if (!containsPath(node.path, dir)) continue;
+            openDirs.delete(dir);
+            openDirs.add(remapPath(dir, node.path, to));
+          }
+          persistOpenDirs();
           await refreshTree();
+          if (oldMain !== state.settings?.mainFile) host.onMainFileChange?.();
         } catch (err) { toast(err.message, 'error'); }
       },
     },
@@ -226,9 +245,15 @@ function rowMenu(e, node) {
             : 'This file will be permanently deleted.',
         });
         if (!ok) return;
+        if (containsPath(node.path, state.settings?.mainFile)) {
+          toast('Choose a different main file before deleting this entry', 'error');
+          return;
+        }
         try {
+          if (containsPath(node.path, state.openPath)) host.closeOpenFile?.();
           await api.deleteEntry(state.projectId, node.path);
-          if (state.openPath === node.path) { state.openPath = null; host.onOpenFileGone?.(); }
+          for (const dir of [...openDirs]) if (containsPath(node.path, dir)) openDirs.delete(dir);
+          persistOpenDirs();
           await refreshTree();
         } catch (err) { toast(err.message, 'error'); }
       },

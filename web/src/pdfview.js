@@ -30,6 +30,7 @@ export class PdfViewer {
 
     this.doc = null;
     this.loadingTask = null;
+    this._loadGeneration = 0;
     this.pages = [];            // { n, page, wrap, canvas, textLayer, viewport, scale }
     this.pagesEl = null;
 
@@ -126,12 +127,24 @@ export class PdfViewer {
 
   async load(url) {
     const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
-    const doc = await task.promise;
+    const generation = ++this._loadGeneration;
+    let doc;
+    try {
+      doc = await task.promise;
+    } catch (err) {
+      await task.destroy().catch(() => {});
+      throw err;
+    }
+    if (generation !== this._loadGeneration) {
+      await task.destroy().catch(() => {});
+      return false;
+    }
     const prev = this.loadingTask;
     this.loadingTask = task;
     this.doc = doc;
     await prev?.destroy().catch(() => {});
     await this.render();
+    return true;
   }
 
   // The scroller's padding and the content box inside it, read from the
@@ -658,6 +671,7 @@ export class PdfViewer {
   }
 
   destroy() {
+    this._loadGeneration++;
     this.seq++;
     this._pinchGeneration++;
     clearTimeout(this._pinchTimer);

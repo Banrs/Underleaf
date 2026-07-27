@@ -83,7 +83,10 @@ function validateSettings(root, patch) {
     if (!ENGINES.includes(patch.engine)) throw new HttpError(400, `Unknown engine: ${patch.engine}`);
     out.engine = patch.engine;
   }
-  if ('shellEscape' in patch) out.shellEscape = !!patch.shellEscape;
+  if ('shellEscape' in patch) {
+    if (typeof patch.shellEscape !== 'boolean') throw new HttpError(400, 'shellEscape must be a boolean');
+    out.shellEscape = patch.shellEscape;
+  }
   if ('mainFile' in patch) out.mainFile = safeRelFile(root, patch.mainFile);
   return out;
 }
@@ -102,6 +105,15 @@ export async function writeSettings(root, settings) {
   const next = { ...current, ...validateSettings(root, settings) };
   await fsp.writeFile(path.join(root, SETTINGS_FILE), JSON.stringify(next, null, 2));
   return next;
+}
+
+// The compiled PDF path for a project — the ONE place this is derived. mainFile
+// "paper.tex" → "<root>/build/paper.pdf". Callers (compile, __pdf protocol,
+// pdf:saveAs, REST /pdf) all route through here instead of recomputing it.
+export async function compiledPdfPath(root) {
+  const { mainFile } = await readSettings(root);
+  const rel = safeRelFile(root, mainFile);
+  return path.join(root, BUILD_DIR, `${path.basename(rel, path.extname(rel))}.pdf`);
 }
 
 // ---------- projects ----------
@@ -191,11 +203,26 @@ export async function renameEntry(root, from, to) {
   if (fs.existsSync(dest)) throw new HttpError(409, 'Destination already exists');
   await fsp.mkdir(path.dirname(dest), { recursive: true });
   await fsp.rename(src, dest);
+  const settings = await readSettings(root);
+  const fromRel = path.relative(root, src);
+  const toRel = path.relative(root, dest);
+  const prefix = fromRel + path.sep;
+  let mainFile = settings.mainFile;
+  if (mainFile === fromRel || mainFile.startsWith(prefix)) {
+    mainFile = toRel + mainFile.slice(fromRel.length);
+    await writeSettings(root, { mainFile });
+  }
+  return { ok: true, from: fromRel, to: toRel, mainFile };
 }
 
 export async function deleteEntry(root, rel) {
   const abs = safePath(root, rel);
   if (abs === root) throw new HttpError(400, 'Cannot delete project root');
+  const target = path.relative(root, abs);
+  const { mainFile } = await readSettings(root);
+  if (mainFile === target || mainFile.startsWith(target + path.sep)) {
+    throw new HttpError(409, 'Choose a different main file before deleting this entry');
+  }
   await fsp.rm(abs, { recursive: true, force: true });
 }
 

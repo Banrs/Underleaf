@@ -158,7 +158,10 @@ export function openSettings() {
     if (state.projectId) {
       const engine = el('select', {
         onchange: async () => {
-          try { state.settings = await api.saveSettings(state.projectId, { engine: engine.value }); }
+          try {
+            state.settings = await api.saveSettings(state.projectId, { engine: engine.value });
+            onAppearanceChange(document.documentElement.dataset.theme);
+          }
           catch (err) { toast(err.message, 'error'); }
         },
       }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>

@@ -4,7 +4,7 @@
   "description": "Fully offline LaTeX editor \u2014 an Overleaf alternative",
   "main": "electron/main.mjs",
   "scripts": {
-    "test": "echo \"no tests yet\" && exit 0",
+    "test": "node --test",
     "build": "node build.mjs",
     "start": "node server/index.js",
     "dev": "node build.mjs && node server/index.js",
@@ -41,8 +41,8 @@
     "pdfjs-dist": "^6.1.200"
   },
   "devDependencies": {
-    "electron": "^43.1.0",
-    "electron-packager": "^17.1.2"
+    "@electron/packager": "^20.0.4",
+    "electron": "^43.1.0"
   },
   "repository": {
     "type": "git",

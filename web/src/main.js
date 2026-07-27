@@ -42,19 +42,23 @@ if (!bridge) installBrowserShortcuts();
 // ---------- routing ----------
 
 let route = null;
+let navigationGeneration = 0;
 
 async function navigate() {
+  const generation = ++navigationGeneration;
   const match = location.hash.match(/^#\/p\/(.+)$/);
   const next = match ? { view: 'project', id: decodeURIComponent(match[1]) } : { view: 'home' };
 
   // A pending edit must reach disk before the workspace is torn down.
   if (route?.view === 'project') {
     await saveCurrent({ triggerCompile: false });
+    if (generation !== navigationGeneration) return;
     destroyWorkspace();
   } else if (route?.view === 'home') {
     destroyHome();
   }
 
+  if (generation !== navigationGeneration) return;
   route = next;
   if (next.view === 'project') await renderWorkspace(next.id);
   else await renderHome();

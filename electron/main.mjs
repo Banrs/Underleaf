@@ -16,6 +16,11 @@ const APP_ROOT = path.join(__dirname, '..');
 const WEB_DIR = path.join(APP_ROOT, 'web');
 const IS_MAC = process.platform === 'darwin';
 
+// Keep PDF scrolling and translucent materials on Chromium's GPU path.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+
 // Projects live in ~/TeXLocal — visible in Finder's Home, syncable, and (unlike
 // ~/Documents, ~/Desktop, ~/Downloads) NOT behind macOS's privacy gate, so the
 // app never hangs waiting on a Documents-folder permission prompt.
@@ -82,10 +87,7 @@ async function boot() {
       // Everything lives on the texlocal://app origin — pdf.js XHRs the PDF,
       // and Chromium blocks cross-origin requests on custom schemes.
       if (segs[0] === '__pdf') {
-        const root = projects.projectRoot(segs[1]);
-        const settings = await projects.readSettings(root);
-        const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-        return fileResponse(path.join(root, projects.BUILD_DIR, `${base}.pdf`));
+        return fileResponse(await projects.compiledPdfPath(projects.projectRoot(segs[1])));
       }
       if (segs[0] === '__raw') {
         const root = projects.projectRoot(segs[1]);
@@ -164,9 +166,7 @@ async function boot() {
 
   handle('pdf:saveAs', async (id) => {
     const root = projects.projectRoot(id);
-    const settings = await projects.readSettings(root);
-    const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-    const src = path.join(root, projects.BUILD_DIR, `${base}.pdf`);
+    const src = await projects.compiledPdfPath(root);
     if (!fs.existsSync(src)) throw new Error('No compiled PDF yet');
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath('downloads'), `${id}.pdf`),
@@ -243,6 +243,7 @@ async function boot() {
         contextIsolation: true,
         nodeIntegration: false,
         spellcheck: true,
+        backgroundThrottling: false,
       },
     });
 

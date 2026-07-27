@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { BUILD_DIR, HttpError, readSettings, safeRelFile } from './projects.js';
+import { BUILD_DIR, HttpError, readSettings, safeRelFile, compiledPdfPath } from './projects.js';
 
 const COMPILE_TIMEOUT_MS = 180_000;
 // Cap what we hold from a child. A runaway document can print for the whole
@@ -16,13 +16,42 @@ const ENGINE_FLAGS = {
   lualatex: ['-lualatex'],
 };
 
-// PATH for spawned TeX tools. GUI-launched apps often miss the TeX bin dirs,
-// so append the usual per-platform locations (uses path.delimiter so the same
-// code works on Windows/MiKTeX later).
+// PATH for spawned TeX tools. GUI-launched apps often miss the TeX bin dirs.
+// Discover year/architecture-specific TeX Live installs instead of baking the
+// current year into the app.
+function texliveBins() {
+  if (process.platform === 'win32') {
+    const roots = ['C:\\texlive'];
+    const bins = [];
+    for (const root of roots) {
+      try {
+        for (const year of fs.readdirSync(root).filter((v) => /^\d{4}$/.test(v)).sort().reverse()) {
+          bins.push(path.join(root, year, 'bin', 'windows'), path.join(root, year, 'bin', 'win32'));
+        }
+      } catch { /* optional install location */ }
+    }
+    return bins;
+  }
+  try {
+    return fs.readdirSync('/usr/local/texlive')
+      .filter((year) => /^\d{4}$/.test(year)).sort().reverse()
+      .flatMap((year) => {
+        const bin = `/usr/local/texlive/${year}/bin`;
+        try { return fs.readdirSync(bin).map((arch) => path.join(bin, arch)); }
+        catch { return []; }
+      });
+  } catch {
+    return [];
+  }
+}
+
 const TEX_DIRS = process.platform === 'win32'
-  ? ['C:\\texlive\\2026\\bin\\windows', 'C:\\texlive\\2025\\bin\\windows',
-     `${process.env.LOCALAPPDATA ?? ''}\\Programs\\MiKTeX\\miktex\\bin\\x64`]
-  : ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', '/usr/local/texlive/2026/bin'];
+  ? [
+      ...texliveBins(),
+      `${process.env.LOCALAPPDATA ?? ''}\\Programs\\MiKTeX\\miktex\\bin\\x64`,
+      'C:\\Program Files\\MiKTeX\\miktex\\bin\\x64',
+    ]
+  : ['/Library/TeX/texbin', '/usr/local/bin', '/opt/homebrew/bin', ...texliveBins()];
 
 const TEX_PATH = [process.env.PATH ?? '', ...TEX_DIRS].filter(Boolean).join(path.delimiter);
 
@@ -198,9 +227,7 @@ export async function cleanBuild(root) {
 // ---------- SyncTeX ----------
 
 async function pdfFor(root) {
-  const settings = await readSettings(root);
-  const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-  const pdf = path.join(root, BUILD_DIR, `${base}.pdf`);
+  const pdf = await compiledPdfPath(root);
   if (!fs.existsSync(pdf)) throw new HttpError(404, 'No compiled PDF yet');
   return pdf;
 }
@@ -209,7 +236,9 @@ async function pdfFor(root) {
 export async function synctexForward(root, file, line) {
   const pdf = await pdfFor(root);
   // synctex expects the input path as TeX saw it (relative to cwd, ./-prefixed)
-  const input = `${line}:1:./${file}`;
+  const rel = safeRelFile(root, file).split(path.sep).join('/');
+  if (!Number.isInteger(line) || line < 1) throw new HttpError(400, 'Invalid source line');
+  const input = `${line}:1:./${rel}`;
   const { code, stdout } = await run('synctex', ['view', '-i', input, '-o', pdf], { cwd: root, timeout: 10_000 });
   if (code !== 0) throw new HttpError(500, 'synctex view failed');
   const rec = {};

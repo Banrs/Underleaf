@@ -9,7 +9,7 @@ import {
   HttpError, projectRoot, safePath, isTextFile,
   listProjects, createProject, renameProject, deleteProject,
   fileTree, createFile, renameEntry, deleteEntry, scanSymbols, searchProject,
-  readSettings, writeSettings, BUILD_DIR,
+  readSettings, writeSettings, BUILD_DIR, compiledPdfPath,
 } from './projects.js';
 import { compile, cleanBuild, texAvailable, synctexForward, synctexInverse } from './compile.js';
 
@@ -32,6 +32,9 @@ const app = express();
 // This only affects browser mode: the desktop app talks to server/projects.js and
 // server/compile.js directly over IPC and never starts this server.
 const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const ALLOWED_ORIGINS = new Set(
+  ['localhost', '127.0.0.1', '[::1]'].map((host) => new URL(`http://${host}:${PORT}`).origin),
+);
 app.use((req, res, next) => {
   if (!ALLOWED_HOSTS.has(req.hostname)) {
     res.status(403).json({ error: 'Invalid Host header' });
@@ -40,7 +43,7 @@ app.use((req, res, next) => {
   const origin = req.get('origin');
   if (origin) {
     let ok = false;
-    try { ok = ALLOWED_HOSTS.has(new URL(origin).hostname); } catch { ok = false; }
+    try { ok = ALLOWED_ORIGINS.has(new URL(origin).origin); } catch { ok = false; }
     if (!ok) {
       res.status(403).json({ error: 'Cross-origin requests are not allowed' });
       return;
@@ -141,8 +144,7 @@ app.post('/api/projects/:id/files', wrap(async (req, res) => {
 }));
 
 app.post('/api/projects/:id/rename', wrap(async (req, res) => {
-  await renameEntry(projectRoot(req.params.id), req.body?.from, req.body?.to);
-  res.json({ ok: true });
+  res.json(await renameEntry(projectRoot(req.params.id), req.body?.from, req.body?.to));
 }));
 
 app.delete('/api/projects/:id/file', wrap(async (req, res) => {
@@ -181,10 +183,7 @@ app.post('/api/projects/:id/clean', wrap(async (req, res) => {
 }));
 
 app.get('/api/projects/:id/pdf', wrap(async (req, res) => {
-  const root = projectRoot(req.params.id);
-  const settings = await readSettings(root);
-  const base = path.basename(settings.mainFile, path.extname(settings.mainFile));
-  const pdf = path.join(root, BUILD_DIR, `${base}.pdf`);
+  const pdf = await compiledPdfPath(projectRoot(req.params.id));
   if (!fs.existsSync(pdf)) throw new HttpError(404, 'No compiled PDF yet');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(pdf);
