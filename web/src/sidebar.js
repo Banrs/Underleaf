@@ -5,17 +5,29 @@
 import { api } from './api.js';
 import { el, toast, promptModal, confirmModal, contextMenu } from './dom.js';
 import { icon } from './icons.js';
-import { state } from './state.js';
+import { state, IMAGE_FILE } from './state.js';
 import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
 
 let host = {};          // { openFile, gotoLine, onMainFileChange }
 let nodes = {};         // cached elements for the mounted sidebar
 
-const storedOpenDirs = prefs.openDirs;
-const openDirs = new Set(Array.isArray(storedOpenDirs) ? storedOpenDirs : []);
+// Expansion state is per project — one shared list would apply project A's
+// expanded folders to project B.
+let openDirs = new Set();
 
-function persistOpenDirs() { prefs.openDirs = [...openDirs]; }
+function loadOpenDirs() {
+  const all = prefs.openDirs;
+  const stored = all && !Array.isArray(all) ? all[state.projectId] : null;
+  openDirs = new Set(Array.isArray(stored) ? stored : []);
+}
+
+function persistOpenDirs() {
+  const all = prefs.openDirs;
+  const map = all && !Array.isArray(all) ? all : {};
+  map[state.projectId] = [...openDirs];
+  prefs.openDirs = map;
+}
 function containsPath(parent, candidate) {
   return candidate === parent
     || candidate?.startsWith(`${parent}/`)
@@ -32,6 +44,7 @@ function remapPath(candidate, from, to) {
 // toggle sits at its trailing end exactly as in a native sidebar window.
 export function buildSidebar(callbacks, titlebarTrailing) {
   host = callbacks;
+  loadOpenDirs();
 
   const search = el('input', {
     class: 'search-input',
@@ -117,7 +130,7 @@ function fileIcon(name) {
   const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
   if (['tex', 'bbl'].includes(ext)) return icon('doc-tex');
   if (ext === 'bib') return icon('book');
-  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'heic', 'bmp'].includes(ext)) return icon('image');
+  if (IMAGE_FILE.test(name)) return icon('image');
   if (['cls', 'sty', 'bst', 'def', 'clo'].includes(ext)) return icon('cog');
   return icon('doc');
 }
@@ -142,6 +155,8 @@ function renderNode(node, level) {
         if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
         persistOpenDirs();
         renderTree();
+        // renderTree replaced the rows, so keyboard focus needs a new home.
+        nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(node.path)}"]`)?.focus();
       },
       onkeydown: treeKeys,
     },
@@ -200,13 +215,15 @@ function treeKeys(e) {
 function rowMenu(e, node) {
   e.preventDefault();
   const items = [];
-  if (node.type === 'file' && node.path.endsWith('.tex') && node.path !== state.settings.mainFile) {
+  if (node.type === 'file' && node.path.endsWith('.tex') && node.path !== state.settings?.mainFile) {
     items.push({
       label: 'Set as Main File',
       action: async () => {
-        state.settings = await api.saveSettings(state.projectId, { mainFile: node.path });
-        renderTree();
-        host.onMainFileChange?.();
+        try {
+          state.settings = await api.saveSettings(state.projectId, { mainFile: node.path });
+          renderTree();
+          host.onMainFileChange?.();
+        } catch (err) { toast(err.message, 'error'); }
       },
     });
   }
@@ -262,8 +279,17 @@ function rowMenu(e, node) {
   contextMenu(e.clientX, e.clientY, items);
 }
 
+// Never throws: callers await it inside their own try blocks, and a tree-fetch
+// hiccup must not be reported as the caller's failure (e.g. after a successful
+// upload).
 export async function refreshTree() {
-  state.tree = await api.tree(state.projectId);
+  const projectId = state.projectId;
+  if (!projectId) return;
+  let tree;
+  try { tree = await api.tree(projectId); }
+  catch (err) { toast(`Couldn’t refresh the file list: ${err.message}`, 'error'); return; }
+  if (state.projectId !== projectId) return;
+  state.tree = tree;
   renderTree();
 }
 
@@ -290,7 +316,11 @@ export function uploadFlow() { nodes.fileInput?.click(); }
 
 function setupDropzone(treeEl) {
   treeEl.addEventListener('dragover', (e) => { e.preventDefault(); treeEl.classList.add('drop-target'); });
-  treeEl.addEventListener('dragleave', () => treeEl.classList.remove('drop-target'));
+  // dragleave also fires when crossing onto a child row — only clear the
+  // highlight when the pointer genuinely left the tree.
+  treeEl.addEventListener('dragleave', (e) => {
+    if (!treeEl.contains(e.relatedTarget)) treeEl.classList.remove('drop-target');
+  });
   treeEl.addEventListener('drop', async (e) => {
     e.preventDefault();
     treeEl.classList.remove('drop-target');
@@ -399,7 +429,11 @@ async function runSearch() {
 
   let hits;
   try { hits = await api.search(state.projectId, q); }
-  catch { return; }
+  catch (err) {
+    if (state.searchQuery !== q) return;
+    results.replaceChildren(el('p', { class: 'placeholder' }, `Search failed: ${err.message}`));
+    return;
+  }
   if (state.searchQuery !== q) return; // stale response
 
   if (!hits.length) {

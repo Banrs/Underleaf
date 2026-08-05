@@ -1,5 +1,9 @@
 # XcodeGen spec — `xcodegen generate` produces Underleaf.xcodeproj.
 # Paths are relative to this file (mac/).
+#
+# The app runs unsandboxed so it can spawn latexmk/synctex and read ~/TeXLocal.
+# For distribution add hardened runtime + notarization; for the App Store add
+# the sandbox + a security-scoped bookmark to the TeX install.
 name: Underleaf
 options:
   bundleIdPrefix: com.texlocal
@@ -11,11 +15,9 @@ settings:
     GENERATE_INFOPLIST_FILE: YES
     PRODUCT_BUNDLE_IDENTIFIER: com.texlocal.underleaf
     MARKETING_VERSION: "0.1.0"
-    # Local dev: unsandboxed so we can spawn latexmk/synctex and read ~/TeXLocal.
-    # (For distribution add hardened runtime + notarization; for the App Store add
-    # the sandbox + a security-scoped bookmark to the TeX install.)
-    INFOPLIST_KEY_NSHumanReadableCopyright: "Underleaf"
+    INFOPLIST_KEY_NSHumanReadableCopyright: "© Underleaf contributors. MIT license."
     INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
+    INFOPLIST_KEY_CFBundleIconFile: "TeXLocal"
 targets:
   Underleaf:
     type: application
@@ -27,4 +29,6 @@ targets:
     resources:
       - path: ../web
         type: folder
+        buildPhase: resources
+      - path: ../assets/TeXLocal.icns
         buildPhase: resources

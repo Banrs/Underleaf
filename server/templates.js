@@ -13,7 +13,6 @@ const ARTICLE_BIB = `@article{knuth1984,
 
 export const TEMPLATES = {
   blank: {
-    label: 'Blank',
     files: {
       'main.tex': `\\documentclass{article}
 \\begin{document}
@@ -26,7 +25,6 @@ Hello, world!
   },
 
   article: {
-    label: 'Article',
     files: {
       'main.tex': `\\documentclass[11pt]{article}
 \\usepackage[utf8]{inputenc}
@@ -72,7 +70,6 @@ Wrap it up.
   },
 
   report: {
-    label: 'Report',
     files: {
       'main.tex': `\\documentclass[11pt]{report}
 \\usepackage[utf8]{inputenc}
@@ -107,7 +104,6 @@ More content.
   },
 
   beamer: {
-    label: 'Beamer presentation',
     files: {
       'main.tex': `\\documentclass{beamer}
 \\usetheme{metropolis} % falls back gracefully; try 'Madrid' if unavailable

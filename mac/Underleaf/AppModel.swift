@@ -40,29 +40,39 @@ final class AppModel: ObservableObject {
         compiling = false
         lastResult = nil
         tree = ProjectStore.fileTree(r)
+        openPath = nil
         openFile(ProjectStore.readSettings(r).mainFile)
     }
-
-    func refreshTree() { if let r = root { tree = ProjectStore.fileTree(r) } }
 
     // MARK: files
 
     func openFile(_ path: String) {
-        guard let r = root else { return }
+        guard let r = root, let id = currentProjectId else { return }
         guard let content = try? ProjectStore.readFile(r, path) else { return }
         openPath = path
         outline = OutlineParser.parse(path.hasSuffix(".tex") ? content : "")
-        editor.open(path: path, content: content, dark: isDark)
+        editor.open(projectId: id, path: path, content: content, dark: isDark)
         dirty = false
     }
 
-    func saveFile(path: String, content: String) {
-        guard let r = root else { return }
-        try? ProjectStore.writeFile(r, path, content)
-        if path == openPath {
+    // `project` is echoed back by the web editor so a save queued for project A
+    // can never land in project B after a switch — the message resolves its own
+    // root (paths are project-relative).
+    func saveFile(project: String, path: String, content: String) {
+        guard let r = try? ProjectStore.projectRoot(project) else { return }
+        do { try ProjectStore.writeFile(r, path, content) } catch {
+            if project == currentProjectId { dirty = true }  // keep "Unsaved"; the next autosave retries
+            return
+        }
+        if project == currentProjectId, path == openPath {
             dirty = false
             if path.hasSuffix(".tex") { outline = OutlineParser.parse(content) }
         }
+    }
+
+    func setDirty(_ value: Bool, project: String?) {
+        guard project == nil || project == currentProjectId else { return }
+        dirty = value
     }
 
     // MARK: compile

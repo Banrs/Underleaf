@@ -5,6 +5,8 @@
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
 
+// Local copy of dom.js's el(), kept minimal so dom.js's toast/modal machinery
+// stays out of the embed bundle.
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) k === 'class' ? (n.className = v) : n.setAttribute(k, v);
@@ -13,7 +15,7 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const post = (name, body) => window.webkit?.messageHandlers?.[name]?.postMessage(body);
 
-let editor = null, pdf = null, currentPath = null, dark = false, dirty = false, saveTimer = null;
+let editor = null, pdf = null, currentProject = null, currentPath = null, dark = false, dirty = false, saveTimer = null;
 let host, pdfScroll;
 
 function setTheme() { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }
@@ -28,12 +30,13 @@ function mountEditor(content) {
     getSymbols: () => ({ citations: [], labels: [] }), // TODO: symbols pushed from native
     onChange: () => {
       dirty = true;
-      post('state', { dirty: true });
+      post('state', { project: currentProject, dirty: true });
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         if (currentPath) {
-          post('save', { path: currentPath, content: editor.getContent() });
+          post('save', { project: currentProject, path: currentPath, content: editor.getContent() });
           dirty = false;
+          post('state', { project: currentProject, dirty: false });
         }
       }, 800);
     },
@@ -43,8 +46,8 @@ function mountEditor(content) {
 }
 
 function build() {
-  host = el('div', { class: 'editor-host', id: 'editor-host' });
-  pdfScroll = el('div', { class: 'pdf-scroll', id: 'pdf-scroll' });
+  host = el('div', { class: 'editor-host' });
+  pdfScroll = el('div', { class: 'pdf-scroll' });
   document.getElementById('app').replaceChildren(
     el('div', { class: 'shell' },
       el('div', { class: 'workspace embed' },
@@ -59,19 +62,21 @@ function build() {
   });
 }
 
-// Swift → web command surface.
+// Swift → web command surface. `projectId` is echoed back on every save/state
+// message so the native side can drop messages that outlived a project switch.
 window.TeXLocal = {
-  open(path, content, isDark) {
+  open(projectId, path, content, isDark) {
     if (dirty && currentPath && editor) {
-      post('save', { path: currentPath, content: editor.getContent() });
+      post('save', { project: currentProject, path: currentPath, content: editor.getContent() });
     }
     clearTimeout(saveTimer);
+    currentProject = projectId;
     currentPath = path;
     dirty = false;
     dark = isDark;
     setTheme();
     mountEditor(content);
-    post('state', { dirty: false });
+    post('state', { project: currentProject, dirty: false });
   },
   format(kind) {
     if (!editor) return;

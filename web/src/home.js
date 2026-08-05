@@ -9,7 +9,6 @@ import { state } from './state.js';
 import { registerCommands, tooltip } from './commands.js';
 import { openSettings } from './settings.js';
 
-const IS_ELECTRON = !!window.texlocal;
 let dispose = null;
 
 function relativeDate(ms) {
@@ -84,7 +83,7 @@ export async function newProjectFlow() {
       el('option', { value: 'beamer' }, 'Beamer Presentation'),
       el('option', { value: 'blank' }, 'Blank'),
     );
-    const go = () => close({ name: name.value.trim(), template: tpl.value });
+    const go = () => close({ name: name.value.trim() || 'Untitled', template: tpl.value });
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     return el('div', { class: 'modal' },
       el('h2', { class: 'modal-title' }, 'New Project'),
@@ -189,5 +188,5 @@ export async function renderHome() {
     );
   }).catch(() => {});
 
-  if (IS_ELECTRON) document.title = 'TeXLocal';
+  document.title = 'TeXLocal';
 }

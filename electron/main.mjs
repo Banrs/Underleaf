@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { buildMenu, buildFallbackMenu } from './menu.mjs';
 import { rebuildIfStale } from './rebuild.mjs';
@@ -15,6 +16,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(__dirname, '..');
 const WEB_DIR = path.join(APP_ROOT, 'web');
 const IS_MAC = process.platform === 'darwin';
+
+// One instance only: rebuild-on-launch rewrites the app's own directories, and
+// two processes swapping the same trees corrupt the install.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+});
 
 // Keep PDF scrolling and translucent materials on Chromium's GPU path.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -40,13 +50,15 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-function fileResponse(abs) {
-  if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
-    return new Response('Not found', { status: 404 });
-  }
+// Streamed, not readFileSync: a synchronous read of a large PDF would freeze
+// the main process (window, menus, all IPC) for the duration.
+async function fileResponse(abs) {
+  let st;
+  try { st = await fsp.stat(abs); } catch { return new Response('Not found', { status: 404 }); }
+  if (st.isDirectory()) return new Response('Not found', { status: 404 });
   const type = MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream';
-  return new Response(fs.readFileSync(abs), {
-    headers: { 'Content-Type': type, 'Cache-Control': 'no-store' },
+  return new Response(Readable.toWeb(fs.createReadStream(abs)), {
+    headers: { 'Content-Type': type, 'Content-Length': String(st.size), 'Cache-Control': 'no-store' },
   });
 }
 
@@ -91,7 +103,11 @@ async function boot() {
       }
       if (segs[0] === '__raw') {
         const root = projects.projectRoot(segs[1]);
-        return fileResponse(projects.safePath(root, segs.slice(2).join('/')));
+        // Project files must never execute as documents on the app origin.
+        const res = await fileResponse(projects.safePath(root, segs.slice(2).join('/')));
+        res.headers.set('Content-Security-Policy', "sandbox; default-src 'none'");
+        res.headers.set('X-Content-Type-Options', 'nosniff');
+        return res;
       }
       const rel = segs.length ? segs.join('/') : 'index.html';
       const abs = path.resolve(WEB_DIR, rel);
@@ -156,7 +172,9 @@ async function boot() {
     if (canceled || !filePath) return { canceled: true };
     await fsp.rm(filePath, { force: true });
     await new Promise((resolve, reject) => {
-      const zip = spawn('zip', ['-r', filePath, '.', '-x', `${projects.BUILD_DIR}/*`, '.texlocal.json'], { cwd: root });
+      // stdio ignored: zip prints a line per entry, and an undrained pipe
+      // deadlocks past the OS buffer on large projects.
+      const zip = spawn('zip', ['-r', filePath, '.', '-x', `${projects.BUILD_DIR}/*`, '.texlocal.json'], { cwd: root, stdio: 'ignore' });
       zip.on('error', reject);
       zip.on('close', (c) => (c === 0 ? resolve() : reject(new Error(`zip exited with ${c}`))));
     });
@@ -217,6 +235,10 @@ async function boot() {
     flushRenderer(win, () => app.quit());
   });
 
+  // Compiles run in their own process groups (so kills reach the whole latexmk
+  // tree), which also means nothing signals them when this process exits.
+  app.on('will-quit', () => compile.killAll());
+
   // ---------- window ----------
   const createWindow = () => {
     win = new BrowserWindow({
@@ -242,24 +264,36 @@ async function boot() {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true,
+        webviewTag: false,
         spellcheck: true,
         backgroundThrottling: false,
       },
     });
 
+    // The IPC surface is trusted because only the app's own UI can reach it —
+    // so nothing may navigate this window off texlocal://app (e.g. a file
+    // dropped outside the drop zones would otherwise load as file:// with the
+    // preload injected).
+    const allowed = (url) => url.startsWith('texlocal://app/');
+    win.webContents.on('will-navigate', (e, url) => { if (!allowed(url)) e.preventDefault(); });
+    win.webContents.on('will-frame-navigate', (e) => { if (!allowed(e.url)) e.preventDefault(); });
+    win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+
     buildFallbackMenu(win);
 
     // Native spellcheck suggestions on right-click.
-    win.webContents.on('context-menu', (_event, params) => {
+    win.webContents.on('context-menu', (event, params) => {
       if (!params.misspelledWord) return;
+      const wc = event.sender;
       const menu = new Menu();
       for (const s of params.dictionarySuggestions.slice(0, 6)) {
-        menu.append(new MenuItem({ label: s, click: () => win.webContents.replaceMisspelling(s) }));
+        menu.append(new MenuItem({ label: s, click: () => wc.replaceMisspelling(s) }));
       }
       if (params.dictionarySuggestions.length) menu.append(new MenuItem({ type: 'separator' }));
       menu.append(new MenuItem({
         label: `Add “${params.misspelledWord}” to dictionary`,
-        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord),
       }));
       menu.popup();
     });
@@ -288,4 +322,7 @@ async function boot() {
 }
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-boot();
+boot().catch((err) => {
+  dialog.showErrorBox('TeXLocal failed to start', String(err?.stack ?? err));
+  app.exit(1);
+});

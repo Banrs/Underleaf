@@ -1,6 +1,11 @@
-# TeXLocal
+# Underleaf
 
 A fully offline LaTeX editor — an Overleaf alternative that runs entirely on your machine. No accounts, no cloud, no network needed.
+
+> **Naming:** the repo and project are **Underleaf**; the app presents as
+> **TeXLocal**, and the on-disk contract keeps that name — `TeXLocal.app`, the
+> `texlocal://` scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and
+> `TEXLOCAL_DATA` — so existing installs and projects keep working.
 
 Ships as an Electron desktop app (no localhost ports), runs as a local web app
 in any browser, and includes a parallel native SwiftUI/WKWebView macOS target.
@@ -76,11 +81,14 @@ server/      Express API + LaTeX compile/SyncTeX/project logic (shared by both m
 electron/    Electron main (main.mjs), native menu (menu.mjs), self-rebuild (rebuild.mjs), preload
 mac/         Parallel SwiftUI macOS shell + Swift backend (generated with XcodeGen)
 web/src/     Frontend modules, bundled by esbuild into web/dist:
-             main.js (bootstrap/routing) · commands.js (shared command model) ·
+             main.js (bootstrap/routing) · embed.js (native panes entry) ·
+             commands.js (shared command model) · api.js (IPC/REST client) ·
              home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
              settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
-             dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) · state.js
-docs/        design-tokens.md (extracted Apple UI-kit values) · windows.md · roadmap.md
+             dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) ·
+             state.js · icons.js · latex-data.js
+docs/        design-tokens.md (extracted Apple UI-kit values) · windows.md ·
+             roadmap.md · shell-and-design.md
 scripts/     install-app.mjs (package + install + self-update stamp)
 build.mjs    esbuild bundler (full app + native embed) and shared asset copy
 assets/      App icon (.icns)
@@ -99,7 +107,7 @@ Developed and runtime-tested on macOS (arm64), structured for a Windows port: pl
 ## Security notes
 
 - Electron mode opens no network ports at all; browser mode binds to `127.0.0.1` only.
-- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project via the project's `.texlocal.json` if a package needs it.
+- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project by editing the project's `.texlocal.json` on disk if a package needs it — the file is reserved and not writable through the app's file APIs.
 
 ## License
 

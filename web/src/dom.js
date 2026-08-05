@@ -4,6 +4,10 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
+// Unique DOM ids for label/control wiring.
+let uid = 0;
+export const nextId = (prefix) => `${prefix}-${++uid}`;
+
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -12,7 +16,7 @@ export function el(tag, attrs = {}, ...children) {
     else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== null) node.setAttribute(k, v);
   }
-  for (const c of children.flat()) {
+  for (const c of children.flat(Infinity)) {
     if (c == null) continue;
     node.append(c.nodeType ? c : document.createTextNode(c));
   }
@@ -34,6 +38,7 @@ const MAX_TOASTS = 3;
 
 export function toast(msg, kind = '') {
   const root = $('#toast-root');
+  if (!root) return; // embed entry has no toast root
   // Cap concurrent toasts — drop the oldest so they never stack to infinity.
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
   const t = el('div', { class: `toast ${kind}`, role: 'status' }, msg);
@@ -50,9 +55,13 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([di
 // returned to the invoking control afterwards.
 export function showModal(build) {
   return new Promise((resolve) => {
+    // Menus share #modal-root; replacing its children without dismissing would
+    // orphan the menu's window-level listeners.
+    openMenu?.dismiss({ restore: false });
     const root = $('#modal-root');
     const restoreTo = document.activeElement;
     const close = (value) => {
+      openMenu?.dismiss({ restore: false });
       root.replaceChildren();
       removeEventListener('keydown', onKey, true);
       if (restoreTo?.isConnected) restoreTo.focus();
@@ -64,7 +73,7 @@ export function showModal(build) {
     dialog.setAttribute('aria-modal', 'true');
     const heading = dialog.querySelector('h2, h3');
     if (heading) {
-      heading.id ||= `dlg-title-${Math.random().toString(36).slice(2, 8)}`;
+      heading.id ||= nextId('dlg-title');
       dialog.setAttribute('aria-labelledby', heading.id);
     }
 
@@ -102,7 +111,7 @@ function dialogShell(title, body, actions) {
 
 export function promptModal({ title, label, value = '', confirm = 'OK' }) {
   return showModal((close) => {
-    const id = `f-${Math.random().toString(36).slice(2, 8)}`;
+    const id = nextId('f');
     const input = el('input', {
       id, value, onkeydown: (e) => { if (e.key === 'Enter') close(input.value.trim()); },
     });
@@ -131,10 +140,14 @@ export function confirmModal({ title, body, confirm = 'Delete', destructive = tr
 // `items` is a list of `{ label, action, danger, checked }` or the string '-'
 // for a separator. Anchored menus keep keyboard operation: arrows move, Enter
 // activates, Escape dismisses and restores focus.
+let openMenu = null;
+
 export function contextMenu(x, y, items) {
+  openMenu?.dismiss({ restore: false });
   const root = $('#modal-root');
   const restoreTo = document.activeElement;
   const dismiss = ({ restore = true } = {}) => {
+    if (openMenu?.dismiss === dismiss) openMenu = null;
     menu.remove();
     removeEventListener('pointerdown', onAway, true);
     removeEventListener('keydown', onKey, true);
@@ -161,7 +174,9 @@ export function contextMenu(x, y, items) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const i = buttons.indexOf(document.activeElement);
-    const next = e.key === 'ArrowDown' ? i + 1 : i - 1;
+    const next = i === -1
+      ? (e.key === 'ArrowDown' ? 0 : buttons.length - 1)
+      : (e.key === 'ArrowDown' ? i + 1 : i - 1);
     buttons[(next + buttons.length) % buttons.length]?.focus();
   };
 
@@ -171,6 +186,7 @@ export function contextMenu(x, y, items) {
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
   addEventListener('pointerdown', onAway, true);
   addEventListener('keydown', onKey, true);
+  openMenu = { dismiss };
   return { dismiss };
 }
 

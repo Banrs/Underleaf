@@ -9,7 +9,7 @@ import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightSty
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion } from '@codemirror/autocomplete';
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
 import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES } from './latex-data.js';
@@ -36,9 +36,7 @@ const jumpFlashField = StateField.define({
 
 // Xcode 27's own Default (Light) and Default (Dark), read out of
 // Xcode-beta.app/Contents/SharedFrameworks/DVTUserInterfaceKit.framework/
-// Resources/FontAndColorThemes/*.xccolortheme — not sampled by eye. The editor
-// used to ship CodeMirror's generic default in light and One Dark in dark, so the
-// largest surface in the app was the one thing that looked nothing like macOS.
+// Resources/FontAndColorThemes/*.xccolortheme — not sampled by eye.
 //
 // `background` is deliberately NOT taken from the theme (Xcode's is #FFFFFF /
 // #1F1F24): the editor sits flush against this app's own panels, so it follows
@@ -94,15 +92,9 @@ const surfaceTheme = (c) => EditorView.theme({
 });
 
 const baseTheme = EditorView.theme({
-  // --bg-content is the editor pane's own colour. (This was `--bg-panel`, a token
-  // that doesn't exist, so the declaration was dropped and the editor simply let
-  // the pane show through — right result, by accident.)
   '&': { backgroundColor: 'var(--bg-content)' },
   // Xcode's gutter carries no fill and no rule — it is the editor surface with
   // dimmer numbers on it, and the current line's number brightens.
-  // (This block previously mixed `--text-dim` and `--border`, neither of which
-  // exists in the token set, so every declaration in it was invalid and dropped.
-  // The grey that showed up came from One Dark, not from here.)
   // --label-2, not --label-3: at 25% over the panel the numbers land near 2.6:1,
   // under the 4.5:1 they need to stay readable at this size.
   '.cm-gutters': {
@@ -162,9 +154,8 @@ function texForPreview(env, body) {
 
 function mathAtCursor(state) {
   const pos = state.selection.main.head;
-  // Only scan a window around the cursor, not the whole document — a math block
-  // never spans this many characters, so this stays O(1) on large papers instead
-  // of stringifying + regex-scanning the entire doc on every cursor move.
+  // Only scan a window around the cursor, not the whole document — the cost per
+  // cursor move is bounded by the window, not by document size.
   const WIN = 20000;
   const from = Math.max(0, pos - WIN);
   const text = state.doc.sliceString(from, Math.min(state.doc.length, pos + WIN));
@@ -180,7 +171,7 @@ function mathAtCursor(state) {
   for (const re of DISPLAY_RE) {
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
-      if (rel > m.index && rel < m.index + m[0].length) {
+      if (rel >= m.index && rel <= m.index + m[0].length) {
         return { from: from + m.index, tex: texForPreview(null, m[1]), display: true };
       }
       if (m.index > rel) break;
@@ -245,11 +236,13 @@ function toggleLatexComment(view) {
   const { state } = view;
   const lines = new Set();
   for (const r of state.selection.ranges) {
-    for (let pos = r.from; pos <= r.to;) {
-      const line = state.doc.lineAt(pos);
+    // A selection ending at column 0 of a line only touches it — exclude it.
+    const end = r.to > r.from && state.doc.lineAt(r.to).from === r.to ? r.to - 1 : r.to;
+    let line = state.doc.lineAt(r.from);
+    for (;;) {
       lines.add(line.number);
-      if (line.to + 1 > r.to) break;
-      pos = line.to + 1;
+      if (line.to >= end) break;
+      line = state.doc.lineAt(line.to + 1);
     }
   }
   const lineObjs = [...lines].map((n) => state.doc.line(n));
@@ -349,17 +342,15 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
   const view = new EditorView({ state, parent });
 
   return {
-    view,
     getContent: () => view.state.doc.toString(),
     setTheme(isDark) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },
-    gotoLine(line, col = 1) {
+    gotoLine(line) {
       const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
-      const pos = Math.min(l.from + col - 1, l.to);
       view.dispatch({
-        selection: { anchor: pos },
-        effects: [EditorView.scrollIntoView(pos, { y: 'center' }), setJumpFlash.of(l.from)],
+        selection: { anchor: l.from },
+        effects: [EditorView.scrollIntoView(l.from, { y: 'center' }), setJumpFlash.of(l.from)],
       });
       view.focus();
       clearTimeout(this._flashTimer);
@@ -374,7 +365,7 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
     redo: () => { redo(view); view.focus(); },
     toggleComment: () => { toggleLatexComment(view); view.focus(); },
     // Wrap the selection (or insert an empty pair with the cursor inside).
-    wrapSelection(prefix, suffix, { complete = false } = {}) {
+    wrapSelection(prefix, suffix) {
       const { from, to } = view.state.selection.main;
       const selected = view.state.sliceDoc(from, to);
       view.dispatch({
@@ -382,7 +373,6 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
         selection: { anchor: from + prefix.length, head: from + prefix.length + selected.length },
       });
       view.focus();
-      if (complete && !selected) startCompletion(view);
     },
     // Insert a multi-line template at the cursor; "$0" marks the cursor spot.
     insertTemplate(template) {

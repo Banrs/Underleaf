@@ -12,7 +12,11 @@ export function buildLogsView({ onJump }) {
   return view;
 }
 
-// The toolbar button carries an error/warning count badge.
+export function destroyLogsView() {
+  nodes = {};
+}
+
+// The toolbar button carries a badge with the more severe of the two counts.
 function logsBadge() {
   const errs = state.lastResult?.errors ?? [];
   const warns = state.lastResult?.warnings ?? [];

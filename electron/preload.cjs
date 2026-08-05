@@ -6,8 +6,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 async function invoke(channel, ...args) {
   const res = await ipcRenderer.invoke(channel, ...args);
-  if (res && res.error) throw new Error(res.error);
-  return res ? res.value : undefined;
+  if (res.error) throw new Error(res.error);
+  return res.value;
 }
 
 contextBridge.exposeInMainWorld('texlocal', {

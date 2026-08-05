@@ -25,11 +25,13 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
         let segs = url.path.split(separator: "/").map(String.init)
         do {
             let fileURL: URL
+            var raw = false
             if segs.first == "__pdf", segs.count >= 2 {
                 fileURL = ProjectStore.compiledPdfPath(try ProjectStore.projectRoot(segs[1]))
             } else if segs.first == "__raw", segs.count >= 3 {
                 let root = try ProjectStore.projectRoot(segs[1])
                 fileURL = try ProjectStore.safePath(root, segs.dropFirst(2).joined(separator: "/"))
+                raw = true
             } else {
                 let rel = segs.isEmpty ? "index.html" : segs.joined(separator: "/")
                 fileURL = webDir.appendingPathComponent(rel)
@@ -38,9 +40,14 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
             }
             guard let data = try? Data(contentsOf: fileURL) else { return fail(task, 404) }
             let type = Self.mime[fileURL.pathExtension.lowercased()] ?? "application/octet-stream"
-            let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
-                                       headerFields: ["Content-Type": type, "Cache-Control": "no-store",
-                                                      "Access-Control-Allow-Origin": "*"])!
+            var headers = ["Content-Type": type, "Cache-Control": "no-store",
+                           "Access-Control-Allow-Origin": "*"]
+            if raw {
+                // Project files must never execute as documents on the app origin.
+                headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+                headers["X-Content-Type-Options"] = "nosniff"
+            }
+            let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
             task.didReceive(resp)
             task.didReceive(data)
             task.didFinish()

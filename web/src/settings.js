@@ -8,19 +8,12 @@ import { $, el, toast, showModal } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
-
-let onAppearanceChange = () => {};
-export function setAppearanceHandler(fn) { onAppearanceChange = fn; }
-
-const apply = () => applyAppearance({ onTheme: (t) => onAppearanceChange(t) });
-
-let uid = 0;
-const nextId = () => `set-${++uid}`;
+import { nextId } from './dom.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
 // its accessible name from the title, so icon-only segments still read properly.
 function row(title, hint, control) {
-  const id = nextId();
+  const id = nextId('set');
   control.setAttribute('aria-labelledby', id);
   return el('div', { class: 'settings-row' },
     el('div', { class: 'settings-label' },
@@ -42,26 +35,23 @@ function group(title, ...rows) {
 // selected option is exposed, not just coloured.
 function segmented(options, get, set) {
   const wrap = el('div', { class: 'segmented', role: 'radiogroup' });
-  const buttons = options.map(({ value, label, glyph }) => {
-    const b = el('button', {
-      class: 'segment',
-      role: 'radio',
-      'aria-checked': String(get() === value),
-      title: label,
-      'aria-label': label,
-      onclick: () => choose(value),
-      onkeydown: (e) => {
-        const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-        if (!dir) return;
-        e.preventDefault();
-        const i = options.findIndex((o) => o.value === get());
-        const next = options[(i + dir + options.length) % options.length];
-        choose(next.value);
-        buttons[options.indexOf(next)].focus();
-      },
-    }, glyph ? icon(glyph) : label);
-    return b;
-  });
+  const buttons = options.map(({ value, label, glyph }) => el('button', {
+    class: 'segment',
+    role: 'radio',
+    'aria-checked': String(get() === value),
+    title: label,
+    'aria-label': label,
+    onclick: () => choose(value),
+    onkeydown: (e) => {
+      const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!dir) return;
+      e.preventDefault();
+      const i = options.findIndex((o) => o.value === get());
+      const next = options[(i + dir + options.length) % options.length];
+      choose(next.value);
+      buttons[options.indexOf(next)].focus();
+    },
+  }, glyph ? icon(glyph) : label));
   function choose(value) {
     set(value);
     options.forEach((o, i) => {
@@ -69,7 +59,7 @@ function segmented(options, get, set) {
       buttons[i].setAttribute('aria-checked', String(on));
       buttons[i].tabIndex = on ? 0 : -1;
     });
-    apply();
+    applyAppearance();
   }
   options.forEach((o, i) => { buttons[i].tabIndex = o.value === get() ? 0 : -1; });
   wrap.append(...buttons);
@@ -84,7 +74,7 @@ function toggle(get, set) {
     onclick: () => {
       set(!get());
       b.setAttribute('aria-checked', String(get()));
-      apply();
+      applyAppearance();
     },
   }, el('span', { class: 'switch-knob' }));
   return b;
@@ -96,28 +86,30 @@ function stepper(values, get, set, format) {
   const label = el('span', { class: 'stepper-value' }, format(get()));
   const dec = el('button', { class: 'icon-btn small', 'aria-label': 'Decrease' }, icon('minus'));
   const inc = el('button', { class: 'icon-btn small', 'aria-label': 'Increase' }, icon('plus'));
+  // Clamp: a stored value off the list (hand-edited, older build) must not
+  // make the first step jump to the minimum.
+  const indexOf = () => Math.max(0, values.indexOf(get()));
   const sync = () => {
-    const i = values.indexOf(get());
+    const i = indexOf();
     dec.disabled = i <= 0;
     inc.disabled = i >= values.length - 1;
     label.textContent = format(get());
   };
   const step = (d) => {
-    const i = values.indexOf(get()) + d;
+    const i = indexOf() + d;
     if (i < 0 || i >= values.length) return;
     set(values[i]);
     sync();
-    apply();
+    applyAppearance();
   };
   dec.onclick = () => step(-1);
   inc.onclick = () => step(1);
   sync();
-  const wrap = el('div', { class: 'stepper', role: 'group' }, dec, label, inc);
-  return wrap;
+  return el('div', { class: 'stepper', role: 'group' }, dec, label, inc);
 }
 
 export function openSettings() {
-  if ($('#modal-root .settings-dialog')) return; // already open
+  if ($('#modal-root .settings-dialog')) return Promise.resolve(null); // already open
 
   return showModal((close) => {
     const groups = [
@@ -158,10 +150,7 @@ export function openSettings() {
     if (state.projectId) {
       const engine = el('select', {
         onchange: async () => {
-          try {
-            state.settings = await api.saveSettings(state.projectId, { engine: engine.value });
-            onAppearanceChange(document.documentElement.dataset.theme);
-          }
+          try { state.settings = await api.saveSettings(state.projectId, { engine: engine.value }); }
           catch (err) { toast(err.message, 'error'); }
         },
       }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>

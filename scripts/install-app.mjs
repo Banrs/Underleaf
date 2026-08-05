@@ -9,6 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { writeBuildInfo } from '../electron/rebuild.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RELEASE = path.join(ROOT, 'release', 'TeXLocal-darwin-arm64', 'TeXLocal.app');
@@ -26,19 +27,19 @@ if (!fs.existsSync(RELEASE)) {
 
 // Resources/app is where electron-packager puts the app source inside the bundle.
 const appDir = path.join(RELEASE, 'Contents', 'Resources', 'app');
-fs.writeFileSync(path.join(appDir, 'build-info.json'), `${JSON.stringify({
+writeBuildInfo(appDir, {
   sourceRoot: ROOT,
   builtAt: Date.now(),
   electron: JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).devDependencies.electron,
-}, null, 2)}\n`);
+});
 
 console.log(`› Installing to ${DEST}…`);
-// Stage-and-swap so a failed copy can't leave a half-installed app. `ditto` is
-// the only safe way to copy a .app — fs.cp breaks the framework symlinks that
-// Electron.app relies on (icudtl.dat lives behind Versions/Current links).
+// Stage the copy first so a failed `ditto` can't leave a half-copied app.
+// `ditto` is the only safe way to copy a .app — fs.cp breaks the framework
+// symlinks that Electron.app relies on.
 const staged = `${DEST}.incoming`;
 await fsp.rm(staged, { recursive: true, force: true });
-execFileSync('ditto', [RELEASE, staged]);
+run('ditto', [RELEASE, staged]);
 await fsp.rm(DEST, { recursive: true, force: true });
 await fsp.rename(staged, DEST);
 

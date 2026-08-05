@@ -4,22 +4,23 @@ import Foundation
 
 struct LogItem: Codable { var type: String; var file: String?; var line: Int?; var message: String }
 
-struct CompileResult: Codable {
+struct CompileResult {
     var ok: Bool
     var killed: Bool
     var durationMs: Double
-    var exitCode: Int32
     var pdf: String?          // project-relative, e.g. "build/main.pdf"
     var errors: [LogItem]
     var warnings: [LogItem]
     var log: String
 }
 
-struct SyncForward: Codable { var page: Double; var x, y, h, v, width, height: Double }
-struct SyncInverse: Codable { var file: String; var line: Int }
+struct SyncInverse { var file: String; var line: Int }
 
 enum Compiler {
     private static let timeout: TimeInterval = 180
+    // Cap what we hold from a child; a runaway document can print for the whole
+    // timeout window.
+    private static let maxOutput = 1_000_000
     private static let engineFlags = ["pdflatex": ["-pdf"], "xelatex": ["-xelatex"], "lualatex": ["-lualatex"]]
 
     // PATH for spawned TeX tools (GUI apps miss the TeX bins). /Library/TeX/texbin is
@@ -40,7 +41,28 @@ enum Compiler {
         var e = ProcessInfo.processInfo.environment; e["PATH"] = texPath; return e
     }
 
-    private struct RunResult { var code: Int32; var stdout: String; var stderr: String }
+    private struct RunResult { var code: Int32; var killed: Bool; var output: String }
+
+    // Thread-safe, size-capped accumulator for the child's output.
+    private final class OutputBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func append(_ d: Data, cap: Int) {
+            lock.lock(); defer { lock.unlock() }
+            if data.count < cap { data.append(d) }
+        }
+        var text: String {
+            lock.lock(); defer { lock.unlock() }
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
 
     @discardableResult
     private static func run(_ cmd: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval = timeout) -> RunResult {
@@ -49,25 +71,47 @@ enum Compiler {
         p.arguments = [cmd] + args
         p.environment = env
         if let cwd { p.currentDirectoryURL = cwd }
-        // Merge both streams into one pipe. Reading stdout and stderr sequentially
-        // can deadlock when the child fills the pipe that is not currently drained.
+        // Never inherit the app's stdin — a TeX run that drops out of batchmode
+        // would otherwise wait on it forever.
+        p.standardInput = FileHandle.nullDevice
+        // Merge both streams into one pipe and drain it incrementally:
+        // readDataToEndOfFile returns only when EVERY writer closes the pipe, so
+        // a surviving grandchild (pdflatex under a killed latexmk) would block
+        // the read forever, and the whole output would sit in memory uncapped.
         let output = Pipe()
         p.standardOutput = output
         p.standardError = output
-        do { try p.run() } catch { return RunResult(code: -1, stdout: "", stderr: String(describing: error)) }
-        // Kill on timeout.
-        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        let collected = OutputBuffer()
+        output.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            if d.isEmpty { h.readabilityHandler = nil; return }
+            collected.append(d, cap: maxOutput)
+        }
+        do { try p.run() } catch {
+            output.fileHandleForReading.readabilityHandler = nil
+            return RunResult(code: -1, killed: false, output: String(describing: error))
+        }
+        // Kill on timeout; escalate to SIGKILL if SIGTERM is ignored.
+        let killed = Flag()
+        let pid = p.processIdentifier
+        let killer = DispatchWorkItem {
+            guard p.isRunning else { return }
+            killed.set()
+            p.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                if p.isRunning { kill(pid, SIGKILL) }
+            }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let o = String(data: data, encoding: .utf8) ?? ""
         p.waitUntilExit()
         killer.cancel()
-        return RunResult(code: p.terminationStatus, stdout: o, stderr: "")
+        output.fileHandleForReading.readabilityHandler = nil
+        return RunResult(code: p.terminationStatus, killed: killed.isSet, output: collected.text)
     }
 
     static func texAvailable() -> (available: Bool, version: String?) {
         let r = run("latexmk", ["-version"], timeout: 10)
-        return (r.code == 0, r.code == 0 ? r.stdout.split(separator: "\n").first.map(String.init) : nil)
+        return (r.code == 0, r.code == 0 ? r.output.split(separator: "\n").first.map(String.init) : nil)
     }
 
     // MARK: log parsing (mirrors parseLog; -file-line-error format)
@@ -105,7 +149,15 @@ enum Compiler {
             }
             if let r = line.range(of: #"Warning:\s*(.*)$"#, options: .regularExpression),
                line.range(of: #"^(LaTeX|Package \S+|Class \S+) Warning:"#, options: .regularExpression) != nil {
-                let message = String(line[r].dropFirst("Warning:".count)).trimmingCharacters(in: .whitespaces)
+                var message = String(line[r].dropFirst("Warning:".count)).trimmingCharacters(in: .whitespaces)
+                // Warnings often wrap onto continuation lines (mirrors the JS parser).
+                var j = i + 1
+                while j < min(i + 3, lines.count) {
+                    let next = lines[j]
+                    if next.trimmingCharacters(in: .whitespaces).isEmpty { break }
+                    if next.range(of: #"Warning|Error|^!"#, options: .regularExpression) != nil { break }
+                    message += " " + next.trimmingCharacters(in: .whitespaces); j += 1
+                }
                 let lm = message.range(of: #"on input line (\d+)"#, options: .regularExpression)
                 let ln = lm.flatMap { Int(message[$0].components(separatedBy: " ").last ?? "") }
                 items.append(LogItem(type: "warning", file: nil, line: ln, message: message))
@@ -118,73 +170,50 @@ enum Compiler {
 
     // MARK: compile
 
-    static func compile(_ root: URL, overrides: [String: Any] = [:]) throws -> CompileResult {
+    static func compile(_ root: URL) throws -> CompileResult {
         let settings = ProjectStore.readSettings(root)
-        let engine = (overrides["engine"] as? String) ?? settings.engine
-        let mainFile = (overrides["mainFile"] as? String) ?? settings.mainFile
-        let shellEscape = (overrides["shellEscape"] as? Bool) ?? settings.shellEscape
-        guard let flags = engineFlags[engine] else { throw BackendError("Unknown engine: \(engine)") }
-        let safeMainFile = try ProjectStore.safeRelativeFile(root, mainFile)
+        guard let flags = engineFlags[settings.engine] else { throw BackendError("Unknown engine: \(settings.engine)") }
+        let safeMainFile = try ProjectStore.safeRelativeFile(root, settings.mainFile)
         guard FileManager.default.fileExists(atPath: try ProjectStore.safePath(root, safeMainFile).path) else {
-            throw BackendError("Main file not found: \(mainFile)")
+            throw BackendError("Main file not found: \(settings.mainFile)")
         }
         let outdir = root.appendingPathComponent(ProjectStore.buildDir)
         try? FileManager.default.createDirectory(at: outdir, withIntermediateDirectories: true)
 
         var args = flags + ["-interaction=batchmode", "-file-line-error", "-synctex=1", "-halt-on-error", "-outdir=\(ProjectStore.buildDir)"]
-        if shellEscape { args.append("-shell-escape") }
+        if settings.shellEscape { args.append("-shell-escape") }
         args.append("./" + safeMainFile)
 
         let started = Date()
         let r = run("latexmk", args, cwd: root)
         let base = ((safeMainFile as NSString).lastPathComponent as NSString).deletingPathExtension
         let logURL = outdir.appendingPathComponent(base + ".log")
-        let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? r.stdout
+        let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? r.output
         let issues = parseLog(log, mainFile: safeMainFile)
         let pdfURL = outdir.appendingPathComponent(base + ".pdf")
         let pdfExists = FileManager.default.fileExists(atPath: pdfURL.path)
 
         return CompileResult(
-            ok: r.code == 0 && pdfExists, killed: false,
-            durationMs: Date().timeIntervalSince(started) * 1000, exitCode: r.code,
+            ok: r.code == 0 && pdfExists, killed: r.killed,
+            durationMs: Date().timeIntervalSince(started) * 1000,
             pdf: pdfExists ? "\(ProjectStore.buildDir)/\(base).pdf" : nil,
             errors: issues.filter { $0.type == "error" }, warnings: issues.filter { $0.type == "warning" },
-            log: r.stdout.count > 200_000 ? String(r.stdout.suffix(200_000)) : r.stdout)
+            log: String(log.suffix(200_000)))
     }
 
-    // MARK: SyncTeX
-
-    private static func pdfFor(_ root: URL) throws -> URL {
-        let pdf = ProjectStore.compiledPdfPath(root)
-        guard FileManager.default.fileExists(atPath: pdf.path) else { throw BackendError("No compiled PDF yet") }
-        return pdf
-    }
-
-    static func synctexForward(_ root: URL, file: String, line: Int) throws -> SyncForward {
-        let pdf = try pdfFor(root)
-        guard line > 0 else { throw BackendError("Invalid source line") }
-        let safeFile = try ProjectStore.safeRelativeFile(root, file)
-        let r = run("synctex", ["view", "-i", "\(line):1:./\(safeFile)", "-o", pdf.path], cwd: root, timeout: 10)
-        guard r.code == 0 else { throw BackendError("synctex view failed") }
-        var rec: [String: Double] = [:]
-        for ln in r.stdout.components(separatedBy: "\n") {
-            let parts = ln.split(separator: ":", maxSplits: 1)
-            if parts.count == 2, rec[String(parts[0])] == nil, let d = Double(parts[1]) { rec[String(parts[0])] = d }
-        }
-        guard let page = rec["Page"] else { throw BackendError("No SyncTeX match") }
-        return SyncForward(page: page, x: rec["x"] ?? 0, y: rec["y"] ?? 0, h: rec["h"] ?? 0, v: rec["v"] ?? 0, width: rec["W"] ?? 0, height: rec["H"] ?? 0)
-    }
+    // MARK: SyncTeX (inverse: PDF click → source)
 
     static func synctexInverse(_ root: URL, page: Int, x: Double, y: Double) throws -> SyncInverse {
-        let pdf = try pdfFor(root)
+        let pdf = ProjectStore.compiledPdfPath(root)
+        guard FileManager.default.fileExists(atPath: pdf.path) else { throw BackendError("No compiled PDF yet") }
         let r = run("synctex", ["edit", "-o", "\(page):\(x):\(y):\(pdf.path)"], cwd: root, timeout: 10)
         guard r.code == 0 else { throw BackendError("synctex edit failed") }
-        guard let fileLine = r.stdout.range(of: #"(?m)^Input:(.*)$"#, options: .regularExpression),
-              let lineLine = r.stdout.range(of: #"(?m)^Line:(\d+)$"#, options: .regularExpression) else {
+        guard let fileLine = r.output.range(of: #"(?m)^Input:(.*)$"#, options: .regularExpression),
+              let lineLine = r.output.range(of: #"(?m)^Line:(\d+)$"#, options: .regularExpression) else {
             throw BackendError("No SyncTeX match")
         }
-        let file = String(r.stdout[fileLine].dropFirst("Input:".count))
-        let line = Int(r.stdout[lineLine].dropFirst("Line:".count)) ?? 0
+        let file = String(r.output[fileLine].dropFirst("Input:".count))
+        let line = Int(r.output[lineLine].dropFirst("Line:".count)) ?? 0
         let rel = URL(fileURLWithPath: file).standardizedFileURL.path
         let relPath = rel.hasPrefix(root.path + "/") ? String(rel.dropFirst(root.path.count + 1)) : file
         guard !relPath.hasPrefix(".."), !relPath.hasPrefix(ProjectStore.buildDir + "/"),

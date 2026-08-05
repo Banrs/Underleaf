@@ -6,10 +6,18 @@ import SwiftUI
 // reason for the native shell.
 struct SidebarView: View {
     @EnvironmentObject var model: AppModel
-    @State private var selection: String?
+
+    // Selection is derived from the model, so programmatic opens (project
+    // switch, inverse SyncTeX) highlight the right row and re-clicking a row
+    // after a switch still works.
+    private var selection: Binding<String?> {
+        Binding(
+            get: { model.openPath },
+            set: { if let p = $0, isFile(p) { model.openFile(p) } })
+    }
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: selection) {
             Section("Files") {
                 OutlineGroup(model.tree, children: \.children) { node in
                     Label(node.name, systemImage: icon(for: node))
@@ -31,9 +39,6 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top) { projectPicker }   // above the list, in the sidebar
-        .onChange(of: selection) { _, path in
-            if let path, isFile(path) { model.openFile(path) }
-        }
     }
 
     private var projectPicker: some View {
