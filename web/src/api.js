@@ -49,7 +49,11 @@ const fetchApi = {
     fd.append('dir', dir);
     for (const f of files) fd.append('files', f, f._relPath ?? f.name);
     const res = await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd });
-    if (!res.ok) throw new Error((await res.json()).error ?? 'Upload failed');
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
+      throw new Error(msg);
+    }
     return res.json();
   },
 
@@ -97,7 +101,7 @@ const ipcApi = ipc && {
 
   compile: (id, opts = {}) => ipc.invoke('compile', id, opts),
   pdfUrl: (id) => `texlocal://app/__pdf/${enc(id)}?t=${Date.now()}`,
-  downloadPdf: (id) => ipc.invoke('pdf:saveAs', id).catch((e) => { throw e; }),
+  downloadPdf: (id) => ipc.invoke('pdf:saveAs', id),
   exportProject: (id) => ipc.invoke('project:export', id),
 
   syncForward: (id, file, line) => ipc.invoke('synctex:forward', id, file, line),

@@ -59,19 +59,17 @@ export class PdfViewer {
       this._paintTimer = setTimeout(() => { if (!this.rendering) this.#paintNear(this.seq); }, 90);
     });
 
-    // Pinch (or Command/Ctrl-scroll) keeps the content point under the fingers
-    // under the fingers, and centres an axis once the content fits it. Both come
-    // out of one clamp on the content offset rather than two pivot "modes", so
-    // the transition is continuous — see #pinchOffset.
+    // Pinch (or Command/Ctrl-scroll) keeps the content point under the fingers,
+    // and centres an axis once the content fits it. Both come out of one clamp
+    // on the content offset rather than two pivot "modes", so the transition is
+    // continuous — see #pinchOffset.
     scrollEl.addEventListener('wheel', (e) => {
       if (!(e.ctrlKey || e.metaKey) || !this.pagesEl) return;
       e.preventDefault();
       const rect = this.scrollEl.getBoundingClientRect();
       // A gesture that arrives while its own settle render is still in flight
       // simply continues: bumping the generation aborts that render, and the
-      // existing gesture state still describes what is on screen. (Deriving
-      // "gesture start" from `pinch === 1` used to miss this case and re-pivot
-      // on a stale pointer position — the "forgets to work if I go fast" bug.)
+      // existing gesture state still describes what is on screen.
       const g = this._pinch ?? this.#beginPinch(rect, e);
       this._pinchGeneration++;
 
@@ -148,10 +146,8 @@ export class PdfViewer {
   }
 
   // The scroller's padding and the content box inside it, read from the
-  // stylesheet instead of mirrored as constants here. The mirrors had drifted:
-  // the gap constant said 10 where the CSS said 8, and the vertical padding was
-  // assumed to be split evenly when it is 56 top / 12 bottom. Caches the padding
-  // for the hot paths (#reportPage runs on every scroll event).
+  // stylesheet instead of mirrored as constants here (mirrors drift). Caches the
+  // padding for the hot paths (#reportPage runs on every scroll event).
   #metrics() {
     const cs = getComputedStyle(this.scrollEl);
     this._padL = parseFloat(cs.paddingLeft) || 0;
@@ -198,8 +194,7 @@ export class PdfViewer {
     this.#cancelPaints();
     // Every early return inside the pass means a newer pass took over. Clearing
     // the flag in `finally` stops an abandoned pass from locking the re-fit
-    // observer out for the rest of the session, which is what happened whenever
-    // a fresh pinch aborted the previous gesture's settle render.
+    // observer out for the rest of the session.
     try {
       await this.#renderPass(seq, pinchGeneration);
     } finally {
@@ -213,7 +208,6 @@ export class PdfViewer {
   }
 
   async #renderPass(seq, pinchGeneration) {
-    const dpr = window.devicePixelRatio || 1;
     this.#metrics();   // refresh the cached padding; a fixed zoom never calls #fitScale
     const oldH = this.scrollEl.scrollHeight;
     const ratio = oldH ? this.scrollEl.scrollTop / oldH : 0;
@@ -303,11 +297,6 @@ export class PdfViewer {
     return near;
   }
 
-  // Paint what is near the viewport and free the pixel buffers of what is not.
-  // Only the buffer is released — the canvas stays attached, visible and at its
-  // full CSS size, because pdf.js silently never settles on a canvas that is
-  // detached or hidden, and because the layout has to stay put for the page
-  // geometry (and so the scroll position) to remain valid.
   // Stop every in-flight page render. Concurrent render() calls on one page proxy
   // deadlock pdf.js, so a new pass must clear the old one before re-rendering the
   // same pages at a new scale.
@@ -318,6 +307,11 @@ export class PdfViewer {
     }
   }
 
+  // Paint what is near the viewport and free the pixel buffers of what is not.
+  // Only the buffer is released — the canvas stays attached, visible and at its
+  // full CSS size, because pdf.js silently never settles on a canvas that is
+  // detached or hidden, and because the layout has to stay put for the page
+  // geometry (and so the scroll position) to remain valid.
   async #paintNear(seq) {
     // Only the newest pass proceeds. Scrolling quickly starts a pass per stop,
     // and without this they all keep going, each awaiting pages the reader has
@@ -328,10 +322,13 @@ export class PdfViewer {
     for (const [i, p] of this.pages.entries()) {
       if (near.has(i)) continue;
       // Stop work already in flight on a page that has gone off-screen, rather
-      // than letting it finish into a buffer about to be thrown away.
+      // than letting it finish into a buffer about to be thrown away. A page
+      // whose paint promise hasn't settled yet keeps its buffer for now —
+      // resizing the canvas under a live render makes pdf.js throw an error
+      // that would wrongly mark the page as failed.
       p._task?.cancel();
       p._task = null;
-      if (!p.canvas.width) continue;
+      if (p._paint || !p.canvas.width) continue;
       p.canvas.width = 0;
       p.canvas.height = 0;
       p._painted = false;
@@ -353,7 +350,9 @@ export class PdfViewer {
       try {
         ok = await this.#paintCanvas(p, dpr);
       } catch (err) {
-        p._failed = true;
+        // Only a page that failed with its buffer intact genuinely can't
+        // render; an evicted canvas erroring is not the page's fault.
+        if (p.canvas.width) p._failed = true;
         console.error(`PDF page ${p.n} failed to render:`, err);
       }
       if (ok) this.#buildTextLayer(p, seq);
@@ -372,16 +371,12 @@ export class PdfViewer {
 
   #beginPinch(rect, e) {
     const g = { ...this.#metrics(), k: 1, offX: 0, offY: 0 };
-    // The block the pages actually occupy, NOT the pages element: that element is
-    // floored to the pane size (`min-width/min-height: 100%`), so a page narrower
-    // than the pane leaves empty margin inside it. Measuring the element counted
-    // that margin as content, so zooming in from a fitting page immediately looked
-    // like an overflow and started panning instead of growing about the centre —
-    // which is what went wrong when the fingers were outside the page border.
-    // Measured off bounding rects rather than offsetLeft/offsetWidth because
+    // The block the pages actually occupy, NOT the pages element: that element
+    // is floored to the pane size (`min-width/min-height: 100%`), so a page
+    // narrower than the pane leaves empty margin inside it that must not count
+    // as content. Bounding rects rather than offsetLeft/offsetWidth because
     // those are rounded to whole pixels, and the gesture multiplies the block's
-    // width by k — so a half-pixel here shows up as a visibly lopsided centring
-    // once zoomed in. A gesture only ever starts on an untransformed element
+    // width by k. A gesture only ever starts on an untransformed element
     // (committing a render clears the gesture), so these rects are the layout.
     const origin = this.pagesEl.getBoundingClientRect();
     const boxes = this.pages.map((p) => p.wrap.getBoundingClientRect());
@@ -422,12 +417,10 @@ export class PdfViewer {
 
   async #settlePinch(g) {
     if (g !== this._pinch) return;
-    // Pinned against a zoom limit, so there is nothing to commit. The gesture
-    // still has to END: leaving it live meant the next pinch reused this one's
-    // geometry and anchor, which at a fixed k is a pure translation — the page
-    // slid hundreds of pixels without zooming, and no settle ever undid it.
-    // Dropping the transform here also preserves the invariant that a gesture
-    // only ever begins measuring an untransformed element.
+    // Pinned against a zoom limit, so there is nothing to commit — but the
+    // gesture still has to END, and dropping the transform preserves the
+    // invariant that a gesture only ever begins measuring an untransformed
+    // element.
     if (g.k === 1) {
       this.pagesEl.style.transform = '';
       this._pinch = null;
@@ -564,7 +557,7 @@ export class PdfViewer {
   }
 
   async fitWidth() { this.scale = null; this.fitMode = 'width'; this.lastFitW = this.scrollEl.clientWidth; await this.render(); }
-  async fitHeight() { this.scale = null; this.fitMode = 'height'; await this.render(); }
+  async fitHeight() { this.scale = null; this.fitMode = 'height'; this.lastFitW = this.scrollEl.clientWidth; await this.render(); }
 
   // ---------- live pane resize ----------
   // While a divider is dragged, the pane width changes continuously. Re-rendering

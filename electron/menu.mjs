@@ -53,7 +53,7 @@ export function buildMenu(spec, win) {
   const helpMenu = {
     role: 'help',
     submenu: [
-      { label: 'TeXLocal on GitHub', click: () => shell.openExternal('https://github.com/Banrs/Underleaf') },
+      { label: 'Underleaf on GitHub', click: () => shell.openExternal('https://github.com/Banrs/Underleaf') },
       { type: 'separator' },
       { role: 'toggleDevTools' },
     ],
@@ -71,8 +71,12 @@ export function buildMenu(spec, win) {
 
   // Windows and Linux have no application menu, so File gets Settings and Quit.
   if (!IS_MAC) {
-    const file = template.find((m) => m.label === 'File');
-    file?.submenu.push(
+    let file = template.find((m) => m.label === 'File');
+    if (!file) {
+      file = { label: 'File', submenu: [] };
+      template.unshift(file);
+    }
+    file.submenu.push(
       { type: 'separator' },
       { label: 'Settings…', accelerator: 'Ctrl+,', click: () => win?.webContents.send('command:run', 'app.settings') },
       { type: 'separator' },

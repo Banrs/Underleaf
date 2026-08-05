@@ -5,7 +5,9 @@ struct UnderleafApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        // A single window: every ContentView shares the one WKWebView in
+        // AppModel, and an NSView can only live in one window at a time.
+        Window("Underleaf", id: "main") {
             ContentView()
                 .environmentObject(model)
                 .frame(minWidth: 900, minHeight: 560)
@@ -16,12 +18,6 @@ struct UnderleafApp: App {
                     }
                 }
         }
-        .windowToolbarStyle(.unified)   // one unified title+toolbar row (traffic lights + toolbar)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Project…") { /* TODO: prompt + ProjectStore.createProject */ }
-                    .keyboardShortcut("n")
-            }
-        }
+        .windowToolbarStyle(.unified)
     }
 }

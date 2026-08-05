@@ -6,21 +6,21 @@ import { $, el, toast, menuUnder } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
-import { state, resetProjectState, parseOutline, wordCount, outlineChain } from './state.js';
-import { prefs, UI_SCALES, applyAppearance } from './prefs.js';
+import { state, resetProjectState, parseOutline, wordCount, outlineChain, IMAGE_FILE } from './state.js';
+import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle } from './commands.js';
-import { openSettings, setAppearanceHandler } from './settings.js';
+import { openSettings } from './settings.js';
 import {
   buildSidebar, renderTree, refreshTree, renderOutline, focusSearch,
   newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome,
 } from './sidebar.js';
-import { buildLogsView, renderLogs } from './logs.js';
+import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
 
 const TEXT_FILE = /\.(tex|bib|cls|sty|bst|txt|md|csv|tsv|json|yaml|yml|lua|py|r|dat|def|clo|tikz)$/i;
-const IMAGE_FILE = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
 
 let ui = {};              // mounted elements
 let disposeCommands = null;
+let restoreAppearanceHandler = null;
 let texWatcher = null;
 let pendingCompile = false;
 let workspaceGeneration = 0;
@@ -36,11 +36,15 @@ export function destroyWorkspace() {
   texWatcher = null;
   clearTimeout(symbolsTimer);
   clearTimeout(docMetaTimer);
+  clearTimeout(crumbTimer);
   pendingCompile = false;
   disposeCommands?.();
   disposeCommands = null;
+  restoreAppearanceHandler?.();
+  restoreAppearanceHandler = null;
   state.editor?.destroy();
   state.pdf?.destroy();
+  destroyLogsView();
   resetProjectState();
   ui = {};
 }
@@ -66,13 +70,13 @@ export async function renderWorkspace(id) {
 
   buildChrome(id);
   disposeCommands = registerCommands(commandDefs());
-  setAppearanceHandler((theme) => {
+  const previousHandler = setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
-    state.pdf?.refreshAppearance?.();
     updateDocMeta();
     refreshSidebarChrome();
     refreshCommands();
   });
+  restoreAppearanceHandler = () => setAppearanceHandler(previousHandler);
 
   renderTree();
   renderOutline();
@@ -81,9 +85,9 @@ export async function renderWorkspace(id) {
 
   await openFile(state.settings.mainFile).catch(() => {});
   if (generation !== workspaceGeneration) return;
-  const hasPdf = await loadPdf();
+  const pdfLoaded = await loadPdf();
   if (generation !== workspaceGeneration) return;
-  if (!hasPdf && prefs.autoCompile && state.tex.available) compile({ auto: true });
+  if (!pdfLoaded && prefs.autoCompile && state.tex.available) compile({ auto: true });
   refreshCommands();
 }
 
@@ -213,11 +217,7 @@ function buildChrome(id) {
     ),
   );
 
-  ui = {
-    sidebar, sidebarDivider, titlebar, crumbs, saveState, editorHost, wordCountPill,
-    editorPane, pdfPane, pdfScroll, logsView, logsButton, compileButton,
-    zoomLabel, pageIndicator, workspace,
-  };
+  ui = { sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton, compileButton, workspace };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
   setupResizer(paneDivider, pdfPane, 'flex', 240, null, 'pdfWidth');
@@ -242,13 +242,12 @@ function buildChrome(id) {
 // A toolbar button wired to a command: label, shortcut tooltip, and enabled
 // state all come from the one declaration.
 function iconButton(commandId, glyph, size = '') {
-  const b = el('button', {
+  return el('button', {
     class: `icon-btn ${size}`,
     title: tooltip(commandId),
     dataset: { command: commandId },
     onclick: () => runCommand(commandId),
   }, icon(glyph));
-  return b;
 }
 
 // Reflect command state onto every toolbar button that maps to a command.
@@ -275,7 +274,7 @@ const hasEditor = () => !!state.editor;
 const hasPdf = () => !!state.pdf?.doc;
 
 function commandDefs() {
-  const defs = [
+  return [
     { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+Shift+N', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
     { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
     { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
@@ -313,7 +312,6 @@ function commandDefs() {
 
     { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
   ];
-  return defs;
 }
 
 // ---------- document lifecycle ----------
@@ -338,6 +336,7 @@ export async function openFile(path) {
   const host = ui.editorHost;
   if (!host) return;
   const projectId = state.projectId;
+  const prevPath = state.openPath;
   state.openPath = path;
   renderTree();
 
@@ -360,7 +359,13 @@ export async function openFile(path) {
   let text;
   try { ({ text } = await api.readFile(projectId, path)); }
   catch (err) {
-    if (request === openGeneration && generation === workspaceGeneration) toast(err.message, 'error');
+    // Roll back: the editor still shows the previous file, and leaving
+    // openPath on the failed target would route the next save to it.
+    if (request === openGeneration && generation === workspaceGeneration) {
+      state.openPath = prevPath;
+      renderTree();
+      toast(err.message, 'error');
+    }
     return;
   }
   if (
@@ -372,7 +377,6 @@ export async function openFile(path) {
 
   state.editor?.destroy();
   host.replaceChildren();
-  let crumbTimer;
   state.editor = createEditor({
     parent: host,
     content: text,
@@ -428,6 +432,8 @@ async function doSave({ triggerCompile = true } = {}) {
   }
 }
 
+let crumbTimer;
+
 let symbolsTimer;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
@@ -480,13 +486,14 @@ function renderCrumbs() {
 
 async function compile({ auto = false } = {}) {
   if (!state.projectId || !state.tex.available) return;
+  // Claim the flag before any await, or two calls in the same tick both pass.
   if (state.compiling) { pendingCompile = true; return; }
+  state.compiling = true;
+  refreshCommands();
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   await saveCurrent({ triggerCompile: false });
-  if (generation !== workspaceGeneration || state.projectId !== projectId) return;
-  state.compiling = true;
-  refreshCommands();
+  if (generation !== workspaceGeneration || state.projectId !== projectId) { state.compiling = false; return; }
   const btn = ui.compileButton;
   const viewer = state.pdf;
   if (btn) { btn.disabled = true; btn.replaceChildren(el('span', { class: 'spinner' }), 'Compiling'); }

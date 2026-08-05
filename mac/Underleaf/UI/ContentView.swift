@@ -15,13 +15,16 @@ struct ContentView: View {
                 .navigationSubtitle(subtitle)
         }
         .toolbar { toolbarContent }
-        // Native chrome matches the system automatically — no CSS traffic-light math.
         .onChange(of: colorScheme) { _, new in model.applyDark(new == .dark) }
         .onAppear { model.applyDark(colorScheme == .dark) }
     }
 
     private var subtitle: String {
-        model.dirty ? "Unsaved" : (model.openPath.map { ($0 as NSString).lastPathComponent } ?? "")
+        if let r = model.lastResult, !r.ok {
+            let n = r.errors.count
+            return r.killed ? "Compile timed out" : "Compile failed — \(n) error\(n == 1 ? "" : "s")"
+        }
+        return model.dirty ? "Unsaved" : (model.openPath.map { ($0 as NSString).lastPathComponent } ?? "")
     }
 
     @ToolbarContentBuilder

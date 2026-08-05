@@ -7,17 +7,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEMPLATES } from './templates.js';
 
-// fileURLToPath, not URL.pathname: pathname keeps percent-encoding, so a repo
-// checked out under a directory with a space in it resolved to a literal
-// "My%20Repo" path that doesn't exist. It is also the only form that yields a
-// valid path on Windows.
+// fileURLToPath, not URL.pathname: pathname keeps percent-encoding and breaks on Windows.
 export const DATA_DIR = process.env.TEXLOCAL_DATA
   ? path.resolve(process.env.TEXLOCAL_DATA)
   : path.resolve(fileURLToPath(new URL('../data/projects', import.meta.url)));
 
-export const BUILD_DIR = 'build'; // compile output subdir inside each project
+export const BUILD_DIR = 'build';
 const SETTINGS_FILE = '.texlocal.json';
-const HIDDEN = new Set([SETTINGS_FILE]);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -40,10 +36,13 @@ export function projectRoot(id) {
 }
 
 // Resolve a user-supplied relative path inside a project, rejecting escapes.
+// The settings file is reserved: writable only through writeSettings, which
+// validates each key — a raw write could flip shellEscape on.
 export function safePath(root, rel) {
   if (typeof rel !== 'string' || rel === '') throw new HttpError(400, 'Missing path');
   const abs = path.resolve(root, rel);
-  if (abs !== root && !abs.startsWith(root + path.sep)) throw new HttpError(400, 'Path escapes project');
+  if (!abs.startsWith(root + path.sep)) throw new HttpError(400, 'Path escapes project');
+  if (path.relative(root, abs) === SETTINGS_FILE) throw new HttpError(400, 'Reserved file');
   return abs;
 }
 
@@ -68,7 +67,7 @@ function sanitizeName(name) {
 
 // ---------- settings ----------
 
-export const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
+const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
 
 const DEFAULT_SETTINGS = { mainFile: 'main.tex', engine: 'pdflatex', shellEscape: false };
 
@@ -167,9 +166,9 @@ export async function fileTree(root, dir = root) {
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   const nodes = [];
   for (const e of entries) {
-    if (HIDDEN.has(e.name) || e.name.startsWith('.')) continue;
+    if (e.name.startsWith('.')) continue;
     const rel = path.relative(root, path.join(dir, e.name));
-    if (rel === BUILD_DIR) continue; // compile artifacts are not project files
+    if (rel === BUILD_DIR) continue;
     if (e.isDirectory()) {
       nodes.push({ type: 'dir', name: e.name, path: rel, children: await fileTree(root, path.join(dir, e.name)) });
     } else {
@@ -217,7 +216,6 @@ export async function renameEntry(root, from, to) {
 
 export async function deleteEntry(root, rel) {
   const abs = safePath(root, rel);
-  if (abs === root) throw new HttpError(400, 'Cannot delete project root');
   const target = path.relative(root, abs);
   const { mainFile } = await readSettings(root);
   if (mainFile === target || mainFile.startsWith(target + path.sep)) {
@@ -243,8 +241,6 @@ export async function searchProject(root, query, limit = 100) {
       for (let i = 0; i < lines.length && hits.length < limit; i++) {
         const col = lines[i].toLowerCase().indexOf(q);
         if (col === -1) continue;
-        // Preview window around the match, with the match position marked so
-        // the UI can highlight exactly what was searched.
         const start = Math.max(0, col - 24);
         const prefix = (start > 0 ? '…' : '') + lines[i].slice(start, col);
         hits.push({

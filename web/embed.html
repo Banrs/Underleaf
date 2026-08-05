@@ -1,8 +1,10 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self'">
+  <title>Underleaf</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="dist/katex.min.css">
   <style>
@@ -11,6 +13,8 @@
     html, body, #app { height: 100%; margin: 0; background: transparent; }
     .workspace.embed { height: 100%; }
     .embed .editor-pane, .embed .pdf-pane { flex: 1; }
+    /* No glass toolbar in this shell, so no toolbar clearance above the pages. */
+    .embed .pdf-scroll { padding-top: var(--sp-3); }
   </style>
 </head>
 <body>

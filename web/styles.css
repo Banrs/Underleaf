@@ -475,8 +475,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .electron.mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
-   the leading side, recents filling the trailing side. The old single centred
-   column left most of the window empty. */
+   the leading side, recents filling the trailing side. */
 .home-body {
   flex: 1;
   min-height: 0;
@@ -574,8 +573,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    band whose 16-tall content sits centred in it (y=2), 13 Bold, and — per the
    Large/Section group, where the first Item starts at y=20 — NO gap before the
    rows. Trailing accessories in that symbol are 20 wide, so the action buttons
-   below are sized to fit inside the band rather than stretching it (they were
-   28px, which made this header 28 tall while the Outline header stayed 20). */
+   below are sized to fit inside the band rather than stretching it. */
 .section-header {
   display: flex;
   align-items: center;
@@ -669,9 +667,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .tree-children { padding-left: var(--sp-4); }
 
 .outline-row {
-  /* Same row height as the file tree. Both carry 15/20 text, and the kit's Large
-     Items master — the variant that pairs with 15/20 — is 40 tall; two densities
-     in one sidebar was the mismatch, not the type size. */
+  /* Same row height as the file tree: one density for the whole sidebar. */
   height: var(--h-row);
   padding-right: var(--sp-2);
   color: var(--label);
@@ -685,9 +681,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .outline-row:hover { background-color: var(--fill-4); }
 
-/* A toolbar band, so it gets the kit's toolbar height rather than the 46px that
-   asymmetric padding happened to add up to. 44 = a 28 control with 8 above and
-   below. */
+/* A toolbar band at the kit's toolbar height: 44 = a 28 control with 8 above
+   and below. */
 .sidebar-footer {
   display: flex;
   align-items: center;
@@ -803,14 +798,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }
-.logs-btn, [data-command="view.toggleLogs"] { position: relative; }
+[data-command="view.toggleLogs"] { position: relative; }
 
 /* ---------- editor ---------- */
 
 .editor-host { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
-/* 1.45 rather than 1.6: code wants tighter leading than prose, Xcode's own is
-   about 1.3, and 1.6 was costing a visible line of context per screen. */
+/* Code wants tighter leading than prose; Xcode's own is about 1.3. */
 .editor-host .cm-scroller { font-family: var(--editor-font, var(--mono)); line-height: 1.45; }
 .editor-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--label-2); padding: var(--sp-6); text-align: center; }
 
@@ -1112,7 +1106,3 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 @media (max-width: 900px) {
   .crumbs, .title-separator { display: none; }
 }
-
-/* iPad/touch: intentionally absent. This build targets desktop pointers on
-   macOS and Windows; the touch-sized (≥44pt) iPad experience is a separate,
-   likely SwiftUI, effort — see docs/roadmap.md. */

@@ -1,5 +1,5 @@
 {
-  "name": "texlocal",
+  "name": "underleaf",
   "version": "0.1.0",
   "description": "Fully offline LaTeX editor \u2014 an Overleaf alternative",
   "main": "electron/main.mjs",
@@ -9,7 +9,7 @@
     "start": "node server/index.js",
     "dev": "node build.mjs && node server/index.js",
     "app": "electron .",
-    "package": "node build.mjs && electron-packager . TeXLocal --platform darwin --arch arm64 --icon assets/TeXLocal.icns --out release --overwrite --app-bundle-id com.texlocal.desktop --ignore '^/release' --ignore '^/data' --ignore '^/docs' --ignore '^/scripts' --ignore '^/TeXLocal.app' --ignore '^/.claude' --ignore '^/node_modules($|/)' --ignore '^/web/src' --ignore '\\.map$'",
+    "package": "node build.mjs && electron-packager . TeXLocal --platform darwin --arch arm64 --icon assets/TeXLocal.icns --out release --overwrite --app-bundle-id com.texlocal.desktop --ignore '^/release' --ignore '^/data' --ignore '^/docs' --ignore '^/scripts' --ignore '^/mac' --ignore '^/test' --ignore '^/TeXLocal.app' --ignore '^/.claude' --ignore '^/node_modules($|/)' --ignore '^/web/src' --ignore '\\.map$'",
     "install-app": "node scripts/install-app.mjs"
   },
   "keywords": [
@@ -19,7 +19,7 @@
     "offline-first",
     "electron"
   ],
-  "author": "TeXLocal contributors",
+  "author": "Underleaf contributors",
   "license": "MIT",
   "type": "module",
   "dependencies": {

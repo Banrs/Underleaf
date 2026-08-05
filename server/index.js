@@ -11,7 +11,7 @@ import {
   fileTree, createFile, renameEntry, deleteEntry, scanSymbols, searchProject,
   readSettings, writeSettings, BUILD_DIR, compiledPdfPath,
 } from './projects.js';
-import { compile, cleanBuild, texAvailable, synctexForward, synctexInverse } from './compile.js';
+import { compile, texAvailable, synctexForward, synctexInverse } from './compile.js';
 
 const PORT = process.env.PORT ?? 3417;
 // fileURLToPath, not URL.pathname — pathname stays percent-encoded, so a checkout
@@ -31,7 +31,7 @@ const app = express();
 //
 // This only affects browser mode: the desktop app talks to server/projects.js and
 // server/compile.js directly over IPC and never starts this server.
-const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const ALLOWED_ORIGINS = new Set(
   ['localhost', '127.0.0.1', '[::1]'].map((host) => new URL(`http://${host}:${PORT}`).origin),
 );
@@ -60,14 +60,14 @@ app.use(express.json({ limit: '20mb' }));
 // onto its asset URLs, so the browser never reuses a stale bundle/CSS.
 app.get(['/', '/index.html'], (_req, res) => {
   let v = Date.now();
-  try { v = Math.floor(fs.statSync(path.join(WEB_DIR, 'dist/bundle.js')).mtimeMs); } catch { /* keep now */ }
+  try { v = Math.floor(fs.statSync(path.join(WEB_DIR, 'dist/bundle.js')).mtimeMs); }
+  catch { console.warn('web/dist/bundle.js not found — run `npm run build`'); }
   let html = fs.readFileSync(path.join(WEB_DIR, 'index.html'), 'utf8');
   html = html.replace(/(href|src)="(\/[^"]+\.(?:css|js))"/g, `$1="$2?v=${v}"`);
   res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(html);
 });
 
-// No-store on everything else too (this is a local single-user server).
 app.use(express.static(WEB_DIR, { etag: false, lastModified: false, setHeaders: (res) => res.setHeader('Cache-Control', 'no-store') }));
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
@@ -126,6 +126,11 @@ app.get('/api/projects/:id/file', wrap(async (req, res) => {
   if (isTextFile(req.query.path) && req.query.raw !== '1') {
     res.json({ text: await fsp.readFile(abs, 'utf8') });
   } else {
+    // Raw serving exists for <img> previews. Never let a project file execute
+    // as a document on this origin: sandbox it and strip active content types.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    if (!/\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i.test(abs)) res.type('application/octet-stream');
     res.sendFile(abs);
   }
 }));
@@ -133,8 +138,10 @@ app.get('/api/projects/:id/file', wrap(async (req, res) => {
 app.put('/api/projects/:id/file', wrap(async (req, res) => {
   const root = projectRoot(req.params.id);
   const abs = safePath(root, req.query.path);
+  const text = req.body?.text ?? '';
+  if (typeof text !== 'string') throw new HttpError(400, 'text must be a string');
   await fsp.mkdir(path.dirname(abs), { recursive: true });
-  await fsp.writeFile(abs, req.body?.text ?? '');
+  await fsp.writeFile(abs, text);
   res.json({ ok: true });
 }));
 
@@ -154,32 +161,32 @@ app.delete('/api/projects/:id/file', wrap(async (req, res) => {
 
 // ---------- uploads ----------
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024, files: 100, fields: 4, parts: 105 },
+});
 
 app.post('/api/projects/:id/upload', upload.array('files'), wrap(async (req, res) => {
   const root = projectRoot(req.params.id);
   const dir = req.body.dir || '';
-  const saved = [];
-  for (const f of req.files ?? []) {
-    // originalname may carry a relative path when a folder is dropped
+  // Validate every path before writing anything, so one bad filename can't
+  // leave a half-applied upload. originalname may carry a relative path when a
+  // folder is dropped.
+  const targets = (req.files ?? []).map((f) => {
     const rel = path.join(dir, f.originalname.replaceAll('\\', '/'));
-    const abs = safePath(root, rel);
-    await fsp.mkdir(path.dirname(abs), { recursive: true });
-    await fsp.writeFile(abs, f.buffer);
-    saved.push(rel);
+    return { rel, abs: safePath(root, rel), buffer: f.buffer };
+  });
+  for (const t of targets) {
+    await fsp.mkdir(path.dirname(t.abs), { recursive: true });
+    await fsp.writeFile(t.abs, t.buffer);
   }
-  res.json({ saved });
+  res.json({ saved: targets.map((t) => t.rel) });
 }));
 
 // ---------- compile & preview ----------
 
 app.post('/api/projects/:id/compile', wrap(async (req, res) => {
   res.json(await compile(projectRoot(req.params.id), req.body ?? {}));
-}));
-
-app.post('/api/projects/:id/clean', wrap(async (req, res) => {
-  await cleanBuild(projectRoot(req.params.id));
-  res.json({ ok: true });
 }));
 
 app.get('/api/projects/:id/pdf', wrap(async (req, res) => {
@@ -206,18 +213,24 @@ app.get('/api/projects/:id/export', wrap(async (req, res) => {
   res.setHeader('Content-Type', 'application/zip');
   const safeName = req.params.id.replace(/[^\w.-]+/g, '_');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-  const zip = spawn('zip', ['-r', '-', '.', '-x', `${BUILD_DIR}/*`, '.texlocal.json'], { cwd: root });
+  const zip = spawn('zip', ['-r', '-', '.', '-x', `${BUILD_DIR}/*`, '.texlocal.json'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+  // Destroy the socket on failure so a truncated download visibly fails
+  // instead of saving as a "successful" partial archive.
+  zip.on('error', (err) => res.destroy(err));
+  zip.on('close', (c) => { if (c !== 0) res.destroy(new Error(`zip exited with ${c}`)); });
+  res.on('close', () => zip.kill());
   zip.stdout.pipe(res);
-  zip.on('error', () => res.end());
 }));
 
 // ---------- errors ----------
 
-app.use((err, _req, res, _next) => {
-  // body-parser and multer report client faults (malformed JSON, oversized body)
-  // with their own status; without honouring it, a bad request was logged and
-  // returned as a 500 as though the server had broken.
-  const status = err instanceof HttpError ? err.status : (err.status ?? err.statusCode ?? 500);
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  // body-parser sets err.status on client faults; multer only sets err.code.
+  const status = err instanceof HttpError ? err.status
+    : err.code === 'LIMIT_FILE_SIZE' ? 413
+    : err.code?.startsWith?.('LIMIT_') ? 400
+    : (err.status ?? err.statusCode ?? 500);
   if (status >= 500) console.error(err);
   res.status(status).json({ error: err.message });
 });

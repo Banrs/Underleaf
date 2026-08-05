@@ -10,12 +10,13 @@ const registry = new Map();
 
 // The menu bar's shape. `id` entries resolve against the registry; `role`
 // entries are handled natively by Electron (standard editing and window items).
-export const MENU = [
+const MENU = [
   {
     label: 'File',
     items: [
       { id: 'project.new' }, '-',
       { id: 'file.new' }, { id: 'file.newFolder' }, { id: 'file.upload' }, '-',
+      { id: 'file.save' }, '-',
       { id: 'project.close' }, '-',
       { id: 'pdf.save' }, { id: 'project.export' },
     ],
@@ -53,6 +54,7 @@ const FALLBACK_TITLES = {
   'file.new': 'New File…',
   'file.newFolder': 'New Folder…',
   'file.upload': 'Add Files…',
+  'file.save': 'Save',
   'project.close': 'Close Project',
   'pdf.save': 'Save PDF As…',
   'project.export': 'Export Project as ZIP…',
@@ -107,9 +109,8 @@ export function commandEnabled(id) {
 }
 
 export function runCommand(id) {
-  const c = registry.get(id);
-  if (!c || (c.enabled && !c.enabled())) return false;
-  c.run();
+  if (!commandEnabled(id)) return false;
+  registry.get(id).run();
   return true;
 }
 
@@ -126,7 +127,7 @@ function publish() {
         id: it.id,
         label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
         accelerator: c?.accel,
-        enabled: !!c && (c.enabled ? !!c.enabled() : true),
+        enabled: commandEnabled(it.id),
         checked: c?.checked?.(),
         type: c?.checked ? 'checkbox' : undefined,
       };
@@ -182,12 +183,8 @@ function matches(accel, e) {
   const key = parts.pop().toLowerCase();
   const want = new Set(parts.map((p) => p.toLowerCase()));
 
-  // Resolve the accelerator to the physical modifiers it actually needs before
-  // comparing. CmdOrCtrl is ⌘ on macOS and Ctrl elsewhere; an explicit Ctrl is
-  // Ctrl everywhere. Collapsing both into one "primary modifier" test made a
-  // Ctrl-only accelerator unmatchable — the SyncTeX pair (Ctrl+Return,
-  // Ctrl+Shift+Return) never fired in browser mode — and let Ctrl+key trigger a
-  // ⌘+key command on macOS.
+  // CmdOrCtrl is ⌘ on macOS and Ctrl elsewhere; an explicit Ctrl is Ctrl
+  // everywhere — the two must not collapse into one "primary modifier" test.
   const wantPrimary = want.has('cmdorctrl') || want.has('cmd') || want.has('command');
   const needMeta = wantPrimary && MAC;
   const needCtrl = want.has('ctrl') || want.has('control') || (wantPrimary && !MAC);
@@ -215,6 +212,8 @@ export function installBrowserShortcuts() {
       // them here would run the action twice.
       if (!c.accel || c.nativeOnly) continue;
       if (!matches(c.accel, e)) continue;
+      // A disabled command leaves the key to the browser (e.g. page zoom).
+      if (!commandEnabled(c.id)) return;
       e.preventDefault();
       runCommand(c.id);
       return;

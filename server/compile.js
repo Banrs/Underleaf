@@ -70,11 +70,13 @@ function killTree(child) {
   } catch { /* already gone */ }
 }
 
-function run(cmd, args, opts = {}) {
+// `timeout` is destructured out so it never reaches spawn(), whose own timeout
+// option would SIGTERM only the direct child — bypassing killTree.
+function run(cmd, args, { timeout = COMPILE_TIMEOUT_MS, ...opts } = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { ...opts, env: ENV, detached: DETACH });
     let stdout = '', stderr = '';
-    const timer = setTimeout(() => killTree(child), opts.timeout ?? COMPILE_TIMEOUT_MS);
+    const timer = setTimeout(() => killTree(child), timeout);
     child.stdout.on('data', (d) => { if (stdout.length < MAX_OUTPUT) stdout += d; });
     child.stderr.on('data', (d) => { if (stderr.length < MAX_OUTPUT) stderr += d; });
     child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, stdout, stderr: String(err) }); });
@@ -145,7 +147,14 @@ export function parseLog(log, mainFile) {
 
 // ---------- compile ----------
 
-const running = new Map(); // project root -> AbortController-ish kill fn
+const running = new Map(); // project root -> kill fn
+
+// Called on app quit: compiles run in their own process groups, so nothing
+// signals them when the parent exits unless we do it here.
+export function killAll() {
+  for (const kill of running.values()) kill();
+  running.clear();
+}
 
 export async function compile(root, overrides = {}) {
   const settings = await readSettings(root);
@@ -197,12 +206,17 @@ export async function compile(root, overrides = {}) {
     child.on('error', () => { clearTimeout(timer); resolve(-1); });
     child.on('close', (c) => { clearTimeout(timer); resolve(c); });
   });
-  if (running.get(root) && !killed) running.delete(root);
+  if (!killed) running.delete(root);
 
   const base = path.basename(mainRel, path.extname(mainRel));
   const logPath = path.join(outdir, `${base}.log`);
+  // Parse the .log file (batchmode sends errors there, not to stdout) — but
+  // only if this run wrote it; a stale log would report last run's errors.
   let log = stdout;
-  try { log = await fsp.readFile(logPath, 'utf8'); } catch { /* fall back to stdout */ }
+  try {
+    const st = await fsp.stat(logPath);
+    if (st.mtimeMs >= startedAt) log = await fsp.readFile(logPath, 'utf8');
+  } catch { /* no log file — fall back to stdout */ }
 
   const issues = parseLog(log, mainRel);
   const pdfPath = path.join(outdir, `${base}.pdf`);
@@ -210,18 +224,12 @@ export async function compile(root, overrides = {}) {
 
   return {
     ok: code === 0 && pdfExists,
-    killed,
     durationMs: Date.now() - startedAt,
-    exitCode: code,
     pdf: pdfExists ? `${BUILD_DIR}/${base}.pdf` : null,
     errors: issues.filter((i) => i.type === 'error'),
     warnings: issues.filter((i) => i.type === 'warning'),
-    log: stdout.length > 200_000 ? stdout.slice(-200_000) : stdout,
+    log: log.slice(-200_000),
   };
-}
-
-export async function cleanBuild(root) {
-  await fsp.rm(path.join(root, BUILD_DIR), { recursive: true, force: true });
 }
 
 // ---------- SyncTeX ----------
@@ -252,6 +260,7 @@ export async function synctexForward(root, file, line) {
 
 // PDF location (page, x, y in TeX points from top-left) -> source file:line
 export async function synctexInverse(root, page, x, y) {
+  if (![page, x, y].every(Number.isFinite) || page < 1) throw new HttpError(400, 'Invalid PDF location');
   const pdf = await pdfFor(root);
   const { code, stdout } = await run('synctex', ['edit', '-o', `${page}:${x}:${y}:${pdf}`], { cwd: root, timeout: 10_000 });
   if (code !== 0) throw new HttpError(500, 'synctex edit failed');

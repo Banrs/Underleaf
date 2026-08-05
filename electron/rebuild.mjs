@@ -142,22 +142,20 @@ async function syncInto(sourceRoot, appPath) {
 // Returns 'relaunch' when the app updated itself and should restart, 'ok' when
 // it is already current, or 'skipped' when there is nothing to check against.
 export async function rebuildIfStale({ appPath, isPackaged, log = console.log }) {
-  const info = readBuildInfo(appPath);
-
   // Running from a checkout: keep the bundle current, in place.
   if (!isPackaged) {
-    const root = path.join(appPath);
-    const src = await newestMtime(root, SOURCE_PATHS);
-    const bundle = path.join(root, 'web/dist/bundle.js');
+    const src = await newestMtime(appPath, SOURCE_PATHS);
+    const bundle = path.join(appPath, 'web/dist/bundle.js');
     const built = fs.existsSync(bundle) ? fs.statSync(bundle).mtimeMs : 0;
     if (src <= built) return 'ok';
     log('Source changed — rebuilding the UI bundle…');
-    await runBuild(root);
+    await runBuild(appPath);
     return 'ok';
   }
 
   repairInterruptedSwap(appPath);
 
+  const info = readBuildInfo(appPath);
   if (!info?.sourceRoot) return 'skipped';
   const { sourceRoot } = info;
   if (!fs.existsSync(path.join(sourceRoot, 'build.mjs'))) {

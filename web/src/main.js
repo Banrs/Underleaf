@@ -1,12 +1,11 @@
 // Bootstrap: platform detection, appearance, routing. Everything else lives in
 // the view modules.
 
-import { prefs, migratePrefs, applyAppearance, resolveTheme } from './prefs.js';
+import { prefs, migratePrefs, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { onCommandsChanged, installBrowserShortcuts, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
 import { renderWorkspace, destroyWorkspace, saveCurrent, syncToolbarState } from './workspace.js';
-import { setAppearanceHandler } from './settings.js';
 
 // ---------- platform ----------
 
@@ -20,6 +19,12 @@ const root = document.documentElement;
 root.classList.toggle('electron', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');
 root.classList.toggle('win', platform === 'win32');
+
+// A file dropped outside the drop zones must never navigate the page (in
+// Electron that would load file:// with the IPC bridge attached). Drop-zone
+// handlers run first and call their own preventDefault.
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => e.preventDefault());
 
 // ---------- appearance ----------
 
@@ -64,8 +69,15 @@ async function navigate() {
   else await renderHome();
 }
 
-// Quitting or closing must not drop an unsaved buffer.
-addEventListener('beforeunload', () => { if (state.dirty) saveCurrent({ triggerCompile: false }); });
+// Quitting or closing must not drop an unsaved buffer. In the browser the
+// unload would cancel an in-flight save, so block it while dirty — the save
+// lands within the debounce and the next close goes through silently.
+addEventListener('beforeunload', (e) => {
+  if (!state.dirty) return;
+  saveCurrent({ triggerCompile: false });
+  e.preventDefault();
+  e.returnValue = '';
+});
 bridge?.onBeforeQuit?.(async () => { await saveCurrent({ triggerCompile: false }); });
 
 addEventListener('hashchange', navigate);
