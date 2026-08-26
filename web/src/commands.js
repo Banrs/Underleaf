@@ -4,7 +4,7 @@
 // disabled command is disabled everywhere and a shortcut can't drift from its
 // menu item.
 
-const ipc = typeof window !== 'undefined' ? window.texlocal : undefined;
+import { bridge as ipc, isMac } from './bridge.js';
 
 const registry = new Map();
 
@@ -148,7 +148,7 @@ export function onCommandsChanged(fn) { notifyHost = fn; }
 // Electron accelerator string → the glyph string macOS shows in menus and
 // tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
 // "Ctrl+Shift+Z".
-const MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform ?? '');
+const MAC = isMac;
 const GLYPH = { CmdOrCtrl: '⌘', Cmd: '⌘', Command: '⌘', Shift: '⇧', Alt: '⌥', Option: '⌥', Ctrl: '⌃', Control: '⌃' };
 const KEYNAME = { Return: '↩', Enter: '↩', Backslash: '\\', Comma: ',', Plus: '+', Minus: '−' };
 

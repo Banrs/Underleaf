@@ -1,6 +1,7 @@
 // Bootstrap: platform detection, appearance, routing. Everything else lives in
 // the view modules.
 
+import { bridge, platform } from './bridge.js';
 import { prefs, migratePrefs, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { onCommandsChanged, installBrowserShortcuts, installMenuBridge } from './commands.js';
 import { state } from './state.js';
@@ -11,10 +12,6 @@ import { renderWorkspace, destroyWorkspace, saveCurrent, syncToolbarState } from
 
 // Platform-specific chrome is gated on these classes rather than assumed, so the
 // Windows shell is a matter of adding rules, not unpicking macOS ones.
-const bridge = window.texlocal;
-const platform = bridge?.platform
-  ?? (/Mac/.test(navigator.platform ?? '') ? 'darwin' : /Win/.test(navigator.platform ?? '') ? 'win32' : 'linux');
-
 const root = document.documentElement;
 root.classList.toggle('electron', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');

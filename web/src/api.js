@@ -1,7 +1,7 @@
 // API client with two backends behind one interface:
 //  - Electron: IPC via the preload bridge, files served over texlocal://
 //  - Browser:  the Express server's REST API on the same origin
-const ipc = typeof window !== 'undefined' ? window.texlocal : undefined;
+import { bridge as ipc } from './bridge.js';
 
 function enc(s) { return encodeURIComponent(s); }
 function encPath(p) { return p.split('/').map(enc).join('/'); }

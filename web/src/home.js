@@ -3,6 +3,7 @@
 // region, and no floating decoration.
 
 import { api } from './api.js';
+import { platform } from './bridge.js';
 import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
@@ -10,6 +11,19 @@ import { registerCommands, tooltip } from './commands.js';
 import { openSettings } from './settings.js';
 
 let dispose = null;
+
+// The remediation half of the "No TeX distribution found" banner, per platform.
+function texInstallHint() {
+  if (platform === 'darwin') {
+    return ['Compilation is disabled until you install one — ',
+      el('code', {}, 'brew install --cask mactex-no-gui'), ', then restart TeXLocal.'];
+  }
+  if (platform === 'win32') {
+    return ['Compilation is disabled until you install MiKTeX (miktex.org) or TeX Live (tug.org/texlive), then restart TeXLocal.'];
+  }
+  return ['Compilation is disabled until you install TeX Live — e.g. ',
+    el('code', {}, 'sudo apt install texlive'), ' — then restart TeXLocal.'];
+}
 
 function relativeDate(ms) {
   const s = (Date.now() - ms) / 1000;
@@ -159,7 +173,9 @@ export async function renderHome() {
   } catch (err) {
     list.replaceChildren(el('div', { class: 'empty-state' },
       el('p', {}, err.message === 'timeout'
-        ? 'Couldn’t read your projects folder. If macOS asked for permission, choose Allow, then try again.'
+        ? (platform === 'darwin'
+          ? 'Couldn’t read your projects folder. If macOS asked for permission, choose Allow, then try again.'
+          : 'Couldn’t read your projects folder. Check that it’s accessible, then try again.')
         : `Couldn’t load projects: ${err.message}`),
       el('button', { class: 'btn', onclick: reload }, 'Try Again'),
     ));
@@ -182,9 +198,7 @@ export async function renderHome() {
       el('span', { class: 'notice-icon' }, icon('warning')),
       el('span', {},
         el('strong', {}, 'No TeX distribution found. '),
-        'Compilation is disabled until you install one — ',
-        el('code', {}, 'brew install --cask mactex-no-gui'),
-        ', then restart TeXLocal.'),
+        ...texInstallHint()),
     );
   }).catch(() => {});
 
