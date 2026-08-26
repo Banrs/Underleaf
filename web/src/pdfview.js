@@ -32,6 +32,7 @@ export class PdfViewer {
     this.loadingTask = null;
     this._loadGeneration = 0;
     this.pages = [];            // { n, page, wrap, canvas, textLayer, viewport, scale }
+    this.pageProxies = [];      // fetched once per document; see load()
     this.pagesEl = null;
 
     this.scale = null;          // explicit scale, or null → use fitMode
@@ -137,9 +138,27 @@ export class PdfViewer {
       await task.destroy().catch(() => {});
       return false;
     }
+    // Fetch every page proxy once, up front and in parallel. A render pass used
+    // to await getPage() per page — one serialized worker round-trip each — on
+    // every zoom step; with the proxies in hand the shell-building loop is
+    // synchronous. pdf.js caches proxies on the document, so this holds no
+    // pixels, just page dictionaries.
+    let proxies;
+    try {
+      proxies = await Promise.all(
+        Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)));
+    } catch (err) {
+      await task.destroy().catch(() => {});
+      throw err;
+    }
+    if (generation !== this._loadGeneration) {
+      await task.destroy().catch(() => {});
+      return false;
+    }
     const prev = this.loadingTask;
     this.loadingTask = task;
     this.doc = doc;
+    this.pageProxies = proxies;
     await prev?.destroy().catch(() => {});
     await this.render();
     return true;
@@ -218,14 +237,15 @@ export class PdfViewer {
     const anchor = this._anchor;
     this._anchor = null;
 
-    // Build the page shells (one scale for the whole pass).
+    // Build the page shells (one scale for the whole pass). The proxies were
+    // fetched at load time, so this loop never awaits — a zoom step lays out a
+    // 200-page document without 200 worker round-trips.
     const pagesEl = document.createElement('div');
     pagesEl.className = 'pdf-pages';
     const pages = [];
     let scale = null;
     for (let n = 1; n <= this.doc.numPages; n++) {
-      if (this.#stale(seq, pinchGeneration)) return;
-      const page = await this.doc.getPage(n);
+      const page = this.pageProxies[n - 1];
       scale = scale ?? (this.scale ?? this.#fitScale(page));
       const viewport = page.getViewport({ scale });
 
@@ -332,6 +352,9 @@ export class PdfViewer {
       p.canvas.width = 0;
       p.canvas.height = 0;
       p._painted = false;
+      // Release the text layer with the pixels: one span per glyph run adds up
+      // over a long scroll, and #buildTextLayer recreates it after the repaint.
+      p.textLayer.replaceChildren();
     }
 
     const dpr = window.devicePixelRatio || 1;
@@ -678,6 +701,7 @@ export class PdfViewer {
     this.loadingTask = null;
     this.doc = null;
     this.pages = [];
+    this.pageProxies = [];
     this.pagesEl = null;
     this.scrollEl.replaceChildren();
   }
