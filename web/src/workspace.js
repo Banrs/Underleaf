@@ -27,6 +27,26 @@ let workspaceGeneration = 0;
 let openGeneration = 0;
 let savePromise = Promise.resolve();
 
+// Editor states of recently open files, so switching back restores the undo
+// history, selection, and scroll position instead of rebuilding from scratch.
+// An entry is only reused when the file on disk still matches its document
+// (openFile saves before switching away, so they match unless something else
+// wrote the file); a mismatch just falls back to a fresh editor.
+const EDITOR_CACHE_MAX = 8;
+const editorStateCache = new Map();   // path → { state, scrollTop }
+
+function stashEditorState(path) {
+  if (!path || !state.editor?.getState) return;
+  editorStateCache.delete(path);
+  editorStateCache.set(path, {
+    state: state.editor.getState(),
+    scrollTop: state.editor.getScrollTop(),
+  });
+  while (editorStateCache.size > EDITOR_CACHE_MAX) {
+    editorStateCache.delete(editorStateCache.keys().next().value);
+  }
+}
+
 // ---------- mount / unmount ----------
 
 export function destroyWorkspace() {
@@ -46,6 +66,7 @@ export function destroyWorkspace() {
   state.pdf?.destroy();
   destroyLogsView();
   resetProjectState();
+  editorStateCache.clear();
   ui = {};
 }
 
@@ -341,6 +362,7 @@ export async function openFile(path) {
   updateTreeSelection();
 
   if (IMAGE_FILE.test(path)) {
+    stashEditorState(prevPath);
     state.editor?.destroy();
     state.editor = null;
     host.replaceChildren(el('div', { class: 'image-preview' },
@@ -350,6 +372,7 @@ export async function openFile(path) {
     return;
   }
   if (!TEXT_FILE.test(path)) {
+    stashEditorState(prevPath);
     showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
     setSaveState('');
     updateDocMeta();
@@ -375,11 +398,17 @@ export async function openFile(path) {
     || host !== ui.editorHost
   ) return;
 
+  stashEditorState(prevPath);
+  const cached = editorStateCache.get(path);
+  const restore = cached && cached.state.doc.toString() === text ? cached : null;
+  editorStateCache.delete(path);
+
   state.editor?.destroy();
   host.replaceChildren();
   state.editor = createEditor({
     parent: host,
     content: text,
+    restore: restore?.state,
     dark: document.documentElement.dataset.theme === 'dark',
     getSymbols: () => state.symbols,
     onChange: () => {
@@ -395,6 +424,7 @@ export async function openFile(path) {
       crumbTimer = setTimeout(renderCrumbs, 150);
     },
   });
+  if (restore) state.editor.setScrollTop(restore.scrollTop);
   state.editor.focus();
   setSaveState('Saved');
   updateDocMeta();
