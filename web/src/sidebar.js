@@ -141,6 +141,23 @@ export function renderTree() {
   syncRovingFocus();
 }
 
+// Move the selection highlight without rebuilding the tree. Structure hasn't
+// changed on a plain file open, so replacing every row just churns the DOM.
+export function updateTreeSelection() {
+  if (!nodes.tree) return;
+  const prev = nodes.tree.querySelector('.tree-row.selected');
+  const next = state.openPath
+    ? nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.openPath)}"]`)
+    : null;
+  if (prev !== next) {
+    prev?.classList.remove('selected');
+    prev?.removeAttribute('aria-current');
+    next?.classList.add('selected');
+    next?.setAttribute('aria-current', 'true');
+  }
+  syncRovingFocus();
+}
+
 function renderNode(node, level) {
   if (node.type === 'dir') {
     const isOpen = openDirs.has(node.path);

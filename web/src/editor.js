@@ -343,6 +343,12 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
 
   return {
     getContent: () => view.state.doc.toString(),
+    lineCount: () => view.state.doc.lines,
+    // Feed each line's text to cb without materializing the whole document.
+    scanLines(cb) {
+      let n = 1;
+      for (const iter = view.state.doc.iterLines(); !iter.next().done;) cb(iter.value, n++);
+    },
     setTheme(isDark) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },

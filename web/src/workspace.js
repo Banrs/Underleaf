@@ -6,12 +6,12 @@ import { $, el, toast, menuUnder } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
-import { state, resetProjectState, parseOutline, wordCount, outlineChain, IMAGE_FILE } from './state.js';
+import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle } from './commands.js';
 import { openSettings } from './settings.js';
 import {
-  buildSidebar, renderTree, refreshTree, renderOutline, focusSearch,
+  buildSidebar, renderTree, updateTreeSelection, refreshTree, renderOutline, focusSearch,
   newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome,
 } from './sidebar.js';
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
@@ -338,7 +338,7 @@ export async function openFile(path) {
   const projectId = state.projectId;
   const prevPath = state.openPath;
   state.openPath = path;
-  renderTree();
+  updateTreeSelection();
 
   if (IMAGE_FILE.test(path)) {
     state.editor?.destroy();
@@ -363,7 +363,7 @@ export async function openFile(path) {
     // openPath on the failed target would route the next save to it.
     if (request === openGeneration && generation === workspaceGeneration) {
       state.openPath = prevPath;
-      renderTree();
+      updateTreeSelection();
       toast(err.message, 'error');
     }
     return;
@@ -457,17 +457,21 @@ function scheduleDocMeta() {
 
 function updateDocMeta() {
   const isTex = state.openPath?.endsWith('.tex');
-  const content = state.editor?.getContent();
-  state.outline = isTex && content != null ? parseOutline(content) : [];
+  const editor = state.editor;
+  const pill = ui.wordCountPill;
+  const show = !!(isTex && editor);
+  const countWords = show && prefs.showWordCount;
+  const { outline, words, lines } = show
+    ? analyzeDoc(editor.scanLines, { countWords })
+    : { outline: [] };
+  state.outline = outline;
   renderOutline();
   renderCrumbs();
 
-  const pill = ui.wordCountPill;
   if (!pill) return;
-  const show = prefs.showWordCount && isTex && content != null;
-  pill.hidden = !show;
-  if (show) {
-    pill.textContent = `${wordCount(content).toLocaleString()} words · ${content.split('\n').length.toLocaleString()} lines`;
+  pill.hidden = !countWords;
+  if (countWords) {
+    pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
   }
 }
 
