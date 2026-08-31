@@ -43,20 +43,19 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     // Native liquid-glass on macOS: the window is transparent, vibrancy renders
     // behind it, and the app's own chrome doubles as the title bar with the
     // lights placed in its 52px band. Elsewhere: a normal opaque title bar.
+    //
+    // The transparent background is macOS private API, so it needs both the
+    // `macos-private-api` crate feature and `app.macOSPrivateApi` in
+    // tauri.conf.json. That rules out the Mac App Store — which spawning a
+    // system latexmk already did (see docs/shell-and-design.md).
     #[cfg(target_os = "macos")]
     {
-        use tauri::utils::config::{WindowEffect, WindowEffectState, WindowEffectsConfig};
         builder = builder
             .transparent(true)
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
             .traffic_light_position(tauri::LogicalPosition::new(18.0, 19.0))
-            .effects(WindowEffectsConfig {
-                effects: vec![WindowEffect::Sidebar],
-                state: Some(WindowEffectState::FollowsWindowActiveState),
-                radius: None,
-                color: None,
-            });
+            .effects(sidebar_vibrancy());
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -66,6 +65,21 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let window = builder.build()?;
     install_flush_on_close(app.clone(), &window);
     Ok(window)
+}
+
+/// The vibrancy material rendered behind the window on macOS. Deliberately not
+/// inside the `cfg(macos)` block: built unconditionally, its types are checked
+/// by every build, so a wrong import can't hide until a macOS runner picks it up.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn sidebar_vibrancy() -> tauri::utils::config::WindowEffectsConfig {
+    use tauri::utils::config::WindowEffectsConfig;
+    use tauri::utils::{WindowEffect, WindowEffectState};
+    WindowEffectsConfig {
+        effects: vec![WindowEffect::Sidebar],
+        state: Some(WindowEffectState::FollowsWindowActiveState),
+        radius: None,
+        color: None,
+    }
 }
 
 /// Quitting or closing must not drop an unsaved buffer: give the renderer one
