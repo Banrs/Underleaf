@@ -374,6 +374,12 @@ impl CompileManager {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
         let started_at = SystemTime::now();
         let start_instant = std::time::Instant::now();
+        // What the log looked like before this run, so finish() can tell
+        // whether latexmk replaced it.
+        let log_before =
+            std::fs::metadata(outdir.join(format!("{}.log", main_base_name(&main_rel))))
+                .and_then(|m| m.modified())
+                .ok();
 
         let mut cmd = base_command("latexmk", Some(root), self.path());
         cmd.args(&args);
@@ -385,6 +391,7 @@ impl CompileManager {
                 return Ok(self.finish(
                     root,
                     &main_rel,
+                    log_before,
                     started_at,
                     start_instant,
                     -1,
@@ -435,13 +442,23 @@ impl CompileManager {
             }
         }
 
-        Ok(self.finish(root, &main_rel, started_at, start_instant, code, output))
+        Ok(self.finish(
+            root,
+            &main_rel,
+            log_before,
+            started_at,
+            start_instant,
+            code,
+            output,
+        ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn finish(
         &self,
         root: &Path,
         main_rel: &str,
+        log_before: Option<SystemTime>,
         started_at: SystemTime,
         start_instant: std::time::Instant,
         code: i32,
@@ -454,9 +471,20 @@ impl CompileManager {
         // Parse the .log file (batchmode sends errors there, not to stdout) —
         // but only if this run wrote it; a stale log would report last run's
         // errors.
+        //
+        // Freshness is decided by whether the file changed, not by comparing
+        // its timestamp to the wall clock: Linux stamps files from a coarse
+        // clock that lags the fine-grained one by up to a jiffy, so a log
+        // written just after the run began can carry an mtime just before it,
+        // and a real failure's errors would silently vanish from the log pane.
+        // The wall-clock test stays as a fallback for the case where the log
+        // is rewritten byte-identically within one timestamp tick.
         let mut log = fallback_output;
         if let Ok(meta) = std::fs::metadata(&log_path) {
-            if meta.modified().map(|m| m >= started_at).unwrap_or(false) {
+            let modified = meta.modified().ok();
+            let rewritten = modified != log_before;
+            let after_start = modified.map(|m| m >= started_at).unwrap_or(false);
+            if rewritten || after_start {
                 if let Ok(bytes) = std::fs::read(&log_path) {
                     log = String::from_utf8_lossy(&bytes).into_owned();
                 }

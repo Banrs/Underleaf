@@ -87,7 +87,7 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             main_file: settings.main_file,
         });
     }
-    projects.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    projects.sort_by_key(|p| std::cmp::Reverse(p.mtime));
     Ok(projects)
 }
 
