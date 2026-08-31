@@ -52,11 +52,14 @@ pub struct SearchHit {
     pub after: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Symbols {
     pub citations: Vec<String>,
     pub labels: Vec<String>,
 }
+
+/// One scannable file's identity for cache invalidation: (rel path, mtime, len).
+pub type FileStamp = (String, u64, u64);
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
     meta.modified()
@@ -424,4 +427,45 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
         citations: dedup(keys),
         labels: dedup(labels),
     })
+}
+
+/// Stat-only fingerprint of every file `scan_symbols` would read, sorted for a
+/// stable comparison. Callers cache the scan against this: the walk plus a stat
+/// per file is far cheaper than reading and regex-scanning each one, and the UI
+/// re-scans after every save.
+pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<FileStamp>) -> Result<(), CoreError> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == BUILD_DIR {
+                continue;
+            }
+            let abs = entry.path();
+            if entry.file_type()?.is_dir() {
+                walk(root, &abs, out)?;
+                continue;
+            }
+            let ext = abs
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if ext != "bib" && ext != "tex" {
+                continue;
+            }
+            let Some(rel) = crate::paths::rel_to_root(root, &abs) else {
+                continue;
+            };
+            let meta = entry.metadata()?;
+            out.push((rel, mtime_ms(&meta), meta.len()));
+        }
+        Ok(())
+    }
+
+    let mut out = Vec::new();
+    walk(root, root, &mut out)?;
+    // read_dir order is filesystem-defined; sort so an unchanged project always
+    // produces an identical fingerprint.
+    out.sort();
+    Ok(out)
 }

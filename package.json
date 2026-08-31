@@ -1,7 +1,7 @@
 {
   "name": "underleaf",
   "version": "0.1.0",
-  "description": "Fully offline LaTeX editor \u2014 an Overleaf alternative",
+  "description": "Fully offline LaTeX editor — an Overleaf alternative",
   "main": "electron/main.mjs",
   "scripts": {
     "test": "node --test",
@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",
+    "@tauri-apps/cli": "^2.11.4",
     "electron": "^43.1.0"
   },
   "repository": {
