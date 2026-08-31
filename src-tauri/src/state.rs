@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,12 @@ pub struct AppState {
     symbols: Mutex<HashMap<PathBuf, (Vec<FileStamp>, Symbols)>>,
     /// Resolved when the renderer acknowledges the pre-quit flush.
     pub flush_ack: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// True while a flush is in flight, so a second close (or Quit during a
+    /// close) doesn't start a rival handshake. Cleared once the flush settles —
+    /// on macOS the app outlives its window, and the next close needs its own.
+    pub flushing: AtomicBool,
+    /// The native menu, and the item handles its updates are applied to.
+    pub menu: Mutex<Option<crate::menu::MenuState>>,
 }
 
 impl AppState {
@@ -43,6 +50,8 @@ impl AppState {
             status: Mutex::new(StatusCache::default()),
             symbols: Mutex::new(HashMap::new()),
             flush_ack: Mutex::new(None),
+            flushing: AtomicBool::new(false),
+            menu: Mutex::new(None),
         }
     }
 

@@ -2,8 +2,7 @@
 //! handshake — the parts of electron/main.mjs's window setup that carry
 //! behavior rather than chrome.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tauri::{
@@ -70,37 +69,56 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 /// Quitting or closing must not drop an unsaved buffer: give the renderer one
-/// chance to write a pending edit, then continue when it acknowledges or after
-/// a short timeout so neither exit path can hang. On macOS closing is not
-/// quitting, so the window close needs this as much as Quit does.
-fn install_flush_on_close(app: AppHandle, window: &WebviewWindow) {
-    let flushing = Arc::new(AtomicBool::new(false));
-    let label = window.label().to_string();
+/// chance to write a pending edit, then run `after` once it acknowledges or a
+/// short timeout passes, so neither exit path can hang. Returns false if a
+/// flush was already in flight, in which case that one finishes the job.
+pub fn flush_then(app: &AppHandle, after: impl FnOnce(&AppHandle) + Send + 'static) -> bool {
+    let state = app.state::<AppState>();
+    if state.flushing.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    *state.flush_ack.lock().unwrap() = Some(tx);
+    let _ = app.emit_to(MAIN_WINDOW, "app:before-quit", ());
 
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = tokio::time::timeout(FLUSH_TIMEOUT, rx).await;
+        let state = app.state::<AppState>();
+        state.flush_ack.lock().unwrap().take();
+        // Cleared before `after` runs: on macOS the app outlives its window, so
+        // the next close has to be able to start a flush of its own.
+        state.flushing.store(false, Ordering::SeqCst);
+        after(&app);
+    });
+    true
+}
+
+/// Quit the way the menu's Quit item does: flush first, then exit for real.
+pub fn quit(app: &AppHandle) {
+    if !flush_then(app, |app| app.exit(0)) {
+        // A close is already flushing; it will destroy the window, and the exit
+        // follows from there on every platform but macOS, where Quit is the
+        // only thing that ends the process — so ask again once it settles.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(FLUSH_TIMEOUT).await;
+            app.exit(0);
+        });
+    }
+}
+
+/// On macOS closing is not quitting, so the window close needs the same flush
+/// that Quit does.
+fn install_flush_on_close(app: AppHandle, window: &WebviewWindow) {
+    let label = window.label().to_string();
     window.on_window_event(move |event| {
         let WindowEvent::CloseRequested { api, .. } = event else {
             return;
         };
-        // A second click while the first flush is still running must not start
-        // another one; the task below always finishes the close.
-        if flushing.swap(true, Ordering::SeqCst) {
-            api.prevent_close();
-            return;
-        }
         api.prevent_close();
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        {
-            let state = app.state::<AppState>();
-            *state.flush_ack.lock().unwrap() = Some(tx);
-        }
-        let _ = app.emit_to(label.as_str(), "app:before-quit", ());
-
-        let app = app.clone();
         let label = label.clone();
-        tauri::async_runtime::spawn(async move {
-            let _ = tokio::time::timeout(FLUSH_TIMEOUT, rx).await;
-            app.state::<AppState>().flush_ack.lock().unwrap().take();
+        flush_then(&app, move |app| {
             if let Some(window) = app.get_webview_window(&label) {
                 // destroy() does not re-fire CloseRequested, so this can't loop.
                 let _ = window.destroy();

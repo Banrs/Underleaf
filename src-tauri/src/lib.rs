@@ -4,6 +4,7 @@
 
 mod commands;
 mod error;
+mod menu;
 mod protocol;
 mod state;
 mod window;
@@ -62,11 +63,13 @@ pub fn run() {
             commands::menu_sync,
             commands::quit_flush_done,
         ])
+        .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle();
             let dir = data_dir(handle);
             std::fs::create_dir_all(&dir)?;
             app.manage(AppState::new(dir));
+            menu::install_fallback(handle)?;
             window::create(handle)?;
             Ok(())
         })

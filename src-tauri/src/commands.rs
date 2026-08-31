@@ -353,11 +353,11 @@ pub async fn save_pdf_as(
 // ---------- shell plumbing ----------
 
 /// The renderer publishes its whole menu spec whenever a command's title or
-/// enabled state changes. Accepted and dropped for now; the native menu is
-/// built from it in the next commit.
+/// enabled state changes; see menu.rs for what that costs (very little after
+/// the first call).
 #[tauri::command]
-pub fn menu_sync(spec: Value) {
-    let _ = spec;
+pub fn menu_sync(app: AppHandle, spec: Vec<crate::menu::GroupSpec>) -> CmdResult<()> {
+    Ok(crate::menu::sync(&app, spec)?)
 }
 
 /// The renderer acknowledging that a pending edit has reached disk. See
