@@ -201,10 +201,10 @@ outside the editor, and matching "Xcode" means matching the system.
 
 ## Platform abstraction
 
-macOS-only chrome is gated on `html.mac`, set from `process.platform` — never
-assumed. Windows keeps the same tokens and gets its own chrome later; see
-[windows.md](windows.md) for what remains.
+macOS-only chrome is gated on `html.mac`, set from the host platform — never
+assumed. Windows keeps the same tokens under standard window decorations; see
+[windows.md](windows.md).
 
 - `html.mac` — vibrancy materials, traffic-light inset, `⌘`-style shortcut glyphs
-- `html.win` — reserved; opaque panels, Windows caption buttons
-- `html.electron` — desktop shell in either OS (vs. browser mode)
+- `html.win` — opaque panels under a standard title bar
+- `html.desktop` — running in the desktop shell rather than browser mode

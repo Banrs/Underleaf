@@ -3,24 +3,26 @@
 A fully offline LaTeX editor — an Overleaf alternative that runs entirely on your machine. No accounts, no cloud, no network needed.
 
 > **Naming:** the repo and project are **Underleaf**; the app presents as
-> **TeXLocal**, and the on-disk contract keeps that name — `TeXLocal.app`, the
-> `texlocal://` scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and
-> `TEXLOCAL_DATA` — so existing installs and projects keep working.
+> **TeXLocal**, and the on-disk contract keeps that name — the `texlocal://`
+> scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
+> — so existing installs and projects keep working.
 
-Ships as an Electron desktop app (no localhost ports), runs as a local web app
-in any browser, and includes a parallel native SwiftUI/WKWebView macOS target.
-Built with open-source components only.
+Ships as a Tauri desktop app for macOS and Windows (a Rust core with the
+system webview — no bundled browser, no localhost ports), and runs as a local
+web app in any browser. Built with open-source components only.
 
 ## Quick start
+
+Download the installer for your platform from
+[Releases](https://github.com/Banrs/Underleaf/releases), or build from source:
 
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 npm install
-npm run dev          # builds the UI and serves http://localhost:3417
+npm run app          # desktop app against live code
+npm run dev          # or browser mode on http://localhost:3417
 ```
-
-For the standalone desktop app: `npm run install-app` — packages the app, installs it to `/Applications/TeXLocal.app`, and stamps it with this checkout's path so it **rebuilds itself on launch** whenever the source here is newer (fully offline; an Electron version bump still needs a re-run of `install-app`).
 
 You also need a TeX distribution — see [Requirements](#requirements).
 
@@ -34,81 +36,114 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **File outline** in the sidebar (sections/subsections, click to jump) and a cursor-tracking breadcrumb with word & line counts
 - **Project-wide search** in the sidebar with highlighted matches; jump targets flash in the editor
 - **Editor toolbar**: undo/redo, bold/italic/math, comment, and an Insert menu (figure, table, equation, lists, code block)
-- **Native OS spellcheck** in the editor (red squiggles + right-click suggestions)
+- **Native OS spellcheck** in the editor (red squiggles + right-click suggestions from the system webview)
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns
 - **Logs in the PDF pane** (Overleaf-style): badge on the toolbar, parsed errors click through to source, raw log view
 - **PDF preview**: trackpad pinch or ⌘-scroll zoom, zoom %, fit width/height, page tracking
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
-- **Native macOS menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
+- **Native menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
 - **Settings** (`⌘,`): grouped System-Settings-style dialog — theme, PDF paper (white by default; dark inversion as a night-reading option), auto-compile, editor font size, interface scale, per-project TeX engine
-- **macOS-native interface** built from Apple's macOS UI kit values ([docs/design-tokens.md](docs/design-tokens.md)): 52px unified title bar, 256px vibrant sidebar, HIG type ramp and system colors; edge-to-edge by default with an optional Floating-panels layout
-- **Rebuild-on-launch**: the installed app rebuilds itself from your checkout when the source is newer — no manual repackaging during development
+- **Interface** built from Apple's macOS UI kit values ([docs/design-tokens.md](docs/design-tokens.md)): 52px unified title bar, 256px vibrant sidebar, HIG type ramp and system colors; edge-to-edge by default with an optional Floating-panels layout. On Windows the same layout runs under a standard title bar.
 - Autosave, `⌘S` save / `⌘⏎` compile, `⌘F` find & replace, `⌘⇧F` find in project, `⌘/` comment, `⌘\` toggle sidebar, `⌘⇧\` toggle PDF, `⌘,` settings
 
 ## Requirements
 
-- **Node.js** ≥ 22.12
-- **TeX Live** (provides `latexmk`, `pdflatex`, `synctex`):
-  ```sh
-  brew install --cask mactex-no-gui
-  ```
-  The full distribution (~7 GB) is recommended so every package works offline forever. After installing, open a new terminal (or restart TeXLocal) so `/Library/TeX/texbin` is on the PATH — TeXLocal also looks there automatically.
+**To run the app:** macOS 12+ (Apple Silicon or Intel) or Windows 10+ (x64),
+plus a TeX distribution providing `latexmk`, `pdflatex` and `synctex`:
+
+- **macOS** — `brew install --cask mactex-no-gui`
+- **Windows** — [MiKTeX](https://miktex.org) or [TeX Live](https://tug.org/texlive)
+- **Linux** (browser mode) — your distribution's TeX Live, e.g. `sudo apt install texlive`
+
+The full distribution (~7 GB) is recommended so every package works offline
+forever. TeXLocal finds TeX on your `PATH` and also looks in the usual install
+locations (`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`,
+`C:\texlive\<year>`, MiKTeX). It reads them once at startup, so restart the app
+after installing TeX.
+
+**To build from source:** Node.js ≥ 22.12, Rust (stable), and your platform's
+Tauri prerequisites — Xcode command line tools on macOS, the WebView2 runtime
+(preinstalled on Windows 11) and MSVC build tools on Windows.
 
 ## Run
 
-**Standalone app (recommended):** `npm run install-app` packages and installs `/Applications/TeXLocal.app`. It's self-contained — no server, no ports; the UI talks to the Electron main process over IPC and files are served via a custom `texlocal://` protocol. Native macOS spellcheck with right-click suggestions works in the editor.
+**Desktop app:** `npm run app` runs it against live code; `npm run package`
+produces installers in `target/release/bundle/`. There is no server and no
+open port — the UI calls Rust commands directly, and PDFs and project images
+are served over a custom `texlocal://` scheme.
 
-The installed app remembers where it was built from (`build-info.json` in the bundle). On every launch it compares that source tree's modification times against its own build stamp; if the source is newer it rebuilds the bundle with the repo's own `build.mjs` (using Electron's bundled Node), swaps the new files in atomically, and relaunches. If the rebuild fails or the checkout has moved, it just runs the existing build. `npm run package` alone still produces a plain non-self-updating bundle in `release/`.
+> Release builds are not code-signed. On macOS, right-click the app and choose
+> Open the first time; on Windows, choose "More info" → "Run anyway" if
+> SmartScreen appears. Distributing without those prompts needs an Apple
+> Developer ID (signing + notarization) and a Windows signing certificate.
 
-> The generated app is ad-hoc signed — fine on your own machine. Distributing it to others needs an Apple Developer ID (code signing + notarization), otherwise Gatekeeper will warn.
-
-Dev mode (Electron against live code): `npm run app`.
-
-**Browser mode:** the Express server runs TeXLocal in any browser:
+**Browser mode:** the Express server runs TeXLocal in any browser, which is
+also how it runs on Linux:
 
 ```sh
 npm run dev         # builds the frontend and serves http://localhost:3417
 ```
 
-Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/` (browser mode) — override either with `TEXLOCAL_DATA=/path`. Everything is just files on disk; no databases, no lock-in.
+Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/`
+(browser mode) — override either with `TEXLOCAL_DATA=/path`. Everything is just
+files on disk; no databases, no lock-in.
 
-> The desktop app uses `~/TeXLocal` (home folder) rather than `~/Documents/TeXLocal` so it isn't blocked by macOS's Documents-folder privacy prompt on unsigned/dev builds.
+> The desktop app uses `~/TeXLocal` (home folder) rather than
+> `~/Documents/TeXLocal` so it isn't blocked by macOS's Documents-folder
+> privacy prompt.
 
 ## Project structure
 
 ```
-server/      Express API + LaTeX compile/SyncTeX/project logic (shared by both modes)
-electron/    Electron main (main.mjs), native menu (menu.mjs), self-rebuild (rebuild.mjs), preload
-mac/         Parallel SwiftUI macOS shell + Swift backend (generated with XcodeGen)
-web/src/     Frontend modules, bundled by esbuild into web/dist:
-             main.js (bootstrap/routing) · embed.js (native panes entry) ·
-             commands.js (shared command model) · api.js (IPC/REST client) ·
-             home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
-             settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
-             dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) ·
-             state.js · icons.js · latex-data.js
-docs/        design-tokens.md (extracted Apple UI-kit values) · windows.md ·
-             roadmap.md · shell-and-design.md
-scripts/     install-app.mjs (package + install + self-update stamp)
-build.mjs    esbuild bundler (full app + native embed) and shared asset copy
-assets/      App icon (.icns)
+crates/texlocal-core/  Projects, path safety, latexmk/SyncTeX, log parsing, ZIP export.
+                       No GUI dependencies, so it builds and tests anywhere.
+src-tauri/             The desktop shell: commands.rs (the command surface),
+                       protocol.rs (texlocal://), menu.rs, window.rs, state.rs
+server/                Express API for browser mode (its own JS implementation
+                       of the same project/compile logic)
+web/src/               Frontend modules, bundled by esbuild into web/dist:
+                       main.js (bootstrap/routing) · bridge.js (host detection) ·
+                       commands.js (shared command model) · api.js (desktop/REST client) ·
+                       home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
+                       settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
+                       dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) ·
+                       state.js · icons.js · latex-data.js
+docs/                  design-tokens.md (extracted Apple UI-kit values) ·
+                       roadmap.md · shell-and-design.md · windows.md
+build.mjs              esbuild bundler and shared asset copy
+scripts/               extract-icns.mjs (icon master for `tauri icon`)
+assets/                App icon source
 ```
 
-`npm run build` bundles the frontend; `npm run dev` builds then serves the browser app; `npm run app` runs Electron against live code; `npm run package` builds the distributable `.app`; `npm run install-app` packages and installs it with self-update enabled.
+The frontend is shared: `web/src/bridge.js` decides at runtime whether it is
+running inside the desktop shell or a browser, and `api.js` picks its backend
+from that. Browser mode keeps its own JS implementation of the project and
+compile logic in `server/`; the two are held together by test suites that
+cover the same cases on both sides.
 
-The native target is intentionally separate from the Electron release path.
-After `npm run build`, run `xcodegen generate` in `mac/` and open the generated
-project in Xcode; see [mac/README.md](mac/README.md).
+## Development
 
-## Cross-platform status
+```sh
+npm run build                 # bundle the frontend
+npm test                      # frontend/server tests (node --test)
+cargo test -p texlocal-core   # core logic tests — no webview needed
+cargo test --workspace        # everything, needs the Tauri build deps
+```
 
-Developed and runtime-tested on macOS (arm64), structured for a Windows port: platform chrome is gated on `html.mac` / `html.win` classes (set from `process.platform`), macOS-only window options (vibrancy, hidden title bar, traffic-light inset) are applied only on darwin, menu accelerators use `CmdOrCtrl`, and the design tokens are platform-neutral. What remains for Windows is itemized in **[docs/windows.md](docs/windows.md)** — window controls (`titleBarOverlay`), Mica instead of vibrancy, a JS zipper instead of the `zip` CLI, SyncTeX path normalization, and a Windows packaging target.
+Every pull request builds installers for macOS (both architectures) and
+Windows and attaches them as artifacts, which is how a change gets tested on
+hardware CI can't assert against.
+
+To publish a release: bump the version in `package.json` and
+`src-tauri/tauri.conf.json`, then push a `v*` tag. CI builds the matrix and
+drafts a release with the installers attached.
 
 ## Security notes
 
-- Electron mode opens no network ports at all; browser mode binds to `127.0.0.1` only.
+- The desktop app opens no network ports at all; browser mode binds to `127.0.0.1` only.
+- Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
 - `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project by editing the project's `.texlocal.json` on disk if a package needs it — the file is reserved and not writable through the app's file APIs.
 
 ## License
 
-MIT. Built with [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [Express](https://expressjs.com) (MIT), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX Live installation.
+MIT. Built with [Tauri](https://tauri.app) (MIT/Apache-2.0), [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [Express](https://expressjs.com) (MIT), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
