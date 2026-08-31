@@ -127,41 +127,33 @@ export class PdfViewer {
   async load(url) {
     const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
     const generation = ++this._loadGeneration;
-    let doc;
+    // Every await below can be overtaken by a newer load. Failing and being
+    // superseded need the same cleanup, so the task is destroyed unless this
+    // call is the one that adopts it.
+    const superseded = () => generation !== this._loadGeneration;
+    let adopted = false;
     try {
-      doc = await task.promise;
-    } catch (err) {
-      await task.destroy().catch(() => {});
-      throw err;
-    }
-    if (generation !== this._loadGeneration) {
-      await task.destroy().catch(() => {});
-      return false;
-    }
-    // Fetch every page proxy once, up front and in parallel. A render pass used
-    // to await getPage() per page — one serialized worker round-trip each — on
-    // every zoom step; with the proxies in hand the shell-building loop is
-    // synchronous. pdf.js caches proxies on the document, so this holds no
-    // pixels, just page dictionaries.
-    let proxies;
-    try {
-      proxies = await Promise.all(
+      const doc = await task.promise;
+      if (superseded()) return false;
+      // Fetch every page proxy once, up front and in parallel. A render pass
+      // used to await getPage() per page — one serialized worker round-trip
+      // each — on every zoom step; with the proxies in hand the shell-building
+      // loop is synchronous. pdf.js caches proxies on the document, so this
+      // holds no pixels, just page dictionaries.
+      const proxies = await Promise.all(
         Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)));
-    } catch (err) {
-      await task.destroy().catch(() => {});
-      throw err;
+      if (superseded()) return false;
+      const prev = this.loadingTask;
+      adopted = true;
+      this.loadingTask = task;
+      this.doc = doc;
+      this.pageProxies = proxies;
+      await prev?.destroy().catch(() => {});
+      await this.render();
+      return true;
+    } finally {
+      if (!adopted) await task.destroy().catch(() => {});
     }
-    if (generation !== this._loadGeneration) {
-      await task.destroy().catch(() => {});
-      return false;
-    }
-    const prev = this.loadingTask;
-    this.loadingTask = task;
-    this.doc = doc;
-    this.pageProxies = proxies;
-    await prev?.destroy().catch(() => {});
-    await this.render();
-    return true;
   }
 
   // The scroller's padding and the content box inside it, read from the

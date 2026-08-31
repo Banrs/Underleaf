@@ -7,19 +7,24 @@ function enc(s) { return encodeURIComponent(s); }
 
 // ---------- browser (fetch) backend ----------
 
-async function req(method, url, body) {
-  const opts = { method, headers: {} };
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  const res = await fetch(url, opts);
+// The server reports failures as { error }, falling back to the status text
+// when the body isn't the JSON we expect.
+async function unwrap(res) {
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
     throw new Error(msg);
   }
   return res.json();
+}
+
+async function req(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  return unwrap(await fetch(url, opts));
 }
 
 const fetchApi = {
@@ -43,17 +48,12 @@ const fetchApi = {
   renameEntry: (id, from, to) => req('POST', `/api/projects/${enc(id)}/rename`, { from, to }),
   deleteEntry: (id, p) => req('DELETE', `/api/projects/${enc(id)}/file?path=${enc(p)}`),
 
+  // FormData sets its own multipart Content-Type, so this can't go through req.
   upload: async (id, files, dir = '') => {
     const fd = new FormData();
     fd.append('dir', dir);
     for (const f of files) fd.append('files', f, f._relPath ?? f.name);
-    const res = await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = res.statusText;
-      try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
-      throw new Error(msg);
-    }
-    return res.json();
+    return unwrap(await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd }));
   },
 
   compile: (id, opts = {}) => req('POST', `/api/projects/${enc(id)}/compile`, opts),
