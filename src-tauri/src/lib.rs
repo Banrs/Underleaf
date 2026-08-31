@@ -59,6 +59,7 @@ pub fn run() {
             commands::synctex_inverse,
             commands::export_project,
             commands::save_pdf_as,
+            commands::menu_sync,
             commands::quit_flush_done,
         ])
         .setup(|app| {

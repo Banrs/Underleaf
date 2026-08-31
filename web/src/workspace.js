@@ -135,14 +135,20 @@ function buildChrome(id) {
 
   // --- window title bar (one 52px band across the whole window) ---
   const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
-  const crumbs = el('nav', { class: 'crumbs', 'aria-label': 'Document location' });
+  // The breadcrumb reads as text, so it opts out of the drag region around it.
+  const crumbs = el('nav', {
+    class: 'crumbs', 'aria-label': 'Document location', 'data-tauri-drag-region': 'false',
+  });
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
   // takes over once it's hidden, so the control never disappears with the pane.
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  const titlebar = el('header', { class: 'titlebar' },
+  // The chrome doubles as the window's title bar. Tauri reads the attribute
+  // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
+  // and other interactive elements on its own.
+  const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
     el('span', { class: 'window-title' }, state.settings?.title || id),

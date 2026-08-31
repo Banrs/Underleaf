@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self'" />
+  <!-- The extra sources serve the desktop shell: Tauri's IPC endpoint, and the
+       texlocal:// scheme carrying compiled PDFs and project images (spelled two
+       ways because WebView2 maps custom schemes onto http://<scheme>.localhost).
+       All of them are inert in browser mode, where the app is same-origin. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: texlocal: http://texlocal.localhost; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost texlocal: http://texlocal.localhost" />
   <title>TeXLocal</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/dist/katex.min.css" />

@@ -13,7 +13,7 @@ import { renderWorkspace, destroyWorkspace, saveCurrent, syncToolbarState } from
 // Platform-specific chrome is gated on these classes rather than assumed, so the
 // Windows shell is a matter of adding rules, not unpicking macOS ones.
 const root = document.documentElement;
-root.classList.toggle('electron', !!bridge);
+root.classList.toggle('desktop', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');
 root.classList.toggle('win', platform === 'win32');
 

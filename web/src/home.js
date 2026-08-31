@@ -142,7 +142,7 @@ export async function renderHome() {
   // the leading side, the recents list filling the trailing side — no dead space.
   app.replaceChildren(
     el('div', { class: 'home' },
-      el('header', { class: 'titlebar home-titlebar' },
+      el('header', { class: 'titlebar home-titlebar', 'data-tauri-drag-region': 'deep' },
         el('span', { class: 'spacer' }),
         el('button', {
           class: 'icon-btn', title: tooltip('app.settings'), 'aria-label': 'Settings', onclick: openSettings,

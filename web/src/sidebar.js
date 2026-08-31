@@ -84,7 +84,8 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel };
 
   const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
-    el('div', { class: 'sidebar-titlebar' }, el('span', { class: 'spacer' }), titlebarTrailing),
+    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
+      el('span', { class: 'spacer' }), titlebarTrailing),
     el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
     el('div', { class: 'section-header' },
       el('span', {}, 'Files'),
