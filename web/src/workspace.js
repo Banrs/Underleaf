@@ -2,7 +2,7 @@
 // document lifecycle (open, save, compile, sync) that ties them together.
 
 import { api } from './api.js';
-import { $, el, toast, menuUnder } from './dom.js';
+import { $, el, toast, menuUnder, promptModal } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
@@ -208,6 +208,37 @@ function buildChrome(id) {
     },
   });
 
+  // --- PDF find bar (hidden until the command opens it) ---
+  // Not permanent toolbar controls: that toolbar is already full, and a find
+  // bar that appears on demand is the native pattern anyway.
+  const findCount = el('span', { class: 'find-count' });
+  const findInput = el('input', {
+    type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF',
+  });
+  const showCount = ({ total, index }) => {
+    findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${total}` : 'Not found') : '';
+  };
+  const stepFind = (delta) => showCount(state.pdf.findStep(delta));
+  const findBar = el('div', { class: 'pdf-find', hidden: true },
+    findInput,
+    findCount,
+    el('button', { class: 'icon-btn small', title: 'Previous match', onclick: () => stepFind(-1) }, icon('chevron-up')),
+    el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
+    el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
+  );
+  // Scanning every page is not free, so typing settles before it runs.
+  let findTimer;
+  findInput.addEventListener('input', () => {
+    clearTimeout(findTimer);
+    findTimer = setTimeout(async () => showCount(await state.pdf.find(findInput.value)), 200);
+  });
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closePdfFind(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    stepFind(e.shiftKey ? -1 : 1);
+  });
+
   const pdfPane = el('div', { class: 'pane pdf-pane' },
     el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Document' },
       compileButton,
@@ -220,6 +251,7 @@ function buildChrome(id) {
       el('span', { class: 'toolbar-separator' }),
       pageIndicator,
     ),
+    findBar,
     logsView,
     pdfScroll,
   );
@@ -244,7 +276,7 @@ function buildChrome(id) {
     ),
   );
 
-  ui = { sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton, compileButton, workspace };
+  ui = { sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton, compileButton, workspace, findBar, findInput };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
   setupResizer(paneDivider, pdfPane, 'flex', 240, null, 'pdfWidth');
@@ -320,6 +352,8 @@ function commandDefs() {
     { id: 'edit.italic', title: 'Italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
     { id: 'edit.math', title: 'Inline Math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
     { id: 'edit.comment', title: 'Toggle Comment', accel: 'CmdOrCtrl+/', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
+    { id: 'edit.gotoLine', title: 'Go to Line…', accel: 'CmdOrCtrl+L', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'pdf.find', title: 'Find in PDF…', accel: 'CmdOrCtrl+Alt+F', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
     { id: 'view.toggleSidebar', title: () => (prefs.sidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar'), accel: 'CmdOrCtrl+\\', run: toggleSidebar },
@@ -339,6 +373,28 @@ function commandDefs() {
 
     { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
   ];
+}
+
+function openPdfFind() {
+  if (!ui?.findBar) return;
+  ui.findBar.hidden = false;
+  ui.findInput.focus();
+  ui.findInput.select();
+}
+
+function closePdfFind() {
+  if (!ui?.findBar) return;
+  ui.findBar.hidden = true;
+  ui.findInput.value = '';
+  state.pdf?.clearFind();
+}
+
+async function gotoLineFlow() {
+  const answer = await promptModal({ title: 'Go to Line', label: 'Line number', confirm: 'Go' });
+  // gotoLine already clamps to the document, so a number is the only thing
+  // worth checking for here.
+  const line = Number.parseInt(answer, 10);
+  if (Number.isFinite(line)) state.editor?.gotoLine(line);
 }
 
 // ---------- document lifecycle ----------

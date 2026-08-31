@@ -8,6 +8,7 @@
 // transparent text layer is a second pass built from each page's text items.
 
 import * as pdfjs from 'pdfjs-dist';
+import { pageText, matchRanges } from './pdftext.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
@@ -43,6 +44,8 @@ export class PdfViewer {
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
     this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
+    this._find = null;            // { query, matches: [{page,start,end}], index }
+    this._pageText = [];          // per page: { text, spans } — see pdftext.js
     this._anchor = null;          // PDF point to pin across a pinch re-render
     this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
@@ -534,8 +537,13 @@ export class PdfViewer {
     if (seq !== this.seq) return;
     const vt = p.viewport.transform;
     const frag = document.createDocumentFragment();
+    // Highlights are applied while the layer is built rather than patched in
+    // afterwards, because a layer is discarded and rebuilt on every repaint.
+    const spans = this._find?.matches.length ? this._pageText[p.n - 1]?.spans : null;
+    let k = -1;
     for (const item of items) {
       if (!item.str) continue;
+      k++;
       const t = item.transform;
       // Affine compose (viewport ∘ item), inlined to avoid depending on pdfjs.Util.
       const a = vt[0] * t[2] + vt[2] * t[3];
@@ -545,7 +553,8 @@ export class PdfViewer {
       const left = vt[0] * t[4] + vt[2] * t[5] + vt[4];
       const top = vt[1] * t[4] + vt[3] * t[5] + vt[5];
       const span = document.createElement('span');
-      span.textContent = item.str;
+      if (spans) this.#paintMatches(span, item.str, spans[k], p.n - 1);
+      else span.textContent = item.str;
       span.style.left = `${left}px`;
       span.style.top = `${top - fontH}px`;
       span.style.fontSize = `${fontH}px`;
@@ -553,6 +562,79 @@ export class PdfViewer {
       frag.appendChild(span);
     }
     p.textLayer.appendChild(frag);
+  }
+
+  // ---------- text search ----------
+
+  // Rebuild one text item's content with <mark> around the parts that fall
+  // inside a match. Items are laid out individually, so a match spanning two of
+  // them is marked in each.
+  #paintMatches(span, str, range, pageIndex) {
+    if (!range) { span.textContent = str; return; }
+    const { matches, index } = this._find;
+    const current = matches[index];
+    let at = 0;
+    for (const m of matches) {
+      if (m.page !== pageIndex || m.end <= range.start || m.start >= range.end) continue;
+      const from = Math.max(m.start, range.start) - range.start;
+      const to = Math.min(m.end, range.end) - range.start;
+      if (from > at) span.appendChild(document.createTextNode(str.slice(at, from)));
+      const mark = document.createElement('mark');
+      mark.textContent = str.slice(from, to);
+      if (m === current) mark.className = 'current';
+      span.appendChild(mark);
+      at = to;
+    }
+    if (at < str.length) span.appendChild(document.createTextNode(str.slice(at)));
+  }
+
+  /// Search every page. Returns { total, index } with a 1-based index.
+  async find(query) {
+    const q = query.trim().toLowerCase();
+    if (!q || !this.doc) { this.clearFind(); return { total: 0, index: 0 }; }
+    const matches = [];
+    for (let i = 0; i < this.pageProxies.length; i++) {
+      let items;
+      try { items = (await this.pageProxies[i].getTextContent()).items; } catch { continue; }
+      const pt = pageText(items);
+      this._pageText[i] = pt;
+      for (const r of matchRanges(pt.text, q)) matches.push({ page: i, ...r });
+    }
+    this._find = { query: q, matches, index: 0 };
+    this.#revealMatch();
+    this.#refreshHighlights();
+    return { total: matches.length, index: matches.length ? 1 : 0 };
+  }
+
+  /// Step to the next (+1) or previous (-1) match, wrapping at either end.
+  findStep(delta) {
+    const f = this._find;
+    if (!f?.matches.length) return { total: 0, index: 0 };
+    f.index = (f.index + delta + f.matches.length) % f.matches.length;
+    this.#revealMatch();
+    this.#refreshHighlights();
+    return { total: f.matches.length, index: f.index + 1 };
+  }
+
+  clearFind() {
+    if (!this._find) return;
+    this._find = null;
+    this.#refreshHighlights();
+  }
+
+  #revealMatch() {
+    const m = this._find?.matches[this._find.index];
+    this.pages[m?.page]?.wrap.scrollIntoView({ block: 'center' });
+  }
+
+  // A text layer caches its own content, so a changed query means clearing and
+  // rebuilding it. The painted canvas underneath is untouched.
+  #refreshHighlights() {
+    for (const p of this.pages) {
+      if (!p._painted) continue;
+      p.textLayer.replaceChildren();
+      this.#buildTextLayer(p, this.seq);
+    }
   }
 
   // ---------- zoom / fit ----------

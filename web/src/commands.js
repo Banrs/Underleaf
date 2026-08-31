@@ -26,7 +26,7 @@ const MENU = [
     items: [
       { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
-      { id: 'edit.find' }, { id: 'project.search' }, '-',
+      { id: 'edit.find' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
       { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
     ],
   },
