@@ -191,10 +191,6 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize)
 pub(crate) struct RunOutput {
     pub code: i32, // -1 for spawn failure or signal death
     pub stdout: String,
-    // Collected for parity with the JS `run` but currently unconsumed: the
-    // callers (tex_available, synctex) read stdout only, as the JS ones did.
-    #[allow(dead_code)]
-    pub stderr: String,
 }
 
 /// Spawn, collect capped output, and kill the whole tree on timeout.
@@ -210,11 +206,12 @@ pub(crate) async fn run(
     cmd.args(args);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(err) => {
+        // The spawn error itself is not surfaced: callers act on the -1 code,
+        // exactly as the JS `run` did.
+        Err(_) => {
             return RunOutput {
                 code: -1,
                 stdout: String::new(),
-                stderr: err.to_string(),
             }
         }
     };
@@ -236,10 +233,12 @@ pub(crate) async fn run(
             child.wait().await.ok()
         }
     };
+    // stderr is drained but discarded: no caller reads it, and leaving the pipe
+    // unread would stall a child that filled its buffer.
+    let _ = err_task.await;
     RunOutput {
         code: status.and_then(|s| s.code()).unwrap_or(-1),
         stdout: out_task.await.unwrap_or_default(),
-        stderr: err_task.await.unwrap_or_default(),
     }
 }
 

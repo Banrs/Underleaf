@@ -25,18 +25,6 @@ impl From<tauri::Error> for CmdError {
     }
 }
 
-impl From<String> for CmdError {
-    fn from(message: String) -> Self {
-        Self(message)
-    }
-}
-
-impl From<&str> for CmdError {
-    fn from(message: &str) -> Self {
-        Self(message.to_string())
-    }
-}
-
 impl Serialize for CmdError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)

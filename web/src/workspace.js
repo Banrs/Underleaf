@@ -347,7 +347,7 @@ function setSaveState(text) {
   if (ui.saveState) ui.saveState.textContent = text;
 }
 
-export function showEditorPlaceholder(message) {
+function showEditorPlaceholder(message) {
   state.editor?.destroy();
   state.editor = null;
   ui.editorHost?.replaceChildren(el('p', { class: 'editor-placeholder' }, message));

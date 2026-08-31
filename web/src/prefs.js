@@ -101,7 +101,7 @@ export function setAppearanceHandler(fn) {
 
 // Dark paper inverts the rendered PDF. White is the document's true appearance
 // and therefore the default; `auto` follows the app theme for night reading.
-export function pdfPaperIsDark() {
+function pdfPaperIsDark() {
   const mode = prefs.pdfPaper;
   return mode === 'dark' || (mode === 'auto' && document.documentElement.dataset.theme === 'dark');
 }

@@ -103,7 +103,7 @@ export function commandTitle(id) {
   return typeof c.title === 'function' ? c.title() : c.title;
 }
 
-export function commandEnabled(id) {
+function commandEnabled(id) {
   const c = registry.get(id);
   return !!c && (c.enabled ? !!c.enabled() : true);
 }
