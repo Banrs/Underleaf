@@ -1,10 +1,10 @@
-// The host bridge: the one module that knows which desktop shell (if any) is
+// The host bridge: the one module that knows whether a desktop shell is
 // hosting the app, and what platform it runs on. Everything else imports from
-// here instead of sniffing window.texlocal or navigator.platform locally, so
-// adding a shell is a change to this file, not a hunt through the views.
+// here instead of sniffing the host or navigator.platform locally, so adding a
+// shell is a change to this file, not a hunt through the views.
 //
-// A bridge exposes: invoke(channel, ...args), platform, setMenu(spec),
-// onCommand(fn), onBeforeQuit(fn), and fileUrl(path) for the routes served
+// A bridge exposes: invoke(command, args, options), platform, setMenu(spec),
+// onCommand(fn), onBeforeQuit(fn), and fileUrl(segments) for the routes served
 // over the texlocal:// scheme.
 
 const tauri = typeof window !== 'undefined' ? window.__TAURI__ : undefined;
@@ -31,8 +31,8 @@ function tauriBridge() {
 
   return {
     platform,
-    // Commands reject with a plain string; wrap it so callers see an Error,
-    // exactly as the Electron preload did when unwrapping its envelope.
+    // Commands reject with a plain string; wrap it so every caller sees an
+    // Error, the same shape the browser backend throws.
     invoke: (command, args, options) => invoke(command, args, options).catch((err) => {
       throw new Error(typeof err === 'string' ? err : (err?.message ?? String(err)));
     }),
@@ -47,9 +47,7 @@ function tauriBridge() {
   };
 }
 
-export const bridge = typeof window !== 'undefined'
-  ? (window.texlocal ?? (tauri ? tauriBridge() : null))
-  : null;
+export const bridge = tauri ? tauriBridge() : null;
 
 // Platform comes from the host when a bridge is present; the browser fallback
 // only affects cosmetics (shortcut glyphs, install hints).

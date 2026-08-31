@@ -9,7 +9,7 @@ import { bridge as ipc, isMac } from './bridge.js';
 const registry = new Map();
 
 // The menu bar's shape. `id` entries resolve against the registry; `role`
-// entries are handled natively by Electron (standard editing and window items).
+// entries are handled natively by the shell (standard editing and window items).
 const MENU = [
   {
     label: 'File',
@@ -114,8 +114,8 @@ export function runCommand(id) {
   return true;
 }
 
-// Push the current menu spec + enabled state to the Electron main process, which
-// owns the actual NSMenu. A no-op in browser mode.
+// Push the current menu spec + enabled state to the desktop shell, which owns
+// the actual native menu. A no-op in browser mode.
 function publish() {
   const spec = MENU.map((m) => ({
     label: m.label,
@@ -145,7 +145,7 @@ export function onCommandsChanged(fn) { notifyHost = fn; }
 
 // ---------- accelerators ----------
 
-// Electron accelerator string → the glyph string macOS shows in menus and
+// An accelerator string → the glyph string macOS shows in menus and
 // tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
 // "Ctrl+Shift+Z".
 const MAC = isMac;
@@ -175,8 +175,8 @@ export function tooltip(id) {
 
 // ---------- browser-mode keyboard routing ----------
 
-// In Electron the native menu owns its accelerators, so handling them here too
-// would fire every command twice. Browser mode has no menu bar, so the same
+// On the desktop the native menu owns its accelerators, so handling them here
+// too would fire every command twice. Browser mode has no menu bar, so the same
 // declarations drive a keydown matcher instead.
 function matches(accel, e) {
   const parts = accel.split('+');
@@ -221,7 +221,7 @@ export function installBrowserShortcuts() {
   });
 }
 
-// In Electron, menu clicks arrive over IPC.
+// On the desktop, menu clicks arrive as an event from the shell.
 export function installMenuBridge() {
   ipc?.onCommand?.((id) => runCommand(id));
 }

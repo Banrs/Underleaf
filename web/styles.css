@@ -194,15 +194,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* ---------- window chrome ---------- */
 
-/* On macOS the title bar is the app's own chrome, so the bands are draggable and
-   the controls inside them opt out. */
-.desktop.mac .titlebar,
-.desktop.mac .sidebar-titlebar { -webkit-app-region: drag; }
-.desktop.mac .titlebar button,
-.desktop.mac .titlebar input,
-.desktop.mac .titlebar select,
-.desktop.mac .titlebar .crumbs,
-.desktop.mac .sidebar-titlebar button { -webkit-app-region: no-drag; }
+/* Dragging the window by its chrome is driven by data-tauri-drag-region on the
+   title bars, not CSS: neither WKWebView nor WebView2 honours -webkit-app-region. */
 
 /* The traffic lights sit at x18/y19 in a 52px band (kit values), so the sidebar
    band keeps its leading end clear of controls. */

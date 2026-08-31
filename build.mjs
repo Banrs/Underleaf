@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Anchor every path to this file, not the cwd — the packaged app's
-// rebuild-on-launch (electron/rebuild.mjs) invokes this script from elsewhere.
+// Anchor every path to this file, not the cwd: Tauri runs this as its
+// beforeBuildCommand, and `npm run dev` runs it from the repository root.
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const at = (...p) => path.join(ROOT, ...p);
 
@@ -39,11 +39,10 @@ const common = {
   sourcemap: watch,
   logLevel: 'info',
 };
-// Two bundles: the Electron/web app (main.js) and the panes-only entry the native
-// macOS shell loads in its WKWebView (embed.js). See mac/README.md.
+// One bundle, shared by the desktop shell and browser mode; which backend it
+// talks to is decided at runtime in web/src/bridge.js.
 const builds = [
   { ...common, entryPoints: [at('web/src/main.js')], outfile: at('web/dist/bundle.js') },
-  { ...common, entryPoints: [at('web/src/embed.js')], outfile: at('web/dist/bundle-embed.js') },
 ];
 
 if (watch) {

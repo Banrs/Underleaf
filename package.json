@@ -1,23 +1,22 @@
 {
   "name": "underleaf",
   "version": "0.1.0",
-  "description": "Fully offline LaTeX editor — an Overleaf alternative",
-  "main": "electron/main.mjs",
+  "description": "Fully offline LaTeX editor \u2014 an Overleaf alternative",
   "scripts": {
     "test": "node --test",
     "build": "node build.mjs",
     "start": "node server/index.js",
     "dev": "node build.mjs && node server/index.js",
-    "app": "electron .",
-    "package": "node build.mjs && electron-packager . TeXLocal --platform darwin --arch arm64 --icon assets/TeXLocal.icns --out release --overwrite --app-bundle-id com.texlocal.desktop --ignore '^/release' --ignore '^/data' --ignore '^/docs' --ignore '^/scripts' --ignore '^/mac' --ignore '^/test' --ignore '^/TeXLocal.app' --ignore '^/.claude' --ignore '^/node_modules($|/)' --ignore '^/web/src' --ignore '\\.map$'",
-    "install-app": "node scripts/install-app.mjs"
+    "tauri": "tauri",
+    "app": "tauri dev",
+    "package": "tauri build"
   },
   "keywords": [
     "latex",
     "overleaf",
     "editor",
     "offline-first",
-    "electron"
+    "tauri"
   ],
   "author": "Underleaf contributors",
   "license": "MIT",
@@ -44,9 +43,7 @@
     "pdfjs-dist": "^6.1.200"
   },
   "devDependencies": {
-    "@electron/packager": "^20.0.4",
-    "@tauri-apps/cli": "^2.11.4",
-    "electron": "^43.1.0"
+    "@tauri-apps/cli": "^2.11.4"
   },
   "repository": {
     "type": "git",

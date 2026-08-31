@@ -38,7 +38,7 @@ const MAX_TOASTS = 3;
 
 export function toast(msg, kind = '') {
   const root = $('#toast-root');
-  if (!root) return; // embed entry has no toast root
+  if (!root) return;
   // Cap concurrent toasts — drop the oldest so they never stack to infinity.
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
   const t = el('div', { class: `toast ${kind}`, role: 'status' }, msg);

@@ -17,9 +17,9 @@ root.classList.toggle('desktop', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');
 root.classList.toggle('win', platform === 'win32');
 
-// A file dropped outside the drop zones must never navigate the page (in
-// Electron that would load file:// with the IPC bridge attached). Drop-zone
-// handlers run first and call their own preventDefault.
+// A file dropped outside the drop zones must never navigate the page — on the
+// desktop that would load file:// on an origin holding the command bridge.
+// Drop-zone handlers run first and call their own preventDefault.
 addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => e.preventDefault());
 
