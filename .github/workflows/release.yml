@@ -1,0 +1,62 @@
+name: Release
+
+# Tag a commit to publish: `npm version` the two manifests, then
+# `git tag v0.2.0 && git push --tags`. The release is left as a draft so the
+# notes can be written before anyone sees it.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (Apple Silicon)
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - label: macOS (Intel)
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - label: Windows (x64)
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.target }}
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.ref_name }}
+          releaseName: TeXLocal ${{ github.ref_name }}
+          releaseDraft: true
+          # The builds are unsigned, so there is nothing for an updater to
+          # verify; releases are downloaded and installed by hand.
+          includeUpdaterJson: false
+          releaseBody: |
+            Download the installer for your platform below.
+
+            The builds are not code-signed. On macOS, right-click the app and
+            choose Open the first time; on Windows, choose "More info" then
+            "Run anyway" if SmartScreen appears.
+
+            LaTeX compilation uses your own TeX distribution — MacTeX or TeX
+            Live on macOS, MiKTeX or TeX Live on Windows.
