@@ -44,7 +44,14 @@ fn add_dir(
             format!("{prefix}/{name}")
         };
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        // metadata() follows symlinks, where entry.file_type() does not: `zip -r`
+        // archived a link's target content, and a symlinked references.bib or
+        // figures directory is a normal thing for a project to contain. A broken
+        // link has no target to read, so it is skipped rather than failing the
+        // whole export.
+        let Ok(file_type) = std::fs::metadata(&path).map(|m| m.file_type()) else {
+            continue;
+        };
         if file_type.is_dir() {
             writer
                 .add_directory(format!("{rel}/"), options)
@@ -58,8 +65,6 @@ fn add_dir(
             io::copy(&mut src, writer)?;
             writer.flush()?;
         }
-        // Symlinks are skipped: the zip CLI archived them as links, which
-        // extractors handle inconsistently; projects shouldn't contain them.
     }
     Ok(())
 }

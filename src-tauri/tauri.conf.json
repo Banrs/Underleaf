@@ -17,7 +17,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "nsis"],
+    "targets": "all",
     "category": "Productivity",
     "shortDescription": "Fully offline LaTeX editor",
     "icon": [

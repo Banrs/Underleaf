@@ -10,10 +10,12 @@ use std::time::{Duration, Instant};
 use texlocal_core::compile::{CompileManager, TexStatus};
 use texlocal_core::projects::{FileStamp, Symbols};
 
-/// How long a "no TeX found" answer is trusted before re-probing. The home
-/// screen polls every 10s while TeX is missing, and each probe would otherwise
-/// spawn `latexmk -version`.
-const TEX_MISSING_TTL: Duration = Duration::from_secs(10);
+/// How long a "no TeX found" answer is trusted before re-probing. The UI polls
+/// every 10s while TeX is missing, and each probe would otherwise spawn
+/// `latexmk -version`. Deliberately shorter than that interval: at exactly 10s
+/// the entry is still fresh when the next tick arrives, so every other poll
+/// would be answered from cache and an install would take 20s to notice.
+const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct StatusCache {

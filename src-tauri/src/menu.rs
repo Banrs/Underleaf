@@ -54,11 +54,18 @@ struct EntrySpec {
     enabled: Option<bool>,
     #[serde(default)]
     checked: Option<bool>,
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
 }
 
 impl EntrySpec {
     fn enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
+    }
+    /// The renderer marks a checkbox both by sending a `checked` value and by
+    /// setting type: 'checkbox'; either is enough.
+    fn is_check(&self) -> bool {
+        self.checked.is_some() || self.kind.as_deref() == Some("checkbox")
     }
 }
 
@@ -94,8 +101,19 @@ fn shape_of(spec: &[GroupSpec]) -> Vec<String> {
         for item in &group.items {
             shape.push(match item {
                 ItemSpec::Separator(_) => "-".to_string(),
+                // The check mark is part of the shape, not just state: an item
+                // published without one is built as a plain item, and no later
+                // update could turn it into a checkable one. The home screen
+                // publishes first, with the checkbox commands unregistered.
                 ItemSpec::Entry(e) => {
                     e.id.clone()
+                        .map(|id| {
+                            if e.is_check() {
+                                format!("{id}#check")
+                            } else {
+                                id
+                            }
+                        })
                         .or_else(|| e.role.as_ref().map(|r| format!("role:{r}")))
                         .unwrap_or_default()
                 }
@@ -170,24 +188,21 @@ fn build(app: &AppHandle, spec: &[GroupSpec]) -> tauri::Result<MenuState> {
                     let Some(id) = entry.id.clone() else { continue };
                     let label = entry.label.clone().unwrap_or_else(|| id.clone());
                     let accel = entry.accelerator.as_deref().map(muda_accelerator);
-                    match entry.checked {
-                        Some(checked) => {
-                            let item = CheckMenuItem::with_id(
-                                app,
-                                &id,
-                                label,
-                                entry.enabled(),
-                                checked,
-                                accel,
-                            )?;
-                            submenu.append(&item)?;
-                            items.insert(id, Handle::Check(item));
-                        }
-                        None => {
-                            let item = MenuItem::with_id(app, &id, label, entry.enabled(), accel)?;
-                            submenu.append(&item)?;
-                            items.insert(id, Handle::Plain(item));
-                        }
+                    if entry.is_check() {
+                        let item = CheckMenuItem::with_id(
+                            app,
+                            &id,
+                            label,
+                            entry.enabled(),
+                            entry.checked.unwrap_or(false),
+                            accel,
+                        )?;
+                        submenu.append(&item)?;
+                        items.insert(id, Handle::Check(item));
+                    } else {
+                        let item = MenuItem::with_id(app, &id, label, entry.enabled(), accel)?;
+                        submenu.append(&item)?;
+                        items.insert(id, Handle::Plain(item));
                     }
                 }
             }
@@ -336,6 +351,7 @@ pub fn install_fallback(app: &AppHandle) -> tauri::Result<()> {
                         accelerator: None,
                         enabled: None,
                         checked: None,
+                        kind: None,
                     })
                 })
                 .collect(),

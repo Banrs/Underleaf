@@ -193,10 +193,14 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
                     std::cmp::Ordering::Greater
                 };
             }
+            // Case-insensitive first, then lowercase before uppercase on a
+            // tie, which is the order localeCompare produced for the sidebar.
+            // Not a full collation: without ICU, non-ASCII names sort after
+            // ASCII ones rather than beside their base letter.
             a.name
                 .to_lowercase()
                 .cmp(&b.name.to_lowercase())
-                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| b.name.cmp(&a.name))
         });
         Ok(nodes)
     }

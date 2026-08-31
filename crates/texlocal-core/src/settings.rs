@@ -77,7 +77,15 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
             Some(e) if ENGINES.contains(&e) => {
                 out.insert("engine".into(), Value::String(e.into()));
             }
-            _ => return Err(CoreError::bad_request(format!("Unknown engine: {engine}"))),
+            // Format the value's contents, not its JSON encoding: a string
+            // would otherwise reach the user's toast wrapped in quotes.
+            _ => {
+                let shown = engine
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| engine.to_string());
+                return Err(CoreError::bad_request(format!("Unknown engine: {shown}")));
+            }
         }
     }
     if let Some(se) = obj.get("shellEscape") {

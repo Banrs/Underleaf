@@ -237,6 +237,45 @@ fn a_backslash_main_file_from_an_old_settings_file_still_works() {
     );
 }
 
+/// `zip -r` followed symlinks and archived the target's content. A symlinked
+/// references.bib or figures directory is a normal thing for a project to
+/// contain, so dropping them would hand the user an archive that no longer
+/// compiles.
+#[cfg(unix)]
+#[test]
+fn zip_export_follows_symlinks_the_way_the_zip_cli_did() {
+    let data = data_dir();
+    let root = project(data.path(), "symlink-test");
+    fs::write(root.join("real.tex"), "shared").unwrap();
+    std::os::unix::fs::symlink(root.join("real.tex"), root.join("linked.tex")).unwrap();
+    // A dangling link has no target to archive; it must be skipped, not fatal.
+    std::os::unix::fs::symlink(root.join("gone.tex"), root.join("broken.tex")).unwrap();
+
+    let dest = data.path().join("out.zip");
+    export_zip(&root, &dest).unwrap();
+
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .collect();
+    assert!(
+        names.contains(&"linked.tex".to_string()),
+        "symlink dropped: {names:?}"
+    );
+    assert!(
+        !names.contains(&"broken.tex".to_string()),
+        "dangling link kept: {names:?}"
+    );
+
+    let mut linked = archive.by_name("linked.tex").unwrap();
+    let mut body = String::new();
+    std::io::Read::read_to_string(&mut linked, &mut body).unwrap();
+    assert_eq!(
+        body, "shared",
+        "symlink archived without its target's content"
+    );
+}
+
 #[test]
 fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
     let data = data_dir();

@@ -10,15 +10,24 @@ use crate::paths::{rel_to_root, safe_rel_file};
 use crate::settings::compiled_pdf_path;
 use crate::BUILD_DIR;
 
+/// Only `page` is required. The rest are omitted when synctex didn't report
+/// them, because the PDF viewer falls back with `??` — which fires on an
+/// absent field but not on a zero, and a zero-size highlight is invisible.
 #[derive(Debug, Serialize)]
 pub struct ForwardLoc {
     pub page: f64,
-    pub x: f64,
-    pub y: f64,
-    pub h: f64,
-    pub v: f64,
-    pub width: f64,
-    pub height: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,12 +99,12 @@ pub async fn synctex_forward(
     let page = page.ok_or_else(|| CoreError::not_found("No SyncTeX match"))?;
     Ok(ForwardLoc {
         page,
-        x: x.unwrap_or(0.0),
-        y: y.unwrap_or(0.0),
-        h: h.unwrap_or(0.0),
-        v: v.unwrap_or(0.0),
-        width: w.unwrap_or(0.0),
-        height: hh.unwrap_or(0.0),
+        x,
+        y,
+        h,
+        v,
+        width: w,
+        height: hh,
     })
 }
 

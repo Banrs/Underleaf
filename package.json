@@ -1,6 +1,6 @@
 {
   "name": "underleaf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fully offline LaTeX editor \u2014 an Overleaf alternative",
   "scripts": {
     "test": "node --test",

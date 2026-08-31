@@ -23,6 +23,13 @@ use crate::state::AppState;
 
 const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 
+// Every command that touches the filesystem is `async`. A synchronous
+// #[tauri::command] runs inline on the thread that received the call — the one
+// driving the window — so a 100 MB upload write, a project-wide search fired
+// per keystroke, or deleting a project tree would stall redraws and the menu.
+// Async commands run on the async runtime instead. menu_sync stays
+// synchronous: native menu objects want the main thread.
+
 fn root(state: &AppState, id: &str) -> CmdResult<PathBuf> {
     Ok(paths::project_root(&state.data_dir, id)?)
 }
@@ -81,12 +88,12 @@ pub async fn status(state: State<'_, AppState>) -> CmdResult<TexStatus> {
 // ---------- projects ----------
 
 #[tauri::command]
-pub fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<ProjectInfo>> {
+pub async fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<ProjectInfo>> {
     Ok(projects::list_projects(&state.data_dir)?)
 }
 
 #[tauri::command]
-pub fn create_project(
+pub async fn create_project(
     state: State<'_, AppState>,
     name: String,
     template: Option<String>,
@@ -99,7 +106,7 @@ pub fn create_project(
 }
 
 #[tauri::command]
-pub fn rename_project(
+pub async fn rename_project(
     state: State<'_, AppState>,
     id: String,
     name: String,
@@ -111,7 +118,7 @@ pub fn rename_project(
 }
 
 #[tauri::command]
-pub fn delete_project(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+pub async fn delete_project(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     let old = root(&state, &id)?;
     projects::delete_project(&state.data_dir, &id)?;
     state.forget_project(&old);
@@ -121,24 +128,28 @@ pub fn delete_project(state: State<'_, AppState>, id: String) -> CmdResult<()> {
 // ---------- settings ----------
 
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>, id: String) -> CmdResult<Settings> {
+pub async fn get_settings(state: State<'_, AppState>, id: String) -> CmdResult<Settings> {
     Ok(settings::read_settings(&root(&state, &id)?))
 }
 
 #[tauri::command]
-pub fn set_settings(state: State<'_, AppState>, id: String, patch: Value) -> CmdResult<Settings> {
+pub async fn set_settings(
+    state: State<'_, AppState>,
+    id: String,
+    patch: Value,
+) -> CmdResult<Settings> {
     Ok(settings::write_settings(&root(&state, &id)?, &patch)?)
 }
 
 // ---------- files ----------
 
 #[tauri::command]
-pub fn file_tree(state: State<'_, AppState>, id: String) -> CmdResult<Vec<TreeNode>> {
+pub async fn file_tree(state: State<'_, AppState>, id: String) -> CmdResult<Vec<TreeNode>> {
     Ok(projects::file_tree(&root(&state, &id)?)?)
 }
 
 #[tauri::command]
-pub fn scan_symbols(state: State<'_, AppState>, id: String) -> CmdResult<Symbols> {
+pub async fn scan_symbols(state: State<'_, AppState>, id: String) -> CmdResult<Symbols> {
     let root = root(&state, &id)?;
     let stamps = projects::symbols_fingerprint(&root)?;
     if let Some(cached) = state.cached_symbols(&root, &stamps) {
@@ -150,7 +161,7 @@ pub fn scan_symbols(state: State<'_, AppState>, id: String) -> CmdResult<Symbols
 }
 
 #[tauri::command]
-pub fn search_project(
+pub async fn search_project(
     state: State<'_, AppState>,
     id: String,
     query: String,
@@ -159,7 +170,11 @@ pub fn search_project(
 }
 
 #[tauri::command]
-pub fn read_file(state: State<'_, AppState>, id: String, path: String) -> CmdResult<FileText> {
+pub async fn read_file(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+) -> CmdResult<FileText> {
     let abs = paths::safe_path(&root(&state, &id)?, &path)?;
     let bytes = std::fs::read(abs)?;
     Ok(FileText {
@@ -168,7 +183,7 @@ pub fn read_file(state: State<'_, AppState>, id: String, path: String) -> CmdRes
 }
 
 #[tauri::command]
-pub fn write_file(
+pub async fn write_file(
     state: State<'_, AppState>,
     id: String,
     path: String,
@@ -183,7 +198,7 @@ pub fn write_file(
 }
 
 #[tauri::command]
-pub fn create_entry(
+pub async fn create_entry(
     state: State<'_, AppState>,
     id: String,
     path: String,
@@ -197,7 +212,7 @@ pub fn create_entry(
 }
 
 #[tauri::command]
-pub fn rename_entry(
+pub async fn rename_entry(
     state: State<'_, AppState>,
     id: String,
     from: String,
@@ -207,7 +222,7 @@ pub fn rename_entry(
 }
 
 #[tauri::command]
-pub fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
+pub async fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
     Ok(projects::delete_entry(&root(&state, &id)?, &path)?)
 }
 
@@ -215,7 +230,7 @@ pub fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> Cmd
 /// headers because the body is the file itself — serializing bytes as a JSON
 /// number array (what the Electron path did) costs several times the payload.
 #[tauri::command]
-pub fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> CmdResult<Saved> {
+pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> CmdResult<Saved> {
     let header = |name: &str| -> CmdResult<String> {
         let raw = request
             .headers()
