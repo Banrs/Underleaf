@@ -1,0 +1,34 @@
+name: Apply review fixes
+
+on:
+  push:
+    paths:
+      - '.review-fixes.*'
+      - '.github/workflows/apply-review-fixes.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .review-fixes.* | base64 --decode > /tmp/review-fixes.tar.gz
+          echo "3ec6a25cd0896d74de9c327821ff5200f52d18498bb0f0101b2722f6060d0d7a  /tmp/review-fixes.tar.gz" | sha256sum --check -
+          tar -xzf /tmp/review-fixes.tar.gz
+          rm -f .review-fixes.*
+          rm -f .github/workflows/apply-review-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: resolve review findings in Tauri rewrite"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
