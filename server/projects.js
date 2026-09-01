@@ -20,6 +20,11 @@ export function toStoredPath(value) {
   return String(value).replaceAll('\\', '/');
 }
 
+function isAbsoluteLike(value) {
+  const stored = toStoredPath(value);
+  return stored.startsWith('/') || /^[A-Za-z]:/.test(stored);
+}
+
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 export class HttpError extends Error {
@@ -79,7 +84,6 @@ function assertExistingAncestorInside(root, target, message) {
   if (!isInside(realRoot, resolved)) throw new HttpError(400, message);
 }
 
-
 function classifyProjectEntry(root, abs, entry) {
   if (entry.isDirectory()) return 'dir';
   if (entry.isFile()) return 'file';
@@ -96,6 +100,9 @@ function classifyProjectEntry(root, abs, entry) {
 }
 
 export function projectRoot(id) {
+  if (typeof id !== 'string' || !id || isAbsoluteLike(id)) {
+    throw new HttpError(400, 'Bad project id');
+  }
   const root = path.resolve(DATA_DIR, id);
   if (!root.startsWith(DATA_DIR + path.sep)) throw new HttpError(400, 'Bad project id');
   validateWindowsPath(root, 'Bad project id');
@@ -111,6 +118,7 @@ export function projectRoot(id) {
 // through writeSettings, which validates each key.
 export function safePath(root, rel) {
   if (typeof rel !== 'string' || rel === '') throw new HttpError(400, 'Missing path');
+  if (isAbsoluteLike(rel)) throw new HttpError(400, 'Path escapes project');
   const abs = path.resolve(root, toStoredPath(rel));
   if (!abs.startsWith(root + path.sep)) throw new HttpError(400, 'Path escapes project');
   validateWindowsPath(abs, 'Path escapes project');
