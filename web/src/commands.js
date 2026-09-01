@@ -62,6 +62,8 @@ const FALLBACK_TITLES = {
   'edit.redo': 'Redo',
   'edit.find': 'Find & Replace',
   'project.search': 'Find in Project',
+  'pdf.find': 'Find in PDF…',
+  'edit.gotoLine': 'Go to Line…',
   'edit.bold': 'Bold',
   'edit.italic': 'Italic',
   'edit.math': 'Inline Math',
@@ -110,7 +112,15 @@ function commandEnabled(id) {
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
-  registry.get(id).run();
+  try {
+    const result = registry.get(id).run();
+    // Native menu and keyboard dispatch are fire-and-forget. Consume a rejected
+    // async command so a handled save/upload failure does not also become an
+    // unhandled-rejection crash report.
+    result?.catch?.((err) => console.error(`Command ${id} failed:`, err));
+  } catch (err) {
+    console.error(`Command ${id} failed:`, err);
+  }
   return true;
 }
 

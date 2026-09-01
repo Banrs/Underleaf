@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
+use tokio::sync::Notify;
 
 use crate::error::CoreError;
 use crate::logparse::{parse_log, LogItem};
@@ -20,8 +21,6 @@ use crate::BUILD_DIR;
 
 pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-// Cap what we hold from a child; a runaway document can print for the whole
-// timeout window.
 const MAX_OUTPUT: usize = 1_000_000;
 const LOG_TAIL: usize = 200_000;
 
@@ -124,10 +123,8 @@ pub fn tex_path() -> &'static str {
 
 // ---------- process plumbing ----------
 
-/// Kill a whole process tree. latexmk drives pdflatex/biber as children of its
-/// own; killing just latexmk leaves those running. On unix the child was
-/// spawned in its own process group, so one signal reaches the tree; Windows
-/// has no process groups in this sense, so taskkill /T is the best effort.
+/// Synchronous shutdown kill. On Windows this waits for taskkill because the
+/// app process is about to exit and cannot leave a console helper behind.
 pub(crate) fn kill_pid_tree(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -138,8 +135,27 @@ pub(crate) fn kill_pid_tree(pid: u32) {
         use std::os::windows::process::CommandExt;
         let _ = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .spawn();
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+}
+
+/// Async equivalent used while the application remains live. Waiting for the
+/// Windows helper is load-bearing: otherwise a replacement compile can start
+/// while descendants of the previous latexmk still own and write build files.
+async fn terminate_pid_tree(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("taskkill");
+        command
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000);
+        let _ = tokio::process::Command::from(command).status().await;
     }
 }
 
@@ -157,8 +173,6 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::pro
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // Without this every latexmk/synctex spawn flashes a console window;
-        // Electron suppressed it implicitly.
         std_cmd.creation_flags(0x0800_0000);
     }
     let mut cmd = tokio::process::Command::from(std_cmd);
@@ -189,12 +203,11 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize)
 }
 
 pub(crate) struct RunOutput {
-    pub code: i32, // -1 for spawn failure or signal death
+    pub code: i32,
     pub stdout: String,
 }
 
 /// Spawn, collect capped output, and kill the whole tree on timeout.
-/// (compile.js `run`)
 pub(crate) async fn run(
     program: &str,
     args: &[&str],
@@ -206,8 +219,6 @@ pub(crate) async fn run(
     cmd.args(args);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        // The spawn error itself is not surfaced: callers act on the -1 code,
-        // exactly as the JS `run` did.
         Err(_) => {
             return RunOutput {
                 code: -1,
@@ -228,13 +239,11 @@ pub(crate) async fn run(
     let status = tokio::select! {
         status = child.wait() => status.ok(),
         _ = tokio::time::sleep(timeout) => {
-            if let Some(pid) = pid { kill_pid_tree(pid); }
+            if let Some(pid) = pid { terminate_pid_tree(pid).await; }
             let _ = child.start_kill();
             child.wait().await.ok()
         }
     };
-    // stderr is drained but discarded: no caller reads it, and leaving the pipe
-    // unread would stall a child that filled its buffer.
     let _ = err_task.await;
     RunOutput {
         code: status.and_then(|s| s.code()).unwrap_or(-1),
@@ -291,18 +300,25 @@ pub struct CompileResult {
 struct RunningEntry {
     token: u64,
     pid: Option<u32>,
+    done: Arc<Notify>,
 }
 
-/// One compile per project, supersede-kill semantics, and kill-all on quit —
-/// the state that lived in compile.js's module-level `running` map, made
-/// explicit so the core stays global-free.
+struct CompletionGuard(Arc<Notify>);
+
+impl Drop for CompletionGuard {
+    fn drop(&mut self) {
+        // notify_one stores a permit when the successor has not begun waiting
+        // yet, so a very fast completion cannot be missed.
+        self.0.notify_one();
+    }
+}
+
+/// One compile per project, supersede-kill semantics, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
     running: Mutex<HashMap<PathBuf, RunningEntry>>,
     next_token: AtomicU64,
-    /// Test hook; None uses the discovered TeX PATH.
     pub path_env: Option<String>,
-    /// Test hook; None uses COMPILE_TIMEOUT.
     pub timeout: Option<Duration>,
 }
 
@@ -315,8 +331,6 @@ impl CompileManager {
         self.path_env.as_deref().unwrap_or_else(|| tex_path())
     }
 
-    /// Called on app quit: compiles run in their own process groups, so
-    /// nothing signals them when the parent exits unless we do it here.
     pub fn kill_all(&self) {
         let mut running = self.running.lock().unwrap();
         for entry in running.values() {
@@ -327,11 +341,30 @@ impl CompileManager {
         running.clear();
     }
 
+    fn clear_if_current(&self, root: &Path, token: u64) {
+        let mut running = self.running.lock().unwrap();
+        if running.get(root).map(|entry| entry.token) == Some(token) {
+            running.remove(root);
+        }
+    }
+
+    fn superseded(start: std::time::Instant) -> CompileResult {
+        CompileResult {
+            ok: false,
+            duration_ms: start.elapsed().as_millis() as u64,
+            pdf: None,
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            log: "Compile superseded by a newer request".to_string(),
+        }
+    }
+
     pub async fn compile(
         &self,
         root: &Path,
         overrides: &CompileOverrides,
     ) -> Result<CompileResult, CoreError> {
+        let request_started = std::time::Instant::now();
         let settings = read_settings(root);
         let engine = overrides.engine.clone().unwrap_or(settings.engine);
         let main_file = overrides.main_file.clone().unwrap_or(settings.main_file);
@@ -339,24 +372,18 @@ impl CompileManager {
 
         let flags = engine_flags(&engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
-        // Re-validate rather than trusting the stored value: .texlocal.json is
-        // a plain file the user can edit, and this string is about to become
-        // an argv element.
         let main_rel = safe_rel_file(root, &main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"
             )));
         }
-        // "./" so latexmk reads it as a path no matter what it contains.
         let main_arg = format!("./{main_rel}");
 
         let outdir = root.join(BUILD_DIR);
         std::fs::create_dir_all(&outdir)?;
 
         let mut args: Vec<&str> = flags.to_vec();
-        // batchmode skips console echoing (a bit faster); errors still land in
-        // the .log file, which is what we parse.
         args.extend([
             "-interaction=batchmode",
             "-file-line-error",
@@ -371,46 +398,78 @@ impl CompileManager {
         args.push(&main_arg);
 
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        let done = Arc::new(Notify::new());
+        let _completion = CompletionGuard(Arc::clone(&done));
+        let previous = self.running.lock().unwrap().insert(
+            root.to_path_buf(),
+            RunningEntry {
+                token,
+                pid: None,
+                done,
+            },
+        );
+
+        // A replacement must not touch the same build directory until the
+        // predecessor has fully settled: process tree gone, child reaped, and
+        // stdout/stderr pipes drained. The completion chain also covers the
+        // PID-not-yet-recorded window and chains correctly through a third run.
+        if let Some(previous) = previous {
+            if let Some(pid) = previous.pid {
+                terminate_pid_tree(pid).await;
+            }
+            previous.done.notified().await;
+        }
+
+        if self.running.lock().unwrap().get(root).map(|entry| entry.token) != Some(token) {
+            return Ok(Self::superseded(request_started));
+        }
+
+        // Capture log identity after the predecessor has stopped, otherwise its
+        // final write can be mistaken for output from this generation.
         let started_at = SystemTime::now();
-        let start_instant = std::time::Instant::now();
-        // What the log looked like before this run, so finish() can tell
-        // whether latexmk replaced it.
         let log_before =
             std::fs::metadata(outdir.join(format!("{}.log", main_base_name(&main_rel))))
-                .and_then(|m| m.modified())
+                .and_then(|meta| meta.modified())
                 .ok();
 
         let mut cmd = base_command("latexmk", Some(root), self.path());
         cmd.args(&args);
-        let spawned = cmd.spawn();
+        let spawn_result = {
+            // Hold the registry lock across synchronous spawn + PID publication.
+            // A successor therefore sees either no child or the actual PID,
+            // never an unkillable gap between the two.
+            let mut running = self.running.lock().unwrap();
+            if running.get(root).map(|entry| entry.token) != Some(token) {
+                None
+            } else {
+                match cmd.spawn() {
+                    Ok(child) => {
+                        running.get_mut(root).expect("token checked").pid = child.id();
+                        Some(Ok(child))
+                    }
+                    Err(err) => Some(Err(err)),
+                }
+            }
+        };
 
-        let mut child = match spawned {
-            Ok(c) => c,
-            Err(err) => {
-                return Ok(self.finish(
+        let mut child = match spawn_result {
+            None => return Ok(Self::superseded(request_started)),
+            Some(Err(err)) => {
+                let result = self.finish(
                     root,
                     &main_rel,
                     log_before,
                     started_at,
-                    start_instant,
+                    request_started,
                     -1,
                     err.to_string(),
-                ));
+                );
+                self.clear_if_current(root, token);
+                return Ok(result);
             }
+            Some(Ok(child)) => child,
         };
         let pid = child.id();
-
-        // One compile per project: kill any in-flight run first.
-        if let Some(prev) = self
-            .running
-            .lock()
-            .unwrap()
-            .insert(root.to_path_buf(), RunningEntry { token, pid })
-        {
-            if let Some(prev_pid) = prev.pid {
-                kill_pid_tree(prev_pid);
-            }
-        }
 
         let out_task = tokio::spawn(read_capped(
             child.stdout.take().expect("stdout piped"),
@@ -425,7 +484,7 @@ impl CompileManager {
         let status = tokio::select! {
             status = child.wait() => status.ok(),
             _ = tokio::time::sleep(timeout) => {
-                if let Some(pid) = pid { kill_pid_tree(pid); }
+                if let Some(pid) = pid { terminate_pid_tree(pid).await; }
                 let _ = child.start_kill();
                 child.wait().await.ok()
             }
@@ -434,22 +493,17 @@ impl CompileManager {
         let mut output = out_task.await.unwrap_or_default();
         output.push_str(&err_task.await.unwrap_or_default());
 
-        {
-            let mut running = self.running.lock().unwrap();
-            if running.get(root).map(|e| e.token) == Some(token) {
-                running.remove(root);
-            }
-        }
-
-        Ok(self.finish(
+        let result = self.finish(
             root,
             &main_rel,
             log_before,
             started_at,
-            start_instant,
+            request_started,
             code,
             output,
-        ))
+        );
+        self.clear_if_current(root, token);
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -467,22 +521,11 @@ impl CompileManager {
         let outdir = root.join(BUILD_DIR);
         let log_path = outdir.join(format!("{base}.log"));
 
-        // Parse the .log file (batchmode sends errors there, not to stdout) —
-        // but only if this run wrote it; a stale log would report last run's
-        // errors.
-        //
-        // Freshness is decided by whether the file changed, not by comparing
-        // its timestamp to the wall clock: Linux stamps files from a coarse
-        // clock that lags the fine-grained one by up to a jiffy, so a log
-        // written just after the run began can carry an mtime just before it,
-        // and a real failure's errors would silently vanish from the log pane.
-        // The wall-clock test stays as a fallback for the case where the log
-        // is rewritten byte-identically within one timestamp tick.
         let mut log = fallback_output;
         if let Ok(meta) = std::fs::metadata(&log_path) {
             let modified = meta.modified().ok();
             let rewritten = modified != log_before;
-            let after_start = modified.map(|m| m >= started_at).unwrap_or(false);
+            let after_start = modified.map(|mtime| mtime >= started_at).unwrap_or(false);
             if rewritten || after_start {
                 if let Ok(bytes) = std::fs::read(&log_path) {
                     log = String::from_utf8_lossy(&bytes).into_owned();
@@ -492,13 +535,16 @@ impl CompileManager {
 
         let issues = parse_log(&log, main_rel);
         let pdf_exists = outdir.join(format!("{base}.pdf")).exists();
+        let ok = code == 0 && pdf_exists;
         let (errors, warnings): (Vec<_>, Vec<_>) =
-            issues.into_iter().partition(|i| i.kind == "error");
+            issues.into_iter().partition(|item| item.kind == "error");
 
         CompileResult {
-            ok: code == 0 && pdf_exists,
+            ok,
             duration_ms: start_instant.elapsed().as_millis() as u64,
-            pdf: pdf_exists.then(|| format!("{BUILD_DIR}/{base}.pdf")),
+            // Never advertise a pre-existing PDF for a failed run. The UI keeps
+            // its old preview visible but does not reload it as fresh output.
+            pdf: ok.then(|| format!("{BUILD_DIR}/{base}.pdf")),
             errors,
             warnings,
             log: tail(&log, LOG_TAIL).to_string(),

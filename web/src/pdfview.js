@@ -9,6 +9,7 @@
 
 import * as pdfjs from 'pdfjs-dist';
 import { pageText, matchRanges } from './pdftext.js';
+import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
@@ -50,8 +51,12 @@ export class PdfViewer {
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
     this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
-    this._find = null;            // { query, matches: [{page,start,end}], index }
-    this._pageText = [];          // per page: { text, spans } — see pdftext.js
+    this._find = null;            // { query, matches, byPage, index, limited }
+    this._findSession = new FindSession();
+    this._highlightGeneration = 0;
+    // Per page, either { promise } while extraction is running or
+    // { items, text, spans } afterwards. Search and text layers share it.
+    this._pageText = [];
     this._anchor = null;          // PDF point to pin across a pinch re-render
     this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
@@ -132,7 +137,6 @@ export class PdfViewer {
 
   get numPages() { return this.doc?.numPages ?? 0; }
 
-
   async load(url) {
     const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
     const generation = ++this._loadGeneration;
@@ -154,12 +158,16 @@ export class PdfViewer {
       if (superseded()) return false;
       const prev = this.loadingTask;
       adopted = true;
+      this._findSession.cancel();
+      this._highlightGeneration++;
+      this._find = null;
+      this._pageText = new Array(doc.numPages);
       this.loadingTask = task;
       this.doc = doc;
       this.pageProxies = proxies;
       await prev?.destroy().catch(() => {});
       await this.render();
-      return true;
+      return !superseded() && this.doc === doc;
     } finally {
       if (!adopted) await task.destroy().catch(() => {});
     }
@@ -404,7 +412,11 @@ export class PdfViewer {
         if (p.canvas.width) p._failed = true;
         console.error(`PDF page ${p.n} failed to render:`, err);
       }
-      if (ok) this.#buildTextLayer(p, seq);
+      if (ok) {
+        void this.#buildTextLayer(p, seq).catch((err) => {
+          console.error(`PDF page ${p.n} text layer failed:`, err);
+        });
+      }
     }
   }
 
@@ -560,53 +572,109 @@ export class PdfViewer {
     return p._paint;
   }
 
+  // Search and selectable text layers need the same page extraction. Cache one
+  // promise per page so repeated queries, highlight refreshes and SyncTeX do not
+  // ask the pdf.js worker to rebuild identical text content.
+  async #pageTextData(p) {
+    const index = p.n - 1;
+    const cached = this._pageText[index];
+    if (cached?.items) return cached;
+    if (cached?.promise) return cached.promise;
+
+    const doc = this.doc;
+    const page = p.page;
+    const promise = (async () => {
+      try {
+        const items = (await page.getTextContent()).items;
+        const data = { items, ...pageText(items) };
+        if (this.doc === doc && this.pageProxies[index] === page) this._pageText[index] = data;
+        return data;
+      } catch {
+        if (this.doc === doc && this.pageProxies[index] === page) this._pageText[index] = null;
+        return null;
+      }
+    })();
+    this._pageText[index] = { promise };
+    return promise;
+  }
+
   // Build a single page's transparent, selectable text layer from its items.
+  // The finished fragment is committed atomically and only if both the render
+  // and highlight generations are still current. That prevents overlapping
+  // searches from appending duplicate or stale spans.
   async #buildTextLayer(p, seq) {
-    if (p.textLayer.childElementCount) return;
-    let items;
-    try { items = (await p.page.getTextContent()).items; } catch { return; }
-    if (seq !== this.seq) return;
-    const vt = p.viewport.transform;
-    const frag = document.createDocumentFragment();
-    // Highlights are applied while the layer is built rather than patched in
-    // afterwards, because a layer is discarded and rebuilt on every repaint.
-    const spans = this._find?.matches.length ? this._pageText[p.n - 1]?.spans : null;
-    let k = -1;
-    for (const item of items) {
-      if (!item.str) continue;
-      k++;
-      const t = item.transform;
-      // Affine compose (viewport ∘ item), inlined to avoid depending on pdfjs.Util.
-      const a = vt[0] * t[2] + vt[2] * t[3];
-      const b = vt[1] * t[2] + vt[3] * t[3];
-      const fontH = Math.hypot(a, b);
-      if (!fontH) continue;
-      const left = vt[0] * t[4] + vt[2] * t[5] + vt[4];
-      const top = vt[1] * t[4] + vt[3] * t[5] + vt[5];
-      const span = document.createElement('span');
-      if (spans) this.#paintMatches(span, item.str, spans[k], p.n - 1);
-      else span.textContent = item.str;
-      span.style.left = `${left}px`;
-      span.style.top = `${top - fontH}px`;
-      span.style.fontSize = `${fontH}px`;
-      span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
-      frag.appendChild(span);
-    }
-    p.textLayer.appendChild(frag);
+    if (p.textLayer.childElementCount) return true;
+    const highlightGeneration = this._highlightGeneration;
+    if (p._textBuild?.generation === highlightGeneration) return p._textBuild.promise;
+
+    const build = {};
+    build.generation = highlightGeneration;
+    build.promise = (async () => {
+      const data = await this.#pageTextData(p);
+      if (
+        !data
+        || seq !== this.seq
+        || highlightGeneration !== this._highlightGeneration
+        || !p._painted
+        || !this.pages.includes(p)
+      ) return false;
+
+      const vt = p.viewport.transform;
+      const frag = document.createDocumentFragment();
+      const pageIndex = p.n - 1;
+      const pageMatches = this._find?.byPage.get(pageIndex) ?? [];
+      const matchesByItem = indexMatchesBySpan(pageMatches, data.spans);
+      const current = this._find?.matches[this._find.index];
+      let k = -1;
+      for (const item of data.items) {
+        if (!item.str) continue;
+        k++;
+        const t = item.transform;
+        // Affine compose (viewport ∘ item), inlined to avoid depending on pdfjs.Util.
+        const a = vt[0] * t[2] + vt[2] * t[3];
+        const b = vt[1] * t[2] + vt[3] * t[3];
+        const fontH = Math.hypot(a, b);
+        if (!fontH) continue;
+        const left = vt[0] * t[4] + vt[2] * t[5] + vt[4];
+        const top = vt[1] * t[4] + vt[3] * t[5] + vt[5];
+        const span = document.createElement('span');
+        if (matchesByItem[k]?.length) {
+          this.#paintMatches(span, item.str, data.spans[k], matchesByItem[k], current);
+        } else {
+          span.textContent = item.str;
+        }
+        span.style.left = `${left}px`;
+        span.style.top = `${top - fontH}px`;
+        span.style.fontSize = `${fontH}px`;
+        span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
+        frag.appendChild(span);
+      }
+
+      if (
+        seq !== this.seq
+        || highlightGeneration !== this._highlightGeneration
+        || !p._painted
+        || !this.pages.includes(p)
+      ) return false;
+      p.textLayer.replaceChildren(frag);
+      return true;
+    })().finally(() => {
+      if (p._textBuild === build) p._textBuild = null;
+    });
+    p._textBuild = build;
+    return build.promise;
   }
 
   // ---------- text search ----------
 
   // Rebuild one text item's content with <mark> around the parts that fall
-  // inside a match. Items are laid out individually, so a match spanning two of
-  // them is marked in each.
-  #paintMatches(span, str, range, pageIndex) {
+  // inside a match. `pageMatches` is already indexed by page, so this loop is
+  // proportional to hits on this page rather than every hit in the document.
+  #paintMatches(span, str, range, pageMatches, current) {
     if (!range) { span.textContent = str; return; }
-    const { matches, index } = this._find;
-    const current = matches[index];
     let at = 0;
-    for (const m of matches) {
-      if (m.page !== pageIndex || m.end <= range.start || m.start >= range.end) continue;
+    for (const m of pageMatches) {
+      if (m.end <= range.start || m.start >= range.end) continue;
       const from = Math.max(m.start, range.start) - range.start;
       const to = Math.min(m.end, range.end) - range.start;
       if (from > at) span.appendChild(document.createTextNode(str.slice(at, from)));
@@ -619,38 +687,73 @@ export class PdfViewer {
     if (at < str.length) span.appendChild(document.createTextNode(str.slice(at)));
   }
 
-  /// Search every page. Returns { total, index } with a 1-based index.
+  #findStatus(stale = false) {
+    const f = this._find;
+    return {
+      total: f?.matches.length ?? 0,
+      index: f?.matches.length ? f.index + 1 : 0,
+      limited: !!f?.limited,
+      stale,
+    };
+  }
+
+  /// Search every page. Only the latest generation may commit its matches.
   async find(query) {
-    const q = query.trim().toLowerCase();
-    if (!q || !this.doc) { this.clearFind(); return { total: 0, index: 0 }; }
-    const matches = [];
-    for (let i = 0; i < this.pageProxies.length; i++) {
-      let items;
-      try { items = (await this.pageProxies[i].getTextContent()).items; } catch { continue; }
-      const pt = pageText(items);
-      this._pageText[i] = pt;
-      for (const r of matchRanges(pt.text, q)) matches.push({ page: i, ...r });
+    const { generation, query: q } = this._findSession.begin(query);
+    const doc = this.doc;
+    if (!q || !doc) {
+      this._find = null;
+      await this.#refreshHighlights();
+      return this.#findStatus();
     }
-    this._find = { query: q, matches, index: 0 };
+
+    const proxies = [...this.pageProxies];
+    const stale = () => !this._findSession.current(generation) || this.doc !== doc;
+    const matches = [];
+    const byPage = new Map();
+    let limited = false;
+
+    for (let i = 0; i < proxies.length; i++) {
+      const data = await this.#pageTextData({ n: i + 1, page: proxies[i] });
+      if (stale()) return this.#findStatus(true);
+      if (!data) continue;
+
+      const remaining = MAX_FIND_MATCHES - matches.length;
+      // Ask for one result beyond the remaining capacity so truncation is known
+      // without first materialising every hit on a pathological page.
+      const ranges = matchRanges(data.text, q, remaining + 1);
+      const accepted = ranges.slice(0, remaining).map((r) => ({ page: i, ...r }));
+      if (accepted.length) {
+        matches.push(...accepted);
+        byPage.set(i, accepted);
+      }
+      if (ranges.length > remaining || matches.length === MAX_FIND_MATCHES) {
+        limited = ranges.length > remaining || i < proxies.length - 1;
+        break;
+      }
+    }
+
+    if (stale()) return this.#findStatus(true);
+    this._find = { query: q, matches, byPage, index: 0, limited };
     this.#revealMatch();
-    this.#refreshHighlights();
-    return { total: matches.length, index: matches.length ? 1 : 0 };
+    await this.#refreshHighlights();
+    return stale() ? this.#findStatus(true) : this.#findStatus();
   }
 
   /// Step to the next (+1) or previous (-1) match, wrapping at either end.
   findStep(delta) {
     const f = this._find;
-    if (!f?.matches.length) return { total: 0, index: 0 };
+    if (!f?.matches.length) return this.#findStatus();
     f.index = (f.index + delta + f.matches.length) % f.matches.length;
     this.#revealMatch();
-    this.#refreshHighlights();
-    return { total: f.matches.length, index: f.index + 1 };
+    void this.#refreshHighlights();
+    return this.#findStatus();
   }
 
   clearFind() {
-    if (!this._find) return;
+    this._findSession.cancel();
     this._find = null;
-    this.#refreshHighlights();
+    void this.#refreshHighlights();
   }
 
   #revealMatch() {
@@ -659,13 +762,17 @@ export class PdfViewer {
   }
 
   // A text layer caches its own content, so a changed query means clearing and
-  // rebuilding it. The painted canvas underneath is untouched.
-  #refreshHighlights() {
+  // rebuilding it. The painted canvas underneath is untouched. The generation
+  // check in #buildTextLayer makes overlapping refreshes harmless.
+  async #refreshHighlights() {
+    this._highlightGeneration++;
+    const builds = [];
     for (const p of this.pages) {
       if (!p._painted) continue;
       p.textLayer.replaceChildren();
-      this.#buildTextLayer(p, this.seq);
+      builds.push(this.#buildTextLayer(p, this.seq));
     }
+    await Promise.allSettled(builds);
   }
 
   // ---------- zoom / fit ----------
@@ -795,10 +902,14 @@ export class PdfViewer {
     this._loadGeneration++;
     this.seq++;
     this._pinchGeneration++;
+    this._findSession.cancel();
+    this._highlightGeneration++;
     clearTimeout(this._pinchTimer);
     clearTimeout(this._roTimer);
     clearTimeout(this._paintTimer);
     this._pinch = null;
+    this._find = null;
+    this._pageText = [];
     this.#cancelPaints();
     this.ro?.disconnect();
     document.removeEventListener('visibilitychange', this._onVisible);

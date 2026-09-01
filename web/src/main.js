@@ -6,12 +6,10 @@ import { prefs, migratePrefs, applyAppearance, applyAccent, setAppearanceHandler
 import { onCommandsChanged, installBrowserShortcuts, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
-import { renderWorkspace, destroyWorkspace, saveCurrent, syncToolbarState } from './workspace.js';
+import { renderWorkspace, destroyWorkspace, flushCurrent, saveCurrent, syncToolbarState } from './workspace.js';
 
 // ---------- platform ----------
 
-// Platform-specific chrome is gated on these classes rather than assumed, so the
-// Windows shell is a matter of adding rules, not unpicking macOS ones.
 const root = document.documentElement;
 root.classList.toggle('desktop', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');
@@ -19,7 +17,6 @@ root.classList.toggle('win', platform === 'win32');
 
 // A file dropped outside the drop zones must never navigate the page — on the
 // desktop that would load file:// on an origin holding the command bridge.
-// Drop-zone handlers run first and call their own preventDefault.
 addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => e.preventDefault());
 
@@ -31,8 +28,6 @@ setAppearanceHandler((theme) => {
 });
 applyAppearance();
 
-// Asked for once, and applied whenever it arrives: the tokens' blue is already
-// on screen, so there is nothing to wait for and no boot path to block.
 bridge?.accent().then((hex) => { if (hex) applyAccent(hex); });
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -50,14 +45,25 @@ if (!bridge) installBrowserShortcuts();
 let route = null;
 let navigationGeneration = 0;
 
+function routeHash(value) {
+  return value?.view === 'project' ? `#/p/${encodeURIComponent(value.id)}` : '#/';
+}
+
 async function navigate() {
   const generation = ++navigationGeneration;
   const match = location.hash.match(/^#\/p\/(.+)$/);
   const next = match ? { view: 'project', id: decodeURIComponent(match[1]) } : { view: 'home' };
 
-  // A pending edit must reach disk before the workspace is torn down.
+  // A pending edit must reach disk before the workspace is torn down. A failed
+  // save cancels the route change and restores the URL to the still-mounted
+  // view, rather than destroying the only copy of the user's buffer.
   if (route?.view === 'project') {
-    await saveCurrent({ triggerCompile: false });
+    try {
+      if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+    } catch {
+      if (generation === navigationGeneration) history.replaceState(null, '', routeHash(route));
+      return;
+    }
     if (generation !== navigationGeneration) return;
     destroyWorkspace();
   } else if (route?.view === 'home') {
@@ -70,16 +76,17 @@ async function navigate() {
   else await renderHome();
 }
 
-// Quitting or closing must not drop an unsaved buffer. In the browser the
-// unload would cancel an in-flight save, so block it while dirty — the save
-// lands within the debounce and the next close goes through silently.
+// In a browser, unload cancels asynchronous writes. The dialog buys the
+// autosave time; consume its rejection because doSave already reports it.
 addEventListener('beforeunload', (e) => {
   if (!state.dirty) return;
-  saveCurrent({ triggerCompile: false });
+  saveCurrent({ triggerCompile: false }).catch(() => {});
   e.preventDefault();
   e.returnValue = '';
 });
-bridge?.onBeforeQuit?.(async () => { await saveCurrent({ triggerCompile: false }); });
+bridge?.onBeforeQuit?.(async () => {
+  if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+});
 
 addEventListener('hashchange', navigate);
 navigate();

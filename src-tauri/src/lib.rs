@@ -31,8 +31,6 @@ fn data_dir(app: &tauri::AppHandle) -> PathBuf {
 
 pub fn run() {
     tauri::Builder::default()
-        // Registered first so a second launch reaches the running instance
-        // instead of opening a rival window over the same project directory.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             window::focus_or_create(app);
         }))
@@ -56,6 +54,7 @@ pub fn run() {
             commands::create_entry,
             commands::rename_entry,
             commands::delete_entry,
+            commands::validate_uploads,
             commands::upload_file,
             commands::compile,
             commands::synctex_forward,
@@ -79,13 +78,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to start TeXLocal")
         .run(|app, event| match event {
-            // On macOS closing the window is not quitting: the app stays in the
-            // dock and reopens the window when its icon is clicked. A user-driven
-            // exit carries no code; Quit calls app.exit() and passes one through.
+            // A Dock/OS Quit request carries no code. Prevent it first, then use
+            // the same fail-closed renderer flush as the custom Quit menu item.
+            // Programmatic app.exit() carries a code and must pass through.
             #[cfg(target_os = "macos")]
             RunEvent::ExitRequested {
                 code: None, api, ..
-            } => api.prevent_exit(),
+            } => {
+                api.prevent_exit();
+                window::quit(app);
+            }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => window::focus_or_create(app),
             // Compiles run in their own process groups so a kill reaches the

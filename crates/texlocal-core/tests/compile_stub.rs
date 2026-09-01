@@ -62,8 +62,6 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 async fn a_stale_log_is_not_reported() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
-    // Pre-existing log from "last run"; the stub writes only the PDF, so the
-    // stale log's mtime predates this compile and must be ignored.
     fs::create_dir_all(root.join("build")).unwrap();
     fs::write(root.join("build/main.log"), "./main.tex:9: Stale error.\n").unwrap();
     let mtime = filetime_from_secs_ago(120);
@@ -89,6 +87,29 @@ async fn a_stale_log_is_not_reported() {
 }
 
 #[tokio::test]
+async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
+    );
+
+    let mut mgr = CompileManager::new();
+    mgr.path_env = Some(path);
+    let result = mgr
+        .compile(&root, &CompileOverrides::default())
+        .await
+        .unwrap();
+
+    assert!(!result.ok);
+    assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
+    assert!(root.join("build/main.pdf").exists(), "old preview may remain on disk");
+}
+
+#[tokio::test]
 async fn a_timed_out_compile_is_killed_and_reported_failed() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
@@ -104,6 +125,7 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
         .unwrap();
 
     assert!(!result.ok);
+    assert_eq!(result.pdf, None);
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "kill did not take effect"
@@ -114,10 +136,9 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
 async fn a_new_compile_supersedes_the_in_flight_one() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
-    // Slow until the marker file appears, then fast and successful.
     let path = stub_env(
         &tmp.path().join("bin"),
-        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'fake' > build/main.pdf; exit 0; else sleep 20; fi\n",
+        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else sleep 20; fi\n",
     );
 
     let mgr = Arc::new({
@@ -146,6 +167,58 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
 
     assert!(second.ok, "superseding compile should succeed");
     assert!(!first.ok, "superseded compile should be killed");
+    assert_eq!(first.pdf, None);
+    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "new");
+}
+
+#[tokio::test]
+async fn a_third_compile_can_supersede_a_replacement_before_it_spawns() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        r#"#!/bin/sh
+case "$*" in
+  *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
+  *) sleep 20 ;;
+esac
+"#,
+    );
+
+    let mgr = Arc::new({
+        let mut m = CompileManager::new();
+        m.path_env = Some(path);
+        m
+    });
+    let launch = |mgr: Arc<CompileManager>, root: std::path::PathBuf, engine: &str| {
+        let options = CompileOverrides {
+            engine: Some(engine.to_string()),
+            ..CompileOverrides::default()
+        };
+        tokio::spawn(async move { mgr.compile(&root, &options).await.unwrap() })
+    };
+
+    let first = launch(Arc::clone(&mgr), root.clone(), "pdflatex");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let second = launch(Arc::clone(&mgr), root.clone(), "xelatex");
+    // The second request is waiting for the first process to settle and may not
+    // have a child PID yet. The third must still supersede it without deadlock.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let third = launch(Arc::clone(&mgr), root.clone(), "lualatex");
+
+    let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
+        (
+            third.await.unwrap(),
+            second.await.unwrap(),
+            first.await.unwrap(),
+        )
+    })
+    .await
+    .expect("compile generations deadlocked");
+    assert!(third.ok);
+    assert!(!second.ok);
+    assert!(!first.ok);
+    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "third");
 }
 
 #[tokio::test]
@@ -163,8 +236,6 @@ async fn tex_available_reports_the_stub_version() {
     assert!(!none.available);
     assert_eq!(none.version, None);
 }
-
-// -- tiny mtime helpers (no extra dev-dependency) --
 
 fn filetime_from_secs_ago(secs: u64) -> std::time::SystemTime {
     std::time::SystemTime::now() - Duration::from_secs(secs)

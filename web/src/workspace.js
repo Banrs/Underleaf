@@ -10,9 +10,10 @@ import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from '
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle } from './commands.js';
 import { openSettings } from './settings.js';
+import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
   buildSidebar, renderTree, updateTreeSelection, refreshTree, renderOutline, focusSearch,
-  newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome,
+  newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome, destroySidebar,
 } from './sidebar.js';
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
 
@@ -25,7 +26,9 @@ let texWatcher = null;
 let pendingCompile = false;
 let workspaceGeneration = 0;
 let openGeneration = 0;
-let savePromise = Promise.resolve();
+let pdfFindTimer = null;
+let pdfFindGeneration = 0;
+const saveQueue = createSaveQueue();
 
 // Editor states of recently open files, so switching back restores the undo
 // history, selection, and scroll position instead of rebuilding from scratch.
@@ -52,11 +55,15 @@ function stashEditorState(path) {
 export function destroyWorkspace() {
   workspaceGeneration++;
   openGeneration++;
+  pdfFindGeneration++;
   clearInterval(texWatcher);
   texWatcher = null;
+  clearTimeout(pdfFindTimer);
+  pdfFindTimer = null;
   clearTimeout(symbolsTimer);
   clearTimeout(docMetaTimer);
   clearTimeout(crumbTimer);
+  clearTimeout(state.saveTimer);
   pendingCompile = false;
   disposeCommands?.();
   disposeCommands = null;
@@ -64,6 +71,7 @@ export function destroyWorkspace() {
   restoreAppearanceHandler = null;
   state.editor?.destroy();
   state.pdf?.destroy();
+  destroySidebar();
   destroyLogsView();
   resetProjectState();
   editorStateCache.clear();
@@ -132,7 +140,9 @@ function buildChrome(id) {
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
-    beforePathMutation: () => saveCurrent({ triggerCompile: false }),
+    beforePathMutation: async () => {
+      if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+    },
     closeOpenFile: () => {
       openGeneration++;
       clearTimeout(state.saveTimer);
@@ -196,6 +206,10 @@ function buildChrome(id) {
 
   // --- PDF pane ---
   const pageIndicator = el('span', { class: 'page-indicator' }, '—');
+  const pdfFreshness = el('span', {
+    class: 'pdf-freshness', role: 'status', hidden: true,
+    title: 'The preview does not reflect the current source',
+  });
   const zoomLabel = el('span', { class: 'zoom-value' }, '—');
   const zoomButton = el('button', {
     class: 'btn small zoom-btn', title: 'Zoom', 'aria-label': 'Zoom',
@@ -219,14 +233,13 @@ function buildChrome(id) {
   });
 
   // --- PDF find bar (hidden until the command opens it) ---
-  // Not permanent toolbar controls: that toolbar is already full, and a find
-  // bar that appears on demand is the native pattern anyway.
   const findCount = el('span', { class: 'find-count' });
   const findInput = el('input', {
     type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF',
   });
-  const showCount = ({ total, index }) => {
-    findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${total}` : 'Not found') : '';
+  const showCount = ({ total, index, limited = false }) => {
+    const totalLabel = limited ? `${total}+` : String(total);
+    findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${totalLabel}` : 'Not found') : '';
   };
   const stepFind = (delta) => showCount(state.pdf.findStep(delta));
   const findBar = el('div', { class: 'pdf-find', hidden: true },
@@ -236,11 +249,20 @@ function buildChrome(id) {
     el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
     el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
   );
-  // Scanning every page is not free, so typing settles before it runs.
-  let findTimer;
   findInput.addEventListener('input', () => {
-    clearTimeout(findTimer);
-    findTimer = setTimeout(async () => showCount(await state.pdf.find(findInput.value)), 200);
+    clearTimeout(pdfFindTimer);
+    const generation = ++pdfFindGeneration;
+    const viewer = state.pdf;
+    const query = findInput.value;
+    pdfFindTimer = setTimeout(async () => {
+      const result = await viewer.find(query);
+      if (
+        generation === pdfFindGeneration
+        && state.pdf === viewer
+        && ui.findInput === findInput
+        && !findBar.hidden
+      ) showCount(result);
+    }, 200);
   });
   findInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closePdfFind(); return; }
@@ -259,6 +281,7 @@ function buildChrome(id) {
       zoomButton,
       iconButton('view.zoomIn', 'plus', 'small'),
       el('span', { class: 'toolbar-separator' }),
+      pdfFreshness,
       pageIndicator,
     ),
     findBar,
@@ -286,7 +309,10 @@ function buildChrome(id) {
     ),
   );
 
-  ui = { sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton, compileButton, workspace, findBar, findInput };
+  ui = {
+    sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
+    compileButton, workspace, findBar, findInput, pdfFreshness,
+  };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
   setupResizer(paneDivider, pdfPane, 'flex', 240, null, 'pdfWidth');
@@ -388,21 +414,24 @@ function commandDefs() {
 function openPdfFind() {
   if (!ui?.findBar) return;
   ui.findBar.hidden = false;
+  ui.findBar.parentElement?.classList.add('find-open');
   ui.findInput.focus();
   ui.findInput.select();
 }
 
 function closePdfFind() {
   if (!ui?.findBar) return;
+  clearTimeout(pdfFindTimer);
+  pdfFindTimer = null;
+  pdfFindGeneration++;
   ui.findBar.hidden = true;
+  ui.findBar.parentElement?.classList.remove('find-open');
   ui.findInput.value = '';
   state.pdf?.clearFind();
 }
 
 async function gotoLineFlow() {
   const answer = await promptModal({ title: 'Go to Line', label: 'Line number', confirm: 'Go' });
-  // gotoLine already clamps to the document, so a number is the only thing
-  // worth checking for here.
   const line = Number.parseInt(answer, 10);
   if (Number.isFinite(line)) state.editor?.gotoLine(line);
 }
@@ -413,6 +442,12 @@ function setSaveState(text) {
   if (ui.saveState) ui.saveState.textContent = text;
 }
 
+function setPdfFreshness(message = '') {
+  if (!ui.pdfFreshness) return;
+  ui.pdfFreshness.hidden = !message;
+  ui.pdfFreshness.textContent = message;
+}
+
 function showEditorPlaceholder(message) {
   state.editor?.destroy();
   state.editor = null;
@@ -420,21 +455,67 @@ function showEditorPlaceholder(message) {
   refreshCommands();
 }
 
+function transitionStillCurrent(request, generation, projectId, host) {
+  return request === openGeneration
+    && generation === workspaceGeneration
+    && state.projectId === projectId
+    && host === ui.editorHost;
+}
+
+async function flushEditsBeforeSwitch(request, generation, projectId, host, editor, path) {
+  const isCurrent = () => transitionStillCurrent(request, generation, projectId, host)
+    && state.editor === editor
+    && state.openPath === path;
+  return flushUntilStable({
+    isCurrent,
+    isDirty: () => state.dirty,
+    save: () => saveCurrent({ triggerCompile: false }),
+  });
+}
+
+// Save the currently mounted document until no edit arrived during the last
+// write. Quit, navigation, compilation and filesystem mutations use this rather
+// than a one-shot save so their success really means the latest buffer is safe.
+export async function flushCurrent() {
+  const generation = workspaceGeneration;
+  const projectId = state.projectId;
+  const editor = state.editor;
+  const path = state.openPath;
+  if (state.dirty && (!editor || !path)) return false;
+  const isCurrent = () => generation === workspaceGeneration
+    && state.projectId === projectId
+    && state.editor === editor
+    && state.openPath === path;
+  return flushUntilStable({
+    isCurrent,
+    isDirty: () => state.dirty,
+    save: () => saveCurrent({ triggerCompile: false }),
+  });
+}
+
 export async function openFile(path) {
-  if (!path) return;
+  if (!path || path === state.openPath) return;
   const request = ++openGeneration;
   const generation = workspaceGeneration;
-  if (state.dirty) await saveCurrent();
-  if (request !== openGeneration || generation !== workspaceGeneration) return;
   const host = ui.editorHost;
   if (!host) return;
   const projectId = state.projectId;
   const prevPath = state.openPath;
-  state.openPath = path;
-  updateTreeSelection();
+  const prevEditor = state.editor;
 
+  // Stabilise the old buffer before every kind of transition. This includes
+  // image/binary previews: an edit may have arrived during the preceding save,
+  // even though the final path swap itself is synchronous.
+  if (!(await flushEditsBeforeSwitch(
+    request, generation, projectId, host, prevEditor, prevPath,
+  ))) return;
+
+  // Non-text previews do not await a read, so no edit can interleave between
+  // the stable check above and committing the new active path.
   if (IMAGE_FILE.test(path)) {
     stashEditorState(prevPath);
+    state.openPath = path;
+    updateTreeSelection();
     state.editor?.destroy();
     state.editor = null;
     host.replaceChildren(el('div', { class: 'image-preview' },
@@ -445,6 +526,8 @@ export async function openFile(path) {
   }
   if (!TEXT_FILE.test(path)) {
     stashEditorState(prevPath);
+    state.openPath = path;
+    updateTreeSelection();
     showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
     setSaveState('');
     updateDocMeta();
@@ -454,27 +537,25 @@ export async function openFile(path) {
   let text;
   try { ({ text } = await api.readFile(projectId, path)); }
   catch (err) {
-    // Roll back: the editor still shows the previous file, and leaving
-    // openPath on the failed target would route the next save to it.
-    if (request === openGeneration && generation === workspaceGeneration) {
-      state.openPath = prevPath;
-      updateTreeSelection();
-      toast(err.message, 'error');
-    }
+    if (transitionStillCurrent(request, generation, projectId, host)) toast(err.message, 'error');
     return;
   }
-  if (
-    request !== openGeneration
-    || generation !== workspaceGeneration
-    || state.projectId !== projectId
-    || host !== ui.editorHost
-  ) return;
+  if (!transitionStillCurrent(request, generation, projectId, host)) return;
+
+  // The old buffer remained active throughout the read. Persist anything typed
+  // during it before changing openPath, or that text could be routed to the new
+  // file or discarded with the old editor.
+  if (!(await flushEditsBeforeSwitch(
+    request, generation, projectId, host, prevEditor, prevPath,
+  ))) return;
 
   stashEditorState(prevPath);
   const cached = editorStateCache.get(path);
   const restore = cached && cached.state.doc.toString() === text ? cached : null;
   editorStateCache.delete(path);
 
+  state.openPath = path;
+  updateTreeSelection();
   state.editor?.destroy();
   host.replaceChildren();
   state.editor = createEditor({
@@ -486,8 +567,13 @@ export async function openFile(path) {
     onChange: () => {
       state.dirty = true;
       setSaveState('Unsaved');
+      if (state.pdf?.doc) setPdfFreshness('Preview out of date');
       clearTimeout(state.saveTimer);
-      state.saveTimer = setTimeout(() => saveCurrent(), 1200);
+      state.saveTimer = setTimeout(() => {
+        // doSave already restores the dirty state and reports the error. A
+        // fire-and-forget autosave must still consume the rejection.
+        saveCurrent().catch(() => {});
+      }, 1200);
       scheduleDocMeta();
     },
     onCursor: (line) => {
@@ -498,14 +584,14 @@ export async function openFile(path) {
   });
   if (restore) state.editor.setScrollTop(restore.scrollTop);
   state.editor.focus();
+  state.dirty = false;
   setSaveState('Saved');
   updateDocMeta();
   refreshCommands();
 }
 
 export function saveCurrent(options = {}) {
-  savePromise = savePromise.then(() => doSave(options));
-  return savePromise;
+  return saveQueue.run(() => doSave(options));
 }
 
 async function doSave({ triggerCompile = true } = {}) {
@@ -526,11 +612,13 @@ async function doSave({ triggerCompile = true } = {}) {
     }
     if (current) refreshSymbols();
   } catch (err) {
+    err.saveFailed = true;
     if (state.projectId === projectId && state.openPath === path && state.editor === editor) {
       state.dirty = true;
       setSaveState('Unsaved');
       toast(`Save failed: ${err.message}`, 'error');
     }
+    throw err;
   }
 }
 
@@ -592,27 +680,44 @@ function renderCrumbs() {
 
 async function compile({ auto = false } = {}) {
   if (!state.projectId || !state.tex.available) return;
-  // Claim the flag before any await, or two calls in the same tick both pass.
   if (state.compiling) { pendingCompile = true; return; }
   state.compiling = true;
   refreshCommands();
   const generation = workspaceGeneration;
   const projectId = state.projectId;
-  await saveCurrent({ triggerCompile: false });
-  if (generation !== workspaceGeneration || state.projectId !== projectId) { state.compiling = false; return; }
-  const btn = ui.compileButton;
   const viewer = state.pdf;
-  if (btn) { btn.disabled = true; btn.replaceChildren(el('span', { class: 'spinner' }), 'Compiling'); }
+  const btn = ui.compileButton;
+  let saveFailed = false;
+
   try {
+    if (!(await flushCurrent())) return;
+    if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
+
+    if (btn) {
+      btn.disabled = true;
+      btn.replaceChildren(el('span', { class: 'spinner' }), 'Compiling');
+    }
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
-    // A failed compile surfaces the log; a success returns to the document.
     state.logOpen = !result.ok;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });
-    if (result.pdf) await viewer.load(api.pdfUrl(projectId));
-    else if (!viewer.doc) showPdfEmpty();
-    // Auto-compiles report through the log badge; only manual runs toast.
+
+    // A failed run may leave a previous PDF on disk. Keep the preview already
+    // on screen rather than reloading and presenting that stale output as this
+    // run's result.
+    if (result.ok && result.pdf) {
+      // A new PDF invalidates every match and text position from the previous
+      // document. Closing the bar also invalidates the workspace debounce.
+      closePdfFind();
+      const loaded = await viewer.load(api.pdfUrl(projectId));
+      setPdfFreshness(loaded ? '' : 'Preview could not reload');
+    } else if (viewer.doc) {
+      setPdfFreshness('Last successful build');
+    } else {
+      showPdfEmpty();
+    }
+
     if (!auto) {
       if (result.ok) {
         const warns = result.warnings.length;
@@ -623,14 +728,24 @@ async function compile({ auto = false } = {}) {
     }
   } catch (err) {
     if (generation !== workspaceGeneration || state.projectId !== projectId) return;
-    if (!auto) toast(err.message, 'error');
-    else console.error('Auto-compile failed:', err);
+    saveFailed = !!err.saveFailed;
+    if (!saveFailed) {
+      if (!auto) toast(err.message, 'error');
+      else console.error('Auto-compile failed:', err);
+    }
   } finally {
     if (generation !== workspaceGeneration || state.projectId !== projectId) return;
     state.compiling = false;
-    if (btn) { btn.disabled = !state.tex.available; btn.replaceChildren('Compile'); }
+    if (btn) {
+      btn.disabled = !state.tex.available;
+      btn.replaceChildren('Compile');
+    }
     refreshCommands();
-    if (pendingCompile) { pendingCompile = false; compile({ auto: true }); }
+    if (saveFailed) pendingCompile = false;
+    else if (pendingCompile) {
+      pendingCompile = false;
+      compile({ auto: true });
+    }
   }
 }
 
@@ -670,8 +785,12 @@ async function loadPdf() {
   const projectId = state.projectId;
   const viewer = state.pdf;
   try {
-    await viewer.load(api.pdfUrl(projectId));
-    return generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
+    const loaded = await viewer.load(api.pdfUrl(projectId));
+    const current = generation === workspaceGeneration
+      && state.projectId === projectId
+      && state.pdf === viewer;
+    if (loaded && current) setPdfFreshness('');
+    return loaded && current;
   } catch {
     if (generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer) showPdfEmpty();
     return false;
@@ -764,11 +883,6 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
       applyWidth(w);
       state.pdf?.liveResize?.();
     };
-    // pointercancel matters as much as pointerup: the OS or the browser can end a
-    // pointer sequence without one, and this teardown is what clears the viewer's
-    // `_resizing` flag. Leaving it set disables the PDF's re-fit observer for the
-    // rest of the session, and leaves pointermove attached so the divider keeps
-    // tracking a pointer with no button held.
     let done = false;
     const onUp = () => {
       if (done) return;

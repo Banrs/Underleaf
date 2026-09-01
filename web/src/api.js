@@ -7,8 +7,6 @@ function enc(s) { return encodeURIComponent(s); }
 
 // ---------- browser (fetch) backend ----------
 
-// The server reports failures as { error }, falling back to the status text
-// when the body isn't the JSON we expect.
 async function unwrap(res) {
   if (!res.ok) {
     let msg = res.statusText;
@@ -48,7 +46,6 @@ const fetchApi = {
   renameEntry: (id, from, to) => req('POST', `/api/projects/${enc(id)}/rename`, { from, to }),
   deleteEntry: (id, p) => req('DELETE', `/api/projects/${enc(id)}/file?path=${enc(p)}`),
 
-  // FormData sets its own multipart Content-Type, so this can't go through req.
   upload: async (id, files, dir = '') => {
     const fd = new FormData();
     fd.append('dir', dir);
@@ -90,22 +87,32 @@ const tauriApi = ipc?.fileUrl && {
   renameEntry: (id, from, to) => ipc.invoke('rename_entry', { id, from, to }),
   deleteEntry: (id, p) => ipc.invoke('delete_entry', { id, path: p }),
 
-  // One request per file, each carrying the bytes as its raw body — a JSON
-  // payload would have to spell every byte out as a number. Sequential so a
-  // multi-file drop can't hold every file in memory at once.
+  // Validate the complete set first so a bad path/oversize file cannot leave a
+  // predictable half-import. Raw one-file invokes keep peak memory bounded; an
+  // unavoidable later I/O failure reports which earlier files did land.
   upload: async (id, files, dir = '') => {
+    await ipc.invoke('validate_uploads', {
+      id,
+      dir,
+      files: files.map((f) => ({ path: f._relPath ?? f.name, size: f.size })),
+    });
     const saved = [];
-    for (const f of files) {
-      const result = await ipc.invoke('upload_file', await f.arrayBuffer(), {
-        headers: {
-          'x-project': enc(id),
-          'x-dir': enc(dir),
-          'x-path': enc(f._relPath ?? f.name),
-        },
-      });
-      saved.push(...result.saved);
+    try {
+      for (const f of files) {
+        const result = await ipc.invoke('upload_file', await f.arrayBuffer(), {
+          headers: {
+            'x-project': enc(id),
+            'x-dir': enc(dir),
+            'x-path': enc(f._relPath ?? f.name),
+          },
+        });
+        saved.push(...result.saved);
+      }
+      return { saved };
+    } catch (err) {
+      err.saved = saved;
+      throw err;
     }
-    return { saved };
   },
 
   compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),

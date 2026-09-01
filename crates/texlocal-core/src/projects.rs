@@ -1,6 +1,7 @@
 //! Project and file management, ported from server/projects.js. Every project
 //! is a directory under the data dir; all returned paths use forward slashes.
 
+use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -58,7 +59,7 @@ pub struct Symbols {
     pub labels: Vec<String>,
 }
 
-/// One scannable file's identity for cache invalidation: (rel path, mtime, len).
+/// One scannable file's identity for cache invalidation: (rel path, mtime ns, len).
 pub type FileStamp = (String, u64, u64);
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
@@ -67,6 +68,51 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn mtime_ns(meta: &fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .and_then(|d| u64::try_from(d.as_nanos()).ok())
+        .unwrap_or(0)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EntryKind {
+    File,
+    Dir,
+    Skip,
+}
+
+// Directory symlinks are skipped to prevent cycles. File symlinks are retained
+// only when their resolved target remains inside the canonical project root.
+fn classify_entry(root_canonical: &Path, entry: &fs::DirEntry) -> Result<EntryKind, CoreError> {
+    let file_type = entry.file_type()?;
+    if file_type.is_dir() {
+        return Ok(EntryKind::Dir);
+    }
+    if file_type.is_file() {
+        return Ok(EntryKind::File);
+    }
+    if !file_type.is_symlink() {
+        return Ok(EntryKind::Skip);
+    }
+
+    let target = match fs::canonicalize(entry.path()) {
+        Ok(target) => target,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(EntryKind::Skip),
+        Err(err) => return Err(err.into()),
+    };
+    if target != root_canonical && !target.starts_with(root_canonical) {
+        return Ok(EntryKind::Skip);
+    }
+    Ok(if fs::metadata(entry.path())?.is_file() {
+        EntryKind::File
+    } else {
+        // Following a directory link can duplicate trees or recurse forever.
+        EntryKind::Skip
+    })
 }
 
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
@@ -143,23 +189,23 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     })
 }
 
-/// Delete to the platform's trash, so a mis-click on a project is recoverable.
-/// One call covers both desktops — the Recycle Bin on Windows, the Trash on
-/// macOS — with no per-OS branch.
-///
-/// Trashing can legitimately fail: the freedesktop spec wants a trash directory
-/// on the same filesystem, which a temp dir or a network mount may not have.
-/// A path that cannot be trashed is still removed, because the caller asked for
-/// it to be gone.
-fn discard(path: &Path) -> std::io::Result<()> {
-    if trash::delete(path).is_ok() {
-        return Ok(());
-    }
-    if path.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    }
+fn discard_using<E, F>(path: &Path, move_to_trash: F) -> Result<(), CoreError>
+where
+    E: Display,
+    F: FnOnce(&Path) -> Result<(), E>,
+{
+    move_to_trash(path).map_err(|err| {
+        CoreError::internal(format!(
+            "Could not move the item to Trash or Recycle Bin: {err}"
+        ))
+    })
+}
+
+/// Delete to the platform's trash, so a mis-click is recoverable. A trash
+/// failure is reported and the original is left in place; it must never become
+/// an implicit permanent-delete request.
+fn discard(path: &Path) -> Result<(), CoreError> {
+    discard_using(path, |candidate| trash::delete(candidate))
 }
 
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
@@ -171,7 +217,11 @@ pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
 // ---------- files ----------
 
 pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
-    fn walk(dir: &Path, rel_prefix: &str) -> Result<Vec<TreeNode>, CoreError> {
+    fn walk(
+        root_canonical: &Path,
+        dir: &Path,
+        rel_prefix: &str,
+    ) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
@@ -187,21 +237,23 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
             if rel == BUILD_DIR {
                 continue;
             }
-            if entry.file_type()?.is_dir() {
-                let children = walk(&entry.path(), &rel)?;
-                nodes.push(TreeNode {
-                    kind: "dir",
-                    name,
-                    path: rel,
-                    children: Some(children),
-                });
-            } else {
-                nodes.push(TreeNode {
+            match classify_entry(root_canonical, &entry)? {
+                EntryKind::Dir => {
+                    let children = walk(root_canonical, &entry.path(), &rel)?;
+                    nodes.push(TreeNode {
+                        kind: "dir",
+                        name,
+                        path: rel,
+                        children: Some(children),
+                    });
+                }
+                EntryKind::File => nodes.push(TreeNode {
                     kind: "file",
                     name,
                     path: rel,
                     children: None,
-                });
+                }),
+                EntryKind::Skip => {}
             }
         }
         nodes.sort_by(|a, b| {
@@ -212,10 +264,6 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
                     std::cmp::Ordering::Greater
                 };
             }
-            // Case-insensitive first, then lowercase before uppercase on a
-            // tie, which is the order localeCompare produced for the sidebar.
-            // Not a full collation: without ICU, non-ASCII names sort after
-            // ASCII ones rather than beside their base letter.
             a.name
                 .to_lowercase()
                 .cmp(&b.name.to_lowercase())
@@ -223,7 +271,9 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         });
         Ok(nodes)
     }
-    walk(root, "")
+
+    let root_canonical = fs::canonicalize(root)?;
+    walk(&root_canonical, root, "")
 }
 
 const TEXT_EXT: &[&str] = &[
@@ -266,18 +316,30 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::rename(&src, &dest)?;
-    let from_rel = crate::paths::safe_rel_file(root, from).unwrap_or_else(|_| from.to_string());
-    let to_rel = crate::paths::safe_rel_file(root, to).unwrap_or_else(|_| to.to_string());
+
+    let from_rel = crate::paths::safe_rel_file(root, from)?;
+    let to_rel = crate::paths::safe_rel_file(root, to)?;
     let settings = read_settings(root);
-    // The stored value may carry either separator (old files, hand edits);
-    // compare in canonical slash form.
     let mut main_file = settings.main_file.replace('\\', "/");
     let prefix = format!("{from_rel}/");
-    if main_file == from_rel || main_file.starts_with(&prefix) {
+    let updates_main = main_file == from_rel || main_file.starts_with(&prefix);
+    if updates_main {
         main_file = format!("{to_rel}{}", &main_file[from_rel.len()..]);
-        write_settings(root, &json!({ "mainFile": main_file }))?;
     }
+
+    fs::rename(&src, &dest)?;
+    if updates_main {
+        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file.clone() })) {
+            if let Err(rollback_err) = fs::rename(&dest, &src) {
+                return Err(CoreError::internal(format!(
+                    "{}; rename rollback failed: {}",
+                    settings_err.message, rollback_err
+                )));
+            }
+            return Err(settings_err);
+        }
+    }
+
     Ok(RenameResult {
         ok: true,
         from: from_rel,
@@ -288,15 +350,14 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
-    let target = crate::paths::safe_rel_file(root, rel).unwrap_or_else(|_| rel.to_string());
+    let target = crate::paths::safe_rel_file(root, rel)?;
     let main_file = read_settings(root).main_file.replace('\\', "/");
     if main_file == target || main_file.starts_with(&format!("{target}/")) {
         return Err(CoreError::conflict(
             "Choose a different main file before deleting this entry",
         ));
     }
-    // force: true — deleting a missing entry is fine
-    if fs::metadata(&abs).is_ok() {
+    if fs::symlink_metadata(&abs).is_ok() {
         discard(&abs)?;
     }
     Ok(())
@@ -304,21 +365,14 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
 
 // ---------- search ----------
 
-/// Lowercase with a 1:1 char mapping (first char of each lowering), so match
-/// columns computed on the lowered text index the original safely.
 fn lower_chars(s: &str) -> Vec<char> {
     let mut out = Vec::new();
     lower_into(s, &mut out);
     out
 }
 
-/// Folds into a caller-owned buffer, so a scan over many lines reuses one
-/// allocation instead of making one per line.
 fn lower_into(s: &str, out: &mut Vec<char>) {
     out.clear();
-    // `to_lowercase` builds an iterator and consults a table for every
-    // character; ASCII is the whole of a normal .tex file and folds with one
-    // branch. Same answer, since for ASCII the two agree by definition.
     out.extend(s.chars().map(|c| {
         if c.is_ascii() {
             c.to_ascii_lowercase()
@@ -335,7 +389,6 @@ fn find_from(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
     (from..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
 }
 
-/// Case-insensitive full-text search across the project's text files.
 pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
     let q = lower_chars(query);
     if q.is_empty() {
@@ -345,6 +398,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
 
     fn walk(
         root: &Path,
+        root_canonical: &Path,
         dir: &Path,
         q: &[char],
         limit: usize,
@@ -361,9 +415,13 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
                 continue;
             }
             let abs = entry.path();
-            if entry.file_type()?.is_dir() {
-                walk(root, &abs, q, limit, hits, lower)?;
-                continue;
+            match classify_entry(root_canonical, &entry)? {
+                EntryKind::Dir => {
+                    walk(root, root_canonical, &abs, q, limit, hits, lower)?;
+                    continue;
+                }
+                EntryKind::File => {}
+                EntryKind::Skip => continue,
             }
             let rel = match crate::paths::rel_to_root(root, &abs) {
                 Some(r) => r,
@@ -377,9 +435,6 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
                 if hits.len() >= limit {
                     break;
                 }
-                // Almost every line is a miss, so a miss must cost as little as
-                // possible: fold into the reused buffer, and don't build the
-                // original-case copy until there is a hit to quote from it.
                 lower_into(line, lower);
                 let col = match find_from(lower, q, 0) {
                     Some(c) => c,
@@ -404,13 +459,21 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         Ok(())
     }
 
-    walk(root, root, &q, limit, &mut hits, &mut Vec::new())?;
+    let root_canonical = fs::canonicalize(root)?;
+    walk(
+        root,
+        &root_canonical,
+        root,
+        &q,
+        limit,
+        &mut hits,
+        &mut Vec::new(),
+    )?;
     Ok(hits)
 }
 
 // ---------- symbols ----------
 
-/// Collect citation keys and \label names across the project (autocomplete).
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     use regex::Regex;
     use std::sync::OnceLock;
@@ -423,6 +486,7 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut labels: Vec<String> = Vec::new();
 
     fn walk(
+        root_canonical: &Path,
         dir: &Path,
         bib_re: &regex::Regex,
         label_re: &regex::Regex,
@@ -436,9 +500,13 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
                 continue;
             }
             let abs = entry.path();
-            if entry.file_type()?.is_dir() {
-                walk(&abs, bib_re, label_re, keys, labels)?;
-                continue;
+            match classify_entry(root_canonical, &entry)? {
+                EntryKind::Dir => {
+                    walk(root_canonical, &abs, bib_re, label_re, keys, labels)?;
+                    continue;
+                }
+                EntryKind::File => {}
+                EntryKind::Skip => continue,
             }
             let ext = abs
                 .extension()
@@ -459,7 +527,15 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
         Ok(())
     }
 
-    walk(root, bib_re, label_re, &mut keys, &mut labels)?;
+    let root_canonical = fs::canonicalize(root)?;
+    walk(
+        &root_canonical,
+        root,
+        bib_re,
+        label_re,
+        &mut keys,
+        &mut labels,
+    )?;
 
     fn dedup(v: Vec<String>) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
@@ -471,12 +547,13 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     })
 }
 
-/// Stat-only fingerprint of every file `scan_symbols` would read, sorted for a
-/// stable comparison. Callers cache the scan against this: the walk plus a stat
-/// per file is far cheaper than reading and regex-scanning each one, and the UI
-/// re-scans after every save.
 pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
-    fn walk(root: &Path, dir: &Path, out: &mut Vec<FileStamp>) -> Result<(), CoreError> {
+    fn walk(
+        root: &Path,
+        root_canonical: &Path,
+        dir: &Path,
+        out: &mut Vec<FileStamp>,
+    ) -> Result<(), CoreError> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -484,9 +561,13 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
                 continue;
             }
             let abs = entry.path();
-            if entry.file_type()?.is_dir() {
-                walk(root, &abs, out)?;
-                continue;
+            match classify_entry(root_canonical, &entry)? {
+                EntryKind::Dir => {
+                    walk(root, root_canonical, &abs, out)?;
+                    continue;
+                }
+                EntryKind::File => {}
+                EntryKind::Skip => continue,
             }
             let ext = abs
                 .extension()
@@ -499,15 +580,31 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
                 continue;
             };
             let meta = entry.metadata()?;
-            out.push((rel, mtime_ms(&meta), meta.len()));
+            out.push((rel, mtime_ns(&meta), meta.len()));
         }
         Ok(())
     }
 
     let mut out = Vec::new();
-    walk(root, root, &mut out)?;
-    // read_dir order is filesystem-defined; sort so an unchanged project always
-    // produces an identical fingerprint.
+    let root_canonical = fs::canonicalize(root)?;
+    walk(root, &root_canonical, root, &mut out)?;
     out.sort();
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discard_using;
+
+    #[test]
+    fn failed_trash_operation_never_falls_back_to_permanent_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keep.tex");
+        std::fs::write(&path, "important").unwrap();
+
+        let result = discard_using(&path, |_| Err::<(), _>("trash unavailable"));
+
+        assert!(result.is_err());
+        assert!(path.exists(), "the original must remain after trash failure");
+    }
 }

@@ -1,11 +1,11 @@
-//! The command surface, one-for-one with the 22 IPC channels that
-//! electron/main.mjs exposed. Every path argument goes through the core's
-//! guards; nothing here reimplements them.
+//! The desktop command surface. Filesystem operations delegate path validation
+//! to texlocal-core and invalidate project caches after successful mutations.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, State};
@@ -19,16 +19,9 @@ use texlocal_core::synctex::{self, ForwardLoc, InverseLoc};
 use texlocal_core::{compile as core_compile, paths, zipexport};
 
 use crate::error::{CmdError, CmdResult};
-use crate::state::AppState;
+use crate::state::{AppState, FlushOutcome};
 
 const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
-
-// Every command that touches the filesystem is `async`. A synchronous
-// #[tauri::command] runs inline on the thread that received the call — the one
-// driving the window — so a 100 MB upload write, a project-wide search fired
-// per keystroke, or deleting a project tree would stall redraws and the menu.
-// Async commands run on the async runtime instead. menu_sync stays
-// synchronous: native menu objects want the main thread.
 
 fn root(state: &AppState, id: &str) -> CmdResult<PathBuf> {
     Ok(paths::project_root(&state.data_dir, id)?)
@@ -70,6 +63,22 @@ impl DialogOutcome {
             ok: false,
             canceled: true,
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadSpec {
+    pub path: String,
+    pub size: usize,
+}
+
+fn upload_rel(dir: &str, name: &str) -> String {
+    let name = name.replace('\\', "/");
+    if dir.is_empty() {
+        name
+    } else {
+        format!("{}/{}", dir.trim_end_matches('/'), name)
     }
 }
 
@@ -189,11 +198,13 @@ pub async fn write_file(
     path: String,
     text: Option<String>,
 ) -> CmdResult<WriteAck> {
-    let abs = paths::safe_path(&root(&state, &id)?, &path)?;
+    let root = root(&state, &id)?;
+    let abs = paths::safe_path(&root, &path)?;
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(abs, text.unwrap_or_default())?;
+    state.forget_project(&root);
     Ok(WriteAck { ok: true })
 }
 
@@ -204,11 +215,10 @@ pub async fn create_entry(
     path: String,
     dir: Option<bool>,
 ) -> CmdResult<()> {
-    Ok(projects::create_file(
-        &root(&state, &id)?,
-        &path,
-        dir.unwrap_or(false),
-    )?)
+    let root = root(&state, &id)?;
+    projects::create_file(&root, &path, dir.unwrap_or(false))?;
+    state.forget_project(&root);
+    Ok(())
 }
 
 #[tauri::command]
@@ -218,17 +228,56 @@ pub async fn rename_entry(
     from: String,
     to: String,
 ) -> CmdResult<RenameResult> {
-    Ok(projects::rename_entry(&root(&state, &id)?, &from, &to)?)
+    let root = root(&state, &id)?;
+    let result = projects::rename_entry(&root, &from, &to)?;
+    state.forget_project(&root);
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
-    Ok(projects::delete_entry(&root(&state, &id)?, &path)?)
+    let root = root(&state, &id)?;
+    projects::delete_entry(&root, &path)?;
+    state.forget_project(&root);
+    Ok(())
 }
 
-/// One file per invoke, body sent raw. The metadata rides in percent-encoded
-/// headers because the body is the file itself — serializing bytes as a JSON
-/// number array (what the Electron path did) costs several times the payload.
+/// Validate the complete desktop upload before the first write. This prevents a
+/// late unsafe path or oversize file from producing a predictable half-import.
+#[tauri::command]
+pub async fn validate_uploads(
+    state: State<'_, AppState>,
+    id: String,
+    dir: Option<String>,
+    files: Vec<UploadSpec>,
+) -> CmdResult<()> {
+    let root = root(&state, &id)?;
+    let dir = dir.unwrap_or_default();
+    let mut seen = HashSet::new();
+    for file in files {
+        if file.size > UPLOAD_MAX_BYTES {
+            return Err(CmdError(format!(
+                "File exceeds the {} MB upload limit",
+                UPLOAD_MAX_BYTES / 1024 / 1024
+            )));
+        }
+        let rel = upload_rel(&dir, &file.path);
+        let abs = paths::safe_path(&root, &rel)?;
+        let key = if cfg!(any(windows, target_os = "macos")) {
+            abs.to_string_lossy().to_ascii_lowercase()
+        } else {
+            abs.to_string_lossy().into_owned()
+        };
+        if !seen.insert(key) {
+            return Err(CmdError("The upload contains duplicate paths".into()));
+        }
+    }
+    Ok(())
+}
+
+/// One file per invoke, body sent raw. The renderer first calls
+/// validate_uploads for the whole batch, then reports any unavoidable I/O
+/// partial success explicitly.
 #[tauri::command]
 pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> CmdResult<Saved> {
     let header = |name: &str| -> CmdResult<String> {
@@ -254,19 +303,13 @@ pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> Cm
     }
 
     let root = root(&state, &header("x-project")?)?;
-    let dir = header("x-dir")?;
-    let name = header("x-path")?.replace('\\', "/");
-    let rel = if dir.is_empty() {
-        name
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    };
-
+    let rel = upload_rel(&header("x-dir")?, &header("x-path")?);
     let abs = paths::safe_path(&root, &rel)?;
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(abs, bytes)?;
+    state.forget_project(&root);
     Ok(Saved { saved: vec![rel] })
 }
 
@@ -288,11 +331,6 @@ pub async fn compile(
     Ok(result)
 }
 
-/// A compile long enough to be worth waiting for usually means the writer has
-/// switched to another window, so report the result the way the OS does — one
-/// call, Notification Center on macOS and a toast on Windows. Stays silent
-/// while the window has focus: the log pane already says all of this, and a
-/// notification for something already on screen is just noise.
 fn announce(app: &AppHandle, result: &CompileResult) {
     use tauri_plugin_notification::NotificationExt;
 
@@ -312,8 +350,6 @@ fn announce(app: &AppHandle, result: &CompileResult) {
             n => format!("Compile failed — {n} errors"),
         }
     };
-    // Cosmetic: a notification the user has denied permission for must not
-    // turn a successful compile into a failed command.
     let _ = app
         .notification()
         .builder()
@@ -347,9 +383,6 @@ pub async fn synctex_inverse(
 
 // ---------- export / save-as ----------
 
-/// Ask for a destination path. The dialog runs on its own thread and reports
-/// back through a channel, so no command ever blocks the main thread waiting
-/// on the user.
 async fn ask_save_path(
     app: &AppHandle,
     default_name: &str,
@@ -404,29 +437,22 @@ pub async fn save_pdf_as(
 
 // ---------- shell plumbing ----------
 
-/// The renderer publishes its whole menu spec whenever a command's title or
-/// enabled state changes; see menu.rs for what that costs (very little after
-/// the first call).
 #[tauri::command]
 pub fn menu_sync(app: AppHandle, spec: Vec<crate::menu::GroupSpec>) -> CmdResult<()> {
     Ok(crate::menu::sync(&app, spec)?)
 }
 
-/// The renderer acknowledging that a pending edit has reached disk. See
-/// window.rs for the handshake this completes.
 #[tauri::command]
-pub fn quit_flush_done(state: State<'_, AppState>) {
+pub fn quit_flush_done(
+    state: State<'_, AppState>,
+    ok: bool,
+    error: Option<String>,
+) {
     if let Some(tx) = state.flush_ack.lock().unwrap().take() {
-        let _ = tx.send(());
+        let _ = tx.send(FlushOutcome { ok, error });
     }
 }
 
-/// The user's system accent colour, so the interface highlights match the rest
-/// of their desktop. `None` when the platform doesn't report one; the UI then
-/// keeps the colour from the design tokens.
-///
-/// Synchronous on purpose: it reads AppKit on macOS, which wants the main
-/// thread, and it is one property read rather than any kind of work.
 #[tauri::command]
 pub fn system_accent() -> Option<String> {
     crate::accent::system_accent()

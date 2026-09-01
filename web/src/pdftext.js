@@ -20,14 +20,16 @@ export function pageText(items) {
 }
 
 // Every occurrence of `query`, case-insensitively. Ranges index into the string
-// pageText built, not into any one item.
-export function matchRanges(text, query) {
+// pageText built, not into any one item. `limit` lets the viewer stop scanning a
+// pathological one-character query once it has enough results to display.
+export function matchRanges(text, query, limit = Number.POSITIVE_INFINITY) {
   const q = query.toLowerCase();
-  if (!q) return [];
+  if (!q || limit <= 0) return [];
   const hay = text.toLowerCase();
   const out = [];
   for (let at = hay.indexOf(q); at !== -1; at = hay.indexOf(q, at + q.length)) {
     out.push({ start: at, end: at + q.length });
+    if (out.length >= limit) break;
   }
   return out;
 }

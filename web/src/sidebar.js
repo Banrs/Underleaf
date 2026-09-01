@@ -276,8 +276,8 @@ function rowMenu(e, node) {
         const ok = await confirmModal({
           title: `Delete “${node.name}”?`,
           body: node.type === 'dir'
-            ? 'The folder and everything inside it will be permanently deleted.'
-            : 'This file will be permanently deleted.',
+            ? 'Delete this folder and everything inside it?'
+            : 'Delete this file?',
         });
         if (!ok) return;
         if (containsPath(node.path, state.settings?.mainFile)) {
@@ -285,8 +285,12 @@ function rowMenu(e, node) {
           return;
         }
         try {
-          if (containsPath(node.path, state.openPath)) host.closeOpenFile?.();
+          await host.beforePathMutation?.();
+          const closesOpenFile = containsPath(node.path, state.openPath);
           await api.deleteEntry(state.projectId, node.path);
+          // Keep the buffer intact until deletion has actually succeeded. On a
+          // Trash/Recycle Bin failure the user can still save or copy its text.
+          if (closesOpenFile) host.closeOpenFile?.();
           for (const dir of [...openDirs]) if (containsPath(node.path, dir)) openDirs.delete(dir);
           persistOpenDirs();
           await refreshTree();
@@ -382,7 +386,16 @@ async function upload(files) {
     toast(`Uploaded ${saved.length} file${saved.length === 1 ? '' : 's'}`);
     await refreshTree();
     host.onFilesChanged?.();
-  } catch (err) { toast(err.message, 'error'); }
+  } catch (err) {
+    const saved = err.saved ?? [];
+    if (saved.length) {
+      await refreshTree();
+      host.onFilesChanged?.();
+      toast(`Upload stopped after ${saved.length} file${saved.length === 1 ? '' : 's'}: ${err.message}`, 'error');
+    } else {
+      toast(err.message, 'error');
+    }
+  }
 }
 
 // ---------- outline ----------
@@ -480,4 +493,15 @@ async function runSearch() {
     }
   }
   results.replaceChildren(...out);
+}
+
+// Cancel work whose callbacks close over the previous project. Without this a
+// debounced search can update a newly mounted sidebar with an old project's
+// response.
+export function destroySidebar() {
+  clearTimeout(searchTimer);
+  searchTimer = undefined;
+  host = {};
+  nodes = {};
+  openDirs = new Set();
 }

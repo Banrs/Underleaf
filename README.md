@@ -40,7 +40,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns
 - **Logs in the PDF pane** (Overleaf-style): badge on the toolbar, parsed errors click through to source, raw log view
 - **PDF preview**: trackpad pinch or ⌘-scroll zoom, zoom %, fit width/height, page tracking
-- **Find in the PDF** (`⌘⌥F`): searches the compiled document, highlights every hit over the page and steps through them with Enter / Shift-Enter — matches split across lines or text runs are found too
+- **Find in the PDF** (`⌘⌥F`): searches the compiled document, highlights every hit over the page and steps through them with Enter / Shift-Enter — matches split across pdf.js text runs are found, while real line breaks remain boundaries
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
 - **Native menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
 - **Deletes go to the Trash** (Recycle Bin on Windows), so removing a file or a whole project is recoverable
@@ -137,15 +137,16 @@ Every pull request builds installers for macOS (both architectures) and
 Windows and attaches them as artifacts, which is how a change gets tested on
 hardware CI can't assert against.
 
-To publish a release: bump the version in `package.json` and
-`src-tauri/tauri.conf.json`, then push a `v*` tag. CI builds the matrix and
-drafts a release with the installers attached.
+To publish a release: bump the version in `package.json`, the workspace
+`Cargo.toml`, and `src-tauri/tauri.conf.json`, then push a matching `v*` tag.
+CI verifies all three versions before drafting the release and attaching the
+installers.
 
 ## Security notes
 
 - The desktop app opens no network ports at all; browser mode binds to `127.0.0.1` only.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
-- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project by editing the project's `.texlocal.json` on disk if a package needs it — the file is reserved and not writable through the app's file APIs.
+- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project through Settings; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 
 ## License
 

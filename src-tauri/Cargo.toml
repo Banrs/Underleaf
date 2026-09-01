@@ -22,7 +22,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 texlocal-core = { path = "../crates/texlocal-core" }
-tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "time"] }
 
 # The system accent colour, read through each platform's own API — see
 # src/accent.rs. Both crates are already in the tree via tauri, so declaring
