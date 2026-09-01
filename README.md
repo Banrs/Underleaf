@@ -43,6 +43,8 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Find in the PDF** (`⌘⌥F`): searches the compiled document, highlights every hit over the page and steps through them with Enter / Shift-Enter — matches split across lines or text runs are found too
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
 - **Native menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
+- **Deletes go to the Trash** (Recycle Bin on Windows), so removing a file or a whole project is recoverable
+- **Compile notifications**: when a compile finishes while you're in another window, the result arrives as a system notification — silent while TeXLocal has focus
 - **Settings** (`⌘,`): grouped System-Settings-style dialog — theme, PDF paper (white by default; dark inversion as a night-reading option), auto-compile, editor font size, interface scale, per-project TeX engine
 - **Interface** built from Apple's macOS UI kit values ([docs/design-tokens.md](docs/design-tokens.md)): 52px unified title bar, 256px vibrant sidebar, HIG type ramp and system colors; edge-to-edge by default with an optional Floating-panels layout. On Windows the same layout runs under a standard title bar.
 - Autosave, `⌘S` save / `⌘⏎` compile, `⌘F` find & replace, `⌘⇧F` find in project, `⌘/` comment, `⌘\` toggle sidebar, `⌘⇧\` toggle PDF, `⌘L` go to line, `⌘⌥F` find in PDF, `⌘,` settings

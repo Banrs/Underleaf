@@ -274,15 +274,52 @@ pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> Cm
 
 #[tauri::command]
 pub async fn compile(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     options: Option<CompileOverrides>,
 ) -> CmdResult<CompileResult> {
     let root = root(&state, &id)?;
-    Ok(state
+    let result = state
         .compile
         .compile(&root, &options.unwrap_or_default())
-        .await?)
+        .await?;
+    announce(&app, &result);
+    Ok(result)
+}
+
+/// A compile long enough to be worth waiting for usually means the writer has
+/// switched to another window, so report the result the way the OS does — one
+/// call, Notification Center on macOS and a toast on Windows. Stays silent
+/// while the window has focus: the log pane already says all of this, and a
+/// notification for something already on screen is just noise.
+fn announce(app: &AppHandle, result: &CompileResult) {
+    use tauri_plugin_notification::NotificationExt;
+
+    let focused = app
+        .get_webview_window(crate::window::MAIN_WINDOW)
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(true);
+    if focused {
+        return;
+    }
+    let body = if result.ok {
+        format!("Compiled in {:.1}s", result.duration_ms as f64 / 1000.0)
+    } else {
+        match result.errors.len() {
+            0 => "Compile failed".to_string(),
+            1 => "Compile failed — 1 error".to_string(),
+            n => format!("Compile failed — {n} errors"),
+        }
+    };
+    // Cosmetic: a notification the user has denied permission for must not
+    // turn a successful compile into a failed command.
+    let _ = app
+        .notification()
+        .builder()
+        .title("TeXLocal")
+        .body(body)
+        .show();
 }
 
 #[tauri::command]

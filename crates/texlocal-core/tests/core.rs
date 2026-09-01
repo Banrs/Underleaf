@@ -66,6 +66,21 @@ fn renaming_a_directory_keeps_the_main_file_setting_valid() {
 }
 
 #[test]
+fn deleting_an_entry_removes_it_whether_or_not_a_trash_is_available() {
+    let data = data_dir();
+    let root = project(data.path(), "discard-test");
+    create_file(&root, "notes/scratch.tex", false).unwrap();
+    assert!(root.join("notes/scratch.tex").exists());
+
+    delete_entry(&root, "notes/scratch.tex").unwrap();
+
+    // The entry is gone from the project either way: a temp dir usually has no
+    // trash directory on its filesystem, so this exercises the fallback.
+    assert!(!root.join("notes/scratch.tex").exists());
+    assert!(root.join("notes").exists(), "only the file was asked for");
+}
+
+#[test]
 fn the_active_main_file_and_its_parent_cannot_be_deleted() {
     let data = data_dir();
     let root = project(data.path(), "delete-test");

@@ -1122,6 +1122,22 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   }
 }
 
+/* macOS "Increase contrast" and the Windows contrast setting both surface here,
+   so one block serves both. Secondary text and separators are what the HIG
+   tones down by default and what stops being legible first. */
+@media (prefers-contrast: more) {
+  :root {
+    --label-2: rgba(0, 0, 0, 0.75);
+    --label-3: rgba(0, 0, 0, 0.5);
+    --separator: rgba(0, 0, 0, 0.6);
+  }
+  [data-theme="dark"] {
+    --label-2: rgba(255, 255, 255, 0.85);
+    --label-3: rgba(255, 255, 255, 0.6);
+    --separator: rgba(255, 255, 255, 0.5);
+  }
+}
+
 /* ---------- narrow windows ---------- */
 
 @media (max-width: 900px) {

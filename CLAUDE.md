@@ -59,12 +59,32 @@ These are load-bearing. Changing them needs a deliberate decision, not a drive-b
 - **`server/` and `crates/texlocal-core/` implement the same logic twice** — the
   Express browser mode (`npm run dev`) and the Tauri desktop app. This
   duplication is deliberate. Change one, change the other, and keep both test
-  suites passing or they drift apart silently.
+  suites passing or they drift apart silently. One deliberate exception: the
+  core deletes to the platform trash, the server unlinks. Browser mode may be
+  serving from a headless box where there is no trash to move a file to.
 - **Never use `PredefinedMenuItem::quit`.** Quit must route through the
   flush-before-exit handshake in `src-tauri/src/window.rs` or unsaved buffers
   are lost.
 - **Menu items are built once, then diff-applied.** An item's *shape*
   (checkbox vs plain) is fixed at build time; only enabled/text/checked update.
+
+## Prefer one declaration that resolves natively
+
+Where both desktops share a *concept*, say it once and let the toolkit pick the
+native primitive: `CmdOrCtrl` accelerators, `PredefinedMenuItem` roles, the
+dialog and opener plugins, `trash::delete`, notifications, and the
+`-apple-system`/`Segoe UI` font stack all do this. `prefers-color-scheme`,
+`prefers-reduced-motion` and `prefers-contrast` do the same for OS settings.
+
+Reach for `cfg(target_os)` only where the platforms disagree on the concept
+itself — the overlay title bar and traffic lights, the macOS application menu,
+the process-tree kill. Those branches are conventions worth keeping apart, not
+duplication worth removing.
+
+Two that look like they belong in the first group but do not: CSS `AccentColor`
+(Chromium dropped it, so WebView2 has none, and browsers pin a fixed value
+against fingerprinting) and `set_badge_count` (macOS only — Windows needs
+`set_overlay_icon`).
 
 ## Layout
 

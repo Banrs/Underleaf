@@ -143,9 +143,28 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     })
 }
 
+/// Delete to the platform's trash, so a mis-click on a project is recoverable.
+/// One call covers both desktops — the Recycle Bin on Windows, the Trash on
+/// macOS — with no per-OS branch.
+///
+/// Trashing can legitimately fail: the freedesktop spec wants a trash directory
+/// on the same filesystem, which a temp dir or a network mount may not have.
+/// A path that cannot be trashed is still removed, because the caller asked for
+/// it to be gone.
+fn discard(path: &Path) -> std::io::Result<()> {
+    if trash::delete(path).is_ok() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
     let root = project_root(data_dir, id)?;
-    fs::remove_dir_all(root)?;
+    discard(&root)?;
     Ok(())
 }
 
@@ -276,10 +295,9 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
             "Choose a different main file before deleting this entry",
         ));
     }
-    match fs::metadata(&abs) {
-        Ok(meta) if meta.is_dir() => fs::remove_dir_all(&abs)?,
-        Ok(_) => fs::remove_file(&abs)?,
-        Err(_) => {} // force: true — deleting a missing entry is fine
+    // force: true — deleting a missing entry is fine
+    if fs::metadata(&abs).is_ok() {
+        discard(&abs)?;
     }
     Ok(())
 }
