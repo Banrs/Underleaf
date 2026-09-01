@@ -26,8 +26,7 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
 
     let result = (|| -> Result<(), CoreError> {
         let mut writer = ZipWriter::new(file);
-        let options =
-            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         let mut visited = HashSet::new();
         visited.insert(root_canonical.clone());
         add_dir(
@@ -75,10 +74,7 @@ fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
         .unwrap_or_else(|| "archive.zip".into());
     for _ in 0..100 {
         let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(
-            ".{name}.texlocal-{}-{n}.tmp",
-            std::process::id()
-        ));
+        let candidate = parent.join(format!(".{name}.texlocal-{}-{n}.tmp", std::process::id()));
         match OpenOptions::new()
             .write(true)
             .create_new(true)

@@ -443,11 +443,7 @@ pub fn menu_sync(app: AppHandle, spec: Vec<crate::menu::GroupSpec>) -> CmdResult
 }
 
 #[tauri::command]
-pub fn quit_flush_done(
-    state: State<'_, AppState>,
-    ok: bool,
-    error: Option<String>,
-) {
+pub fn quit_flush_done(state: State<'_, AppState>, ok: bool, error: Option<String>) {
     if let Some(tx) = state.flush_ack.lock().unwrap().take() {
         let _ = tx.send(FlushOutcome { ok, error });
     }

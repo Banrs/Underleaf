@@ -41,11 +41,23 @@ fn settings_reject_unsafe_compiler_inputs() {
     let root = project(data.path(), "settings-test");
 
     let err = write_settings(&root, &json!({ "shellEscape": "false" })).unwrap_err();
-    assert!(err.message.contains("shellEscape must be a boolean"), "{}", err.message);
+    assert!(
+        err.message.contains("shellEscape must be a boolean"),
+        "{}",
+        err.message
+    );
     let err = write_settings(&root, &json!({ "mainFile": "-interaction.tex" })).unwrap_err();
-    assert!(err.message.contains("Path segments cannot start"), "{}", err.message);
+    assert!(
+        err.message.contains("Path segments cannot start"),
+        "{}",
+        err.message
+    );
     let err = write_settings(&root, &json!({ "mainFile": "../outside.tex" })).unwrap_err();
-    assert!(err.message.contains("Path escapes project"), "{}", err.message);
+    assert!(
+        err.message.contains("Path escapes project"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -79,9 +91,15 @@ fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
     let path = root.join("notes/scratch.tex");
     let result = delete_entry(&root, "notes/scratch.tex");
     if result.is_ok() {
-        assert!(!path.exists(), "a successful trash operation removes the entry");
+        assert!(
+            !path.exists(),
+            "a successful trash operation removes the entry"
+        );
     } else {
-        assert!(path.exists(), "a failed trash operation must leave the entry intact");
+        assert!(
+            path.exists(),
+            "a failed trash operation must leave the entry intact"
+        );
     }
     assert!(root.join("notes").exists(), "only the file was requested");
 }
@@ -93,13 +111,19 @@ fn the_active_main_file_and_its_parent_cannot_be_deleted() {
     create_file(&root, "chapters/main.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
     let err = delete_entry(&root, "chapters/main.tex").unwrap_err();
-    assert!(err.message.contains("different main file"), "{}", err.message);
+    assert!(
+        err.message.contains("different main file"),
+        "{}",
+        err.message
+    );
     let err = delete_entry(&root, "chapters").unwrap_err();
-    assert!(err.message.contains("different main file"), "{}", err.message);
-    let raw: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join(".texlocal.json")).unwrap(),
-    )
-    .unwrap();
+    assert!(
+        err.message.contains("different main file"),
+        "{}",
+        err.message
+    );
+    let raw: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
     assert_eq!(raw["mainFile"], "chapters/main.tex");
 }
 
@@ -107,11 +131,20 @@ fn the_active_main_file_and_its_parent_cannot_be_deleted() {
 fn path_traversal_is_rejected_at_every_boundary() {
     let data = data_dir();
     let root = project(data.path(), "paths-test");
-    assert!(project_root(data.path(), "../etc").unwrap_err().message.contains("Bad project id"));
+    assert!(project_root(data.path(), "../etc")
+        .unwrap_err()
+        .message
+        .contains("Bad project id"));
     for path in ["../x", "a/../../b", ".", r"..\x", r"C:\x"] {
-        assert!(safe_path(&root, path).unwrap_err().message.contains("Path escapes project"));
+        assert!(safe_path(&root, path)
+            .unwrap_err()
+            .message
+            .contains("Path escapes project"));
     }
-    assert!(safe_path(&root, "").unwrap_err().message.contains("Missing path"));
+    assert!(safe_path(&root, "")
+        .unwrap_err()
+        .message
+        .contains("Missing path"));
 }
 
 #[cfg(unix)]
@@ -122,8 +155,14 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
-    assert!(safe_path(&root, "outside/secret.tex").unwrap_err().message.contains("Path escapes project"));
-    assert!(safe_rel_file(&root, "outside/secret.tex").unwrap_err().message.contains("Path escapes project"));
+    assert!(safe_path(&root, "outside/secret.tex")
+        .unwrap_err()
+        .message
+        .contains("Path escapes project"));
+    assert!(safe_rel_file(&root, "outside/secret.tex")
+        .unwrap_err()
+        .message
+        .contains("Path escapes project"));
 }
 
 #[cfg(unix)]
@@ -137,11 +176,8 @@ fn implicit_project_scans_skip_external_symlink_files() {
         "needle\n\\label{outside-secret}\n",
     )
     .unwrap();
-    std::os::unix::fs::symlink(
-        outside.path().join("secret.tex"),
-        root.join("external.tex"),
-    )
-    .unwrap();
+    std::os::unix::fs::symlink(outside.path().join("secret.tex"), root.join("external.tex"))
+        .unwrap();
 
     assert!(search_project(&root, "needle", 50).unwrap().is_empty());
     assert!(scan_symbols(&root).unwrap().labels.is_empty());
@@ -159,8 +195,14 @@ fn implicit_project_scans_skip_external_symlink_files() {
 fn the_settings_file_is_not_reachable_through_the_file_api() {
     let data = data_dir();
     let root = project(data.path(), "reserved-test");
-    assert!(safe_path(&root, ".texlocal.json").unwrap_err().message.contains("Reserved file"));
-    assert!(safe_path(&root, ".TEXLOCAL.JSON").unwrap_err().message.contains("Reserved file"));
+    assert!(safe_path(&root, ".texlocal.json")
+        .unwrap_err()
+        .message
+        .contains("Reserved file"));
+    assert!(safe_path(&root, ".TEXLOCAL.JSON")
+        .unwrap_err()
+        .message
+        .contains("Reserved file"));
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
@@ -169,7 +211,10 @@ fn the_settings_file_is_not_reachable_through_the_file_api() {
 fn windows_aliases_cannot_reach_settings_or_reserved_device_names() {
     let data = data_dir();
     let root = project(data.path(), "windows-aliases");
-    assert!(safe_path(&root, ".TEXLOCAL.JSON").unwrap_err().message.contains("Reserved file"));
+    assert!(safe_path(&root, ".TEXLOCAL.JSON")
+        .unwrap_err()
+        .message
+        .contains("Reserved file"));
     assert!(safe_path(&root, "CON.tex").is_err());
     assert!(safe_path(&root, "CONIN$").is_err());
     assert!(safe_path(&root, "COM¹.log").is_err());
@@ -180,10 +225,19 @@ fn windows_aliases_cannot_reach_settings_or_reserved_device_names() {
 #[test]
 fn project_names_are_sanitized() {
     let data = data_dir();
-    assert!(create_project(data.path(), ".hidden", "blank").unwrap_err().message.contains("Invalid name"));
-    assert!(create_project(data.path(), "   ", "blank").unwrap_err().message.contains("Invalid name"));
+    assert!(create_project(data.path(), ".hidden", "blank")
+        .unwrap_err()
+        .message
+        .contains("Invalid name"));
+    assert!(create_project(data.path(), "   ", "blank")
+        .unwrap_err()
+        .message
+        .contains("Invalid name"));
     create_project(data.path(), "dup-test", "blank").unwrap();
-    assert!(create_project(data.path(), "dup-test", "blank").unwrap_err().message.contains("already exists"));
+    assert!(create_project(data.path(), "dup-test", "blank")
+        .unwrap_err()
+        .message
+        .contains("already exists"));
 }
 
 #[test]
@@ -192,7 +246,10 @@ fn compiled_pdf_path_derives_from_a_nested_main_file() {
     let root = project(data.path(), "pdfpath-test");
     create_file(&root, "chapters/paper.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters/paper.tex" })).unwrap();
-    assert_eq!(compiled_pdf_path(&root).unwrap(), root.join("build").join("paper.pdf"));
+    assert_eq!(
+        compiled_pdf_path(&root).unwrap(),
+        root.join("build").join("paper.pdf")
+    );
 }
 
 #[test]
@@ -240,9 +297,19 @@ fn a_backslash_main_file_from_an_old_settings_file_still_works() {
     let data = data_dir();
     let root = project(data.path(), "backslash-test");
     create_file(&root, "chapters/paper.tex", false).unwrap();
-    fs::write(root.join(".texlocal.json"), r#"{ "mainFile": "chapters\\paper.tex" }"#).unwrap();
-    assert_eq!(safe_rel_file(&root, &read_settings(&root).main_file).unwrap(), "chapters/paper.tex");
-    assert_eq!(compiled_pdf_path(&root).unwrap(), root.join("build").join("paper.pdf"));
+    fs::write(
+        root.join(".texlocal.json"),
+        r#"{ "mainFile": "chapters\\paper.tex" }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        safe_rel_file(&root, &read_settings(&root).main_file).unwrap(),
+        "chapters/paper.tex"
+    );
+    assert_eq!(
+        compiled_pdf_path(&root).unwrap(),
+        root.join("build").join("paper.pdf")
+    );
 }
 
 #[cfg(unix)]
@@ -257,13 +324,17 @@ fn zip_export_keeps_safe_file_links_but_skips_directory_and_external_links() {
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(root.join("real.tex"), root.join("linked.tex")).unwrap();
     std::os::unix::fs::symlink(root.join("figures"), root.join("linked-dir")).unwrap();
-    std::os::unix::fs::symlink(outside.path().join("secret.tex"), root.join("outside.tex")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("secret.tex"), root.join("outside.tex"))
+        .unwrap();
     std::os::unix::fs::symlink(root.join("gone.tex"), root.join("broken.tex")).unwrap();
     let dest = data.path().join("out.zip");
     export_zip(&root, &dest).unwrap();
     let names = zip_names(&dest);
     assert!(names.contains(&"linked.tex".to_string()), "{names:?}");
-    assert!(!names.iter().any(|name| name.starts_with("linked-dir")), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("linked-dir")),
+        "{names:?}"
+    );
     assert!(!names.contains(&"outside.tex".to_string()), "{names:?}");
     assert!(!names.contains(&"broken.tex".to_string()), "{names:?}");
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
@@ -282,7 +353,10 @@ fn zip_export_can_replace_a_destination_inside_the_project_without_archiving_its
     export_zip(&root, &dest).unwrap();
     let names = zip_names(&dest);
     assert!(!names.contains(&"project.zip".to_string()), "{names:?}");
-    assert!(!names.iter().any(|name| name.contains(".texlocal-")), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.contains(".texlocal-")),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -297,8 +371,14 @@ fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
     export_zip(&root, &dest).unwrap();
     let names = zip_names(&dest);
     assert!(names.contains(&"main.tex".to_string()), "{names:?}");
-    assert!(names.contains(&"chapters/intro.tex".to_string()), "{names:?}");
-    assert!(names.contains(&"sub/.texlocal.json".to_string()), "{names:?}");
+    assert!(
+        names.contains(&"chapters/intro.tex".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"sub/.texlocal.json".to_string()),
+        "{names:?}"
+    );
     assert!(!names.iter().any(|n| n.starts_with("build")), "{names:?}");
     assert!(!names.contains(&".texlocal.json".to_string()), "{names:?}");
 }
@@ -338,7 +418,11 @@ fn search_stops_at_the_limit_and_skips_build_output() {
     let root = project(data.path(), "limits");
     fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
     fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(root.join("build").join("main.log"), "needle in the build dir").unwrap();
+    fs::write(
+        root.join("build").join("main.log"),
+        "needle in the build dir",
+    )
+    .unwrap();
     let hits = search_project(&root, "needle", 5).unwrap();
     assert_eq!(hits.len(), 5);
     assert!(hits.iter().all(|h| h.file == "many.tex"));

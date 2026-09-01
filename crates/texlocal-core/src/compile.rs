@@ -420,7 +420,14 @@ impl CompileManager {
             previous.done.notified().await;
         }
 
-        if self.running.lock().unwrap().get(root).map(|entry| entry.token) != Some(token) {
+        if self
+            .running
+            .lock()
+            .unwrap()
+            .get(root)
+            .map(|entry| entry.token)
+            != Some(token)
+        {
             return Ok(Self::superseded(request_started));
         }
 

@@ -32,14 +32,25 @@ fn invalid_windows_segment(segment: &str) -> bool {
 
     // Device names are reserved even when an extension is present (CON.tex,
     // LPT1.log, and so on).
-    let stem = segment.split('.').next().unwrap_or_default().to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        || stem
-            .strip_prefix("COM")
-            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
-        || stem
-            .strip_prefix("LPT")
-            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+    let stem = segment
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || stem.strip_prefix("COM").is_some_and(|n| {
+        matches!(
+            n,
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
+    }) || stem.strip_prefix("LPT").is_some_and(|n| {
+        matches!(
+            n,
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
+    })
 }
 
 fn validate_platform_segment(segment: &str, error: &str) -> Result<(), CoreError> {
@@ -106,8 +117,7 @@ fn ensure_existing_ancestor_within(
         }
     }
 
-    let resolved = fs::canonicalize(existing)
-        .map_err(|_| CoreError::bad_request(escape_err))?;
+    let resolved = fs::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
     if resolved != canonical_root && !resolved.starts_with(&canonical_root) {
         return Err(CoreError::bad_request(escape_err));
     }

@@ -106,7 +106,10 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
-    assert!(root.join("build/main.pdf").exists(), "old preview may remain on disk");
+    assert!(
+        root.join("build/main.pdf").exists(),
+        "old preview may remain on disk"
+    );
 }
 
 #[tokio::test]
@@ -168,7 +171,10 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
     assert!(second.ok, "superseding compile should succeed");
     assert!(!first.ok, "superseded compile should be killed");
     assert_eq!(first.pdf, None);
-    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "new");
+    assert_eq!(
+        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
+        "new"
+    );
 }
 
 #[tokio::test]
@@ -218,7 +224,10 @@ esac
     assert!(third.ok);
     assert!(!second.ok);
     assert!(!first.ok);
-    assert_eq!(fs::read_to_string(root.join("build/main.pdf")).unwrap(), "third");
+    assert_eq!(
+        fs::read_to_string(root.join("build/main.pdf")).unwrap(),
+        "third"
+    );
 }
 
 #[tokio::test]

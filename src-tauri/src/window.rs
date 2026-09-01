@@ -130,7 +130,10 @@ fn flush_then(app: &AppHandle, action: FlushAction) -> bool {
                 state.exit_after_flush.store(false, Ordering::SeqCst);
                 restore_after_aborted_flush(
                     &app,
-                    outcome.error.as_deref().unwrap_or("the document could not be saved"),
+                    outcome
+                        .error
+                        .as_deref()
+                        .unwrap_or("the document could not be saved"),
                 );
                 return;
             }

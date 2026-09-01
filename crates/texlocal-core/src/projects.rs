@@ -605,6 +605,9 @@ mod tests {
         let result = discard_using(&path, |_| Err::<(), _>("trash unavailable"));
 
         assert!(result.is_err());
-        assert!(path.exists(), "the original must remain after trash failure");
+        assert!(
+            path.exists(),
+            "the original must remain after trash failure"
+        );
     }
 }
