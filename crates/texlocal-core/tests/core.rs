@@ -10,8 +10,7 @@ use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, file_tree, rename_entry, scan_symbols,
-    search_project, symbols_fingerprint,
+    create_file, create_project, delete_entry, rename_entry, search_project,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
@@ -168,6 +167,11 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
 #[cfg(unix)]
 #[test]
 fn implicit_project_scans_skip_external_symlink_files() {
+    // Imported here rather than at the top: this is the only test that reads
+    // them, and it is unix-only, so a file-level import is an unused-import
+    // error on Windows under -D warnings.
+    use texlocal_core::projects::{file_tree, scan_symbols, symbols_fingerprint};
+
     let data = data_dir();
     let root = project(data.path(), "symlink-scans");
     let outside = tempfile::tempdir().unwrap();
