@@ -22,6 +22,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: node scripts/check-version.mjs
 
   core:
     name: Rust core
@@ -65,28 +66,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
           key: ${{ matrix.target }}
       - run: npm ci
-      # The core's path handling has real Windows branches (separators, drive
-      # letters, MiKTeX discovery), so its tests run here as well as on Linux.
-      # Built for the host, not the matrix target: a cross-compiled test binary
-      # would need Rosetta to run on the Apple Silicon runner.
-      - run: cargo test -p texlocal-core
+      # Run the JS suite on Windows too: filename aliases and separators are
+      # platform semantics, not cross-compilation semantics.
+      - run: npm test
+      - run: cargo fmt --all --check
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} -- -D warnings
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --target ${{ matrix.target }}
-      # The installers a reviewer can download and smoke-test; unsigned, so
-      # macOS needs right-click → Open and Windows a SmartScreen override.
       - uses: actions/upload-artifact@v4
         with:
           name: TeXLocal-${{ matrix.target }}
-          # One glob per platform's installer; each job matches exactly the
-          # ones its own OS produces, so the others simply find nothing.
           path: |
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             target/${{ matrix.target }}/release/bundle/nsis/*.exe
