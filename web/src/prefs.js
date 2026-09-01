@@ -106,6 +106,29 @@ function pdfPaperIsDark() {
   return mode === 'dark' || (mode === 'auto' && document.documentElement.dataset.theme === 'dark');
 }
 
+// White on the accent is what every platform draws, and it stays white here for
+// the same reason: maximising contrast would put a black label on the tokens'
+// own blue (5.97:1 against 3.52:1), which no desktop does. The label only flips
+// where white genuinely fails — a yellow or pale accent — using WCAG's 3:1 floor
+// for user-interface components.
+export function onAccent(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 1.05 / (l + 0.05) >= 3 ? '#ffffff' : '#000000';
+}
+
+// The accent the user picked system-wide, once the host has reported it. Set on
+// the root element so it wins over both the light and the dark token block — a
+// person chooses one accent, not one per appearance.
+export function applyAccent(hex) {
+  const root = document.documentElement;
+  root.style.setProperty('--accent', hex);
+  root.style.setProperty('--on-accent', onAccent(hex));
+}
+
 // Applies every appearance preference to the document.
 export function applyAppearance() {
   const root = document.documentElement;

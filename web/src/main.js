@@ -2,7 +2,7 @@
 // the view modules.
 
 import { bridge, platform } from './bridge.js';
-import { prefs, migratePrefs, applyAppearance, setAppearanceHandler } from './prefs.js';
+import { prefs, migratePrefs, applyAppearance, applyAccent, setAppearanceHandler } from './prefs.js';
 import { onCommandsChanged, installBrowserShortcuts, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
@@ -30,6 +30,10 @@ setAppearanceHandler((theme) => {
   state.editor?.setTheme(theme === 'dark');
 });
 applyAppearance();
+
+// Asked for once, and applied whenever it arrives: the tokens' blue is already
+// on screen, so there is nothing to wait for and no boot path to block.
+bridge?.accent().then((hex) => { if (hex) applyAccent(hex); });
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (prefs.themeMode === 'system') applyAppearance();

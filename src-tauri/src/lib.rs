@@ -2,6 +2,7 @@
 //! from Tauri's app protocol, talks to this process over commands, and reads
 //! PDFs and project files through the `texlocal://` scheme.
 
+mod accent;
 mod commands;
 mod error;
 mod menu;
@@ -63,6 +64,7 @@ pub fn run() {
             commands::save_pdf_as,
             commands::menu_sync,
             commands::quit_flush_done,
+            commands::system_accent,
         ])
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {

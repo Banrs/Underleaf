@@ -58,3 +58,6 @@ The parts most likely to differ on Windows, in the order worth checking:
    files of those names kept.
 5. Compile a document, then quit with an unsaved buffer — the edit should be on
    disk.
+6. The interface highlights match Settings → Personalisation → Colours. Pick a
+   pale accent and check that a primary button's label turns black rather than
+   going white-on-white (`src-tauri/src/accent.rs`, `onAccent` in prefs.js).

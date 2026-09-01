@@ -3844,6 +3844,7 @@ dependencies = [
 name = "texlocal"
 version = "0.2.0"
 dependencies = [
+ "objc2-app-kit",
  "percent-encoding",
  "serde",
  "serde_json",
@@ -3855,6 +3856,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "texlocal-core",
  "tokio",
+ "windows 0.61.3",
 ]
 
 [[package]]

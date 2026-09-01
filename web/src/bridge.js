@@ -3,9 +3,9 @@
 // here instead of sniffing the host or navigator.platform locally, so adding a
 // shell is a change to this file, not a hunt through the views.
 //
-// A bridge exposes: invoke(command, args, options), platform, setMenu(spec),
-// onCommand(fn), onBeforeQuit(fn), and fileUrl(segments) for the routes served
-// over the texlocal:// scheme.
+// A bridge exposes: invoke(command, args, options), platform, accent(),
+// setMenu(spec), onCommand(fn), onBeforeQuit(fn), and fileUrl(segments) for the
+// routes served over the texlocal:// scheme.
 
 const tauri = typeof window !== 'undefined' ? window.__TAURI__ : undefined;
 
@@ -36,6 +36,9 @@ function tauriBridge() {
     invoke: (command, args, options) => invoke(command, args, options).catch((err) => {
       throw new Error(typeof err === 'string' ? err : (err?.message ?? String(err)));
     }),
+    // Null rather than a rejection: an accent is a nicety, and the design
+    // tokens already carry a colour to fall back to.
+    accent: () => invoke('system_accent').catch(() => null),
     fileUrl: (segments) => `${origin}/${segments.map(encodeURIComponent).join('/')}`,
     setMenu: (spec) => { invoke('menu_sync', { spec }).catch(() => { /* menus are cosmetic */ }); },
     onCommand: (fn) => { listen('command:run', (e) => fn(e.payload)); },

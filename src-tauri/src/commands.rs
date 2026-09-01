@@ -420,3 +420,14 @@ pub fn quit_flush_done(state: State<'_, AppState>) {
         let _ = tx.send(());
     }
 }
+
+/// The user's system accent colour, so the interface highlights match the rest
+/// of their desktop. `None` when the platform doesn't report one; the UI then
+/// keeps the colour from the design tokens.
+///
+/// Synchronous on purpose: it reads AppKit on macOS, which wants the main
+/// thread, and it is one property read rather than any kind of work.
+#[tauri::command]
+pub fn system_accent() -> Option<String> {
+    crate::accent::system_accent()
+}

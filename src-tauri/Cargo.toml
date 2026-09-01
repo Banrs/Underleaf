@@ -23,3 +23,19 @@ tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 texlocal-core = { path = "../crates/texlocal-core" }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
+
+# The system accent colour, read through each platform's own API — see
+# src/accent.rs. Both crates are already in the tree via tauri, so declaring
+# them here costs a feature, not a dependency.
+[target.'cfg(target_os = "macos")'.dependencies]
+# default-features = false matters: the default set is every AppKit binding,
+# which drags in Core Video, Core Data and CloudKit for one colour read.
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSColor",
+    "NSColorSpace",
+    "objc2-core-foundation",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["UI_ViewManagement"] }

@@ -81,10 +81,15 @@ itself — the overlay title bar and traffic lights, the macOS application menu,
 the process-tree kill. Those branches are conventions worth keeping apart, not
 duplication worth removing.
 
-Two that look like they belong in the first group but do not: CSS `AccentColor`
-(Chromium dropped it, so WebView2 has none, and browsers pin a fixed value
-against fingerprinting) and `set_badge_count` (macOS only — Windows needs
-`set_overlay_icon`).
+Where the toolkit has no one primitive but *both* systems have the concept, the
+shape is still one declaration: two small readers behind `cfg`, one value out,
+and nothing downstream that knows which platform answered. `src/accent.rs` is
+the example — two API calls, one `--accent` token, no per-OS CSS.
+
+`set_badge_count` looks like it belongs in the first group and does not (macOS
+only — Windows needs `set_overlay_icon`). So does CSS `AccentColor`: Chromium
+dropped it, so WebView2 has none, and browsers pin a fixed value against
+fingerprinting — the accent reaches the page from the host instead.
 
 ## Layout
 
