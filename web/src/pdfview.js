@@ -22,6 +22,12 @@ const PINCH_MAX = 2.5;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// The interface-scale preference is applied as `zoom` on the body, and
+// devicePixelRatio does not account for it. Measured in Chromium: at zoom 1.3 a
+// canvas with a 200px CSS width occupies 260 device px, so a buffer sized from
+// devicePixelRatio alone holds 77% of the detail the page is displayed at.
+const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
+
 export class PdfViewer {
   constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
     this.scrollEl = scrollEl;
@@ -264,8 +270,14 @@ export class PdfViewer {
       wrap.appendChild(textLayer);
 
       wrap.addEventListener('dblclick', (e) => {
+        // The rect is in on-screen units, which include the interface-scale
+        // zoom; the click offset is too. Going through the rect's own size
+        // cancels it, where dividing the raw offset by `scale` would land the
+        // inverse search `zoom` times too far down the page.
         const rect = canvas.getBoundingClientRect();
-        this.onSyncClick?.(n, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
+        const fx = (e.clientX - rect.left) / rect.width;
+        const fy = (e.clientY - rect.top) / rect.height;
+        this.onSyncClick?.(n, (fx * viewport.width) / scale, (fy * viewport.height) / scale);
       });
 
       pagesEl.appendChild(wrap);
@@ -284,6 +296,7 @@ export class PdfViewer {
     this.pagesEl = pagesEl;
     this.scrollEl.replaceChildren(pagesEl);
     this.pages = pages;
+    this.#cacheGeometry();
     if (!(anchor && this.#restoreAnchor(anchor, pages))) {
       this.scrollEl.scrollLeft = centerRatioX * this.scrollEl.scrollWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollTop = ratio * this.scrollEl.scrollHeight;
@@ -302,12 +315,24 @@ export class PdfViewer {
   // backing store; the rest are released. Painting the whole document is what
   // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
   // enough to stall the compositor for seconds per zoom step.
+  // Read every page's box once per render, not once per scroll. #nearPages used
+  // to touch offsetTop and offsetHeight on each page every time scrolling
+  // settled, and each of those forces a layout — 400 on a 200-page document,
+  // 90ms after every scroll stop. Layout does not move between render passes,
+  // and a pinch preview is a transform, which does not affect offsetTop.
+  #cacheGeometry() {
+    for (const p of this.pages) {
+      p.top = p.wrap.offsetTop;
+      p.height = p.wrap.offsetHeight;
+    }
+  }
+
   #nearPages() {
     const top = this.scrollEl.scrollTop - this._padT;
     const vh = this.scrollEl.clientHeight;
     const near = [];
     for (const [i, p] of this.pages.entries()) {
-      if (p.wrap.offsetTop + p.wrap.offsetHeight >= top - vh * 1.5 && p.wrap.offsetTop <= top + vh * 2.5) near.push(i);
+      if (p.top + p.height >= top - vh * 1.5 && p.top <= top + vh * 2.5) near.push(i);
     }
     return near;
   }
@@ -352,7 +377,7 @@ export class PdfViewer {
       p.textLayer.replaceChildren();
     }
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = (window.devicePixelRatio || 1) * uiZoom();
     for (const i of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
       const p = this.pages[i];

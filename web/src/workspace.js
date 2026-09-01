@@ -91,11 +91,21 @@ export async function renderWorkspace(id) {
 
   buildChrome(id);
   disposeCommands = registerCommands(commandDefs());
+  // The interface scale is applied as `zoom` on the body, and no ResizeObserver
+  // reports that — measured in Chromium, an element's own CSS box is unchanged
+  // by it. So a scale change has to ask for the re-render itself, or the PDF
+  // keeps the pixel buffer it was rendered at and stays soft until something
+  // unrelated re-renders it.
+  let lastScale = prefs.uiScale;
   const previousHandler = setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
     updateDocMeta();
     refreshSidebarChrome();
     refreshCommands();
+    if (prefs.uiScale !== lastScale) {
+      lastScale = prefs.uiScale;
+      state.pdf?.render();
+    }
   });
   restoreAppearanceHandler = () => setAppearanceHandler(previousHandler);
 
