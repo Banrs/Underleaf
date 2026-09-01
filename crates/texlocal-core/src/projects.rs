@@ -307,9 +307,25 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
 /// Lowercase with a 1:1 char mapping (first char of each lowering), so match
 /// columns computed on the lowered text index the original safely.
 fn lower_chars(s: &str) -> Vec<char> {
-    s.chars()
-        .map(|c| c.to_lowercase().next().unwrap_or(c))
-        .collect()
+    let mut out = Vec::new();
+    lower_into(s, &mut out);
+    out
+}
+
+/// Folds into a caller-owned buffer, so a scan over many lines reuses one
+/// allocation instead of making one per line.
+fn lower_into(s: &str, out: &mut Vec<char>) {
+    out.clear();
+    // `to_lowercase` builds an iterator and consults a table for every
+    // character; ASCII is the whole of a normal .tex file and folds with one
+    // branch. Same answer, since for ASCII the two agree by definition.
+    out.extend(s.chars().map(|c| {
+        if c.is_ascii() {
+            c.to_ascii_lowercase()
+        } else {
+            c.to_lowercase().next().unwrap_or(c)
+        }
+    }));
 }
 
 fn find_from(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
@@ -333,6 +349,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         q: &[char],
         limit: usize,
         hits: &mut Vec<SearchHit>,
+        lower: &mut Vec<char>,
     ) -> Result<(), CoreError> {
         for entry in fs::read_dir(dir)? {
             if hits.len() >= limit {
@@ -345,7 +362,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
             }
             let abs = entry.path();
             if entry.file_type()?.is_dir() {
-                walk(root, &abs, q, limit, hits)?;
+                walk(root, &abs, q, limit, hits, lower)?;
                 continue;
             }
             let rel = match crate::paths::rel_to_root(root, &abs) {
@@ -360,12 +377,15 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
                 if hits.len() >= limit {
                     break;
                 }
-                let chars: Vec<char> = line.chars().collect();
-                let lower = lower_chars(line);
-                let col = match find_from(&lower, q, 0) {
+                // Almost every line is a miss, so a miss must cost as little as
+                // possible: fold into the reused buffer, and don't build the
+                // original-case copy until there is a hit to quote from it.
+                lower_into(line, lower);
+                let col = match find_from(lower, q, 0) {
                     Some(c) => c,
                     None => continue,
                 };
+                let chars: Vec<char> = line.chars().collect();
                 let start = col.saturating_sub(24);
                 let ellipsis = if start > 0 { "…" } else { "" };
                 let before: String = chars[start..col].iter().collect();
@@ -384,7 +404,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         Ok(())
     }
 
-    walk(root, root, &q, limit, &mut hits)?;
+    walk(root, root, &q, limit, &mut hits, &mut Vec::new())?;
     Ok(hits)
 }
 

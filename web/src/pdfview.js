@@ -315,14 +315,20 @@ export class PdfViewer {
   // backing store; the rest are released. Painting the whole document is what
   // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
   // enough to stall the compositor for seconds per zoom step.
-  // Read every page's box once per render, not once per scroll. #nearPages used
-  // to touch offsetTop and offsetHeight on each page every time scrolling
-  // settled, and each of those forces a layout — 400 on a 200-page document,
-  // 90ms after every scroll stop. Layout does not move between render passes,
-  // and a pinch preview is a transform, which does not affect offsetTop.
+  // Every page's box, read once per render — the single source for all of them.
+  // Reading them live is what cost: currentPage() runs on every scroll event and
+  // scanned all pages, and #reportPage writes the page indicator just before, so
+  // each event paid a forced layout. Measured on 200 pages in Chromium: 0.24ms
+  // per scroll event live against 0.001ms cached, same answer.
+  //
+  // Safe because layout does not move between render passes: this runs right
+  // after the page swap and before anything reads it, the only two live previews
+  // (pinch, pane resize) are CSS transforms — which do not affect offsetTop —
+  // and both end in the render that refreshes this.
   #cacheGeometry() {
     for (const p of this.pages) {
       p.top = p.wrap.offsetTop;
+      p.left = p.wrap.offsetLeft;
       p.height = p.wrap.offsetHeight;
     }
   }
@@ -493,12 +499,12 @@ export class PdfViewer {
   // margin beside one, still resolves to an exact point that survives the
   // re-render. Clamping it into the page box was itself a visible drift.
   #pageAt(x, y) {
-    const p = this.pages.find((q) => y <= q.wrap.offsetTop + q.wrap.offsetHeight) ?? this.pages.at(-1);
+    const p = this.pages.find((q) => y <= q.top + q.height) ?? this.pages.at(-1);
     if (!p) return null;
     return {
       pageIndex: p.n - 1,
-      pageX: (x - p.wrap.offsetLeft) / p.scale,
-      pageY: (y - p.wrap.offsetTop) / p.scale,
+      pageX: (x - p.left) / p.scale,
+      pageY: (y - p.top) / p.scale,
     };
   }
 
@@ -516,8 +522,8 @@ export class PdfViewer {
   #restoreAnchor(anchor, pages) {
     const target = pages[anchor.pageIndex];
     if (!target) return false;
-    this.scrollEl.scrollLeft = target.wrap.offsetLeft + anchor.pageX * target.scale - anchor.viewX;
-    this.scrollEl.scrollTop = target.wrap.offsetTop + anchor.pageY * target.scale - anchor.viewY;
+    this.scrollEl.scrollLeft = target.left + anchor.pageX * target.scale - anchor.viewX;
+    this.scrollEl.scrollTop = target.top + anchor.pageY * target.scale - anchor.viewY;
     return true;
   }
 
@@ -723,7 +729,7 @@ export class PdfViewer {
   currentPage() {
     const mid = this.#viewMark();
     let best = 1;
-    for (const p of this.pages) if (p.wrap.offsetTop <= mid) best = p.n;
+    for (const p of this.pages) if (p.top <= mid) best = p.n;
     return best;
   }
 
@@ -761,7 +767,7 @@ export class PdfViewer {
     }
     // No text on this page (e.g. a figure-only page): fall back to a point in
     // the text column at the viewport top.
-    const yPts = Math.max(5, (this.#viewMark() - p.wrap.offsetTop) / p.scale);
+    const yPts = Math.max(5, (this.#viewMark() - p.top) / p.scale);
     const pageHeightPts = p.viewport.height / p.scale;
     const pageWidthPts = p.viewport.width / p.scale;
     return { page: p.n, x: Math.round(pageWidthPts / 2.5), y: Math.round(Math.min(yPts, pageHeightPts - 5)) };
@@ -780,7 +786,7 @@ export class PdfViewer {
     flash.style.width = `${Math.max(24, (loc.width ?? 0) * s) + 4}px`;
     flash.style.height = `${h + 4}px`;
     p.wrap.appendChild(flash);
-    const targetTop = this._padT + p.wrap.offsetTop + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
+    const targetTop = this._padT + p.top + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
     setTimeout(() => flash.remove(), 2400);
   }

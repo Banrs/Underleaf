@@ -9,7 +9,9 @@ use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
-use texlocal_core::projects::{create_file, create_project, delete_entry, rename_entry};
+use texlocal_core::projects::{
+    create_file, create_project, delete_entry, rename_entry, search_project,
+};
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
 
@@ -324,5 +326,65 @@ fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
     assert!(
         !names.contains(&".texlocal.json".to_string()),
         "settings excluded: {names:?}"
+    );
+}
+
+// search_project had no coverage at all, and its inner loop folds case by hand:
+// an ASCII branch for the bulk of a .tex file and `to_lowercase` for the rest.
+// These pin both branches, and the snippet arithmetic around a hit.
+
+#[test]
+fn search_is_case_insensitive_in_both_folding_branches() {
+    let data = data_dir();
+    let root = project(data.path(), "search");
+    fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
+    // Non-ASCII: the fold has to go through `to_lowercase`, not the byte path.
+    fs::write(root.join("accents.tex"), "L'ÉCOLE Normale\nStraße\n").unwrap();
+
+    let hits = search_project(&root, "theorem", 50).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].file, "ascii.tex");
+    assert_eq!(hits[0].line, 2);
+    assert_eq!(hits[0].matched, "THEOREM");
+
+    let hits = search_project(&root, "école", 50).unwrap();
+    assert_eq!(hits.len(), 1, "uppercase É must be found by lowercase é");
+    assert_eq!(hits[0].matched, "ÉCOLE");
+
+    // A query that shares no first character with anything must find nothing —
+    // the case a fast reject would be most likely to get wrong.
+    assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
+}
+
+#[test]
+fn a_hit_carries_the_text_either_side_of_it() {
+    let data = data_dir();
+    let root = project(data.path(), "snippet");
+    fs::write(root.join("a.tex"), "the quick brown fox jumps\n").unwrap();
+
+    let hits = search_project(&root, "brown", 50).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].before, "the quick ");
+    assert_eq!(hits[0].matched, "brown");
+    assert_eq!(hits[0].after, " fox jumps");
+}
+
+#[test]
+fn search_stops_at_the_limit_and_skips_build_output() {
+    let data = data_dir();
+    let root = project(data.path(), "limits");
+    fs::write(root.join("many.tex"), "needle\n".repeat(20)).unwrap();
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(
+        root.join("build").join("main.log"),
+        "needle in the build dir",
+    )
+    .unwrap();
+
+    let hits = search_project(&root, "needle", 5).unwrap();
+    assert_eq!(hits.len(), 5, "the limit is honoured");
+    assert!(
+        hits.iter().all(|h| h.file == "many.tex"),
+        "build output is never searched"
     );
 }
