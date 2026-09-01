@@ -57,6 +57,14 @@ test('renameEntry rolls back when updating settings fails', async () => {
   assert.equal(await readFile(path.join(root, 'paper.tex'), 'utf8').then(() => true, () => false), false);
 });
 
+test('drive-letter paths are rejected on every host', async () => {
+  await projects.createProject('drive-paths', 'blank');
+  const root = projects.projectRoot('drive-paths');
+  for (const rel of ['C:\\outside.tex', 'c:/outside.tex']) {
+    assert.throws(() => projects.safePath(root, rel), /Path escapes project/);
+  }
+  assert.throws(() => projects.projectRoot('C:\\outside'), /Bad project id/);
+});
 
 test('settings aliases are reserved on case-insensitive desktop filesystems', async () => {
   await projects.createProject('settings-alias', 'blank');
