@@ -4,12 +4,12 @@
 // disabled command is disabled everywhere and a shortcut can't drift from its
 // menu item.
 
-const ipc = typeof window !== 'undefined' ? window.texlocal : undefined;
+import { bridge as ipc, isMac } from './bridge.js';
 
 const registry = new Map();
 
 // The menu bar's shape. `id` entries resolve against the registry; `role`
-// entries are handled natively by Electron (standard editing and window items).
+// entries are handled natively by the shell (standard editing and window items).
 const MENU = [
   {
     label: 'File',
@@ -26,7 +26,7 @@ const MENU = [
     items: [
       { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
-      { id: 'edit.find' }, { id: 'project.search' }, '-',
+      { id: 'edit.find' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
       { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
     ],
   },
@@ -62,6 +62,8 @@ const FALLBACK_TITLES = {
   'edit.redo': 'Redo',
   'edit.find': 'Find & Replace',
   'project.search': 'Find in Project',
+  'pdf.find': 'Find in PDF…',
+  'edit.gotoLine': 'Go to Line…',
   'edit.bold': 'Bold',
   'edit.italic': 'Italic',
   'edit.math': 'Inline Math',
@@ -103,19 +105,27 @@ export function commandTitle(id) {
   return typeof c.title === 'function' ? c.title() : c.title;
 }
 
-export function commandEnabled(id) {
+function commandEnabled(id) {
   const c = registry.get(id);
   return !!c && (c.enabled ? !!c.enabled() : true);
 }
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
-  registry.get(id).run();
+  try {
+    const result = registry.get(id).run();
+    // Native menu and keyboard dispatch are fire-and-forget. Consume a rejected
+    // async command so a handled save/upload failure does not also become an
+    // unhandled-rejection crash report.
+    result?.catch?.((err) => console.error(`Command ${id} failed:`, err));
+  } catch (err) {
+    console.error(`Command ${id} failed:`, err);
+  }
   return true;
 }
 
-// Push the current menu spec + enabled state to the Electron main process, which
-// owns the actual NSMenu. A no-op in browser mode.
+// Push the current menu spec + enabled state to the desktop shell, which owns
+// the actual native menu. A no-op in browser mode.
 function publish() {
   const spec = MENU.map((m) => ({
     label: m.label,
@@ -145,10 +155,10 @@ export function onCommandsChanged(fn) { notifyHost = fn; }
 
 // ---------- accelerators ----------
 
-// Electron accelerator string → the glyph string macOS shows in menus and
+// An accelerator string → the glyph string macOS shows in menus and
 // tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
 // "Ctrl+Shift+Z".
-const MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform ?? '');
+const MAC = isMac;
 const GLYPH = { CmdOrCtrl: '⌘', Cmd: '⌘', Command: '⌘', Shift: '⇧', Alt: '⌥', Option: '⌥', Ctrl: '⌃', Control: '⌃' };
 const KEYNAME = { Return: '↩', Enter: '↩', Backslash: '\\', Comma: ',', Plus: '+', Minus: '−' };
 
@@ -175,8 +185,8 @@ export function tooltip(id) {
 
 // ---------- browser-mode keyboard routing ----------
 
-// In Electron the native menu owns its accelerators, so handling them here too
-// would fire every command twice. Browser mode has no menu bar, so the same
+// On the desktop the native menu owns its accelerators, so handling them here
+// too would fire every command twice. Browser mode has no menu bar, so the same
 // declarations drive a keydown matcher instead.
 function matches(accel, e) {
   const parts = accel.split('+');
@@ -221,7 +231,7 @@ export function installBrowserShortcuts() {
   });
 }
 
-// In Electron, menu clicks arrive over IPC.
+// On the desktop, menu clicks arrive as an event from the shell.
 export function installMenuBridge() {
   ipc?.onCommand?.((id) => runCommand(id));
 }

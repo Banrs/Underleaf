@@ -1,0 +1,101 @@
+# Working on TeXLocal
+
+Guidelines for agents and humans changing this repo. The four behavioural rules
+are adapted from Andrej Karpathy's widely shared `CLAUDE.md`.
+
+## 1. Think before coding
+
+State assumptions and surface confusion *before* implementing, not after. If a
+request has two plausible readings, say so and pick one explicitly rather than
+choosing silently.
+
+## 2. Simplicity first
+
+Write the minimum code that solves the stated problem.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" nobody requested — an unused
+  `From` impl or trait bound is a liability, not a courtesy.
+- No error handling for impossible scenarios.
+
+If you wrote 200 lines and it could be 50, rewrite it. Ask: *would a senior
+engineer call this overcomplicated?* If yes, simplify.
+
+## 3. Surgical changes
+
+Touch only what the request requires. Don't refactor working systems or clean
+up unrelated code as a side effect. Match the style of the file you're in.
+Pre-existing dead code gets *mentioned*, not silently deleted — unless removing
+it is the actual request.
+
+## 4. Verify, don't assume
+
+Every change ends green:
+
+```
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+npm test && npm run build
+```
+
+Reproduce a bug before fixing it, then show the same check passing. "It should
+work" is not verification. CI runs a newer Rust than you may have locally — if
+clippy disagrees with you, clippy is right.
+
+## Invariants that are easy to break
+
+These are load-bearing. Changing them needs a deliberate decision, not a drive-by.
+
+- **`crates/texlocal-core/src/paths.rs` is the security boundary.** Every guard
+  there mirrors one in `server/projects.js`. Normalisation is *lexical* on
+  purpose — `canonicalize()` resolves symlinks and requires existence, which is
+  not the same semantics. The leading-`-` rejection blocks argv injection into
+  `latexmk`.
+- **Project-relative paths use forward slashes on every platform** when returned
+  or stored. Both separators are accepted on input. The frontend splits on `/`
+  and SyncTeX requires it.
+- **`server/` and `crates/texlocal-core/` implement the same logic twice** — the
+  Express browser mode (`npm run dev`) and the Tauri desktop app. This
+  duplication is deliberate. Change one, change the other, and keep both test
+  suites passing or they drift apart silently. One deliberate exception: the
+  core deletes to the platform trash, the server unlinks. Browser mode may be
+  serving from a headless box where there is no trash to move a file to.
+- **Never use `PredefinedMenuItem::quit`.** Quit must route through the
+  flush-before-exit handshake in `src-tauri/src/window.rs` or unsaved buffers
+  are lost.
+- **Menu items are built once, then diff-applied.** An item's *shape*
+  (checkbox vs plain) is fixed at build time; only enabled/text/checked update.
+
+## Prefer one declaration that resolves natively
+
+Where both desktops share a *concept*, say it once and let the toolkit pick the
+native primitive: `CmdOrCtrl` accelerators, `PredefinedMenuItem` roles, the
+dialog and opener plugins, `trash::delete`, notifications, and the
+`-apple-system`/`Segoe UI` font stack all do this. `prefers-color-scheme`,
+`prefers-reduced-motion` and `prefers-contrast` do the same for OS settings.
+
+Reach for `cfg(target_os)` only where the platforms disagree on the concept
+itself — the overlay title bar and traffic lights, the macOS application menu,
+the process-tree kill. Those branches are conventions worth keeping apart, not
+duplication worth removing.
+
+Where the toolkit has no one primitive but *both* systems have the concept, the
+shape is still one declaration: two small readers behind `cfg`, one value out,
+and nothing downstream that knows which platform answered. `src/accent.rs` is
+the example — two API calls, one `--accent` token, no per-OS CSS.
+
+`set_badge_count` looks like it belongs in the first group and does not (macOS
+only — Windows needs `set_overlay_icon`). So does CSS `AccentColor`: Chromium
+dropped it, so WebView2 has none, and browsers pin a fixed value against
+fingerprinting — the accent reaches the page from the host instead.
+
+## Layout
+
+```
+web/                    frontend (vanilla JS, CodeMirror 6, pdf.js)
+server/                 Express API for browser mode — its own JS implementation
+crates/texlocal-core/   ported logic, GUI-free so it tests without a webview
+src-tauri/              the desktop app: commands, protocol, menus, window
+```

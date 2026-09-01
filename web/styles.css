@@ -174,7 +174,7 @@ html, body {
 
 /* On macOS the native window vibrancy shows through a transparent window; the
    sidebar leaves its background translucent to reveal it. */
-.electron.mac, .electron.mac body { background: transparent; }
+.desktop.mac, .desktop.mac body { background: transparent; }
 
 h1, h2, h3, p { margin: 0; }
 
@@ -194,21 +194,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* ---------- window chrome ---------- */
 
-/* On macOS the title bar is the app's own chrome, so the bands are draggable and
-   the controls inside them opt out. */
-.electron.mac .titlebar,
-.electron.mac .sidebar-titlebar { -webkit-app-region: drag; }
-.electron.mac .titlebar button,
-.electron.mac .titlebar input,
-.electron.mac .titlebar select,
-.electron.mac .titlebar .crumbs,
-.electron.mac .sidebar-titlebar button { -webkit-app-region: no-drag; }
+/* Dragging the window by its chrome is driven by data-tauri-drag-region on the
+   title bars, not CSS: neither WKWebView nor WebView2 honours -webkit-app-region. */
 
 /* The traffic lights sit at x18/y19 in a 52px band (kit values), so the sidebar
    band keeps its leading end clear of controls. */
-.electron.mac .sidebar-titlebar { padding-left: 96px; }
+.desktop.mac .sidebar-titlebar { padding-left: 96px; }
 /* With the sidebar hidden, the lights move over the content title bar. */
-.electron.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
+.desktop.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
 
 .titlebar {
   display: flex;
@@ -472,7 +465,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
-.electron.mac .home-titlebar { padding-left: 96px; }
+.desktop.mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
    the leading side, recents filling the trailing side. */
@@ -563,8 +556,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 /* Native vibrancy already renders behind the transparent window on macOS, so the
    sidebar only needs to stay out of the way. Elsewhere it blurs the app itself. */
-.electron.mac .sidebar { background: transparent; }
-:not(.electron) .sidebar, .win .sidebar { background: var(--bg-recessed); }
+.desktop.mac .sidebar { background: transparent; }
+:not(.desktop) .sidebar, .win .sidebar { background: var(--bg-recessed); }
 
 .sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
 .sidebar.collapsed + .divider { display: none; }
@@ -905,6 +898,34 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pdf-text-layer ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
 .pdf-text-layer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; cursor: default; user-select: none; }
 
+/* Search highlights live in the transparent text layer, so they tint the canvas
+   glyphs underneath instead of painting any text of their own. */
+.pdf-text-layer mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: transparent; border-radius: 2px; }
+.pdf-text-layer mark.current { background: color-mix(in srgb, var(--accent) 70%, transparent); }
+
+.pdf-find {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: none;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-content);
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+.pdf-find input {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-control);
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--fill-3);
+  color: var(--label-1);
+  font: inherit;
+}
+.pdf-find input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.pdf-find .find-count { flex: none; color: var(--label-2); white-space: nowrap; }
+
 /* Dark paper is an explicit reading preference, not the default appearance:
    invert the canvas and hue-rotate so coloured figures stay roughly true. */
 .pdf-dark .pdf-page-wrap canvas { filter: invert(1) hue-rotate(180deg); }
@@ -971,7 +992,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .floating .divider:not(.divider-sync):hover { background: transparent; }
 .floating .divider:not(.divider-sync):hover::after { background: var(--label-3); }
 .floating .divider:not(.divider-sync).dragging::after { background: var(--accent); }
-.floating.electron.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
+.floating.desktop.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
 
 /* ---------- dialogs, menus, toasts ---------- */
 
@@ -1038,7 +1059,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: var(--shadow-menu);
   animation: pop-in 0.12s ease-out;
 }
-.win .menu, :not(.electron) .menu { background: var(--bg-window); }
+.win .menu, :not(.desktop) .menu { background: var(--bg-window); }
 .menu-item {
   display: flex;
   align-items: center;
@@ -1098,6 +1119,22 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* macOS "Increase contrast" and the Windows contrast setting both surface here,
+   so one block serves both. Secondary text and separators are what the HIG
+   tones down by default and what stops being legible first. */
+@media (prefers-contrast: more) {
+  :root {
+    --label-2: rgba(0, 0, 0, 0.75);
+    --label-3: rgba(0, 0, 0, 0.5);
+    --separator: rgba(0, 0, 0, 0.6);
+  }
+  [data-theme="dark"] {
+    --label-2: rgba(255, 255, 255, 0.85);
+    --label-3: rgba(255, 255, 255, 0.6);
+    --separator: rgba(255, 255, 255, 0.5);
   }
 }
 

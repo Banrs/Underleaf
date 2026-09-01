@@ -1,0 +1,29 @@
+/* Correctness fixes that depend on shell layout rather than design tokens. */
+.pdf-find {
+  position: absolute;
+  top: var(--h-toolbar);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  min-height: 36px;
+}
+
+.pdf-find[hidden] { display: none; }
+
+/* The scroller normally reserves only the toolbar. When Find is open, reserve
+   its row as well so page content and hit targets never sit underneath it. */
+.pdf-pane.find-open .pdf-scroll {
+  padding-top: calc(var(--h-toolbar) + 36px + var(--sp-3));
+}
+
+
+.pdf-freshness {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--orange);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+}
+.pdf-freshness[hidden] { display: none; }
