@@ -124,8 +124,8 @@ export function runCommand(id) {
   return true;
 }
 
-// Push the current menu spec + enabled state to the desktop shell, which owns
-// the actual native menu. A no-op in browser mode.
+// Push the current menu spec + enabled state to the shell, which owns the
+// actual native menu.
 function publish() {
   const spec = MENU.map((m) => ({
     label: m.label,
@@ -182,11 +182,11 @@ export function tooltip(id) {
   return a ? `${t} (${a})` : t;
 }
 
-// ---------- browser-mode keyboard routing ----------
+// ---------- menu events ----------
 
-// On the desktop the native menu owns its accelerators, so handling them here
-// too would fire every command twice. Browser mode has no menu bar, so the same
-// declarations drive a keydown matcher instead.
+// The native menu owns its accelerators, so nothing here listens for keys —
+// handling them a second time would fire every command twice. This only routes
+// what the shell reports back.
 export function installMenuBridge() {
   ipc?.onCommand?.((id) => runCommand(id));
 }

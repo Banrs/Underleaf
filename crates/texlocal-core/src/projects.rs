@@ -521,12 +521,20 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     // Matched against the file's bytes rather than a decoded copy: a .tex file
     // is scanned for a handful of names, so decoding megabytes of prose to
     // find them is the whole cost. Only the captures become Strings.
+    //
+    // `(?-u)` is load-bearing, not tidying. In Unicode mode a class like
+    // `[^,\s]` only steps across well-formed UTF-8, so one stray byte from a
+    // Latin-1 .bib — an umlaut in an author key — fails the whole `@entry{...}`
+    // match and silently drops that citation. Matching bytes keeps the entry
+    // and lets from_utf8_lossy mangle just the key, which is what decoding the
+    // file up front used to do.
     use regex::bytes::Regex;
     use std::sync::OnceLock;
     static BIB_RE: OnceLock<Regex> = OnceLock::new();
     static LABEL_RE: OnceLock<Regex> = OnceLock::new();
-    let bib_re = BIB_RE.get_or_init(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-    let label_re = LABEL_RE.get_or_init(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+    let bib_re =
+        BIB_RE.get_or_init(|| Regex::new(r"(?-u)@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
+    let label_re = LABEL_RE.get_or_init(|| Regex::new(r"(?-u)\\label\{([^}]+)\}").unwrap());
 
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();

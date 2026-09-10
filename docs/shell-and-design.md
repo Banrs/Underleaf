@@ -7,9 +7,10 @@ The app ships a **single** design language: the docked, edge-to-edge macOS
 title row, one type ramp keyed to the AppKit HIG). There are no design-variant
 class systems to keep in sync. Two small hooks remain by design:
 
-- **`.win` / `.mac` / `.desktop` platform classes** (`web/src/main.js`) — gate
+- **`.win` / `.mac` platform classes** (`web/src/main.js`) — gate
   platform-specific chrome, so a platform's shell is a matter of adding rules
-  rather than unpicking macOS ones.
+  rather than unpicking macOS ones. One of the two is always set, so a rule
+  meant for both belongs on the bare selector.
 - **Floating panels** — a Settings preference (`prefs.floating`) that insets the
   panes; a preference, not a parallel design system.
 
@@ -38,14 +39,14 @@ Two consequences worth recording:
   header in `protocol.rs` are for. Windows needs both spellings of every
   desktop source, because WebView2 maps custom schemes onto
   `http://<scheme>.localhost`.
-- **`.desktop`, not `.electron`.** The root platform class no longer names one
-  shell. `-webkit-app-region` went with it: neither WKWebView nor WebView2
-  honours it, so the title bars carry `data-tauri-drag-region` instead.
+- **No shell-named platform class.** The root carries only `.mac` or `.win`;
+  nothing names the shell any more. `-webkit-app-region` went the same way:
+  neither WKWebView nor WebView2 honours it, so the title bars carry
+  `data-tauri-drag-region` instead.
 
 **Rebuild-on-launch did not survive.** A compiled binary can't rebuild itself
 from a source tree the way the packaged Electron app did. Releases come from CI
-instead, built for macOS (both architectures) and Windows on every tagged
-commit.
+instead, built for Apple Silicon macOS and Windows on every tagged commit.
 
 Still true, and still parked: the **Mac App Store wall**. A sandboxed app can't
 freely `spawn` a system `latexmk`/`synctex`. Shipping to MAS would need

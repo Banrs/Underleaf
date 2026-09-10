@@ -496,3 +496,114 @@ fn search_stops_at_the_limit_and_skips_build_output() {
     assert_eq!(hits.len(), 5);
     assert!(hits.iter().all(|h| h.file == "many.tex"));
 }
+
+#[test]
+fn symbol_scan_still_finds_entries_around_a_byte_that_is_not_utf8() {
+    // Plenty of .bib and .tex files are still Latin-1. The scan matches raw
+    // bytes, so its patterns have to match bytes rather than codepoints: a
+    // Unicode-mode automaton cannot step across 0xFC and drops the whole entry
+    // containing it, where decoding the file first would have kept it lossily.
+    let data = data_dir();
+    let root = project(data.path(), "latin1");
+    let mut bib = b"@article{m".to_vec();
+    bib.push(0xFC); // 'u-umlaut' in ISO-8859-1; invalid on its own as UTF-8
+    bib.extend_from_slice(b"ller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n");
+    fs::write(root.join("refs.bib"), &bib).unwrap();
+
+    let mut tex = b"\\label{fig:m".to_vec();
+    tex.push(0xFC);
+    tex.extend_from_slice(b"ller}\n\\label{fig:ok}\n");
+    fs::write(root.join("ch.tex"), &tex).unwrap();
+
+    let found = scan_symbols(&root).unwrap();
+    assert!(
+        found.citations.iter().any(|c| c.contains("ller2020")),
+        "the entry carrying the byte was dropped: {:?}",
+        found.citations
+    );
+    assert!(
+        found.citations.contains(&"ok2021".to_string()),
+        "{:?}",
+        found.citations
+    );
+    assert!(
+        found.labels.iter().any(|l| l.contains("ller")),
+        "the label carrying the byte was dropped: {:?}",
+        found.labels
+    );
+    assert!(
+        found.labels.contains(&"fig:ok".to_string()),
+        "{:?}",
+        found.labels
+    );
+}
+
+#[test]
+fn the_byte_prefilter_never_hides_a_match_the_char_path_would_find() {
+    // U+0130 and the Kelvin sign both lowercase into plain ASCII, so an ASCII
+    // query can match a file holding no such ASCII byte. Skipping a file on one
+    // pass over its bytes is gated on the file being ASCII for exactly that
+    // reason; drop the gate and these two searches quietly return nothing.
+    let data = data_dir();
+    let root = project(data.path(), "folding");
+    fs::write(root.join("a.tex"), "\u{0130}stanbul\n").unwrap();
+    fs::write(root.join("b.tex"), "measured 5 \u{212A} today\n").unwrap();
+
+    let hits = search_project(&root, "istanbul", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
+        vec!["a.tex"],
+        "U+0130 lowercases to an ASCII 'i'"
+    );
+
+    let hits = search_project(&root, "k", 10).unwrap();
+    assert!(
+        hits.iter().any(|h| h.file == "b.tex"),
+        "U+212A lowercases to an ASCII 'k': {hits:?}"
+    );
+}
+
+#[test]
+fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
+    // Settings written by an older build can hold "chapters\main.tex". The
+    // rename normalises separators before comparing, so it still recognises the
+    // file it is moving; without that the main file keeps pointing at the old
+    // path and the next compile fails. Browser mode's suite was the only place
+    // this pairing was covered, and it went with the deletion.
+    let data = data_dir();
+    let root = project(data.path(), "legacy-sep");
+    create_file(&root, "chapters/main.tex", false).unwrap();
+    fs::write(
+        root.join(".texlocal.json"),
+        r#"{"mainFile":"chapters\\main.tex","engine":"pdflatex","shellEscape":false}"#,
+    )
+    .unwrap();
+
+    rename_entry(&root, "chapters", "content").unwrap();
+
+    assert_eq!(read_settings(&root).main_file, "content/main.tex");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fingerprint_follows_an_in_project_link_to_the_bytes_the_scan_reads() {
+    // scan_symbols reads through the link, so the stamp has to come from the
+    // target. Stamping the link itself leaves the symbol cache serving stale
+    // labels after the real file changed underneath it.
+    let data = data_dir();
+    let root = project(data.path(), "link-stamp");
+    fs::write(root.join("real.tex"), "\\label{a}\n").unwrap();
+    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
+
+    let stamp_of = |v: &[(String, u64, u64)]| {
+        v.iter()
+            .find(|(rel, _, _)| rel == "link.tex")
+            .cloned()
+            .expect("the link is scanned")
+    };
+    let before = stamp_of(&symbols_fingerprint(&root).unwrap());
+    fs::write(root.join("real.tex"), "\\label{a}\n\\label{b}\n").unwrap();
+    let after = stamp_of(&symbols_fingerprint(&root).unwrap());
+
+    assert_ne!(before, after, "the link's stamp must track its target");
+}

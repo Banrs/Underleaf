@@ -7,9 +7,9 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 > scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
 > — so existing installs and projects keep working.
 
-Ships as a Tauri desktop app for macOS and Windows (a Rust core with the
-system webview — no bundled browser, no localhost ports), and runs as a local
-web app in any browser. Built with open-source components only.
+Ships as a Tauri desktop app for Apple Silicon macOS and Windows 11: a Rust
+core with the system webview — no bundled browser, no localhost ports, and no
+HTTP client at all. Built with open-source components only.
 
 ## Quick start
 
@@ -120,7 +120,7 @@ cargo test -p texlocal-core   # core logic tests — no webview needed
 cargo test --workspace        # everything, needs the Tauri build deps
 ```
 
-Every pull request builds installers for macOS (both architectures) and
+Every pull request builds installers for Apple Silicon macOS and
 Windows and attaches them as artifacts, which is how a change gets tested on
 hardware CI can't assert against.
 
