@@ -111,6 +111,70 @@ fn classify_entry(root_canonical: &Path, entry: &fs::DirEntry) -> Result<EntryKi
     })
 }
 
+/// Every content file in the project, depth-first, with its project-relative
+/// path. Search, symbol scanning and fingerprinting all walk through here, so
+/// they cannot disagree about what a project contains: dotfiles are hidden,
+/// the top-level `build/` is compile output rather than content, and links are
+/// followed only while they stay inside the project.
+///
+/// The visitor returns false to stop the walk — search uses that to stop
+/// reading files once it has the hits it was asked for.
+fn visit_files(
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
+) -> Result<(), CoreError> {
+    fn walk(
+        root_canonical: &Path,
+        dir: &Path,
+        prefix: &str,
+        visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
+    ) -> Result<bool, CoreError> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            // Only the project's own build directory holds compile output. A
+            // `build` deeper in the tree is the author's, and both the file
+            // tree and the ZIP export keep it, so the scans must too.
+            if rel == BUILD_DIR {
+                continue;
+            }
+            match classify_entry(root_canonical, &entry)? {
+                EntryKind::Dir => {
+                    if !walk(root_canonical, &entry.path(), &rel, visit)? {
+                        return Ok(false);
+                    }
+                }
+                EntryKind::File => {
+                    if !visit(&entry.path(), rel)? {
+                        return Ok(false);
+                    }
+                }
+                EntryKind::Skip => {}
+            }
+        }
+        Ok(true)
+    }
+
+    walk(&fs::canonicalize(root)?, root, "", visit)?;
+    Ok(())
+}
+
+/// A project-relative path's extension, lowercased.
+fn ext_of(rel: &str) -> String {
+    Path::new(rel)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
@@ -385,88 +449,79 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    let mut hits: Vec<SearchHit> = Vec::new();
+    // The ASCII spelling of the query, when it has one, for the whole-file
+    // prefilter below.
+    let q_ascii: Option<Vec<u8>> = q
+        .iter()
+        .all(|c| c.is_ascii())
+        .then(|| q.iter().map(|c| *c as u8).collect());
 
-    fn walk(
-        root: &Path,
-        root_canonical: &Path,
-        dir: &Path,
-        q: &[char],
-        limit: usize,
-        hits: &mut Vec<SearchHit>,
-        lower: &mut Vec<char>,
-    ) -> Result<(), CoreError> {
-        for entry in fs::read_dir(dir)? {
-            if hits.len() >= limit {
-                return Ok(());
-            }
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == BUILD_DIR {
-                continue;
-            }
-            let abs = entry.path();
-            match classify_entry(root_canonical, &entry)? {
-                EntryKind::Dir => {
-                    walk(root, root_canonical, &abs, q, limit, hits, lower)?;
-                    continue;
-                }
-                EntryKind::File => {}
-                EntryKind::Skip => continue,
-            }
-            let rel = match crate::paths::rel_to_root(root, &abs) {
-                Some(r) => r,
-                None => continue,
-            };
-            if !is_text_file(&rel) {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&fs::read(&abs)?).into_owned();
-            for (i, line) in text.split('\n').enumerate() {
-                if hits.len() >= limit {
-                    break;
-                }
-                lower_into(line, lower);
-                let col = match find_from(lower, q, 0) {
-                    Some(c) => c,
-                    None => continue,
-                };
-                let chars: Vec<char> = line.chars().collect();
-                let start = col.saturating_sub(24);
-                let ellipsis = if start > 0 { "…" } else { "" };
-                let before: String = chars[start..col].iter().collect();
-                let matched: String = chars[col..col + q.len()].iter().collect();
-                let after_end = (col + q.len() + 60).min(chars.len());
-                let after: String = chars[col + q.len()..after_end].iter().collect();
-                hits.push(SearchHit {
-                    file: rel.clone(),
-                    line: (i + 1) as u32,
-                    before: format!("{ellipsis}{before}").trim_start().to_string(),
-                    matched,
-                    after: after.trim_end().to_string(),
-                });
+    let mut hits: Vec<SearchHit> = Vec::new();
+    let mut lower = Vec::new();
+    visit_files(root, &mut |abs, rel| {
+        if !is_text_file(&rel) {
+            return Ok(true);
+        }
+        let bytes = fs::read(abs)?;
+        // One case-insensitive pass over the raw bytes rules a file out without
+        // splitting a single line. Sound only when both sides are ASCII: there
+        // the byte fold and `lower_into`'s char fold agree by definition, while
+        // a character like 'İ' lowercases into an ASCII 'i' that no byte
+        // comparison would find.
+        if let Some(needle) = &q_ascii {
+            if bytes.is_ascii() && find_ci_ascii(&bytes, needle).is_none() {
+                return Ok(true);
             }
         }
-        Ok(())
-    }
-
-    let root_canonical = fs::canonicalize(root)?;
-    walk(
-        root,
-        &root_canonical,
-        root,
-        &q,
-        limit,
-        &mut hits,
-        &mut Vec::new(),
-    )?;
+        let text = String::from_utf8_lossy(&bytes);
+        for (i, line) in text.split('\n').enumerate() {
+            if hits.len() >= limit {
+                break;
+            }
+            lower_into(line, &mut lower);
+            let Some(col) = find_from(&lower, &q, 0) else {
+                continue;
+            };
+            let chars: Vec<char> = line.chars().collect();
+            let start = col.saturating_sub(24);
+            let ellipsis = if start > 0 { "…" } else { "" };
+            let before: String = chars[start..col].iter().collect();
+            let matched: String = chars[col..col + q.len()].iter().collect();
+            let after_end = (col + q.len() + 60).min(chars.len());
+            let after: String = chars[col + q.len()..after_end].iter().collect();
+            hits.push(SearchHit {
+                file: rel.clone(),
+                line: (i + 1) as u32,
+                before: format!("{ellipsis}{before}").trim_start().to_string(),
+                matched,
+                after: after.trim_end().to_string(),
+            });
+        }
+        Ok(hits.len() < limit)
+    })?;
     Ok(hits)
+}
+
+/// Case-insensitive substring search over ASCII bytes.
+fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len()).find(|&i| {
+        haystack[i..i + needle.len()]
+            .iter()
+            .zip(needle)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
 }
 
 // ---------- symbols ----------
 
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    use regex::Regex;
+    // Matched against the file's bytes rather than a decoded copy: a .tex file
+    // is scanned for a handful of names, so decoding megabytes of prose to
+    // find them is the whole cost. Only the captures become Strings.
+    use regex::bytes::Regex;
     use std::sync::OnceLock;
     static BIB_RE: OnceLock<Regex> = OnceLock::new();
     static LABEL_RE: OnceLock<Regex> = OnceLock::new();
@@ -475,58 +530,17 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
 
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
-
-    fn walk(
-        root_canonical: &Path,
-        dir: &Path,
-        bib_re: &regex::Regex,
-        label_re: &regex::Regex,
-        keys: &mut Vec<String>,
-        labels: &mut Vec<String>,
-    ) -> Result<(), CoreError> {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == BUILD_DIR {
-                continue;
-            }
-            let abs = entry.path();
-            match classify_entry(root_canonical, &entry)? {
-                EntryKind::Dir => {
-                    walk(root_canonical, &abs, bib_re, label_re, keys, labels)?;
-                    continue;
-                }
-                EntryKind::File => {}
-                EntryKind::Skip => continue,
-            }
-            let ext = abs
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            if ext == "bib" {
-                let src = String::from_utf8_lossy(&fs::read(&abs)?).into_owned();
-                for m in bib_re.captures_iter(&src) {
-                    keys.push(m[1].to_string());
-                }
-            } else if ext == "tex" {
-                let src = String::from_utf8_lossy(&fs::read(&abs)?).into_owned();
-                for m in label_re.captures_iter(&src) {
-                    labels.push(m[1].to_string());
-                }
-            }
+    visit_files(root, &mut |abs, rel| {
+        let (re, out) = match ext_of(&rel).as_str() {
+            "bib" => (bib_re, &mut keys),
+            "tex" => (label_re, &mut labels),
+            _ => return Ok(true),
+        };
+        for m in re.captures_iter(&fs::read(abs)?) {
+            out.push(String::from_utf8_lossy(&m[1]).into_owned());
         }
-        Ok(())
-    }
-
-    let root_canonical = fs::canonicalize(root)?;
-    walk(
-        &root_canonical,
-        root,
-        bib_re,
-        label_re,
-        &mut keys,
-        &mut labels,
-    )?;
+        Ok(true)
+    })?;
 
     fn dedup(v: Vec<String>) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
@@ -539,50 +553,21 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
 }
 
 pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
-    fn walk(
-        root: &Path,
-        root_canonical: &Path,
-        dir: &Path,
-        out: &mut Vec<FileStamp>,
-    ) -> Result<(), CoreError> {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == BUILD_DIR {
-                continue;
-            }
-            let abs = entry.path();
-            match classify_entry(root_canonical, &entry)? {
-                EntryKind::Dir => {
-                    walk(root, root_canonical, &abs, out)?;
-                    continue;
-                }
-                EntryKind::File => {}
-                EntryKind::Skip => continue,
-            }
-            let ext = abs
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            if ext != "bib" && ext != "tex" {
-                continue;
-            }
-            let Some(rel) = crate::paths::rel_to_root(root, &abs) else {
-                continue;
-            };
-            let meta = entry.metadata()?;
-            out.push((rel, mtime_ns(&meta), meta.len()));
-        }
-        Ok(())
-    }
-
     let mut out = Vec::new();
-    let root_canonical = fs::canonicalize(root)?;
-    walk(root, &root_canonical, root, &mut out)?;
+    visit_files(root, &mut |abs, rel| {
+        let ext = ext_of(&rel);
+        if ext != "bib" && ext != "tex" {
+            return Ok(true);
+        }
+        // fs::metadata follows the link, so a symlinked source is stamped by
+        // the bytes scan_symbols actually reads rather than by the link itself.
+        let meta = fs::metadata(abs)?;
+        out.push((rel, mtime_ns(&meta), meta.len()));
+        Ok(true)
+    })?;
     out.sort();
     Ok(out)
 }
-
 #[cfg(test)]
 mod tests {
     use super::discard_using;

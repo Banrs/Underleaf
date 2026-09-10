@@ -58,6 +58,12 @@ These are load-bearing. Changing them needs a deliberate decision, not a drive-b
 - **Never use `PredefinedMenuItem::quit`.** Quit must route through the
   flush-before-exit handshake in `src-tauri/src/window.rs` or unsaved buffers
   are lost.
+- **Every project scan goes through `visit_files`** in `projects.rs`. Search,
+  symbol scanning and fingerprinting used to walk the tree themselves and had
+  drifted: all three skipped any directory named `build` at any depth, while
+  `file_tree` and the ZIP export skip only the project's own top-level one. Only
+  the top-level `build/` is compile output; a `build` deeper in the tree is the
+  author's content and every scan must see it.
 - **Menu items are built once, then diff-applied.** An item's *shape*
   (checkbox vs plain) is fixed at build time; only enabled/text/checked update.
 

@@ -10,7 +10,8 @@ use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, rename_entry, search_project,
+    create_file, create_project, delete_entry, rename_entry, scan_symbols, search_project,
+    symbols_fingerprint,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
@@ -170,7 +171,7 @@ fn implicit_project_scans_skip_external_symlink_files() {
     // Imported here rather than at the top: this is the only test that reads
     // them, and it is unix-only, so a file-level import is an unused-import
     // error on Windows under -D warnings.
-    use texlocal_core::projects::{file_tree, scan_symbols, symbols_fingerprint};
+    use texlocal_core::projects::file_tree;
 
     let data = data_dir();
     let root = project(data.path(), "symlink-scans");
@@ -429,6 +430,55 @@ fn a_hit_carries_the_text_either_side_of_it() {
     assert_eq!(hits[0].before, "the quick ");
     assert_eq!(hits[0].matched, "brown");
     assert_eq!(hits[0].after, " fox jumps");
+}
+
+#[test]
+fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
+    // Only the project's own top-level build/ is compile output. A `build`
+    // deeper in the tree is the author's: file_tree lists it and export_zip
+    // archives it, so search and the symbol scan must see it too. All three
+    // used to skip any directory of that name at any depth, which left a real
+    // source file invisible to search while still showing in the sidebar.
+    let data = data_dir();
+    let root = project(data.path(), "nested-build");
+    create_file(&root, "chapters/build/notes.tex", false).unwrap();
+    fs::write(
+        root.join("chapters/build/notes.tex"),
+        "a needle and \\label{deep:one}\n",
+    )
+    .unwrap();
+
+    let hits = search_project(&root, "needle", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
+        vec!["chapters/build/notes.tex"],
+    );
+    assert!(scan_symbols(&root)
+        .unwrap()
+        .labels
+        .contains(&"deep:one".to_string()));
+    assert!(symbols_fingerprint(&root)
+        .unwrap()
+        .iter()
+        .any(|(rel, _, _)| rel == "chapters/build/notes.tex"));
+}
+
+#[test]
+fn top_level_build_output_stays_out_of_every_scan() {
+    let data = data_dir();
+    let root = project(data.path(), "top-build");
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
+
+    assert!(search_project(&root, "needle", 10).unwrap().is_empty());
+    assert!(!scan_symbols(&root)
+        .unwrap()
+        .labels
+        .contains(&"gen:one".to_string()));
+    assert!(symbols_fingerprint(&root)
+        .unwrap()
+        .iter()
+        .all(|(rel, _, _)| !rel.starts_with("build/")));
 }
 
 #[test]

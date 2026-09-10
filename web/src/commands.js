@@ -158,7 +158,6 @@ export function onCommandsChanged(fn) { notifyHost = fn; }
 // An accelerator string → the glyph string macOS shows in menus and
 // tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
 // "Ctrl+Shift+Z".
-const MAC = isMac;
 const GLYPH = { CmdOrCtrl: '⌘', Cmd: '⌘', Command: '⌘', Shift: '⇧', Alt: '⌥', Option: '⌥', Ctrl: '⌃', Control: '⌃' };
 const KEYNAME = { Return: '↩', Enter: '↩', Backslash: '\\', Comma: ',', Plus: '+', Minus: '−' };
 
@@ -167,7 +166,7 @@ export function accelLabel(accel) {
   const parts = accel.split('+');
   const key = parts.pop();
   const shown = KEYNAME[key] ?? key.toUpperCase();
-  if (!MAC) return [...parts, shown].join('+');
+  if (!isMac) return [...parts, shown].join('+');
   // macOS orders modifiers ⌃⌥⇧⌘ regardless of how they were written.
   const order = ['Ctrl', 'Control', 'Alt', 'Option', 'Shift', 'CmdOrCtrl', 'Cmd', 'Command'];
   const mods = parts.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((p) => GLYPH[p] ?? p);

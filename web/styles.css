@@ -44,7 +44,6 @@
   --bg-content: #ffffff;
   --bg-recessed: #f2f2f4;
   --material: rgba(236, 236, 236, 0.63);   /* "regular" */
-  --material-thin: rgba(236, 236, 236, 0.5);
 
   --accent: #0088ff;
   --on-accent: #ffffff;
@@ -140,7 +139,6 @@
   --bg-content: #1e1e1e;
   --bg-recessed: #171717;
   --material: rgba(44, 44, 44, 0.61);
-  --material-thin: rgba(41, 41, 41, 0.49);
 
   --accent: #0091ff;
   --red: #ff4245;
@@ -552,13 +550,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   position: relative;
   overflow: hidden;
-  background: var(--material-thin);
+  background: var(--bg-recessed);
   transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease;
 }
-/* Native vibrancy already renders behind the transparent window on macOS, so the
-   sidebar only needs to stay out of the way. Elsewhere it blurs the app itself. */
+/* Native vibrancy already renders behind the transparent window on macOS, so
+   there the sidebar only needs to stay out of the way. */
 .mac .sidebar { background: transparent; }
-.win .sidebar { background: var(--bg-recessed); }
 
 .sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
 .sidebar.collapsed + .divider { display: none; }
