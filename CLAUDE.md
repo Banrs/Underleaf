@@ -48,20 +48,13 @@ clippy disagrees with you, clippy is right.
 
 These are load-bearing. Changing them needs a deliberate decision, not a drive-by.
 
-- **`crates/texlocal-core/src/paths.rs` is the security boundary.** Every guard
-  there mirrors one in `server/projects.js`. Normalisation is *lexical* on
-  purpose — `canonicalize()` resolves symlinks and requires existence, which is
-  not the same semantics. The leading-`-` rejection blocks argv injection into
-  `latexmk`.
+- **`crates/texlocal-core/src/paths.rs` is the security boundary**, and now the
+  only one. Normalisation is *lexical* on purpose — `canonicalize()` resolves
+  symlinks and requires existence, which is not the same semantics. The
+  leading-`-` rejection blocks argv injection into `latexmk`.
 - **Project-relative paths use forward slashes on every platform** when returned
   or stored. Both separators are accepted on input. The frontend splits on `/`
   and SyncTeX requires it.
-- **`server/` and `crates/texlocal-core/` implement the same logic twice** — the
-  Express browser mode (`npm run dev`) and the Tauri desktop app. This
-  duplication is deliberate. Change one, change the other, and keep both test
-  suites passing or they drift apart silently. One deliberate exception: the
-  core deletes to the platform trash, the server unlinks. Browser mode may be
-  serving from a headless box where there is no trash to move a file to.
 - **Never use `PredefinedMenuItem::quit`.** Quit must route through the
   flush-before-exit handshake in `src-tauri/src/window.rs` or unsaved buffers
   are lost.
@@ -95,7 +88,9 @@ fingerprinting — the accent reaches the page from the host instead.
 
 ```
 web/                    frontend (vanilla JS, CodeMirror 6, pdf.js)
-server/                 Express API for browser mode — its own JS implementation
-crates/texlocal-core/   ported logic, GUI-free so it tests without a webview
+crates/texlocal-core/   project/compile/synctex logic, GUI-free so it tests without a webview
 src-tauri/              the desktop app: commands, protocol, menus, window
 ```
+
+One implementation of everything. The app targets Apple Silicon macOS and
+Windows 11 only; it speaks no HTTP and opens no ports.

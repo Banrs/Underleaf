@@ -1,7 +1,8 @@
 /* TeXLocal interface.
    Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
    extraction. Platform-specific chrome is gated on html.mac / html.win so the
-   Windows shell is additive rather than a rewrite. */
+   Windows shell is additive rather than a rewrite. The app only ever runs in
+   the desktop shell, so there is no browser variant to gate against. */
 
 /* ---------- fonts ---------- */
 
@@ -174,7 +175,7 @@ html, body {
 
 /* On macOS the native window vibrancy shows through a transparent window; the
    sidebar leaves its background translucent to reveal it. */
-.desktop.mac, .desktop.mac body { background: transparent; }
+.mac, .mac body { background: transparent; }
 
 h1, h2, h3, p { margin: 0; }
 
@@ -199,9 +200,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* The traffic lights sit at x18/y19 in a 52px band (kit values), so the sidebar
    band keeps its leading end clear of controls. */
-.desktop.mac .sidebar-titlebar { padding-left: 96px; }
+.mac .sidebar-titlebar { padding-left: 96px; }
 /* With the sidebar hidden, the lights move over the content title bar. */
-.desktop.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
+.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
 
 .titlebar {
   display: flex;
@@ -465,7 +466,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
-.desktop.mac .home-titlebar { padding-left: 96px; }
+.mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
    the leading side, recents filling the trailing side. */
@@ -556,8 +557,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 /* Native vibrancy already renders behind the transparent window on macOS, so the
    sidebar only needs to stay out of the way. Elsewhere it blurs the app itself. */
-.desktop.mac .sidebar { background: transparent; }
-:not(.desktop) .sidebar, .win .sidebar { background: var(--bg-recessed); }
+.mac .sidebar { background: transparent; }
+.win .sidebar { background: var(--bg-recessed); }
 
 .sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
 .sidebar.collapsed + .divider { display: none; }
@@ -992,7 +993,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .floating .divider:not(.divider-sync):hover { background: transparent; }
 .floating .divider:not(.divider-sync):hover::after { background: var(--label-3); }
 .floating .divider:not(.divider-sync).dragging::after { background: var(--accent); }
-.floating.desktop.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
+.floating.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
 
 /* ---------- dialogs, menus, toasts ---------- */
 
@@ -1059,7 +1060,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: var(--shadow-menu);
   animation: pop-in 0.12s ease-out;
 }
-.win .menu, :not(.desktop) .menu { background: var(--bg-window); }
+.win .menu { background: var(--bg-window); }
 .menu-item {
   display: flex;
   align-items: center;

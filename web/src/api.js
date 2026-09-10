@@ -1,68 +1,6 @@
-// API client with two backends behind one interface:
-//  - Desktop: Tauri commands, files served over texlocal://
-//  - Browser: the Express server's REST API on the same origin
+// The API client. One backend: Tauri commands, with project files served over
+// the texlocal:// scheme. The app speaks no HTTP at all.
 import { bridge as ipc } from './bridge.js';
-
-function enc(s) { return encodeURIComponent(s); }
-
-// ---------- browser (fetch) backend ----------
-
-async function unwrap(res) {
-  if (!res.ok) {
-    let msg = res.statusText;
-    try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
-    throw new Error(msg);
-  }
-  return res.json();
-}
-
-async function req(method, url, body) {
-  const opts = { method, headers: {} };
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  return unwrap(await fetch(url, opts));
-}
-
-const fetchApi = {
-  status: () => req('GET', '/api/status'),
-
-  listProjects: () => req('GET', '/api/projects'),
-  createProject: (name, template) => req('POST', '/api/projects', { name, template }),
-  renameProject: (id, name) => req('PATCH', `/api/projects/${enc(id)}`, { name }),
-  deleteProject: (id) => req('DELETE', `/api/projects/${enc(id)}`),
-
-  settings: (id) => req('GET', `/api/projects/${enc(id)}/settings`),
-  saveSettings: (id, s) => req('PUT', `/api/projects/${enc(id)}/settings`, s),
-
-  tree: (id) => req('GET', `/api/projects/${enc(id)}/tree`),
-  symbols: (id) => req('GET', `/api/projects/${enc(id)}/symbols`),
-  search: (id, q) => req('GET', `/api/projects/${enc(id)}/search?q=${enc(q)}`),
-  readFile: (id, p) => req('GET', `/api/projects/${enc(id)}/file?path=${enc(p)}`),
-  rawFileUrl: (id, p) => `/api/projects/${enc(id)}/file?path=${enc(p)}&raw=1`,
-  writeFile: (id, p, text) => req('PUT', `/api/projects/${enc(id)}/file?path=${enc(p)}`, { text }),
-  createEntry: (id, p, dir) => req('POST', `/api/projects/${enc(id)}/files`, { path: p, dir }),
-  renameEntry: (id, from, to) => req('POST', `/api/projects/${enc(id)}/rename`, { from, to }),
-  deleteEntry: (id, p) => req('DELETE', `/api/projects/${enc(id)}/file?path=${enc(p)}`),
-
-  upload: async (id, files, dir = '') => {
-    const fd = new FormData();
-    fd.append('dir', dir);
-    for (const f of files) fd.append('files', f, f._relPath ?? f.name);
-    return unwrap(await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd }));
-  },
-
-  compile: (id, opts = {}) => req('POST', `/api/projects/${enc(id)}/compile`, opts),
-  pdfUrl: (id) => `/api/projects/${enc(id)}/pdf?t=${Date.now()}`,
-  downloadPdf: (id) => window.open(`/api/projects/${enc(id)}/pdf?t=${Date.now()}`, '_blank'),
-  exportProject: (id) => { location.href = `/api/projects/${enc(id)}/export`; },
-
-  syncForward: (id, file, line) =>
-    req('GET', `/api/projects/${enc(id)}/synctex/forward?file=${enc(file)}&line=${line}`),
-  syncInverse: (id, page, x, y) =>
-    req('GET', `/api/projects/${enc(id)}/synctex/inverse?page=${page}&x=${x}&y=${y}`),
-};
 
 // ---------- Tauri (command) backend ----------
 
@@ -124,4 +62,4 @@ const tauriApi = ipc?.fileUrl && {
   syncInverse: (id, page, x, y) => ipc.invoke('synctex_inverse', { id, page, x, y }),
 };
 
-export const api = tauriApi ?? fetchApi;
+export const api = tauriApi;

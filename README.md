@@ -21,7 +21,6 @@ git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 npm install
 npm run app          # desktop app against live code
-npm run dev          # or browser mode on http://localhost:3417
 ```
 
 You also need a TeX distribution — see [Requirements](#requirements).
@@ -51,12 +50,11 @@ You also need a TeX distribution — see [Requirements](#requirements).
 
 ## Requirements
 
-**To run the app:** macOS 12+ (Apple Silicon or Intel) or Windows 10+ (x64),
-plus a TeX distribution providing `latexmk`, `pdflatex` and `synctex`:
+**To run the app:** macOS 12+ on Apple Silicon, or Windows 11 (x64), plus a TeX
+distribution providing `latexmk`, `pdflatex` and `synctex`:
 
 - **macOS** — `brew install --cask mactex-no-gui`
 - **Windows** — [MiKTeX](https://miktex.org) or [TeX Live](https://tug.org/texlive)
-- **Linux** (browser mode) — your distribution's TeX Live, e.g. `sudo apt install texlive`
 
 The full distribution (~7 GB) is recommended so every package works offline
 forever. TeXLocal finds TeX on your `PATH` and also looks in the usual install
@@ -80,16 +78,9 @@ are served over a custom `texlocal://` scheme.
 > SmartScreen appears. Distributing without those prompts needs an Apple
 > Developer ID (signing + notarization) and a Windows signing certificate.
 
-**Browser mode:** the Express server runs TeXLocal in any browser, which is
-also how it runs on Linux:
-
-```sh
-npm run dev         # builds the frontend and serves http://localhost:3417
-```
-
-Projects are plain folders in `~/TeXLocal` (desktop app) or `data/projects/`
-(browser mode) — override either with `TEXLOCAL_DATA=/path`. Everything is just
-files on disk; no databases, no lock-in.
+Projects are plain folders in `~/TeXLocal` — override with
+`TEXLOCAL_DATA=/path`. Everything is just files on disk; no databases, no
+lock-in.
 
 > The desktop app uses `~/TeXLocal` (home folder) rather than
 > `~/Documents/TeXLocal` so it isn't blocked by macOS's Documents-folder
@@ -102,11 +93,9 @@ crates/texlocal-core/  Projects, path safety, latexmk/SyncTeX, log parsing, ZIP 
                        No GUI dependencies, so it builds and tests anywhere.
 src-tauri/             The desktop shell: commands.rs (the command surface),
                        protocol.rs (texlocal://), menu.rs, window.rs, state.rs
-server/                Express API for browser mode (its own JS implementation
-                       of the same project/compile logic)
 web/src/               Frontend modules, bundled by esbuild into web/dist:
                        main.js (bootstrap/routing) · bridge.js (host detection) ·
-                       commands.js (shared command model) · api.js (desktop/REST client) ·
+                       commands.js (shared command model) · api.js (command client) ·
                        home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
                        settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
                        dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) ·
@@ -118,11 +107,9 @@ scripts/               extract-icns.mjs (icon master for `tauri icon`)
 assets/                App icon source
 ```
 
-The frontend is shared: `web/src/bridge.js` decides at runtime whether it is
-running inside the desktop shell or a browser, and `api.js` picks its backend
-from that. Browser mode keeps its own JS implementation of the project and
-compile logic in `server/`; the two are held together by test suites that
-cover the same cases on both sides.
+There is one implementation of everything. `web/src/bridge.js` is the single
+place that knows about the host, and `api.js` speaks only to Tauri commands —
+the app contains no HTTP client and no server.
 
 ## Development
 
@@ -144,10 +131,10 @@ installers.
 
 ## Security notes
 
-- The desktop app opens no network ports at all; browser mode binds to `127.0.0.1` only.
+- The app opens no network ports at all and contains no HTTP client.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
 - `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project through Settings; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 
 ## License
 
-MIT. Built with [Tauri](https://tauri.app) (MIT/Apache-2.0), [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [Express](https://expressjs.com) (MIT), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
+MIT. Built with [Tauri](https://tauri.app) (MIT/Apache-2.0), [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.

@@ -188,50 +188,6 @@ export function tooltip(id) {
 // On the desktop the native menu owns its accelerators, so handling them here
 // too would fire every command twice. Browser mode has no menu bar, so the same
 // declarations drive a keydown matcher instead.
-function matches(accel, e) {
-  const parts = accel.split('+');
-  const key = parts.pop().toLowerCase();
-  const want = new Set(parts.map((p) => p.toLowerCase()));
-
-  // CmdOrCtrl is ⌘ on macOS and Ctrl elsewhere; an explicit Ctrl is Ctrl
-  // everywhere — the two must not collapse into one "primary modifier" test.
-  const wantPrimary = want.has('cmdorctrl') || want.has('cmd') || want.has('command');
-  const needMeta = wantPrimary && MAC;
-  const needCtrl = want.has('ctrl') || want.has('control') || (wantPrimary && !MAC);
-  if (needMeta !== e.metaKey || needCtrl !== e.ctrlKey) return false;
-  if ((want.has('alt') || want.has('option')) !== e.altKey) return false;
-
-  // On most layouts '+' is Shift+= and '_' is Shift+-, so an accelerator written
-  // as Plus/Minus has to accept the unshifted key as well as the shifted glyph —
-  // and must not then insist on a matching Shift state, or Cmd+Shift+= (the
-  // natural way to type Cmd++) would fail to zoom.
-  const pressed = e.key === 'Enter' ? 'return' : e.key.toLowerCase();
-  const shifted = (key === 'plus' && pressed === '+') || (key === 'minus' && pressed === '_');
-  const keyMatches = pressed === key || shifted
-    || (key === 'plus' && pressed === '=')
-    || (key === 'minus' && pressed === '-');
-  if (!keyMatches) return false;
-  return shifted || want.has('shift') === e.shiftKey;
-}
-
-export function installBrowserShortcuts() {
-  addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    for (const c of registry.values()) {
-      // `nativeOnly` commands are already bound inside CodeMirror; intercepting
-      // them here would run the action twice.
-      if (!c.accel || c.nativeOnly) continue;
-      if (!matches(c.accel, e)) continue;
-      // A disabled command leaves the key to the browser (e.g. page zoom).
-      if (!commandEnabled(c.id)) return;
-      e.preventDefault();
-      runCommand(c.id);
-      return;
-    }
-  });
-}
-
-// On the desktop, menu clicks arrive as an event from the shell.
 export function installMenuBridge() {
   ipc?.onCommand?.((id) => runCommand(id));
 }

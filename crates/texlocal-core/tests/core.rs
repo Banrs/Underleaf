@@ -210,15 +210,30 @@ fn the_settings_file_is_not_reachable_through_the_file_api() {
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
+// Not gated: `component_eq` reserves the settings name's case aliases on every
+// platform on purpose, because macOS volumes are case-insensitive too. Keeping
+// this assertion inside the cfg(windows) test below meant the only host that
+// ever checked it was Windows.
+#[test]
+fn settings_aliases_are_reserved_on_every_platform() {
+    let data = data_dir();
+    let root = project(data.path(), "settings-aliases");
+    for alias in [".TEXLOCAL.JSON", ".TexLocal.Json", ".texlocal.JSON"] {
+        assert!(
+            safe_path(&root, alias)
+                .unwrap_err()
+                .message
+                .contains("Reserved file"),
+            "{alias} must be reserved"
+        );
+    }
+}
+
 #[cfg(windows)]
 #[test]
-fn windows_aliases_cannot_reach_settings_or_reserved_device_names() {
+fn windows_reserved_device_names_are_rejected() {
     let data = data_dir();
     let root = project(data.path(), "windows-aliases");
-    assert!(safe_path(&root, ".TEXLOCAL.JSON")
-        .unwrap_err()
-        .message
-        .contains("Reserved file"));
     assert!(safe_path(&root, "CON.tex").is_err());
     assert!(safe_path(&root, "CONIN$").is_err());
     assert!(safe_path(&root, "COM¹.log").is_err());
