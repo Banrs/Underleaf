@@ -7,13 +7,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEMPLATES } from './templates.js';
 
-// fileURLToPath, not URL.pathname: pathname keeps percent-encoding and breaks on Windows.
 export const DATA_DIR = process.env.TEXLOCAL_DATA
   ? path.resolve(process.env.TEXLOCAL_DATA)
   : path.resolve(fileURLToPath(new URL('../data/projects', import.meta.url)));
 
 export const BUILD_DIR = 'build';
 const SETTINGS_FILE = '.texlocal.json';
+const WINDOWS = process.platform === 'win32';
+
+// Paths stored in settings and returned to the frontend are platform-neutral.
+export function toStoredPath(value) {
+  return String(value).replaceAll('\\', '/');
+}
+
+function isAbsoluteLike(value) {
+  const stored = toStoredPath(value);
+  return stored.startsWith('/') || /^[A-Za-z]:/.test(stored);
+}
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -26,34 +36,103 @@ export class HttpError extends Error {
 
 // ---------- path safety ----------
 
+function invalidWindowsSegment(segment) {
+  if (!WINDOWS) return false;
+  if (/[ .]$/.test(segment) || /[\x00-\x1f<>:"|?*]/.test(segment)) return true;
+  const stem = segment.split('.')[0].toUpperCase();
+  return ['CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$'].includes(stem)
+    || /^COM[1-9¹²³]$/u.test(stem)
+    || /^LPT[1-9¹²³]$/u.test(stem);
+}
+
+function validateWindowsPath(abs, message) {
+  if (!WINDOWS) return;
+  const { root } = path.parse(abs);
+  for (const segment of abs.slice(root.length).split(path.sep).filter(Boolean)) {
+    if (invalidWindowsSegment(segment)) throw new HttpError(400, message);
+  }
+}
+
+function isInside(root, candidate) {
+  const rel = path.relative(root, candidate);
+  return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+// Resolve only the closest component that exists. This preserves lexical
+// semantics for new paths while blocking symlink/junction ancestors that point
+// outside the project.
+function assertExistingAncestorInside(root, target, message) {
+  const realRoot = fs.realpathSync.native(root);
+  let existing = target;
+  while (true) {
+    try {
+      fs.lstatSync(existing);
+      break;
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      const parent = path.dirname(existing);
+      if (parent === existing) throw new HttpError(400, message);
+      existing = parent;
+    }
+  }
+  let resolved;
+  try {
+    resolved = fs.realpathSync.native(existing);
+  } catch {
+    throw new HttpError(400, message);
+  }
+  if (!isInside(realRoot, resolved)) throw new HttpError(400, message);
+}
+
+function classifyProjectEntry(root, abs, entry) {
+  if (entry.isDirectory()) return 'dir';
+  if (entry.isFile()) return 'file';
+  if (!entry.isSymbolicLink()) return null;
+  try {
+    assertExistingAncestorInside(root, abs, 'Path escapes project');
+    // Directory links are never followed: they can form cycles or duplicate an
+    // arbitrarily large subtree. Safe in-project file links remain usable.
+    return fs.statSync(abs).isFile() ? 'file' : null;
+  } catch (err) {
+    if (err instanceof HttpError || err?.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
 export function projectRoot(id) {
+  if (typeof id !== 'string' || !id || isAbsoluteLike(id)) {
+    throw new HttpError(400, 'Bad project id');
+  }
   const root = path.resolve(DATA_DIR, id);
   if (!root.startsWith(DATA_DIR + path.sep)) throw new HttpError(400, 'Bad project id');
+  validateWindowsPath(root, 'Bad project id');
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new HttpError(404, `No such project: ${id}`);
   }
+  assertExistingAncestorInside(DATA_DIR, root, 'Bad project id');
   return root;
 }
 
-// Resolve a user-supplied relative path inside a project, rejecting escapes.
-// The settings file is reserved: writable only through writeSettings, which
-// validates each key — a raw write could flip shellEscape on.
+// Resolve a user-supplied relative path inside a project, rejecting lexical and
+// existing-symlink escapes. The settings file is reserved: writable only
+// through writeSettings, which validates each key.
 export function safePath(root, rel) {
   if (typeof rel !== 'string' || rel === '') throw new HttpError(400, 'Missing path');
-  const abs = path.resolve(root, rel);
+  if (isAbsoluteLike(rel)) throw new HttpError(400, 'Path escapes project');
+  const abs = path.resolve(root, toStoredPath(rel));
   if (!abs.startsWith(root + path.sep)) throw new HttpError(400, 'Path escapes project');
-  if (path.relative(root, abs) === SETTINGS_FILE) throw new HttpError(400, 'Reserved file');
+  validateWindowsPath(abs, 'Path escapes project');
+  const relative = toStoredPath(path.relative(root, abs));
+  if (relative.toLowerCase() === SETTINGS_FILE) throw new HttpError(400, 'Reserved file');
+  assertExistingAncestorInside(root, abs, 'Path escapes project');
   return abs;
 }
 
-// A path inside the project, in a form that is safe to hand to a command line:
-// relative, no escape, and with no segment a tool could read as an option. The
-// main file becomes an argv element for latexmk, where a leading "-" would be
-// parsed as a flag rather than a filename.
 export function safeRelFile(root, rel) {
-  const out = path.relative(root, safePath(root, rel));
-  if (!out || out.startsWith('..') || path.isAbsolute(out)) throw new HttpError(400, 'Path escapes project');
-  if (out.split(path.sep).some((seg) => seg.startsWith('-'))) {
+  const native = path.relative(root, safePath(root, rel));
+  if (!native || native.startsWith('..') || path.isAbsolute(native)) throw new HttpError(400, 'Path escapes project');
+  const out = toStoredPath(native);
+  if (out.split('/').some((seg) => seg.startsWith('-'))) {
     throw new HttpError(400, 'Path segments cannot start with "-"');
   }
   return out;
@@ -61,20 +140,17 @@ export function safeRelFile(root, rel) {
 
 function sanitizeName(name) {
   const clean = String(name ?? '').trim().replace(/[/\\:*?"<>|]/g, '').slice(0, 80);
-  if (!clean || clean.startsWith('.')) throw new HttpError(400, 'Invalid name');
+  if (!clean || clean.startsWith('.') || invalidWindowsSegment(clean)) {
+    throw new HttpError(400, 'Invalid name');
+  }
   return clean;
 }
 
 // ---------- settings ----------
 
 const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
-
 const DEFAULT_SETTINGS = { mainFile: 'main.tex', engine: 'pdflatex', shellEscape: false };
 
-// Settings arrive from a request body, and two of them are dangerous taken as
-// given: `mainFile` becomes an argv element for latexmk, and `shellEscape` turns
-// on arbitrary shell execution during a compile. Accept only known keys, and
-// validate each one rather than merging whatever was sent.
 function validateSettings(root, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, 'Invalid settings');
   const out = {};
@@ -106,9 +182,6 @@ export async function writeSettings(root, settings) {
   return next;
 }
 
-// The compiled PDF path for a project — the ONE place this is derived. mainFile
-// "paper.tex" → "<root>/build/paper.pdf". Callers (compile, __pdf protocol,
-// pdf:saveAs, REST /pdf) all route through here instead of recomputing it.
 export async function compiledPdfPath(root) {
   const { mainFile } = await readSettings(root);
   const rel = safeRelFile(root, mainFile);
@@ -167,11 +240,13 @@ export async function fileTree(root, dir = root) {
   const nodes = [];
   for (const e of entries) {
     if (e.name.startsWith('.')) continue;
-    const rel = path.relative(root, path.join(dir, e.name));
+    const rel = toStoredPath(path.relative(root, path.join(dir, e.name)));
     if (rel === BUILD_DIR) continue;
-    if (e.isDirectory()) {
-      nodes.push({ type: 'dir', name: e.name, path: rel, children: await fileTree(root, path.join(dir, e.name)) });
-    } else {
+    const abs = path.join(dir, e.name);
+    const kind = classifyProjectEntry(root, abs, e);
+    if (kind === 'dir') {
+      nodes.push({ type: 'dir', name: e.name, path: rel, children: await fileTree(root, abs) });
+    } else if (kind === 'file') {
       nodes.push({ type: 'file', name: e.name, path: rel });
     }
   }
@@ -200,31 +275,48 @@ export async function renameEntry(root, from, to) {
   const dest = safePath(root, to);
   if (!fs.existsSync(src)) throw new HttpError(404, 'Not found');
   if (fs.existsSync(dest)) throw new HttpError(409, 'Destination already exists');
+
+  const settings = await readSettings(root);
+  const storedMain = toStoredPath(settings.mainFile);
+  const fromRel = safeRelFile(root, from);
+  const toRel = safeRelFile(root, to);
+  const prefix = `${fromRel}/`;
+  const updatesMain = storedMain === fromRel || storedMain.startsWith(prefix);
+  const mainFile = updatesMain
+    ? toRel + storedMain.slice(fromRel.length)
+    : storedMain;
+
   await fsp.mkdir(path.dirname(dest), { recursive: true });
   await fsp.rename(src, dest);
-  const settings = await readSettings(root);
-  const fromRel = path.relative(root, src);
-  const toRel = path.relative(root, dest);
-  const prefix = fromRel + path.sep;
-  let mainFile = settings.mainFile;
-  if (mainFile === fromRel || mainFile.startsWith(prefix)) {
-    mainFile = toRel + mainFile.slice(fromRel.length);
-    await writeSettings(root, { mainFile });
+  if (updatesMain) {
+    try {
+      await writeSettings(root, { mainFile });
+    } catch (settingsError) {
+      try {
+        await fsp.rename(dest, src);
+      } catch (rollbackError) {
+        throw new HttpError(
+          500,
+          `${settingsError.message}; rename rollback failed: ${rollbackError.message}`,
+        );
+      }
+      throw settingsError;
+    }
   }
   return { ok: true, from: fromRel, to: toRel, mainFile };
 }
 
 export async function deleteEntry(root, rel) {
   const abs = safePath(root, rel);
-  const target = path.relative(root, abs);
-  const { mainFile } = await readSettings(root);
-  if (mainFile === target || mainFile.startsWith(target + path.sep)) {
+  const target = safeRelFile(root, rel);
+  const { mainFile: rawMainFile } = await readSettings(root);
+  const mainFile = toStoredPath(rawMainFile);
+  if (mainFile === target || mainFile.startsWith(`${target}/`)) {
     throw new HttpError(409, 'Choose a different main file before deleting this entry');
   }
   await fsp.rm(abs, { recursive: true, force: true });
 }
 
-// Case-insensitive full-text search across the project's text files.
 export async function searchProject(root, query, limit = 100) {
   const q = String(query ?? '').toLowerCase();
   if (!q) return [];
@@ -234,19 +326,21 @@ export async function searchProject(root, query, limit = 100) {
       if (hits.length >= limit) return;
       if (e.name.startsWith('.') || e.name === BUILD_DIR) continue;
       const abs = path.join(dir, e.name);
-      if (e.isDirectory()) { await walk(abs); continue; }
-      const rel = path.relative(root, abs);
+      const kind = classifyProjectEntry(root, abs, e);
+      if (kind === 'dir') { await walk(abs); continue; }
+      if (kind !== 'file') continue;
+      const rel = toStoredPath(path.relative(root, abs));
       if (!isTextFile(rel)) continue;
       const lines = (await fsp.readFile(abs, 'utf8')).split('\n');
       for (let i = 0; i < lines.length && hits.length < limit; i++) {
         const col = lines[i].toLowerCase().indexOf(q);
         if (col === -1) continue;
         const start = Math.max(0, col - 24);
-        const prefix = (start > 0 ? '…' : '') + lines[i].slice(start, col);
+        const prefixText = (start > 0 ? '…' : '') + lines[i].slice(start, col);
         hits.push({
           file: rel,
           line: i + 1,
-          before: prefix.trimStart(),
+          before: prefixText.trimStart(),
           match: lines[i].slice(col, col + q.length),
           after: lines[i].slice(col + q.length, col + q.length + 60).trimEnd(),
         });
@@ -257,7 +351,6 @@ export async function searchProject(root, query, limit = 100) {
   return hits;
 }
 
-// Collect citation keys and \label names across the project (for autocomplete).
 export async function scanSymbols(root) {
   const keys = [];
   const labels = [];
@@ -265,7 +358,9 @@ export async function scanSymbols(root) {
     for (const e of await fsp.readdir(dir, { withFileTypes: true })) {
       if (e.name.startsWith('.') || e.name === BUILD_DIR) continue;
       const abs = path.join(dir, e.name);
-      if (e.isDirectory()) { await walk(abs); continue; }
+      const kind = classifyProjectEntry(root, abs, e);
+      if (kind === 'dir') { await walk(abs); continue; }
+      if (kind !== 'file') continue;
       const ext = path.extname(e.name).toLowerCase();
       if (ext === '.bib') {
         const src = await fsp.readFile(abs, 'utf8');

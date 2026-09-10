@@ -1,12 +1,20 @@
 // API client with two backends behind one interface:
-//  - Electron: IPC via the preload bridge, files served over texlocal://
-//  - Browser:  the Express server's REST API on the same origin
-const ipc = typeof window !== 'undefined' ? window.texlocal : undefined;
+//  - Desktop: Tauri commands, files served over texlocal://
+//  - Browser: the Express server's REST API on the same origin
+import { bridge as ipc } from './bridge.js';
 
 function enc(s) { return encodeURIComponent(s); }
-function encPath(p) { return p.split('/').map(enc).join('/'); }
 
 // ---------- browser (fetch) backend ----------
+
+async function unwrap(res) {
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
 
 async function req(method, url, body) {
   const opts = { method, headers: {} };
@@ -14,13 +22,7 @@ async function req(method, url, body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(url, opts);
-  if (!res.ok) {
-    let msg = res.statusText;
-    try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
-    throw new Error(msg);
-  }
-  return res.json();
+  return unwrap(await fetch(url, opts));
 }
 
 const fetchApi = {
@@ -48,13 +50,7 @@ const fetchApi = {
     const fd = new FormData();
     fd.append('dir', dir);
     for (const f of files) fd.append('files', f, f._relPath ?? f.name);
-    const res = await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd });
-    if (!res.ok) {
-      let msg = res.statusText;
-      try { msg = (await res.json()).error ?? msg; } catch { /* keep statusText */ }
-      throw new Error(msg);
-    }
-    return res.json();
+    return unwrap(await fetch(`/api/projects/${enc(id)}/upload`, { method: 'POST', body: fd }));
   },
 
   compile: (id, opts = {}) => req('POST', `/api/projects/${enc(id)}/compile`, opts),
@@ -68,44 +64,64 @@ const fetchApi = {
     req('GET', `/api/projects/${enc(id)}/synctex/inverse?page=${page}&x=${x}&y=${y}`),
 };
 
-// ---------- Electron (IPC) backend ----------
+// ---------- Tauri (command) backend ----------
 
-const ipcApi = ipc && {
+const tauriApi = ipc?.fileUrl && {
   status: () => ipc.invoke('status'),
 
-  listProjects: () => ipc.invoke('projects:list'),
-  createProject: (name, template) => ipc.invoke('projects:create', name, template),
-  renameProject: (id, name) => ipc.invoke('projects:rename', id, name),
-  deleteProject: (id) => ipc.invoke('projects:delete', id),
+  listProjects: () => ipc.invoke('list_projects'),
+  createProject: (name, template) => ipc.invoke('create_project', { name, template }),
+  renameProject: (id, name) => ipc.invoke('rename_project', { id, name }),
+  deleteProject: (id) => ipc.invoke('delete_project', { id }),
 
-  settings: (id) => ipc.invoke('settings:get', id),
-  saveSettings: (id, s) => ipc.invoke('settings:set', id, s),
+  settings: (id) => ipc.invoke('get_settings', { id }),
+  saveSettings: (id, s) => ipc.invoke('set_settings', { id, patch: s }),
 
-  tree: (id) => ipc.invoke('tree', id),
-  symbols: (id) => ipc.invoke('symbols', id),
-  search: (id, q) => ipc.invoke('search', id, q),
-  readFile: (id, p) => ipc.invoke('file:read', id, p),
-  rawFileUrl: (id, p) => `texlocal://app/__raw/${enc(id)}/${encPath(p)}`,
-  writeFile: (id, p, text) => ipc.invoke('file:write', id, p, text),
-  createEntry: (id, p, dir) => ipc.invoke('files:create', id, p, dir),
-  renameEntry: (id, from, to) => ipc.invoke('file:rename', id, from, to),
-  deleteEntry: (id, p) => ipc.invoke('file:delete', id, p),
+  tree: (id) => ipc.invoke('file_tree', { id }),
+  symbols: (id) => ipc.invoke('scan_symbols', { id }),
+  search: (id, q) => ipc.invoke('search_project', { id, query: q }),
+  readFile: (id, p) => ipc.invoke('read_file', { id, path: p }),
+  rawFileUrl: (id, p) => ipc.fileUrl(['__raw', id, ...p.split('/')]),
+  writeFile: (id, p, text) => ipc.invoke('write_file', { id, path: p, text }),
+  createEntry: (id, p, dir) => ipc.invoke('create_entry', { id, path: p, dir }),
+  renameEntry: (id, from, to) => ipc.invoke('rename_entry', { id, from, to }),
+  deleteEntry: (id, p) => ipc.invoke('delete_entry', { id, path: p }),
 
+  // Validate the complete set first so a bad path/oversize file cannot leave a
+  // predictable half-import. Raw one-file invokes keep peak memory bounded; an
+  // unavoidable later I/O failure reports which earlier files did land.
   upload: async (id, files, dir = '') => {
-    const payload = await Promise.all([...files].map(async (f) => ({
-      name: f._relPath ?? f.name,
-      data: await f.arrayBuffer(),
-    })));
-    return ipc.invoke('upload', id, payload, dir);
+    await ipc.invoke('validate_uploads', {
+      id,
+      dir,
+      files: files.map((f) => ({ path: f._relPath ?? f.name, size: f.size })),
+    });
+    const saved = [];
+    try {
+      for (const f of files) {
+        const result = await ipc.invoke('upload_file', await f.arrayBuffer(), {
+          headers: {
+            'x-project': enc(id),
+            'x-dir': enc(dir),
+            'x-path': enc(f._relPath ?? f.name),
+          },
+        });
+        saved.push(...result.saved);
+      }
+      return { saved };
+    } catch (err) {
+      err.saved = saved;
+      throw err;
+    }
   },
 
-  compile: (id, opts = {}) => ipc.invoke('compile', id, opts),
-  pdfUrl: (id) => `texlocal://app/__pdf/${enc(id)}?t=${Date.now()}`,
-  downloadPdf: (id) => ipc.invoke('pdf:saveAs', id),
-  exportProject: (id) => ipc.invoke('project:export', id),
+  compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
+  pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
+  downloadPdf: (id) => ipc.invoke('save_pdf_as', { id }),
+  exportProject: (id) => ipc.invoke('export_project', { id }),
 
-  syncForward: (id, file, line) => ipc.invoke('synctex:forward', id, file, line),
-  syncInverse: (id, page, x, y) => ipc.invoke('synctex:inverse', id, page, x, y),
+  syncForward: (id, file, line) => ipc.invoke('synctex_forward', { id, file, line }),
+  syncInverse: (id, page, x, y) => ipc.invoke('synctex_inverse', { id, page, x, y }),
 };
 
-export const api = ipcApi ?? fetchApi;
+export const api = tauriApi ?? fetchApi;

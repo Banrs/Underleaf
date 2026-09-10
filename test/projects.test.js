@@ -45,8 +45,8 @@ test('renaming a file or directory keeps the main-file setting valid', async () 
 
   const result = await projects.renameEntry(root, 'chapters', 'content');
 
-  assert.equal(result.mainFile, path.join('content', 'main.tex'));
-  assert.equal((await projects.readSettings(root)).mainFile, path.join('content', 'main.tex'));
+  assert.equal(result.mainFile, 'content/main.tex');
+  assert.equal((await projects.readSettings(root)).mainFile, 'content/main.tex');
 });
 
 test('the active main file and its parent directory cannot be deleted', async () => {
@@ -59,7 +59,7 @@ test('the active main file and its parent directory cannot be deleted', async ()
   await assert.rejects(projects.deleteEntry(root, 'chapters'), /different main file/);
 
   const settings = JSON.parse(await readFile(path.join(root, '.texlocal.json'), 'utf8'));
-  assert.equal(settings.mainFile, path.join('chapters', 'main.tex'));
+  assert.equal(settings.mainFile, 'chapters/main.tex');
 });
 
 test('path traversal is rejected at every boundary', async () => {

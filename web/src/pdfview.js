@@ -8,6 +8,8 @@
 // transparent text layer is a second pass built from each page's text items.
 
 import * as pdfjs from 'pdfjs-dist';
+import { pageText, matchRanges } from './pdftext.js';
+import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
 
@@ -21,6 +23,12 @@ const PINCH_MAX = 2.5;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// The interface-scale preference is applied as `zoom` on the body, and
+// devicePixelRatio does not account for it. Measured in Chromium: at zoom 1.3 a
+// canvas with a 200px CSS width occupies 260 device px, so a buffer sized from
+// devicePixelRatio alone holds 77% of the detail the page is displayed at.
+const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
+
 export class PdfViewer {
   constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
     this.scrollEl = scrollEl;
@@ -32,6 +40,7 @@ export class PdfViewer {
     this.loadingTask = null;
     this._loadGeneration = 0;
     this.pages = [];            // { n, page, wrap, canvas, textLayer, viewport, scale }
+    this.pageProxies = [];      // fetched once per document; see load()
     this.pagesEl = null;
 
     this.scale = null;          // explicit scale, or null → use fitMode
@@ -42,6 +51,12 @@ export class PdfViewer {
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
     this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
+    this._find = null;            // { query, matches, byPage, index, limited }
+    this._findSession = new FindSession();
+    this._highlightGeneration = 0;
+    // Per page, either { promise } while extraction is running or
+    // { items, text, spans } afterwards. Search and text layers share it.
+    this._pageText = [];
     this._anchor = null;          // PDF point to pin across a pinch re-render
     this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
@@ -122,27 +137,40 @@ export class PdfViewer {
 
   get numPages() { return this.doc?.numPages ?? 0; }
 
-
   async load(url) {
     const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
     const generation = ++this._loadGeneration;
-    let doc;
+    // Every await below can be overtaken by a newer load. Failing and being
+    // superseded need the same cleanup, so the task is destroyed unless this
+    // call is the one that adopts it.
+    const superseded = () => generation !== this._loadGeneration;
+    let adopted = false;
     try {
-      doc = await task.promise;
-    } catch (err) {
-      await task.destroy().catch(() => {});
-      throw err;
+      const doc = await task.promise;
+      if (superseded()) return false;
+      // Fetch every page proxy once, up front and in parallel. A render pass
+      // used to await getPage() per page — one serialized worker round-trip
+      // each — on every zoom step; with the proxies in hand the shell-building
+      // loop is synchronous. pdf.js caches proxies on the document, so this
+      // holds no pixels, just page dictionaries.
+      const proxies = await Promise.all(
+        Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)));
+      if (superseded()) return false;
+      const prev = this.loadingTask;
+      adopted = true;
+      this._findSession.cancel();
+      this._highlightGeneration++;
+      this._find = null;
+      this._pageText = new Array(doc.numPages);
+      this.loadingTask = task;
+      this.doc = doc;
+      this.pageProxies = proxies;
+      await prev?.destroy().catch(() => {});
+      await this.render();
+      return !superseded() && this.doc === doc;
+    } finally {
+      if (!adopted) await task.destroy().catch(() => {});
     }
-    if (generation !== this._loadGeneration) {
-      await task.destroy().catch(() => {});
-      return false;
-    }
-    const prev = this.loadingTask;
-    this.loadingTask = task;
-    this.doc = doc;
-    await prev?.destroy().catch(() => {});
-    await this.render();
-    return true;
   }
 
   // The scroller's padding and the content box inside it, read from the
@@ -218,14 +246,15 @@ export class PdfViewer {
     const anchor = this._anchor;
     this._anchor = null;
 
-    // Build the page shells (one scale for the whole pass).
+    // Build the page shells (one scale for the whole pass). The proxies were
+    // fetched at load time, so this loop never awaits — a zoom step lays out a
+    // 200-page document without 200 worker round-trips.
     const pagesEl = document.createElement('div');
     pagesEl.className = 'pdf-pages';
     const pages = [];
     let scale = null;
     for (let n = 1; n <= this.doc.numPages; n++) {
-      if (this.#stale(seq, pinchGeneration)) return;
-      const page = await this.doc.getPage(n);
+      const page = this.pageProxies[n - 1];
       scale = scale ?? (this.scale ?? this.#fitScale(page));
       const viewport = page.getViewport({ scale });
 
@@ -249,8 +278,14 @@ export class PdfViewer {
       wrap.appendChild(textLayer);
 
       wrap.addEventListener('dblclick', (e) => {
+        // The rect is in on-screen units, which include the interface-scale
+        // zoom; the click offset is too. Going through the rect's own size
+        // cancels it, where dividing the raw offset by `scale` would land the
+        // inverse search `zoom` times too far down the page.
         const rect = canvas.getBoundingClientRect();
-        this.onSyncClick?.(n, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
+        const fx = (e.clientX - rect.left) / rect.width;
+        const fy = (e.clientY - rect.top) / rect.height;
+        this.onSyncClick?.(n, (fx * viewport.width) / scale, (fy * viewport.height) / scale);
       });
 
       pagesEl.appendChild(wrap);
@@ -269,6 +304,7 @@ export class PdfViewer {
     this.pagesEl = pagesEl;
     this.scrollEl.replaceChildren(pagesEl);
     this.pages = pages;
+    this.#cacheGeometry();
     if (!(anchor && this.#restoreAnchor(anchor, pages))) {
       this.scrollEl.scrollLeft = centerRatioX * this.scrollEl.scrollWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollTop = ratio * this.scrollEl.scrollHeight;
@@ -287,12 +323,30 @@ export class PdfViewer {
   // backing store; the rest are released. Painting the whole document is what
   // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
   // enough to stall the compositor for seconds per zoom step.
+  // Every page's box, read once per render — the single source for all of them.
+  // Reading them live is what cost: currentPage() runs on every scroll event and
+  // scanned all pages, and #reportPage writes the page indicator just before, so
+  // each event paid a forced layout. Measured on 200 pages in Chromium: 0.24ms
+  // per scroll event live against 0.001ms cached, same answer.
+  //
+  // Safe because layout does not move between render passes: this runs right
+  // after the page swap and before anything reads it, the only two live previews
+  // (pinch, pane resize) are CSS transforms — which do not affect offsetTop —
+  // and both end in the render that refreshes this.
+  #cacheGeometry() {
+    for (const p of this.pages) {
+      p.top = p.wrap.offsetTop;
+      p.left = p.wrap.offsetLeft;
+      p.height = p.wrap.offsetHeight;
+    }
+  }
+
   #nearPages() {
     const top = this.scrollEl.scrollTop - this._padT;
     const vh = this.scrollEl.clientHeight;
     const near = [];
     for (const [i, p] of this.pages.entries()) {
-      if (p.wrap.offsetTop + p.wrap.offsetHeight >= top - vh * 1.5 && p.wrap.offsetTop <= top + vh * 2.5) near.push(i);
+      if (p.top + p.height >= top - vh * 1.5 && p.top <= top + vh * 2.5) near.push(i);
     }
     return near;
   }
@@ -332,9 +386,12 @@ export class PdfViewer {
       p.canvas.width = 0;
       p.canvas.height = 0;
       p._painted = false;
+      // Release the text layer with the pixels: one span per glyph run adds up
+      // over a long scroll, and #buildTextLayer recreates it after the repaint.
+      p.textLayer.replaceChildren();
     }
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = (window.devicePixelRatio || 1) * uiZoom();
     for (const i of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
       const p = this.pages[i];
@@ -355,7 +412,11 @@ export class PdfViewer {
         if (p.canvas.width) p._failed = true;
         console.error(`PDF page ${p.n} failed to render:`, err);
       }
-      if (ok) this.#buildTextLayer(p, seq);
+      if (ok) {
+        void this.#buildTextLayer(p, seq).catch((err) => {
+          console.error(`PDF page ${p.n} text layer failed:`, err);
+        });
+      }
     }
   }
 
@@ -450,12 +511,12 @@ export class PdfViewer {
   // margin beside one, still resolves to an exact point that survives the
   // re-render. Clamping it into the page box was itself a visible drift.
   #pageAt(x, y) {
-    const p = this.pages.find((q) => y <= q.wrap.offsetTop + q.wrap.offsetHeight) ?? this.pages.at(-1);
+    const p = this.pages.find((q) => y <= q.top + q.height) ?? this.pages.at(-1);
     if (!p) return null;
     return {
       pageIndex: p.n - 1,
-      pageX: (x - p.wrap.offsetLeft) / p.scale,
-      pageY: (y - p.wrap.offsetTop) / p.scale,
+      pageX: (x - p.left) / p.scale,
+      pageY: (y - p.top) / p.scale,
     };
   }
 
@@ -473,8 +534,8 @@ export class PdfViewer {
   #restoreAnchor(anchor, pages) {
     const target = pages[anchor.pageIndex];
     if (!target) return false;
-    this.scrollEl.scrollLeft = target.wrap.offsetLeft + anchor.pageX * target.scale - anchor.viewX;
-    this.scrollEl.scrollTop = target.wrap.offsetTop + anchor.pageY * target.scale - anchor.viewY;
+    this.scrollEl.scrollLeft = target.left + anchor.pageX * target.scale - anchor.viewX;
+    this.scrollEl.scrollTop = target.top + anchor.pageY * target.scale - anchor.viewY;
     return true;
   }
 
@@ -511,33 +572,207 @@ export class PdfViewer {
     return p._paint;
   }
 
+  // Search and selectable text layers need the same page extraction. Cache one
+  // promise per page so repeated queries, highlight refreshes and SyncTeX do not
+  // ask the pdf.js worker to rebuild identical text content.
+  async #pageTextData(p) {
+    const index = p.n - 1;
+    const cached = this._pageText[index];
+    if (cached?.items) return cached;
+    if (cached?.promise) return cached.promise;
+
+    const doc = this.doc;
+    const page = p.page;
+    const promise = (async () => {
+      try {
+        const items = (await page.getTextContent()).items;
+        const data = { items, ...pageText(items) };
+        if (this.doc === doc && this.pageProxies[index] === page) this._pageText[index] = data;
+        return data;
+      } catch {
+        if (this.doc === doc && this.pageProxies[index] === page) this._pageText[index] = null;
+        return null;
+      }
+    })();
+    this._pageText[index] = { promise };
+    return promise;
+  }
+
   // Build a single page's transparent, selectable text layer from its items.
+  // The finished fragment is committed atomically and only if both the render
+  // and highlight generations are still current. That prevents overlapping
+  // searches from appending duplicate or stale spans.
   async #buildTextLayer(p, seq) {
-    if (p.textLayer.childElementCount) return;
-    let items;
-    try { items = (await p.page.getTextContent()).items; } catch { return; }
-    if (seq !== this.seq) return;
-    const vt = p.viewport.transform;
-    const frag = document.createDocumentFragment();
-    for (const item of items) {
-      if (!item.str) continue;
-      const t = item.transform;
-      // Affine compose (viewport ∘ item), inlined to avoid depending on pdfjs.Util.
-      const a = vt[0] * t[2] + vt[2] * t[3];
-      const b = vt[1] * t[2] + vt[3] * t[3];
-      const fontH = Math.hypot(a, b);
-      if (!fontH) continue;
-      const left = vt[0] * t[4] + vt[2] * t[5] + vt[4];
-      const top = vt[1] * t[4] + vt[3] * t[5] + vt[5];
-      const span = document.createElement('span');
-      span.textContent = item.str;
-      span.style.left = `${left}px`;
-      span.style.top = `${top - fontH}px`;
-      span.style.fontSize = `${fontH}px`;
-      span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
-      frag.appendChild(span);
+    if (p.textLayer.childElementCount) return true;
+    const highlightGeneration = this._highlightGeneration;
+    if (p._textBuild?.generation === highlightGeneration) return p._textBuild.promise;
+
+    const build = {};
+    build.generation = highlightGeneration;
+    build.promise = (async () => {
+      const data = await this.#pageTextData(p);
+      if (
+        !data
+        || seq !== this.seq
+        || highlightGeneration !== this._highlightGeneration
+        || !p._painted
+        || !this.pages.includes(p)
+      ) return false;
+
+      const vt = p.viewport.transform;
+      const frag = document.createDocumentFragment();
+      const pageIndex = p.n - 1;
+      const pageMatches = this._find?.byPage.get(pageIndex) ?? [];
+      const matchesByItem = indexMatchesBySpan(pageMatches, data.spans);
+      const current = this._find?.matches[this._find.index];
+      let k = -1;
+      for (const item of data.items) {
+        if (!item.str) continue;
+        k++;
+        const t = item.transform;
+        // Affine compose (viewport ∘ item), inlined to avoid depending on pdfjs.Util.
+        const a = vt[0] * t[2] + vt[2] * t[3];
+        const b = vt[1] * t[2] + vt[3] * t[3];
+        const fontH = Math.hypot(a, b);
+        if (!fontH) continue;
+        const left = vt[0] * t[4] + vt[2] * t[5] + vt[4];
+        const top = vt[1] * t[4] + vt[3] * t[5] + vt[5];
+        const span = document.createElement('span');
+        if (matchesByItem[k]?.length) {
+          this.#paintMatches(span, item.str, data.spans[k], matchesByItem[k], current);
+        } else {
+          span.textContent = item.str;
+        }
+        span.style.left = `${left}px`;
+        span.style.top = `${top - fontH}px`;
+        span.style.fontSize = `${fontH}px`;
+        span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
+        frag.appendChild(span);
+      }
+
+      if (
+        seq !== this.seq
+        || highlightGeneration !== this._highlightGeneration
+        || !p._painted
+        || !this.pages.includes(p)
+      ) return false;
+      p.textLayer.replaceChildren(frag);
+      return true;
+    })().finally(() => {
+      if (p._textBuild === build) p._textBuild = null;
+    });
+    p._textBuild = build;
+    return build.promise;
+  }
+
+  // ---------- text search ----------
+
+  // Rebuild one text item's content with <mark> around the parts that fall
+  // inside a match. `pageMatches` is already indexed by page, so this loop is
+  // proportional to hits on this page rather than every hit in the document.
+  #paintMatches(span, str, range, pageMatches, current) {
+    if (!range) { span.textContent = str; return; }
+    let at = 0;
+    for (const m of pageMatches) {
+      if (m.end <= range.start || m.start >= range.end) continue;
+      const from = Math.max(m.start, range.start) - range.start;
+      const to = Math.min(m.end, range.end) - range.start;
+      if (from > at) span.appendChild(document.createTextNode(str.slice(at, from)));
+      const mark = document.createElement('mark');
+      mark.textContent = str.slice(from, to);
+      if (m === current) mark.className = 'current';
+      span.appendChild(mark);
+      at = to;
     }
-    p.textLayer.appendChild(frag);
+    if (at < str.length) span.appendChild(document.createTextNode(str.slice(at)));
+  }
+
+  #findStatus(stale = false) {
+    const f = this._find;
+    return {
+      total: f?.matches.length ?? 0,
+      index: f?.matches.length ? f.index + 1 : 0,
+      limited: !!f?.limited,
+      stale,
+    };
+  }
+
+  /// Search every page. Only the latest generation may commit its matches.
+  async find(query) {
+    const { generation, query: q } = this._findSession.begin(query);
+    const doc = this.doc;
+    if (!q || !doc) {
+      this._find = null;
+      await this.#refreshHighlights();
+      return this.#findStatus();
+    }
+
+    const proxies = [...this.pageProxies];
+    const stale = () => !this._findSession.current(generation) || this.doc !== doc;
+    const matches = [];
+    const byPage = new Map();
+    let limited = false;
+
+    for (let i = 0; i < proxies.length; i++) {
+      const data = await this.#pageTextData({ n: i + 1, page: proxies[i] });
+      if (stale()) return this.#findStatus(true);
+      if (!data) continue;
+
+      const remaining = MAX_FIND_MATCHES - matches.length;
+      // Ask for one result beyond the remaining capacity so truncation is known
+      // without first materialising every hit on a pathological page.
+      const ranges = matchRanges(data.text, q, remaining + 1);
+      const accepted = ranges.slice(0, remaining).map((r) => ({ page: i, ...r }));
+      if (accepted.length) {
+        matches.push(...accepted);
+        byPage.set(i, accepted);
+      }
+      if (ranges.length > remaining || matches.length === MAX_FIND_MATCHES) {
+        limited = ranges.length > remaining || i < proxies.length - 1;
+        break;
+      }
+    }
+
+    if (stale()) return this.#findStatus(true);
+    this._find = { query: q, matches, byPage, index: 0, limited };
+    this.#revealMatch();
+    await this.#refreshHighlights();
+    return stale() ? this.#findStatus(true) : this.#findStatus();
+  }
+
+  /// Step to the next (+1) or previous (-1) match, wrapping at either end.
+  findStep(delta) {
+    const f = this._find;
+    if (!f?.matches.length) return this.#findStatus();
+    f.index = (f.index + delta + f.matches.length) % f.matches.length;
+    this.#revealMatch();
+    void this.#refreshHighlights();
+    return this.#findStatus();
+  }
+
+  clearFind() {
+    this._findSession.cancel();
+    this._find = null;
+    void this.#refreshHighlights();
+  }
+
+  #revealMatch() {
+    const m = this._find?.matches[this._find.index];
+    this.pages[m?.page]?.wrap.scrollIntoView({ block: 'center' });
+  }
+
+  // A text layer caches its own content, so a changed query means clearing and
+  // rebuilding it. The painted canvas underneath is untouched. The generation
+  // check in #buildTextLayer makes overlapping refreshes harmless.
+  async #refreshHighlights() {
+    this._highlightGeneration++;
+    const builds = [];
+    for (const p of this.pages) {
+      if (!p._painted) continue;
+      p.textLayer.replaceChildren();
+      builds.push(this.#buildTextLayer(p, this.seq));
+    }
+    await Promise.allSettled(builds);
   }
 
   // ---------- zoom / fit ----------
@@ -601,7 +836,7 @@ export class PdfViewer {
   currentPage() {
     const mid = this.#viewMark();
     let best = 1;
-    for (const p of this.pages) if (p.wrap.offsetTop <= mid) best = p.n;
+    for (const p of this.pages) if (p.top <= mid) best = p.n;
     return best;
   }
 
@@ -639,7 +874,7 @@ export class PdfViewer {
     }
     // No text on this page (e.g. a figure-only page): fall back to a point in
     // the text column at the viewport top.
-    const yPts = Math.max(5, (this.#viewMark() - p.wrap.offsetTop) / p.scale);
+    const yPts = Math.max(5, (this.#viewMark() - p.top) / p.scale);
     const pageHeightPts = p.viewport.height / p.scale;
     const pageWidthPts = p.viewport.width / p.scale;
     return { page: p.n, x: Math.round(pageWidthPts / 2.5), y: Math.round(Math.min(yPts, pageHeightPts - 5)) };
@@ -658,7 +893,7 @@ export class PdfViewer {
     flash.style.width = `${Math.max(24, (loc.width ?? 0) * s) + 4}px`;
     flash.style.height = `${h + 4}px`;
     p.wrap.appendChild(flash);
-    const targetTop = this._padT + p.wrap.offsetTop + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
+    const targetTop = this._padT + p.top + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
     setTimeout(() => flash.remove(), 2400);
   }
@@ -667,10 +902,14 @@ export class PdfViewer {
     this._loadGeneration++;
     this.seq++;
     this._pinchGeneration++;
+    this._findSession.cancel();
+    this._highlightGeneration++;
     clearTimeout(this._pinchTimer);
     clearTimeout(this._roTimer);
     clearTimeout(this._paintTimer);
     this._pinch = null;
+    this._find = null;
+    this._pageText = [];
     this.#cancelPaints();
     this.ro?.disconnect();
     document.removeEventListener('visibilitychange', this._onVisible);
@@ -678,6 +917,7 @@ export class PdfViewer {
     this.loadingTask = null;
     this.doc = null;
     this.pages = [];
+    this.pageProxies = [];
     this.pagesEl = null;
     this.scrollEl.replaceChildren();
   }

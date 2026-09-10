@@ -84,7 +84,8 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel };
 
   const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
-    el('div', { class: 'sidebar-titlebar' }, el('span', { class: 'spacer' }), titlebarTrailing),
+    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
+      el('span', { class: 'spacer' }), titlebarTrailing),
     el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
     el('div', { class: 'section-header' },
       el('span', {}, 'Files'),
@@ -138,6 +139,23 @@ function fileIcon(name) {
 export function renderTree() {
   if (!nodes.tree) return;
   nodes.tree.replaceChildren(...state.tree.map((n) => renderNode(n, 1)));
+  syncRovingFocus();
+}
+
+// Move the selection highlight without rebuilding the tree. Structure hasn't
+// changed on a plain file open, so replacing every row just churns the DOM.
+export function updateTreeSelection() {
+  if (!nodes.tree) return;
+  const prev = nodes.tree.querySelector('.tree-row.selected');
+  const next = state.openPath
+    ? nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.openPath)}"]`)
+    : null;
+  if (prev !== next) {
+    prev?.classList.remove('selected');
+    prev?.removeAttribute('aria-current');
+    next?.classList.add('selected');
+    next?.setAttribute('aria-current', 'true');
+  }
   syncRovingFocus();
 }
 
@@ -258,8 +276,8 @@ function rowMenu(e, node) {
         const ok = await confirmModal({
           title: `Delete “${node.name}”?`,
           body: node.type === 'dir'
-            ? 'The folder and everything inside it will be permanently deleted.'
-            : 'This file will be permanently deleted.',
+            ? 'Delete this folder and everything inside it?'
+            : 'Delete this file?',
         });
         if (!ok) return;
         if (containsPath(node.path, state.settings?.mainFile)) {
@@ -267,8 +285,12 @@ function rowMenu(e, node) {
           return;
         }
         try {
-          if (containsPath(node.path, state.openPath)) host.closeOpenFile?.();
+          await host.beforePathMutation?.();
+          const closesOpenFile = containsPath(node.path, state.openPath);
           await api.deleteEntry(state.projectId, node.path);
+          // Keep the buffer intact until deletion has actually succeeded. On a
+          // Trash/Recycle Bin failure the user can still save or copy its text.
+          if (closesOpenFile) host.closeOpenFile?.();
           for (const dir of [...openDirs]) if (containsPath(node.path, dir)) openDirs.delete(dir);
           persistOpenDirs();
           await refreshTree();
@@ -364,7 +386,16 @@ async function upload(files) {
     toast(`Uploaded ${saved.length} file${saved.length === 1 ? '' : 's'}`);
     await refreshTree();
     host.onFilesChanged?.();
-  } catch (err) { toast(err.message, 'error'); }
+  } catch (err) {
+    const saved = err.saved ?? [];
+    if (saved.length) {
+      await refreshTree();
+      host.onFilesChanged?.();
+      toast(`Upload stopped after ${saved.length} file${saved.length === 1 ? '' : 's'}: ${err.message}`, 'error');
+    } else {
+      toast(err.message, 'error');
+    }
+  }
 }
 
 // ---------- outline ----------
@@ -462,4 +493,15 @@ async function runSearch() {
     }
   }
   results.replaceChildren(...out);
+}
+
+// Cancel work whose callbacks close over the previous project. Without this a
+// debounced search can update a newly mounted sidebar with an old project's
+// response.
+export function destroySidebar() {
+  clearTimeout(searchTimer);
+  searchTimer = undefined;
+  host = {};
+  nodes = {};
+  openDirs = new Set();
 }

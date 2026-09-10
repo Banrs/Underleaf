@@ -74,6 +74,19 @@ work on both opaque panels and vibrant materials.
 | Separator | `rgba(60,60,67,.29)` | `rgba(255,255,255,.15)` |
 | Window background | `#ffffff` | `#1e1e1e` |
 
+**The accent is the user's, not this table's.** `--accent` starts at the kit's
+blue and is replaced at startup by whatever the person chose in System Settings
+— `NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
+`src-tauri/src/accent.rs`). The kit values below are the fallback for a host that
+reports nothing, and for browser mode.
+
+`--on-accent` stays white, which is what every desktop draws on an accent fill,
+and flips to black only where white drops under WCAG's 3:1 floor for interface
+components — a yellow or pale accent. Maximising contrast instead would put a
+black label on the kit's own blue (5.97:1 against 3.52:1), which no platform
+does; Windows makes the same trade by moving the accent *shade*
+(`UIColorType::AccentDark1-3` / `AccentLight1-3`) rather than the label.
+
 System colors (light / dark): blue `#0088FF` / `#0091FF`, red `#FF383C` /
 `#FF4245`, orange `#FF8D28` / `#FF9230`, yellow `#FFCC00` / `#FFD600`, green
 `#34C759` / `#30D158`, gray `#8E8E93` / `#98989D`.
@@ -201,10 +214,15 @@ outside the editor, and matching "Xcode" means matching the system.
 
 ## Platform abstraction
 
-macOS-only chrome is gated on `html.mac`, set from `process.platform` — never
-assumed. Windows keeps the same tokens and gets its own chrome later; see
-[windows.md](windows.md) for what remains.
+macOS-only chrome is gated on `html.mac`, set from the host platform — never
+assumed. Windows keeps the same tokens under standard window decorations; see
+[windows.md](windows.md).
 
 - `html.mac` — vibrancy materials, traffic-light inset, `⌘`-style shortcut glyphs
-- `html.win` — reserved; opaque panels, Windows caption buttons
-- `html.electron` — desktop shell in either OS (vs. browser mode)
+- `html.win` — opaque panels under a standard title bar
+- `html.desktop` — running in the desktop shell rather than browser mode
+
+The accent goes the other way: one concept both systems have, read through each
+one's own API and delivered as a single token, so the CSS never learns which
+platform it is on. Read once at startup — a live accent change needs a per-OS
+observer, and a restart picks it up.

@@ -302,8 +302,12 @@ function latexCompletions(getSymbols) {
   };
 }
 
-export function createEditor({ parent, content, onChange, onCursor, dark, getSymbols }) {
-  const state = EditorState.create({
+// `restore` (a previously captured EditorState) takes precedence over
+// `content`: it carries the document, selection, and undo history of an
+// earlier session with the same file. Its embedded listener closures only
+// touch stable module-level state, so reattaching them is safe.
+export function createEditor({ parent, content, restore, onChange, onCursor, dark, getSymbols }) {
+  const state = restore ?? EditorState.create({
     doc: content,
     extensions: [
       lineNumbers(),
@@ -340,9 +344,20 @@ export function createEditor({ parent, content, onChange, onCursor, dark, getSym
   });
 
   const view = new EditorView({ state, parent });
+  // A restored state carries the theme it was cached under, which may be stale.
+  if (restore) view.dispatch({ effects: themeCompartment.reconfigure(themeFor(dark)) });
 
   return {
     getContent: () => view.state.doc.toString(),
+    getState: () => view.state,
+    getScrollTop: () => view.scrollDOM.scrollTop,
+    setScrollTop: (top) => { view.scrollDOM.scrollTop = top; },
+    lineCount: () => view.state.doc.lines,
+    // Feed each line's text to cb without materializing the whole document.
+    scanLines(cb) {
+      let n = 1;
+      for (const iter = view.state.doc.iterLines(); !iter.next().done;) cb(iter.value, n++);
+    },
     setTheme(isDark) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },

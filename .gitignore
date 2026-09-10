@@ -8,6 +8,10 @@ web/dist/
 release/
 *.app/
 
+# Rust / Tauri build output
+target/
+src-tauri/gen/
+
 # User data (projects live here in browser mode)
 data/
 server.log
