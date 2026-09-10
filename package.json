@@ -5,8 +5,6 @@
   "scripts": {
     "test": "node --test",
     "build": "node build.mjs",
-    "start": "node server/index.js",
-    "dev": "node build.mjs && node server/index.js",
     "tauri": "tauri",
     "app": "tauri dev",
     "package": "tauri build"
@@ -37,9 +35,7 @@
     "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2",
     "esbuild": "^0.28.1",
-    "express": "^5.2.1",
     "katex": "^0.17.0",
-    "multer": "^2.2.0",
     "pdfjs-dist": "^6.1.200"
   },
   "devDependencies": {

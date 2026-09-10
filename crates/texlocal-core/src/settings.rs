@@ -1,5 +1,5 @@
-//! Per-project settings in `<project>/.texlocal.json`, ported from
-//! server/projects.js. Settings arrive from the UI, and two of them are
+//! Per-project settings in `<project>/.texlocal.json`.
+//! Settings arrive from the UI, and two of them are
 //! dangerous taken as given: `mainFile` becomes an argv element for latexmk,
 //! and `shellEscape` turns on arbitrary shell execution during a compile.
 //! Only known keys are accepted, each validated rather than merged as sent.

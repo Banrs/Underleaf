@@ -51,7 +51,7 @@ Profile before changing frameworks. Likely areas:
 - short and long PDFs
 - physical trackpad pinch at several pivot positions
 - compile, save, navigation, window close, and quit
-- the packaged macOS app, not only browser mode
+- the packaged macOS app
 
 ## Guardrails
 

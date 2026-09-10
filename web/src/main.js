@@ -3,7 +3,7 @@
 
 import { bridge, platform } from './bridge.js';
 import { prefs, migratePrefs, applyAppearance, applyAccent, setAppearanceHandler } from './prefs.js';
-import { onCommandsChanged, installBrowserShortcuts, installMenuBridge } from './commands.js';
+import { onCommandsChanged, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
 import { renderWorkspace, destroyWorkspace, flushCurrent, saveCurrent, syncToolbarState } from './workspace.js';
@@ -11,7 +11,6 @@ import { renderWorkspace, destroyWorkspace, flushCurrent, saveCurrent, syncToolb
 // ---------- platform ----------
 
 const root = document.documentElement;
-root.classList.toggle('desktop', !!bridge);
 root.classList.toggle('mac', platform === 'darwin');
 root.classList.toggle('win', platform === 'win32');
 
@@ -38,7 +37,6 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 
 onCommandsChanged(syncToolbarState);
 installMenuBridge();
-if (!bridge) installBrowserShortcuts();
 
 // ---------- routing ----------
 

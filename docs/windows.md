@@ -13,7 +13,7 @@ Windows runner. What has *not* happened is a human sitting in front of Windows
 
 | Old item | Resolution |
 |---|---|
-| `zip` CLI has no Windows equivalent | Gone. The desktop export uses the Rust `zip` crate (`crates/texlocal-core/src/zipexport.rs`). Browser mode still shells out, and still only runs on macOS and Linux. |
+| `zip` CLI has no Windows equivalent | Gone. Export uses the Rust `zip` crate (`crates/texlocal-core/src/zipexport.rs`). |
 | No window controls under `titleBarStyle: 'hidden'` | Gone. The hidden title bar is macOS-only; Windows gets a standard decorated window (`src-tauri/src/window.rs`). |
 | Vibrancy needs a Mica equivalent | Deliberately not done. Windows gets an opaque `#1e1e1e` window rather than an imitation of macOS translucency. |
 | SyncTeX path separators | Fixed by construction: every project-relative path the core returns or stores uses forward slashes on all platforms, and both separators are accepted on input. Covered by a test. |
@@ -47,10 +47,11 @@ needs a restart before it is found.
 
 The parts most likely to differ on Windows, in the order worth checking:
 
-1. Menu accelerators fire while the webview has focus. If they don't,
-   `installBrowserShortcuts()` in `web/src/commands.js` is the in-tree
-   fallback — enable it for Windows and strip the native accelerators so
-   nothing fires twice.
+1. Menu accelerators fire while the webview has focus. If they don't, the fix
+   is a `keydown` listener that dispatches the command registry's accelerators
+   and strips the native ones so nothing fires twice. That fallback used to
+   live in `web/src/commands.js` as `installBrowserShortcuts()`; it went with
+   browser mode and is recoverable from git history at `fcab53a` if needed.
 2. `texlocal://` images and the compiled PDF load — this is the
    `http://texlocal.localhost` origin form, which only Windows uses.
 3. SyncTeX both ways with a main file in a subfolder (the separator case).

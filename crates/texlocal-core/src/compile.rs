@@ -1,6 +1,6 @@
-//! LaTeX compilation via latexmk, ported from server/compile.js: augmented
-//! PATH discovery, process-group kill, per-project supersede, timeout and
-//! output caps, and the stale-log guard.
+//! LaTeX compilation via latexmk: augmented PATH discovery, process-group
+//! kill, per-project supersede, timeout and output caps, and the stale-log
+//! guard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -226,6 +226,15 @@ pub(crate) async fn run(
             }
         }
     };
+    let (code, stdout, _stderr) = drive(&mut child, timeout).await;
+    RunOutput { code, stdout }
+}
+
+/// Drive a spawned child to completion: stream both pipes into capped buffers,
+/// and if it outlives the timeout, kill its whole process tree before reaping
+/// it. Both callers share this so a change to the timeout or kill path cannot
+/// reach one of them and miss the other.
+async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, String, String) {
     let pid = child.id();
     let out_task = tokio::spawn(read_capped(
         child.stdout.take().expect("stdout piped"),
@@ -244,11 +253,11 @@ pub(crate) async fn run(
             child.wait().await.ok()
         }
     };
-    let _ = err_task.await;
-    RunOutput {
-        code: status.and_then(|s| s.code()).unwrap_or(-1),
-        stdout: out_task.await.unwrap_or_default(),
-    }
+    (
+        status.and_then(|s| s.code()).unwrap_or(-1),
+        out_task.await.unwrap_or_default(),
+        err_task.await.unwrap_or_default(),
+    )
 }
 
 // ---------- availability ----------
@@ -476,29 +485,9 @@ impl CompileManager {
             }
             Some(Ok(child)) => child,
         };
-        let pid = child.id();
-
-        let out_task = tokio::spawn(read_capped(
-            child.stdout.take().expect("stdout piped"),
-            MAX_OUTPUT,
-        ));
-        let err_task = tokio::spawn(read_capped(
-            child.stderr.take().expect("stderr piped"),
-            MAX_OUTPUT,
-        ));
-
         let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-        let status = tokio::select! {
-            status = child.wait() => status.ok(),
-            _ = tokio::time::sleep(timeout) => {
-                if let Some(pid) = pid { terminate_pid_tree(pid).await; }
-                let _ = child.start_kill();
-                child.wait().await.ok()
-            }
-        };
-        let code = status.and_then(|s| s.code()).unwrap_or(-1);
-        let mut output = out_task.await.unwrap_or_default();
-        output.push_str(&err_task.await.unwrap_or_default());
+        let (code, mut output, stderr) = drive(&mut child, timeout).await;
+        output.push_str(&stderr);
 
         let result = self.finish(
             root,

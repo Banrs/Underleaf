@@ -124,8 +124,8 @@ export function runCommand(id) {
   return true;
 }
 
-// Push the current menu spec + enabled state to the desktop shell, which owns
-// the actual native menu. A no-op in browser mode.
+// Push the current menu spec + enabled state to the shell, which owns the
+// actual native menu.
 function publish() {
   const spec = MENU.map((m) => ({
     label: m.label,
@@ -158,7 +158,6 @@ export function onCommandsChanged(fn) { notifyHost = fn; }
 // An accelerator string → the glyph string macOS shows in menus and
 // tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
 // "Ctrl+Shift+Z".
-const MAC = isMac;
 const GLYPH = { CmdOrCtrl: '⌘', Cmd: '⌘', Command: '⌘', Shift: '⇧', Alt: '⌥', Option: '⌥', Ctrl: '⌃', Control: '⌃' };
 const KEYNAME = { Return: '↩', Enter: '↩', Backslash: '\\', Comma: ',', Plus: '+', Minus: '−' };
 
@@ -167,7 +166,7 @@ export function accelLabel(accel) {
   const parts = accel.split('+');
   const key = parts.pop();
   const shown = KEYNAME[key] ?? key.toUpperCase();
-  if (!MAC) return [...parts, shown].join('+');
+  if (!isMac) return [...parts, shown].join('+');
   // macOS orders modifiers ⌃⌥⇧⌘ regardless of how they were written.
   const order = ['Ctrl', 'Control', 'Alt', 'Option', 'Shift', 'CmdOrCtrl', 'Cmd', 'Command'];
   const mods = parts.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((p) => GLYPH[p] ?? p);
@@ -183,55 +182,11 @@ export function tooltip(id) {
   return a ? `${t} (${a})` : t;
 }
 
-// ---------- browser-mode keyboard routing ----------
+// ---------- menu events ----------
 
-// On the desktop the native menu owns its accelerators, so handling them here
-// too would fire every command twice. Browser mode has no menu bar, so the same
-// declarations drive a keydown matcher instead.
-function matches(accel, e) {
-  const parts = accel.split('+');
-  const key = parts.pop().toLowerCase();
-  const want = new Set(parts.map((p) => p.toLowerCase()));
-
-  // CmdOrCtrl is ⌘ on macOS and Ctrl elsewhere; an explicit Ctrl is Ctrl
-  // everywhere — the two must not collapse into one "primary modifier" test.
-  const wantPrimary = want.has('cmdorctrl') || want.has('cmd') || want.has('command');
-  const needMeta = wantPrimary && MAC;
-  const needCtrl = want.has('ctrl') || want.has('control') || (wantPrimary && !MAC);
-  if (needMeta !== e.metaKey || needCtrl !== e.ctrlKey) return false;
-  if ((want.has('alt') || want.has('option')) !== e.altKey) return false;
-
-  // On most layouts '+' is Shift+= and '_' is Shift+-, so an accelerator written
-  // as Plus/Minus has to accept the unshifted key as well as the shifted glyph —
-  // and must not then insist on a matching Shift state, or Cmd+Shift+= (the
-  // natural way to type Cmd++) would fail to zoom.
-  const pressed = e.key === 'Enter' ? 'return' : e.key.toLowerCase();
-  const shifted = (key === 'plus' && pressed === '+') || (key === 'minus' && pressed === '_');
-  const keyMatches = pressed === key || shifted
-    || (key === 'plus' && pressed === '=')
-    || (key === 'minus' && pressed === '-');
-  if (!keyMatches) return false;
-  return shifted || want.has('shift') === e.shiftKey;
-}
-
-export function installBrowserShortcuts() {
-  addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    for (const c of registry.values()) {
-      // `nativeOnly` commands are already bound inside CodeMirror; intercepting
-      // them here would run the action twice.
-      if (!c.accel || c.nativeOnly) continue;
-      if (!matches(c.accel, e)) continue;
-      // A disabled command leaves the key to the browser (e.g. page zoom).
-      if (!commandEnabled(c.id)) return;
-      e.preventDefault();
-      runCommand(c.id);
-      return;
-    }
-  });
-}
-
-// On the desktop, menu clicks arrive as an event from the shell.
+// The native menu owns its accelerators, so nothing here listens for keys —
+// handling them a second time would fire every command twice. This only routes
+// what the shell reports back.
 export function installMenuBridge() {
   ipc?.onCommand?.((id) => runCommand(id));
 }

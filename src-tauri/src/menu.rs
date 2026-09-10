@@ -40,7 +40,7 @@ enum ItemSpec {
     Entry(EntrySpec),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct EntrySpec {
     #[serde(default)]
     id: Option<String>,
@@ -345,13 +345,8 @@ pub fn install_fallback(app: &AppHandle) -> tauri::Result<()> {
                 .into_iter()
                 .map(|role| {
                     ItemSpec::Entry(EntrySpec {
-                        id: None,
                         role: Some(role.into()),
-                        label: None,
-                        accelerator: None,
-                        enabled: None,
-                        checked: None,
-                        kind: None,
+                        ..Default::default()
                     })
                 })
                 .collect(),

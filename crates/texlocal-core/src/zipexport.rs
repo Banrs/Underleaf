@@ -25,21 +25,17 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let temp_abs = absolute_lexical(&temp_path)?;
 
     let result = (|| -> Result<(), CoreError> {
-        let mut writer = ZipWriter::new(file);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        let mut visited = HashSet::new();
-        visited.insert(root_canonical.clone());
-        add_dir(
-            &mut writer,
-            options,
-            root,
-            "",
-            &root_canonical,
-            &dest_abs,
-            &temp_abs,
-            &mut visited,
-        )?;
-        let completed = writer
+        let mut export = Export {
+            writer: ZipWriter::new(file),
+            options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            root_canonical: &root_canonical,
+            dest_abs: &dest_abs,
+            temp_abs: &temp_abs,
+            visited: HashSet::from([root_canonical.clone()]),
+        };
+        export.add_dir(root, "")?;
+        let completed = export
+            .writer
             .finish()
             .map_err(|e| CoreError::internal(e.to_string()))?;
         completed.sync_all()?;
@@ -135,98 +131,88 @@ fn sibling_backup(dest: &Path) -> PathBuf {
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn add_dir(
-    writer: &mut ZipWriter<File>,
+/// The parts of an export that do not change as the walk descends: where the
+/// archive is being written, and the two paths inside the project that must not
+/// end up in it.
+struct Export<'a> {
+    writer: ZipWriter<File>,
     options: SimpleFileOptions,
-    dir: &Path,
-    prefix: &str,
-    root_canonical: &Path,
-    dest_abs: &Path,
-    temp_abs: &Path,
-    visited: &mut HashSet<PathBuf>,
-) -> Result<(), CoreError> {
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        entries.push(entry?);
-    }
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if prefix.is_empty() && (name == BUILD_DIR || name == SETTINGS_FILE) {
-            continue;
-        }
-        let rel = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        let path = entry.path();
-        let path_abs = absolute_lexical(&path)?;
-        if path_abs == *dest_abs || path_abs == *temp_abs {
-            continue;
-        }
-
-        let entry_type = entry.file_type()?;
-        if entry_type.is_symlink() {
-            let target = match fs::canonicalize(&path) {
-                Ok(target) => target,
-                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err.into()),
-            };
-            if target != root_canonical && !target.starts_with(root_canonical) {
-                // Never export data reached through a link outside the project.
-                continue;
-            }
-            let meta = fs::metadata(&path)?;
-            if meta.is_file() {
-                add_file(writer, options, &rel, &path)?;
-            }
-            // Directory links are deliberately skipped. Following them creates
-            // cycles and duplicates; regular directories below are still walked.
-            continue;
-        }
-
-        if entry_type.is_dir() {
-            let canonical = fs::canonicalize(&path)?;
-            if canonical != root_canonical && !canonical.starts_with(root_canonical) {
-                continue;
-            }
-            if !visited.insert(canonical) {
-                continue;
-            }
-            writer
-                .add_directory(format!("{rel}/"), options)
-                .map_err(|e| CoreError::internal(e.to_string()))?;
-            add_dir(
-                writer,
-                options,
-                &path,
-                &rel,
-                root_canonical,
-                dest_abs,
-                temp_abs,
-                visited,
-            )?;
-        } else if entry_type.is_file() {
-            add_file(writer, options, &rel, &path)?;
-        }
-    }
-    Ok(())
+    root_canonical: &'a Path,
+    dest_abs: &'a Path,
+    temp_abs: &'a Path,
+    visited: HashSet<PathBuf>,
 }
 
-fn add_file(
-    writer: &mut ZipWriter<File>,
-    options: SimpleFileOptions,
-    rel: &str,
-    path: &Path,
-) -> Result<(), CoreError> {
-    writer
-        .start_file(rel, options)
-        .map_err(|e| CoreError::internal(e.to_string()))?;
-    let mut src = File::open(path)?;
-    io::copy(&mut src, writer)?;
-    writer.flush()?;
-    Ok(())
+impl Export<'_> {
+    fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            entries.push(entry?);
+        }
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if prefix.is_empty() && (name == BUILD_DIR || name == SETTINGS_FILE) {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let path = entry.path();
+            let path_abs = absolute_lexical(&path)?;
+            if path_abs == *self.dest_abs || path_abs == *self.temp_abs {
+                continue;
+            }
+
+            let entry_type = entry.file_type()?;
+            if entry_type.is_symlink() {
+                let target = match fs::canonicalize(&path) {
+                    Ok(target) => target,
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                    Err(err) => return Err(err.into()),
+                };
+                if target != *self.root_canonical && !target.starts_with(self.root_canonical) {
+                    // Never export data reached through a link outside the project.
+                    continue;
+                }
+                if fs::metadata(&path)?.is_file() {
+                    self.add_file(&rel, &path)?;
+                }
+                // Directory links are deliberately skipped. Following them creates
+                // cycles and duplicates; regular directories below are still walked.
+                continue;
+            }
+
+            if entry_type.is_dir() {
+                let canonical = fs::canonicalize(&path)?;
+                if canonical != *self.root_canonical && !canonical.starts_with(self.root_canonical)
+                {
+                    continue;
+                }
+                if !self.visited.insert(canonical) {
+                    continue;
+                }
+                self.writer
+                    .add_directory(format!("{rel}/"), self.options)
+                    .map_err(|e| CoreError::internal(e.to_string()))?;
+                self.add_dir(&path, &rel)?;
+            } else if entry_type.is_file() {
+                self.add_file(&rel, &path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
+        self.writer
+            .start_file(rel, self.options)
+            .map_err(|e| CoreError::internal(e.to_string()))?;
+        let mut src = File::open(path)?;
+        io::copy(&mut src, &mut self.writer)?;
+        self.writer.flush()?;
+        Ok(())
+    }
 }

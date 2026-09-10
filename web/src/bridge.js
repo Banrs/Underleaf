@@ -1,7 +1,7 @@
-// The host bridge: the one module that knows whether a desktop shell is
-// hosting the app, and what platform it runs on. Everything else imports from
-// here instead of sniffing the host or navigator.platform locally, so adding a
-// shell is a change to this file, not a hunt through the views.
+// The host bridge: the one module that knows what platform the shell runs on.
+// Everything else imports from here instead of sniffing navigator.platform
+// locally, so changing shell is a change to this file, not a hunt through the
+// views.
 //
 // A bridge exposes: invoke(command, args, options), platform, accent(),
 // setMenu(spec), onCommand(fn), onBeforeQuit(fn), and fileUrl(segments) for the
@@ -82,8 +82,9 @@ function tauriBridge() {
 
 export const bridge = tauri ? tauriBridge() : null;
 
-export const platform = bridge?.platform
-  ?? (/Mac/.test(navigator.platform ?? '') ? 'darwin'
-    : /Win/.test(navigator.platform ?? '') ? 'win32' : 'linux');
-
+// Only the shell ever runs this app, so `bridge` is non-null in practice; the
+// null case keeps this module importable by the unit tests, which exercise
+// runQuitFlush without a host. Platform falls back to the same user-agent read
+// the bridge itself uses — there is no second sniff to disagree with it.
+export const platform = bridge?.platform ?? agentPlatform();
 export const isMac = platform === 'darwin';

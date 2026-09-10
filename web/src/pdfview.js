@@ -687,13 +687,12 @@ export class PdfViewer {
     if (at < str.length) span.appendChild(document.createTextNode(str.slice(at)));
   }
 
-  #findStatus(stale = false) {
+  #findStatus() {
     const f = this._find;
     return {
       total: f?.matches.length ?? 0,
       index: f?.matches.length ? f.index + 1 : 0,
       limited: !!f?.limited,
-      stale,
     };
   }
 
@@ -715,7 +714,7 @@ export class PdfViewer {
 
     for (let i = 0; i < proxies.length; i++) {
       const data = await this.#pageTextData({ n: i + 1, page: proxies[i] });
-      if (stale()) return this.#findStatus(true);
+      if (stale()) return this.#findStatus();
       if (!data) continue;
 
       const remaining = MAX_FIND_MATCHES - matches.length;
@@ -733,11 +732,11 @@ export class PdfViewer {
       }
     }
 
-    if (stale()) return this.#findStatus(true);
+    if (stale()) return this.#findStatus();
     this._find = { query: q, matches, byPage, index: 0, limited };
     this.#revealMatch();
     await this.#refreshHighlights();
-    return stale() ? this.#findStatus(true) : this.#findStatus();
+    return this.#findStatus();
   }
 
   /// Step to the next (+1) or previous (-1) match, wrapping at either end.

@@ -4,11 +4,10 @@
 // dialog shell (focus trap, Escape, focus restore) comes from dom.js.
 
 import { api } from './api.js';
-import { $, el, toast, showModal } from './dom.js';
+import { $, el, toast, showModal, nextId } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
-import { nextId } from './dom.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
 // its accessible name from the title, so icon-only segments still read properly.

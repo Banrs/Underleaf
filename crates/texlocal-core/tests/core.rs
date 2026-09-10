@@ -10,7 +10,8 @@ use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, rename_entry, search_project,
+    create_file, create_project, delete_entry, rename_entry, scan_symbols, search_project,
+    symbols_fingerprint,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
@@ -170,7 +171,7 @@ fn implicit_project_scans_skip_external_symlink_files() {
     // Imported here rather than at the top: this is the only test that reads
     // them, and it is unix-only, so a file-level import is an unused-import
     // error on Windows under -D warnings.
-    use texlocal_core::projects::{file_tree, scan_symbols, symbols_fingerprint};
+    use texlocal_core::projects::file_tree;
 
     let data = data_dir();
     let root = project(data.path(), "symlink-scans");
@@ -210,15 +211,30 @@ fn the_settings_file_is_not_reachable_through_the_file_api() {
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
+// Not gated: `component_eq` reserves the settings name's case aliases on every
+// platform on purpose, because macOS volumes are case-insensitive too. Keeping
+// this assertion inside the cfg(windows) test below meant the only host that
+// ever checked it was Windows.
+#[test]
+fn settings_aliases_are_reserved_on_every_platform() {
+    let data = data_dir();
+    let root = project(data.path(), "settings-aliases");
+    for alias in [".TEXLOCAL.JSON", ".TexLocal.Json", ".texlocal.JSON"] {
+        assert!(
+            safe_path(&root, alias)
+                .unwrap_err()
+                .message
+                .contains("Reserved file"),
+            "{alias} must be reserved"
+        );
+    }
+}
+
 #[cfg(windows)]
 #[test]
-fn windows_aliases_cannot_reach_settings_or_reserved_device_names() {
+fn windows_reserved_device_names_are_rejected() {
     let data = data_dir();
     let root = project(data.path(), "windows-aliases");
-    assert!(safe_path(&root, ".TEXLOCAL.JSON")
-        .unwrap_err()
-        .message
-        .contains("Reserved file"));
     assert!(safe_path(&root, "CON.tex").is_err());
     assert!(safe_path(&root, "CONIN$").is_err());
     assert!(safe_path(&root, "COM¹.log").is_err());
@@ -417,6 +433,55 @@ fn a_hit_carries_the_text_either_side_of_it() {
 }
 
 #[test]
+fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
+    // Only the project's own top-level build/ is compile output. A `build`
+    // deeper in the tree is the author's: file_tree lists it and export_zip
+    // archives it, so search and the symbol scan must see it too. All three
+    // used to skip any directory of that name at any depth, which left a real
+    // source file invisible to search while still showing in the sidebar.
+    let data = data_dir();
+    let root = project(data.path(), "nested-build");
+    create_file(&root, "chapters/build/notes.tex", false).unwrap();
+    fs::write(
+        root.join("chapters/build/notes.tex"),
+        "a needle and \\label{deep:one}\n",
+    )
+    .unwrap();
+
+    let hits = search_project(&root, "needle", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
+        vec!["chapters/build/notes.tex"],
+    );
+    assert!(scan_symbols(&root)
+        .unwrap()
+        .labels
+        .contains(&"deep:one".to_string()));
+    assert!(symbols_fingerprint(&root)
+        .unwrap()
+        .iter()
+        .any(|(rel, _, _)| rel == "chapters/build/notes.tex"));
+}
+
+#[test]
+fn top_level_build_output_stays_out_of_every_scan() {
+    let data = data_dir();
+    let root = project(data.path(), "top-build");
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.tex"), "needle \\label{gen:one}\n").unwrap();
+
+    assert!(search_project(&root, "needle", 10).unwrap().is_empty());
+    assert!(!scan_symbols(&root)
+        .unwrap()
+        .labels
+        .contains(&"gen:one".to_string()));
+    assert!(symbols_fingerprint(&root)
+        .unwrap()
+        .iter()
+        .all(|(rel, _, _)| !rel.starts_with("build/")));
+}
+
+#[test]
 fn search_stops_at_the_limit_and_skips_build_output() {
     let data = data_dir();
     let root = project(data.path(), "limits");
@@ -430,4 +495,115 @@ fn search_stops_at_the_limit_and_skips_build_output() {
     let hits = search_project(&root, "needle", 5).unwrap();
     assert_eq!(hits.len(), 5);
     assert!(hits.iter().all(|h| h.file == "many.tex"));
+}
+
+#[test]
+fn symbol_scan_still_finds_entries_around_a_byte_that_is_not_utf8() {
+    // Plenty of .bib and .tex files are still Latin-1. The scan matches raw
+    // bytes, so its patterns have to match bytes rather than codepoints: a
+    // Unicode-mode automaton cannot step across 0xFC and drops the whole entry
+    // containing it, where decoding the file first would have kept it lossily.
+    let data = data_dir();
+    let root = project(data.path(), "latin1");
+    let mut bib = b"@article{m".to_vec();
+    bib.push(0xFC); // 'u-umlaut' in ISO-8859-1; invalid on its own as UTF-8
+    bib.extend_from_slice(b"ller2020,\n  title={x}\n}\n@article{ok2021,\n  title={y}\n}\n");
+    fs::write(root.join("refs.bib"), &bib).unwrap();
+
+    let mut tex = b"\\label{fig:m".to_vec();
+    tex.push(0xFC);
+    tex.extend_from_slice(b"ller}\n\\label{fig:ok}\n");
+    fs::write(root.join("ch.tex"), &tex).unwrap();
+
+    let found = scan_symbols(&root).unwrap();
+    assert!(
+        found.citations.iter().any(|c| c.contains("ller2020")),
+        "the entry carrying the byte was dropped: {:?}",
+        found.citations
+    );
+    assert!(
+        found.citations.contains(&"ok2021".to_string()),
+        "{:?}",
+        found.citations
+    );
+    assert!(
+        found.labels.iter().any(|l| l.contains("ller")),
+        "the label carrying the byte was dropped: {:?}",
+        found.labels
+    );
+    assert!(
+        found.labels.contains(&"fig:ok".to_string()),
+        "{:?}",
+        found.labels
+    );
+}
+
+#[test]
+fn the_byte_prefilter_never_hides_a_match_the_char_path_would_find() {
+    // U+0130 and the Kelvin sign both lowercase into plain ASCII, so an ASCII
+    // query can match a file holding no such ASCII byte. Skipping a file on one
+    // pass over its bytes is gated on the file being ASCII for exactly that
+    // reason; drop the gate and these two searches quietly return nothing.
+    let data = data_dir();
+    let root = project(data.path(), "folding");
+    fs::write(root.join("a.tex"), "\u{0130}stanbul\n").unwrap();
+    fs::write(root.join("b.tex"), "measured 5 \u{212A} today\n").unwrap();
+
+    let hits = search_project(&root, "istanbul", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|h| h.file.as_str()).collect::<Vec<_>>(),
+        vec!["a.tex"],
+        "U+0130 lowercases to an ASCII 'i'"
+    );
+
+    let hits = search_project(&root, "k", 10).unwrap();
+    assert!(
+        hits.iter().any(|h| h.file == "b.tex"),
+        "U+212A lowercases to an ASCII 'k': {hits:?}"
+    );
+}
+
+#[test]
+fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
+    // Settings written by an older build can hold "chapters\main.tex". The
+    // rename normalises separators before comparing, so it still recognises the
+    // file it is moving; without that the main file keeps pointing at the old
+    // path and the next compile fails. Browser mode's suite was the only place
+    // this pairing was covered, and it went with the deletion.
+    let data = data_dir();
+    let root = project(data.path(), "legacy-sep");
+    create_file(&root, "chapters/main.tex", false).unwrap();
+    fs::write(
+        root.join(".texlocal.json"),
+        r#"{"mainFile":"chapters\\main.tex","engine":"pdflatex","shellEscape":false}"#,
+    )
+    .unwrap();
+
+    rename_entry(&root, "chapters", "content").unwrap();
+
+    assert_eq!(read_settings(&root).main_file, "content/main.tex");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fingerprint_follows_an_in_project_link_to_the_bytes_the_scan_reads() {
+    // scan_symbols reads through the link, so the stamp has to come from the
+    // target. Stamping the link itself leaves the symbol cache serving stale
+    // labels after the real file changed underneath it.
+    let data = data_dir();
+    let root = project(data.path(), "link-stamp");
+    fs::write(root.join("real.tex"), "\\label{a}\n").unwrap();
+    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
+
+    let stamp_of = |v: &[(String, u64, u64)]| {
+        v.iter()
+            .find(|(rel, _, _)| rel == "link.tex")
+            .cloned()
+            .expect("the link is scanned")
+    };
+    let before = stamp_of(&symbols_fingerprint(&root).unwrap());
+    fs::write(root.join("real.tex"), "\\label{a}\n\\label{b}\n").unwrap();
+    let after = stamp_of(&symbols_fingerprint(&root).unwrap());
+
+    assert_ne!(before, after, "the link's stamp must track its target");
 }

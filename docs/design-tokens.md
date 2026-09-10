@@ -78,7 +78,7 @@ work on both opaque panels and vibrant materials.
 blue and is replaced at startup by whatever the person chose in System Settings
 — `NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
 `src-tauri/src/accent.rs`). The kit values below are the fallback for a host that
-reports nothing, and for browser mode.
+reports nothing.
 
 `--on-accent` stays white, which is what every desktop draws on an accent fill,
 and flips to black only where white drops under WCAG's 3:1 floor for interface
@@ -220,7 +220,6 @@ assumed. Windows keeps the same tokens under standard window decorations; see
 
 - `html.mac` — vibrancy materials, traffic-light inset, `⌘`-style shortcut glyphs
 - `html.win` — opaque panels under a standard title bar
-- `html.desktop` — running in the desktop shell rather than browser mode
 
 The accent goes the other way: one concept both systems have, read through each
 one's own API and delivered as a single token, so the CSS never learns which

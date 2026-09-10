@@ -1,7 +1,6 @@
-// TeXLocal's core, ported from server/projects.js and server/compile.js. The
-// JS originals remain the reference for browser mode; every guard here mirrors
-// one there, and the test suite mirrors test/projects.test.js so the two
-// implementations can't drift apart silently.
+// TeXLocal's core: projects, compilation, and the path rules that keep both
+// inside the data directory. Deliberately GUI-free, so it tests on any host
+// without a webview.
 //
 // Path convention: every project-relative path this crate RETURNS or STORES
 // uses forward slashes, on every platform — the frontend splits on '/', and
