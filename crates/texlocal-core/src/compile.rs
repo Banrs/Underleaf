@@ -1,6 +1,6 @@
-//! LaTeX compilation via latexmk, ported from server/compile.js: augmented
-//! PATH discovery, process-group kill, per-project supersede, timeout and
-//! output caps, and the stale-log guard.
+//! LaTeX compilation via latexmk: augmented PATH discovery, process-group
+//! kill, per-project supersede, timeout and output caps, and the stale-log
+//! guard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

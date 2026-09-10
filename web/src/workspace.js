@@ -12,7 +12,7 @@ import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, com
 import { openSettings } from './settings.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
-  buildSidebar, renderTree, updateTreeSelection, refreshTree, renderOutline, focusSearch,
+  buildSidebar, renderTree, updateTreeSelection, renderOutline, focusSearch,
   newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome, destroySidebar,
 } from './sidebar.js';
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';

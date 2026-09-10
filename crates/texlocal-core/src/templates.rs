@@ -1,5 +1,4 @@
-//! Built-in project templates, ported verbatim from server/templates.js.
-//! Each template maps relative file path → content.
+//! Built-in project templates. Each maps relative file path → content.
 
 const ARTICLE_BIB: &str = r#"@article{knuth1984,
   author  = {Knuth, Donald E.},
@@ -136,5 +135,3 @@ pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
         _ => &[("main.tex", ARTICLE_MAIN), ("references.bib", ARTICLE_BIB)],
     }
 }
-
-pub const NAMES: &[&str] = &["blank", "article", "report", "beamer"];

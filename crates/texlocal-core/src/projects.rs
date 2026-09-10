@@ -1,10 +1,10 @@
-//! Project and file management, ported from server/projects.js. Every project
-//! is a directory under the data dir; all returned paths use forward slashes.
+//! Project and file management. Every project is a directory under the data
+//! dir; all returned paths use forward slashes.
 
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::json;
@@ -62,20 +62,16 @@ pub struct Symbols {
 /// One scannable file's identity for cache invalidation: (rel path, mtime ns, len).
 pub type FileStamp = (String, u64, u64);
 
+fn since_epoch(meta: &fs::Metadata) -> Option<Duration> {
+    meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()
+}
+
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    since_epoch(meta).map_or(0, |d| d.as_millis() as u64)
 }
 
 fn mtime_ns(meta: &fs::Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .and_then(|d| u64::try_from(d.as_nanos()).ok())
-        .unwrap_or(0)
+    since_epoch(meta).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(0))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -365,12 +361,6 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
 
 // ---------- search ----------
 
-fn lower_chars(s: &str) -> Vec<char> {
-    let mut out = Vec::new();
-    lower_into(s, &mut out);
-    out
-}
-
 fn lower_into(s: &str, out: &mut Vec<char>) {
     out.clear();
     out.extend(s.chars().map(|c| {
@@ -390,7 +380,8 @@ fn find_from(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
 }
 
 pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
-    let q = lower_chars(query);
+    let mut q = Vec::new();
+    lower_into(query, &mut q);
     if q.is_empty() {
         return Ok(Vec::new());
     }

@@ -1,4 +1,4 @@
-//! latexmk/TeX log parsing, ported line-for-line from server/compile.js.
+//! latexmk/TeX log parsing.
 //! We compile with -file-line-error, so errors look like:
 //!   ./main.tex:12: Undefined control sequence.
 //! Warnings look like:

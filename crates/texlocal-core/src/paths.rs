@@ -1,5 +1,5 @@
-//! Path safety — the security boundary, ported guard-for-guard from
-//! server/projects.js. User paths are normalized lexically first, then the
+//! Path safety — the security boundary, and the only one.
+//! User paths are normalized lexically first, then the
 //! nearest existing ancestor is resolved so symlinked files and directories
 //! cannot redirect an operation outside the project.
 

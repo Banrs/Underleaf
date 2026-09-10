@@ -352,7 +352,6 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
     getState: () => view.state,
     getScrollTop: () => view.scrollDOM.scrollTop,
     setScrollTop: (top) => { view.scrollDOM.scrollTop = top; },
-    lineCount: () => view.state.doc.lines,
     // Feed each line's text to cb without materializing the whole document.
     scanLines(cb) {
       let n = 1;

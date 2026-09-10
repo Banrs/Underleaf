@@ -1,8 +1,8 @@
 use std::fmt;
 
-/// Mirrors server/projects.js's HttpError: a status code the HTTP layer used
-/// directly, kept here because the messages (and the 4xx/5xx distinction)
-/// surface in the UI.
+/// An error with a status code attached. The code is not decoration: the
+/// `texlocal://` protocol handler returns it verbatim, and the 4xx/5xx split
+/// decides whether the UI blames the request or the app.
 #[derive(Debug, Clone)]
 pub struct CoreError {
     pub status: u16,

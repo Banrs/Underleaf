@@ -97,16 +97,19 @@ fn restore_after_aborted_flush(app: &AppHandle, reason: &str) {
 /// responder, or timeout leaves the window and process intact.
 fn flush_then(app: &AppHandle, action: FlushAction) -> bool {
     let state = app.state::<AppState>();
-    if state.flushing.swap(true, Ordering::SeqCst) {
-        if matches!(&action, FlushAction::Exit) {
-            state.exit_after_flush.store(true, Ordering::SeqCst);
-        }
-        return false;
-    }
-
+    // A quit arriving while a close is already flushing still has to exit once
+    // that flush lands, so this is recorded either way. It stays *after* the
+    // swap: an in-flight flush's task reads this flag to decide whether to
+    // exit, and storing it earlier would let that task consume a quit the
+    // handshake has not acknowledged yet.
+    let already_flushing = state.flushing.swap(true, Ordering::SeqCst);
     if matches!(&action, FlushAction::Exit) {
         state.exit_after_flush.store(true, Ordering::SeqCst);
     }
+    if already_flushing {
+        return false;
+    }
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     *state.flush_ack.lock().unwrap() = Some(tx);
     if let Err(err) = app.emit_to(MAIN_WINDOW, "app:before-quit", ()) {
@@ -124,29 +127,20 @@ fn flush_then(app: &AppHandle, action: FlushAction) -> bool {
         state.flush_ack.lock().unwrap().take();
         state.flushing.store(false, Ordering::SeqCst);
 
-        match result {
-            Ok(Ok(outcome)) if outcome.ok => {}
-            Ok(Ok(outcome)) => {
-                state.exit_after_flush.store(false, Ordering::SeqCst);
-                restore_after_aborted_flush(
-                    &app,
-                    outcome
-                        .error
-                        .as_deref()
-                        .unwrap_or("the document could not be saved"),
-                );
-                return;
-            }
-            Ok(Err(_)) => {
-                state.exit_after_flush.store(false, Ordering::SeqCst);
-                restore_after_aborted_flush(&app, "the renderer closed before saving");
-                return;
-            }
-            Err(_) => {
-                state.exit_after_flush.store(false, Ordering::SeqCst);
-                restore_after_aborted_flush(&app, "saving did not finish before the timeout");
-                return;
-            }
+        let failure = match result {
+            Ok(Ok(outcome)) if outcome.ok => None,
+            Ok(Ok(outcome)) => Some(
+                outcome
+                    .error
+                    .unwrap_or_else(|| "the document could not be saved".to_string()),
+            ),
+            Ok(Err(_)) => Some("the renderer closed before saving".to_string()),
+            Err(_) => Some("saving did not finish before the timeout".to_string()),
+        };
+        if let Some(reason) = failure {
+            state.exit_after_flush.store(false, Ordering::SeqCst);
+            restore_after_aborted_flush(&app, &reason);
+            return;
         }
 
         let exit = state.exit_after_flush.swap(false, Ordering::SeqCst)

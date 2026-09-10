@@ -1,4 +1,4 @@
-//! SyncTeX queries, ported from server/compile.js.
+//! SyncTeX queries: editor line to PDF position, and back.
 
 use std::path::Path;
 
