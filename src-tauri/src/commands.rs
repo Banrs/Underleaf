@@ -28,11 +28,6 @@ fn root(state: &AppState, id: &str) -> CmdResult<PathBuf> {
 }
 
 #[derive(Serialize)]
-pub struct WriteAck {
-    pub ok: bool,
-}
-
-#[derive(Serialize)]
 pub struct FileText {
     pub text: String,
 }
@@ -41,29 +36,6 @@ pub struct FileText {
 #[serde(rename_all = "camelCase")]
 pub struct Saved {
     pub saved: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct DialogOutcome {
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub ok: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub canceled: bool,
-}
-
-impl DialogOutcome {
-    fn done() -> Self {
-        Self {
-            ok: true,
-            canceled: false,
-        }
-    }
-    fn canceled() -> Self {
-        Self {
-            ok: false,
-            canceled: true,
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -197,7 +169,7 @@ pub async fn write_file(
     id: String,
     path: String,
     text: Option<String>,
-) -> CmdResult<WriteAck> {
+) -> CmdResult<()> {
     let root = root(&state, &id)?;
     let abs = paths::safe_path(&root, &path)?;
     if let Some(parent) = abs.parent() {
@@ -205,7 +177,7 @@ pub async fn write_file(
     }
     std::fs::write(abs, text.unwrap_or_default())?;
     state.forget_project(&root);
-    Ok(WriteAck { ok: true })
+    Ok(())
 }
 
 #[tauri::command]
@@ -406,33 +378,29 @@ pub async fn export_project(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> CmdResult<DialogOutcome> {
+) -> CmdResult<()> {
     let root = root(&state, &id)?;
     let Some(dest) = ask_save_path(&app, &format!("{id}.zip"), ("ZIP archive", "zip")).await else {
-        return Ok(DialogOutcome::canceled());
+        return Ok(());
     };
     zipexport::export_zip(&root, &dest)?;
     let _ = app.opener().reveal_item_in_dir(&dest);
-    Ok(DialogOutcome::done())
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn save_pdf_as(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> CmdResult<DialogOutcome> {
+pub async fn save_pdf_as(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
     let root = root(&state, &id)?;
     let src = settings::compiled_pdf_path(&root)?;
     if !src.exists() {
         return Err(CmdError("No compiled PDF yet".into()));
     }
     let Some(dest) = ask_save_path(&app, &format!("{id}.pdf"), ("PDF", "pdf")).await else {
-        return Ok(DialogOutcome::canceled());
+        return Ok(());
     };
     std::fs::copy(&src, &dest)?;
     let _ = app.opener().reveal_item_in_dir(&dest);
-    Ok(DialogOutcome::done())
+    Ok(())
 }
 
 // ---------- shell plumbing ----------

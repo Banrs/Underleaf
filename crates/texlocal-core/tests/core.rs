@@ -498,7 +498,7 @@ fn search_stops_at_the_limit_and_skips_build_output() {
 }
 
 #[test]
-fn symbol_scan_still_finds_entries_around_a_byte_that_is_not_utf8() {
+fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
     // Plenty of .bib and .tex files are still Latin-1. The scan matches raw
     // bytes, so its patterns have to match bytes rather than codepoints: a
     // Unicode-mode automaton cannot step across 0xFC and drops the whole entry
@@ -515,10 +515,29 @@ fn symbol_scan_still_finds_entries_around_a_byte_that_is_not_utf8() {
     tex.extend_from_slice(b"ller}\n\\label{fig:ok}\n");
     fs::write(root.join("ch.tex"), &tex).unwrap();
 
+    // Non-breaking spaces, which reference managers and PDF copy-paste emit, are
+    // the opposite trap: matching bytes with an ASCII-only `\s` swallows the
+    // NBSP into the key and drops an entry whose NBSP sits before the brace.
+    fs::write(
+        root.join("pasted.bib"),
+        "@article{Smith2020\u{00A0},\n  title={x}\n}\n@article\u{00A0}{Jones2021,\n  title={y}\n}\n",
+    )
+    .unwrap();
+
     let found = scan_symbols(&root).unwrap();
     assert!(
         found.citations.iter().any(|c| c.contains("ller2020")),
         "the entry carrying the byte was dropped: {:?}",
+        found.citations
+    );
+    assert!(
+        found.citations.contains(&"Smith2020".to_string()),
+        "a non-breaking space was swallowed into the key: {:?}",
+        found.citations
+    );
+    assert!(
+        found.citations.contains(&"Jones2021".to_string()),
+        "an entry was dropped over a non-breaking space: {:?}",
         found.citations
     );
     assert!(

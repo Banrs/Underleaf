@@ -518,23 +518,28 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // ---------- symbols ----------
 
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    // Matched against the file's bytes rather than a decoded copy: a .tex file
-    // is scanned for a handful of names, so decoding megabytes of prose to
-    // find them is the whole cost. Only the captures become Strings.
+    // Both failure modes here are real and pull in opposite directions, so the
+    // decode has to happen before the match, not after.
     //
-    // `(?-u)` is load-bearing, not tidying. In Unicode mode a class like
-    // `[^,\s]` only steps across well-formed UTF-8, so one stray byte from a
-    // Latin-1 .bib — an umlaut in an author key — fails the whole `@entry{...}`
-    // match and silently drops that citation. Matching bytes keeps the entry
-    // and lets from_utf8_lossy mangle just the key, which is what decoding the
-    // file up front used to do.
-    use regex::bytes::Regex;
+    // Matching raw bytes in Unicode mode drops an entry outright when the file
+    // carries a byte that is not valid UTF-8 — an umlaut in a Latin-1 .bib —
+    // because a class like `[^,\s]` cannot step across it. Escaping that with
+    // `(?-u)` narrows `\s` to ASCII instead, which swallows a non-breaking
+    // space into the captured key (autocomplete then offers a key `\cite`
+    // will never match) and drops the entry entirely when one sits between the
+    // type and the brace. Reference managers and PDF copy-paste emit those.
+    //
+    // Decoding first and matching a str gets both right: invalid bytes become
+    // U+FFFD and the entry survives, while `\s` keeps its Unicode meaning.
+    // `from_utf8_lossy` borrows when the file is already valid UTF-8, which is
+    // the normal case, so this does not copy the file the way an earlier
+    // `.into_owned()` here did.
+    use regex::Regex;
     use std::sync::OnceLock;
     static BIB_RE: OnceLock<Regex> = OnceLock::new();
     static LABEL_RE: OnceLock<Regex> = OnceLock::new();
-    let bib_re =
-        BIB_RE.get_or_init(|| Regex::new(r"(?-u)@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-    let label_re = LABEL_RE.get_or_init(|| Regex::new(r"(?-u)\\label\{([^}]+)\}").unwrap());
+    let bib_re = BIB_RE.get_or_init(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
+    let label_re = LABEL_RE.get_or_init(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
 
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
@@ -544,8 +549,9 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
             "tex" => (label_re, &mut labels),
             _ => return Ok(true),
         };
-        for m in re.captures_iter(&fs::read(abs)?) {
-            out.push(String::from_utf8_lossy(&m[1]).into_owned());
+        let bytes = fs::read(abs)?;
+        for m in re.captures_iter(&String::from_utf8_lossy(&bytes)) {
+            out.push(m[1].to_string());
         }
         Ok(true)
     })?;
