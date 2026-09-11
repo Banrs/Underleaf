@@ -331,6 +331,17 @@ pub struct CompileManager {
     pub timeout: Option<Duration>,
 }
 
+/// One compile run's identity: known together, read again only in finish(), so
+/// it travels as one value rather than eight arguments.
+#[derive(Clone, Copy)]
+struct CompileRun<'a> {
+    root: &'a Path,
+    main_rel: &'a str,
+    log_before: Option<SystemTime>,
+    started_at: SystemTime,
+    request_started: std::time::Instant,
+}
+
 impl CompileManager {
     pub fn new() -> Self {
         Self::default()
@@ -442,11 +453,17 @@ impl CompileManager {
 
         // Capture log identity after the predecessor has stopped, otherwise its
         // final write can be mistaken for output from this generation.
-        let started_at = SystemTime::now();
-        let log_before =
-            std::fs::metadata(outdir.join(format!("{}.log", main_base_name(&main_rel))))
-                .and_then(|meta| meta.modified())
-                .ok();
+        let run = CompileRun {
+            root,
+            main_rel: &main_rel,
+            log_before: std::fs::metadata(
+                outdir.join(format!("{}.log", main_base_name(&main_rel))),
+            )
+            .and_then(|meta| meta.modified())
+            .ok(),
+            started_at: SystemTime::now(),
+            request_started,
+        };
 
         let mut cmd = base_command("latexmk", Some(root), self.path());
         cmd.args(&args);
@@ -471,15 +488,7 @@ impl CompileManager {
         let mut child = match spawn_result {
             None => return Ok(Self::superseded(request_started)),
             Some(Err(err)) => {
-                let result = self.finish(
-                    root,
-                    &main_rel,
-                    log_before,
-                    started_at,
-                    request_started,
-                    -1,
-                    err.to_string(),
-                );
+                let result = self.finish(&run, -1, err.to_string());
                 self.clear_if_current(root, token);
                 return Ok(result);
             }
@@ -489,30 +498,19 @@ impl CompileManager {
         let (code, mut output, stderr) = drive(&mut child, timeout).await;
         output.push_str(&stderr);
 
-        let result = self.finish(
-            root,
-            &main_rel,
-            log_before,
-            started_at,
-            request_started,
-            code,
-            output,
-        );
+        let result = self.finish(&run, code, output);
         self.clear_if_current(root, token);
         Ok(result)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn finish(
-        &self,
-        root: &Path,
-        main_rel: &str,
-        log_before: Option<SystemTime>,
-        started_at: SystemTime,
-        start_instant: std::time::Instant,
-        code: i32,
-        fallback_output: String,
-    ) -> CompileResult {
+    fn finish(&self, run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
+        let CompileRun {
+            root,
+            main_rel,
+            log_before,
+            started_at,
+            request_started: start_instant,
+        } = *run;
         let base = main_base_name(main_rel);
         let outdir = root.join(BUILD_DIR);
         let log_path = outdir.join(format!("{base}.log"));
