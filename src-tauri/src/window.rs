@@ -50,7 +50,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
             // x is a literal left inset. Native AppKit puts the lights at x19/y19
-            // in a unified toolbar window (measured at runtime on Tahoe), so
+            // in a unified toolbar window (measured at runtime on Golden Gate /
+            // macOS 27), so
             // both take 19. y sets the titlebar container height to `button
             // height + y` and the buttons stay bottom-pinned inside it, so the
             // rendered top inset is `y - 9`: y=28 renders the kit's y of 19,

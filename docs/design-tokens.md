@@ -149,7 +149,7 @@ nothing needs an ad-hoc radius.
 | Sidebar section header | 20 tall, 13 Bold, content 16 tall centred (y=2), **no gap before the rows** |
 | Section header accessory | 20 wide (kit's `Headers - Trailing`); square here for a kinder target |
 | Sidebar footer | 44 — a toolbar band, not the 46 that asymmetric padding produced |
-| Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Tahoe; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
+| Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Golden Gate/macOS 27; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
 | Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
 | Switch (regular) | 54 × 24 |
 | Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
