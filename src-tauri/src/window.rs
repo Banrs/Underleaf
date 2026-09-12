@@ -49,7 +49,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .transparent(true)
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 19.0))
+            // x is a literal left inset; y is not the matching top inset. tao
+            // grows the titlebar container to `button height + y` and AppKit
+            // centres the buttons in it, so the rendered inset is half of what
+            // is passed. 14 + 38 makes that container exactly the 52px title
+            // bar band, which centres the lights on it — the kit's y of 19.
+            .traffic_light_position(tauri::LogicalPosition::new(18.0, 38.0))
             .effects(sidebar_vibrancy());
     }
     #[cfg(not(target_os = "macos"))]
