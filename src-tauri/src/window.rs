@@ -49,12 +49,13 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .transparent(true)
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            // x is a literal left inset; y is not the matching top inset. tao
-            // grows the titlebar container to `button height + y` and AppKit
-            // centres the buttons in it, so the rendered inset is half of what
-            // is passed. 14 + 38 makes that container exactly the 52px title
-            // bar band, which centres the lights on it — the kit's y of 19.
-            .traffic_light_position(tauri::LogicalPosition::new(18.0, 38.0))
+            // x is a literal left inset. Native AppKit puts the lights at x19/y19
+            // in a unified toolbar window (measured at runtime on Tahoe), so
+            // both take 19. y sets the titlebar container height to `button
+            // height + y` and the buttons stay bottom-pinned inside it, so the
+            // rendered top inset is `y - 9`: y=28 renders the kit's y of 19,
+            // centred on the plain middle of the 52px band exactly as native.
+            .traffic_light_position(tauri::LogicalPosition::new(19.0, 28.0))
             .effects(sidebar_vibrancy());
     }
     #[cfg(not(target_os = "macos"))]

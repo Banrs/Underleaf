@@ -196,7 +196,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 /* Dragging the window by its chrome is driven by data-tauri-drag-region on the
    title bars, not CSS: neither WKWebView nor WebView2 honours -webkit-app-region. */
 
-/* The traffic lights sit at x18/y19 in a 52px band (kit values), so the sidebar
+/* The traffic lights sit at x19/y19 in a 52px band (native insets), so the sidebar
    band keeps its leading end clear of controls. */
 .mac .sidebar-titlebar { padding-left: 96px; }
 /* With the sidebar hidden, the lights move over the content title bar. */
