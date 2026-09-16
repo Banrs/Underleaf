@@ -32,6 +32,26 @@ export function withTimeout(promise, ms) {
   ]);
 }
 
+// ---------- progress ----------
+
+// A pane waiting on I/O gets a progress overlay instead of sitting there looking
+// broken. It is held back briefly so a fast local read never flashes a spinner
+// (the HIG's rule: don't report progress for work that reads as instantaneous).
+// The host must be a positioned element; the returned function cancels a pending
+// overlay and removes a shown one, so callers can put it in a `finally`.
+const BUSY_DELAY = 250;
+
+export function showBusy(host, label) {
+  if (!host) return () => {};
+  let overlay = null;
+  const timer = setTimeout(() => {
+    overlay = el('div', { class: 'busy-overlay', role: 'status' },
+      el('span', { class: 'spinner' }), label);
+    host.append(overlay);
+  }, BUSY_DELAY);
+  return () => { clearTimeout(timer); overlay?.remove(); };
+}
+
 // ---------- toasts ----------
 
 const MAX_TOASTS = 3;

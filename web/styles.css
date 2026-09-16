@@ -169,7 +169,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-#app { height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+#app { height: 100%; overflow: hidden; display: flex; flex-direction: column; position: relative; }
 
 /* On macOS the native window vibrancy shows through a transparent window; the
    sidebar leaves its background translucent to reveal it. */
@@ -177,7 +177,11 @@ html, body {
 
 h1, h2, h3, p { margin: 0; }
 
-button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+/* `appearance` is reset explicitly rather than left to WebKit's rule that an
+   author background or border implicitly drops native chrome — the app is
+   developed in Chromium and ships in WKWebView, and that is not a difference
+   worth discovering from a screenshot. */
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; appearance: none; }
 
 /* Thin native scrollbars: `scrollbar-width: thin` gives the slim macOS bar
    rather than Chromium's chunky fallback, and with no ::-webkit rules it still
@@ -365,22 +369,28 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--label-4);
 }
 
-/* Switch: the kit's regular size is 54 × 24 with a 20px knob. */
+/* Switch: the kit's regular size is 54 × 24 with a 20px knob, inset 2 on every
+   side. The track had drifted to --h-menu-row (28), which left the knob — pinned
+   2 from the top — seated 2px above centre with 6 below it. The knob now sits in
+   flow, so all four insets come from the one `padding: 2px`: it cannot drift
+   again, and it does not depend on a <button> establishing a containing block
+   for absolutely positioned children, which the two webviews have not always
+   agreed on. */
 .switch {
   width: 54px;
-  height: var(--h-menu-row);
+  height: 24px;
   flex: none;
+  display: flex;
+  align-items: center;
+  padding: 2px;
   border-radius: var(--r-pill);
   background: var(--fill-1);
-  position: relative;
   transition: background-color 0.18s ease;
 }
 .switch-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
   width: 20px;
   height: 20px;
+  flex: none;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.16), 0 2px 4px rgba(0, 0, 0, 0.12);
@@ -400,6 +410,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* A pane waiting on I/O. The content underneath stays visible through the scrim
+   so the user keeps their place; dom.js decides when it appears. */
+.busy-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  background: color-mix(in srgb, var(--bg-content) 72%, transparent);
+  color: var(--label-2);
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
+  animation: fade-in 0.14s ease-out;
+}
+.busy-overlay .spinner { border-color: var(--label-4); border-top-color: var(--label-2); }
 
 .badge {
   display: inline-flex;
@@ -488,7 +516,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .brand-actions .btn { width: 100%; justify-content: flex-start; gap: var(--sp-2); }
 
 .home-recents { display: flex; flex-direction: column; min-height: 0; padding-top: var(--sp-5); }
-/* Subheadline 11 Bold, matching the sidebar's section headers. */
+/* The sidebar's section-header role: kit "Large" header, 13 Bold. */
 .recents-heading { font-size: var(--fs-header); line-height: var(--lh-header); font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-2); padding-left: var(--sp-3); }
 /* Sizes to its rows rather than stretching, so two projects don't leave a tall
    empty box; scrolls once the rows exceed the column. */
@@ -561,17 +589,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .sidebar.collapsed + .divider { display: none; }
 
 /* Section header, measured off the kit's Sidebars/Large/Header symbol: a 20-tall
-   band whose 16-tall content sits centred in it (y=2), 13 Bold, and — per the
-   Large/Section group, where the first Item starts at y=20 — NO gap before the
-   rows. Trailing accessories in that symbol are 20 wide, so the action buttons
-   below are sized to fit inside the band rather than stretching it. */
+   band whose 16-tall content sits centred in it (y=2), 13 Bold. Trailing
+   accessories in that symbol are 20 wide, so the action buttons below are sized
+   to fit inside the band rather than stretching it.
+   The kit's Large/Section group starts its first Item at y=20, i.e. flush. That
+   holds for its 2px-inset selection pill; ours fills the whole 40px row, so
+   flush put the pill's edge 2px under the header text. One 4px gap restores the
+   separation the kit gets from the pill inset. */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
   height: 20px;
-  margin: 0;
+  margin: 0 0 var(--sp-1);
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
   font-size: var(--fs-header);
@@ -582,6 +613,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
 .section-header.disclosure:hover { color: var(--label); }
+/* Collapsed, the Outline header is the last thing above the footer's hairline
+   and would sit flush on it — the row list is what normally holds it clear. */
+.sidebar:has(.outline[hidden]) .section-header.disclosure { margin-bottom: var(--sp-3); }
 .section-actions { display: flex; gap: 1px; }
 /* Square 20px targets so the header keeps its 20px band; the kit's own trailing
    accessories are 20 wide, and a square is a kinder pointer target than its 16
@@ -793,7 +827,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- editor ---------- */
 
-.editor-host { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.editor-host { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; position: relative; }
 .editor-host .cm-editor { height: 100%; font-size: var(--editor-fs, 14px); }
 /* Code wants tighter leading than prose; Xcode's own is about 1.3. */
 .editor-host .cm-scroller { font-family: var(--editor-font, var(--mono)); line-height: 1.45; }
@@ -918,7 +952,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border: 0;
   border-radius: var(--r-control);
   background: var(--fill-3);
-  color: var(--label-1);
+  color: var(--label);
   font: inherit;
 }
 .pdf-find input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -1045,7 +1079,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .settings-foot { justify-content: space-between; }
 .settings-status { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Menus use the vibrant material and the kit's 24px rows with radius 8. */
+/* Menus use the vibrant material, --h-menu-row rows and --r-menu corners in
+   an --r-container popover. */
 .menu {
   position: fixed;
   z-index: 200;

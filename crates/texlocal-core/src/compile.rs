@@ -527,6 +527,7 @@ impl CompileManager {
             }
         }
 
+        let log = fold_nonascii_spaces(log);
         let issues = parse_log(&log, main_rel);
         let pdf_exists = outdir.join(format!("{base}.pdf")).exists();
         let ok = code == 0 && pdf_exists;
@@ -546,6 +547,20 @@ impl CompileManager {
     }
 }
 
+/// Engines disagree on how a non-ASCII space reaches the log. pdfTeX and XeTeX
+/// escape it (`^^a0`); LuaTeX writes the character itself, so the same source
+/// produces a log pocked with U+00A0 under lualatex alone. On screen those are
+/// spaces that are not spaces: they don't wrap and they don't match a typed
+/// search. Fold every non-ASCII whitespace char to a plain space so the log
+/// reads the same whichever engine produced it.
+fn fold_nonascii_spaces(log: String) -> String {
+    let odd = |c: char| c.is_whitespace() && !c.is_ascii();
+    if !log.contains(odd) {
+        return log;
+    }
+    log.chars().map(|c| if odd(c) { ' ' } else { c }).collect()
+}
+
 /// The last `max` bytes of `s`, moved forward to a char boundary.
 fn tail(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -556,4 +571,22 @@ fn tail(s: &str, max: usize) -> &str {
         start += 1;
     }
     &s[start..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fold_nonascii_spaces;
+
+    #[test]
+    fn lualatex_non_breaking_spaces_read_as_ordinary_spaces() {
+        let log = "! Undefined control sequence.\nl.7 Figure\u{a0}\\reff\u{2007}{x}\n";
+
+        let folded = fold_nonascii_spaces(log.to_string());
+
+        assert_eq!(
+            folded,
+            "! Undefined control sequence.\nl.7 Figure \\reff {x}\n"
+        );
+        assert!(folded.lines().count() == 2, "line structure is preserved");
+    }
 }

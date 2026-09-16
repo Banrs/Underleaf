@@ -6,6 +6,8 @@
 import { api } from './api.js';
 import { $, el, toast, showModal, nextId } from './dom.js';
 import { icon } from './icons.js';
+import { runCommand } from './commands.js';
+import { refreshSidebarChrome } from './sidebar.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
 
@@ -149,8 +151,24 @@ export function openSettings() {
     if (state.projectId) {
       const engine = el('select', {
         onchange: async () => {
-          try { state.settings = await api.saveSettings(state.projectId, { engine: engine.value }); }
-          catch (err) { toast(err.message, 'error'); }
+          const chosen = engine.value;
+          const previous = state.settings?.engine;
+          try {
+            state.settings = await api.saveSettings(state.projectId, { engine: chosen });
+          } catch (err) {
+            // The control must not keep claiming a setting that didn't save.
+            engine.value = previous ?? 'pdflatex';
+            toast(err.message, 'error');
+            return;
+          }
+          // The engine is only visible in the output, and the dialog covers the
+          // Compile button, so a silent save reads as a control that does
+          // nothing — lualatex's first run is slow enough to read as hung on top
+          // of that. Rebuild with it, and say so.
+          refreshSidebarChrome();
+          toast(runCommand('compile.run')
+            ? `Recompiling with ${chosen}…`
+            : `Engine set to ${chosen}`);
         },
       }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>
         el('option', { value: e, selected: state.settings?.engine === e ? '' : undefined }, e)));

@@ -2,7 +2,7 @@
 // document lifecycle (open, save, compile, sync) that ties them together.
 
 import { api } from './api.js';
-import { $, el, toast, menuUnder, promptModal } from './dom.js';
+import { $, el, toast, menuUnder, promptModal, showBusy } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
@@ -83,7 +83,10 @@ export async function renderWorkspace(id) {
   const generation = workspaceGeneration;
   state.projectId = id;
 
+  // Four IPC round-trips before the shell exists: until they land the previous
+  // view is still on screen, so it says what it is waiting for.
   let settings, tree, symbols, status;
+  const busy = showBusy($('#app'), 'Opening project…');
   try {
     [settings, tree, symbols, status] = await Promise.all([
       api.settings(id), api.tree(id), api.symbols(id), api.status(),
@@ -93,6 +96,8 @@ export async function renderWorkspace(id) {
     toast(err.message, 'error');
     location.hash = '#/';
     return;
+  } finally {
+    busy();
   }
   if (generation !== workspaceGeneration) return;
   Object.assign(state, { settings, tree, symbols, tex: status });
@@ -245,9 +250,9 @@ function buildChrome(id) {
   const findBar = el('div', { class: 'pdf-find', hidden: true },
     findInput,
     findCount,
-    el('button', { class: 'icon-btn small', title: 'Previous match', onclick: () => stepFind(-1) }, icon('chevron-up')),
-    el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
-    el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
+    el('button', { class: 'icon-btn small', title: 'Previous match', 'aria-label': 'Previous match', onclick: () => stepFind(-1) }, icon('chevron-up')),
+    el('button', { class: 'icon-btn small', title: 'Next match', 'aria-label': 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
+    el('button', { class: 'icon-btn small', title: 'Close', 'aria-label': 'Close find bar', onclick: () => closePdfFind() }, icon('close')),
   );
   findInput.addEventListener('input', () => {
     clearTimeout(pdfFindTimer);
@@ -534,60 +539,70 @@ export async function openFile(path) {
     return;
   }
 
-  let text;
-  try { ({ text } = await api.readFile(projectId, path)); }
-  catch (err) {
-    if (transitionStillCurrent(request, generation, projectId, host)) toast(err.message, 'error');
-    return;
+  // Reading the file and building the CodeMirror state are fast on a small
+  // document and neither is on a large one. The outgoing document stays mounted
+  // under the overlay until the new one is ready to replace it. `finally` is
+  // load-bearing on every exit: a transition that beat the delay would
+  // otherwise leave the timer to drop an overlay into the next document.
+  const busy = showBusy(host, `Opening ${path.split('/').pop()}…`);
+  try {
+    let text;
+    try { ({ text } = await api.readFile(projectId, path)); }
+    catch (err) {
+      if (transitionStillCurrent(request, generation, projectId, host)) toast(err.message, 'error');
+      return;
+    }
+    if (!transitionStillCurrent(request, generation, projectId, host)) return;
+
+    // The old buffer remained active throughout the read. Persist anything typed
+    // during it before changing openPath, or that text could be routed to the new
+    // file or discarded with the old editor.
+    if (!(await flushEditsBeforeSwitch(
+      request, generation, projectId, host, prevEditor, prevPath,
+    ))) return;
+
+    stashEditorState(prevPath);
+    const cached = editorStateCache.get(path);
+    const restore = cached && cached.state.doc.toString() === text ? cached : null;
+    editorStateCache.delete(path);
+
+    state.openPath = path;
+    updateTreeSelection();
+    state.editor?.destroy();
+    host.replaceChildren();
+    state.editor = createEditor({
+      parent: host,
+      content: text,
+      restore: restore?.state,
+      dark: document.documentElement.dataset.theme === 'dark',
+      getSymbols: () => state.symbols,
+      onChange: () => {
+        state.dirty = true;
+        setSaveState('Unsaved');
+        if (state.pdf?.doc) setPdfFreshness('Preview out of date');
+        clearTimeout(state.saveTimer);
+        state.saveTimer = setTimeout(() => {
+          // doSave already restores the dirty state and reports the error. A
+          // fire-and-forget autosave must still consume the rejection.
+          saveCurrent().catch(() => {});
+        }, 1200);
+        scheduleDocMeta();
+      },
+      onCursor: (line) => {
+        state.cursorLine = line;
+        clearTimeout(crumbTimer);
+        crumbTimer = setTimeout(renderCrumbs, 150);
+      },
+    });
+    if (restore) state.editor.setScrollTop(restore.scrollTop);
+    state.editor.focus();
+    state.dirty = false;
+    setSaveState('Saved');
+    updateDocMeta();
+    refreshCommands();
+  } finally {
+    busy();
   }
-  if (!transitionStillCurrent(request, generation, projectId, host)) return;
-
-  // The old buffer remained active throughout the read. Persist anything typed
-  // during it before changing openPath, or that text could be routed to the new
-  // file or discarded with the old editor.
-  if (!(await flushEditsBeforeSwitch(
-    request, generation, projectId, host, prevEditor, prevPath,
-  ))) return;
-
-  stashEditorState(prevPath);
-  const cached = editorStateCache.get(path);
-  const restore = cached && cached.state.doc.toString() === text ? cached : null;
-  editorStateCache.delete(path);
-
-  state.openPath = path;
-  updateTreeSelection();
-  state.editor?.destroy();
-  host.replaceChildren();
-  state.editor = createEditor({
-    parent: host,
-    content: text,
-    restore: restore?.state,
-    dark: document.documentElement.dataset.theme === 'dark',
-    getSymbols: () => state.symbols,
-    onChange: () => {
-      state.dirty = true;
-      setSaveState('Unsaved');
-      if (state.pdf?.doc) setPdfFreshness('Preview out of date');
-      clearTimeout(state.saveTimer);
-      state.saveTimer = setTimeout(() => {
-        // doSave already restores the dirty state and reports the error. A
-        // fire-and-forget autosave must still consume the rejection.
-        saveCurrent().catch(() => {});
-      }, 1200);
-      scheduleDocMeta();
-    },
-    onCursor: (line) => {
-      state.cursorLine = line;
-      clearTimeout(crumbTimer);
-      crumbTimer = setTimeout(renderCrumbs, 150);
-    },
-  });
-  if (restore) state.editor.setScrollTop(restore.scrollTop);
-  state.editor.focus();
-  state.dirty = false;
-  setSaveState('Saved');
-  updateDocMeta();
-  refreshCommands();
 }
 
 export function saveCurrent(options = {}) {
@@ -784,6 +799,10 @@ async function loadPdf() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   const viewer = state.pdf;
+  // Parsing and rendering the first page of a long document is not instant, and
+  // on project open nothing else in the pane is moving. (A compile-driven reload
+  // is already reported by the Compile button, which stays busy across it.)
+  const busy = showBusy(ui.pdfScroll, 'Loading preview…');
   try {
     const loaded = await viewer.load(api.pdfUrl(projectId));
     const current = generation === workspaceGeneration
@@ -794,6 +813,8 @@ async function loadPdf() {
   } catch {
     if (generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer) showPdfEmpty();
     return false;
+  } finally {
+    busy();
   }
 }
 
