@@ -229,8 +229,17 @@ export function menuUnder(target, items) {
 // open and after every change rather than cached, so a rejected write reverts
 // the label with no bookkeeping at the call site.
 export function popupButton({ options, get, onChange, label }) {
-  const labelOf = (v) => options.find((o) => o.value === v)?.label ?? String(v);
-  const value = el('span', {}, labelOf(get()));
+  // Sized to its widest option, the way a macOS pop-up button is: every label is
+  // laid out in the same grid cell and all but the current one is hidden, so the
+  // button's own intrinsic width is the widest one and choosing never resizes it.
+  // No picked-by-hand min-width, and none to re-pick when an option is added.
+  const labels = options.map((o) => el('span', { class: 'popup-label' }, o.label));
+  const showCurrent = () => {
+    const i = options.findIndex((o) => o.value === get());
+    labels.forEach((n, j) => n.classList.toggle('current', j === Math.max(0, i)));
+  };
+  const value = el('span', { class: 'popup-labels' }, labels);
+  showCurrent();
   const button = el('button', {
     class: 'btn small popup-button',
     'aria-haspopup': 'menu',
@@ -245,7 +254,7 @@ export function popupButton({ options, get, onChange, label }) {
         // back to whatever actually stuck.
         try { await onChange(o.value); }
         catch (err) { console.error('Pop-up button change failed:', err); }
-        value.textContent = labelOf(get());
+        showCurrent();
       },
     }))),
   }, value, icon('chevron-down'));

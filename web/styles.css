@@ -97,6 +97,12 @@
   --h-titlebar: 52px;
   --h-toolbar: 44px;
   --w-sidebar: 256px;
+  /* Leading room for window controls drawn over the webview. Zero is the
+     universal case — Windows 11 keeps a decorated window, so its controls are
+     outside the content entirely — and .mac raises it for the traffic lights
+     over a hidden title bar. Declaring it once is what keeps every band below
+     from being written twice, once per platform. */
+  --window-controls: 0px;
 
   /* 4px rhythm. */
   --sp-1: 4px;
@@ -200,11 +206,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 /* Dragging the window by its chrome is driven by data-tauri-drag-region on the
    title bars, not CSS: neither WKWebView nor WebView2 honours -webkit-app-region. */
 
-/* The traffic lights sit at x19/y19 in a 52px band (native insets), so the sidebar
-   band keeps its leading end clear of controls. */
-.mac .sidebar-titlebar { padding-left: 96px; }
-/* With the sidebar hidden, the lights move over the content title bar. */
-.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
+/* The traffic lights sit at x19/y19 in a 52px band (native insets). That is the
+   one thing here that is genuinely per-platform, so it is the one thing stated
+   per-platform — as a value, not as a rule. */
+.mac { --window-controls: 96px; }
 
 .titlebar {
   display: flex;
@@ -225,6 +230,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   flex: none;
   height: var(--h-titlebar);
   padding: 0 var(--sp-2);
+}
+/* The bands window controls can overlay: the sidebar's, the welcome window's,
+   and the content title bar once the sidebar is hidden and the lights move over
+   it. Each keeps its normal 8px lead-in wherever the inset is zero. */
+.sidebar-titlebar,
+.home-titlebar,
+.shell:has(.sidebar.collapsed) .titlebar {
+  padding-left: max(var(--sp-2), var(--window-controls));
 }
 
 .window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--title-gap, 0); }
@@ -372,30 +385,37 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Pop-up button: value on the leading edge, chevron trailing. The menu it opens
    is the app's own (dom.js), so this is one control with one look on both
    platforms rather than two native menulists with none of this styling. */
-.popup-button { justify-content: space-between; gap: var(--sp-2); min-width: 128px; }
+.popup-button { justify-content: space-between; gap: var(--sp-2); }
 .popup-button .icon { color: var(--label-2); }
+/* Every option's label occupies the one grid cell, so the widest sets the width
+   and the visible one is whichever carries .current (dom.js). */
+.popup-labels { display: grid; }
+.popup-label { grid-area: 1 / 1; text-align: left; }
+.popup-label:not(.current) { visibility: hidden; }
 
-/* Switch: the kit's regular size is 54 × 24 with a 20px knob, inset 2 on every
-   side. The track had drifted to --h-menu-row (28), which left the knob — pinned
-   2 from the top — seated 2px above centre with 6 below it. The knob now sits in
-   flow, so all four insets come from the one `padding: 2px`: it cannot drift
-   again, and it does not depend on a <button> establishing a containing block
-   for absolutely positioned children, which the two webviews have not always
-   agreed on. */
+/* Switch: the kit's regular size is 54 × 24 with a 20px knob inset 2 a side. The
+   three numbers are declared once and everything else reads them — the track had
+   drifted to --h-menu-row (28) against a knob still pinned 2 from the top, which
+   is what seated it above centre, and the travel was separately hardcoded to the
+   30 they imply. The knob sits in flow, so its seating is the one `padding` on
+   all four sides. */
 .switch {
-  width: 54px;
-  height: 24px;
+  --track: 54px;
+  --knob: 20px;
+  --knob-inset: 2px;
+  width: var(--track);
+  height: calc(var(--knob) + 2 * var(--knob-inset));
   flex: none;
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: var(--knob-inset);
   border-radius: var(--r-pill);
   background: var(--fill-1);
   transition: background-color 0.18s ease;
 }
 .switch-knob {
-  width: 20px;
-  height: 20px;
+  width: var(--knob);
+  height: var(--knob);
   flex: none;
   border-radius: 50%;
   background: #fff;
@@ -403,10 +423,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   transition: transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1);
 }
 .switch[aria-checked="true"] { background: var(--accent); }
-.switch[aria-checked="true"] .switch-knob { transform: translateX(30px); }
+.switch[aria-checked="true"] .switch-knob {
+  transform: translateX(calc(var(--track) - var(--knob) - 2 * var(--knob-inset)));
+}
 
 .stepper { display: inline-flex; align-items: center; gap: var(--sp-1); }
-.stepper-value { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; color: var(--label-2); }
+.stepper-value { min-width: 5ch; text-align: center; font-variant-numeric: tabular-nums; color: var(--label-2); }
 
 .spinner {
   width: 13px; height: 13px;
@@ -498,7 +520,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
-.mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
    the leading side, recents filling the trailing side. */
@@ -595,20 +616,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .sidebar.collapsed + .divider { display: none; }
 
 /* Section header, measured off the kit's Sidebars/Large/Header symbol: a 20-tall
-   band whose 16-tall content sits centred in it (y=2), 13 Bold. Trailing
-   accessories in that symbol are 20 wide, so the action buttons below are sized
-   to fit inside the band rather than stretching it.
-   The kit's Large/Section group starts its first Item at y=20, i.e. flush. That
-   holds for its 2px-inset selection pill; ours fills the whole 40px row, so
-   flush put the pill's edge 2px under the header text. One 4px gap restores the
-   separation the kit gets from the pill inset. */
+   band whose 16-tall content sits centred in it (y=2), 13 Bold, and — per the
+   Large/Section group, where the first Item starts at y=20 — NO gap before the
+   rows. Trailing accessories in that symbol are 20 wide, so the action buttons
+   below are sized to fit inside the band rather than stretching it. */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
   height: 20px;
-  margin: 0 0 var(--sp-1);
+  margin: 0;
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
   font-size: var(--fs-header);
@@ -619,9 +637,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
 .section-header.disclosure:hover { color: var(--label); }
-/* Collapsed, the Outline header is the last thing above the footer's hairline
-   and would sit flush on it — the row list is what normally holds it clear. */
-.sidebar:has(.outline[hidden]) .section-header.disclosure { margin-bottom: var(--sp-3); }
 .section-actions { display: flex; gap: 1px; }
 /* Square 20px targets so the header keeps its 20px band; the kit's own trailing
    accessories are 20 wide, and a square is a kinder pointer target than its 16
@@ -828,8 +843,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   backdrop-filter: blur(20px) saturate(180%);
 }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.zoom-btn { min-width: 68px; }
-.zoom-value { font-variant-numeric: tabular-nums; }
+.zoom-value { min-width: 5ch; font-variant-numeric: tabular-nums; }
 [data-command="view.toggleLogs"] { position: relative; }
 
 /* ---------- editor ---------- */
@@ -1031,7 +1045,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .floating .divider:not(.divider-sync):hover { background: transparent; }
 .floating .divider:not(.divider-sync):hover::after { background: var(--label-3); }
 .floating .divider:not(.divider-sync).dragging::after { background: var(--accent); }
-.floating.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
+/* Floating insets the pane from the window's top edge, but overlaid window
+   controls don't move with it — they sit at a fixed window position — so the
+   band gives back exactly what the inset took, and only where such controls
+   exist. Same token, so this isn't a second place that knows about macOS. */
+.floating .sidebar-titlebar {
+  height: calc(var(--h-titlebar) - min(var(--sp-2), var(--window-controls)));
+}
 
 /* ---------- dialogs, menus, toasts ---------- */
 

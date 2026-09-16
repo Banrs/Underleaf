@@ -217,7 +217,7 @@ function buildChrome(id) {
   });
   const zoomLabel = el('span', { class: 'zoom-value' }, '—');
   const zoomButton = el('button', {
-    class: 'btn small zoom-btn', title: 'Zoom', 'aria-label': 'Zoom',
+    class: 'btn small', title: 'Zoom', 'aria-label': 'Zoom',
     onclick: (e) => menuUnder(e.currentTarget, [
       { label: 'Fit Width', action: () => state.pdf.fitWidth() },
       { label: 'Fit Height', action: () => state.pdf.fitHeight() },
