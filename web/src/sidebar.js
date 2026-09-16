@@ -64,7 +64,6 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   });
 
   const tree = el('div', { class: 'tree', role: 'tree', 'aria-label': 'Project files' });
-  setupDropzone(tree);
 
   const results = el('div', { class: 'search-results', hidden: '' });
   const outline = el('div', { class: 'outline', role: 'list' });
@@ -83,10 +82,12 @@ export function buildSidebar(callbacks, titlebarTrailing) {
 
   nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel };
 
-  const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
-    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
-      el('span', { class: 'spacer' }), titlebarTrailing),
-    el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
+  // One scrolling source list holding both sections, the way a Mac sidebar is
+  // built. Previously the tree took all the free space and the outline was a
+  // second scroller pinned under it, which left a band of dead space between
+  // them and made the outline read as a detached panel rather than a section of
+  // this list.
+  const list = el('div', { class: 'sidebar-list' },
     el('div', { class: 'section-header' },
       el('span', {}, 'Files'),
       el('span', { class: 'spacer' }),
@@ -100,6 +101,17 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     tree,
     outlineToggle,
     outline,
+  );
+  // The whole list takes drops, not just the tree. The tree now ends where its
+  // last row does, so a drop aimed at the empty space below it — which is most
+  // of the pane in a small project — would otherwise land on nothing.
+  setupDropzone(list);
+
+  const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
+    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
+      el('span', { class: 'spacer' }), titlebarTrailing),
+    el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
+    list,
     el('div', { class: 'sidebar-footer' },
       el('button', {
         class: 'icon-btn small', title: `Settings (${accelLabel('CmdOrCtrl+,')})`, 'aria-label': 'Settings',
@@ -336,16 +348,16 @@ export function uploadFlow() { nodes.fileInput?.click(); }
 
 // ---------- uploads ----------
 
-function setupDropzone(treeEl) {
-  treeEl.addEventListener('dragover', (e) => { e.preventDefault(); treeEl.classList.add('drop-target'); });
+function setupDropzone(zone) {
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drop-target'); });
   // dragleave also fires when crossing onto a child row — only clear the
-  // highlight when the pointer genuinely left the tree.
-  treeEl.addEventListener('dragleave', (e) => {
-    if (!treeEl.contains(e.relatedTarget)) treeEl.classList.remove('drop-target');
+  // highlight when the pointer genuinely left the list.
+  zone.addEventListener('dragleave', (e) => {
+    if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-target');
   });
-  treeEl.addEventListener('drop', async (e) => {
+  zone.addEventListener('drop', async (e) => {
     e.preventDefault();
-    treeEl.classList.remove('drop-target');
+    zone.classList.remove('drop-target');
     // Walking the dropped entries can reject (an unreadable folder, a permission
     // refusal). Without this the drop failed silently as an unhandled rejection.
     try {
@@ -400,7 +412,9 @@ async function upload(files) {
 
 // ---------- outline ----------
 
-const GUTTER = 10, INDENT = 14, RAIL = 3;
+// Outline rows carry no icon, so their text starts where the file rows' icon
+// column does — one leading edge for the whole pane instead of two.
+const GUTTER = 20, INDENT = 14, RAIL = 3;
 
 export function renderOutline() {
   const box = nodes.outline;

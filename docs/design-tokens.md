@@ -146,7 +146,7 @@ nothing needs an ad-hoc radius.
 | Sidebar | **256** wide |
 | Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
 | Sidebar content inset | 14 (selection pill bleeds to 10) |
-| Sidebar section header | 20 tall, 13 Bold, content 16 tall centred (y=2), **no gap before the rows** |
+| Sidebar section header | 20 tall, 13 Bold, content 16 tall centred (y=2), **4 gap before the rows** — see below |
 | Section header accessory | 20 wide (kit's `Headers - Trailing`); square here for a kinder target |
 | Sidebar footer | 44 — a toolbar band, not the 46 that asymmetric padding produced |
 | Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Golden Gate/macOS 27; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
@@ -154,6 +154,35 @@ nothing needs an ad-hoc radius.
 | Switch (regular) | 54 × 24 |
 | Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
 | Scrollbar | 12 |
+
+### Where the sidebar departs from the kit symbol, and why
+
+The kit's Large/Section symbol starts its first Item flush against the header
+(y=20), and this table used to say so. Implementing it literally read as one
+crowded block: our selection fill occupies the whole 40px row, so flush puts a
+solid fill 2px under the header text. The HIG is explicit that the grouping
+mechanism is the space itself — "Group related items… For example, you might use
+negative space, container shapes, or separator lines to show which elements are
+related and which are unrelated" (Layout) — so the header carries a 4px gap
+below it. **A number lifted from the kit that contradicts the HIG's stated
+intent is the number that's wrong.**
+
+Three more places where the philosophy, not the measurement, decided:
+
+- **Icons take the accent colour.** "By default, sidebar icons use your app's
+  accent color… they expect all sidebar icons to appear in that color"
+  (Sidebars → macOS). They were grey except when selected.
+- **One source list, not stacked panes.** Files and Outline are sections inside
+  a single scroller. Giving the tree the free space and pinning the outline
+  below it left a band of dead space between them and made the outline read as
+  a detached panel.
+- **Two-state selection.** Accent-filled while the list is the focused pane,
+  grey once focus moves on — the standard AppKit source-list behaviour.
+
+Still outstanding, and deliberately not changed here: the footer puts Settings
+and the engine readout at the bottom of the sidebar, against "Avoid putting
+critical information or actions at the bottom of a sidebar. People often
+relocate a window in a way that hides its bottom edge" (Sidebars → macOS).
 
 ## The editor: Xcode 27's Default themes
 
