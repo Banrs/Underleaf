@@ -316,7 +316,7 @@ function rowMenu(e, node) {
 // Never throws: callers await it inside their own try blocks, and a tree-fetch
 // hiccup must not be reported as the caller's failure (e.g. after a successful
 // upload).
-export async function refreshTree() {
+async function refreshTree() {
   const projectId = state.projectId;
   if (!projectId) return;
   let tree;

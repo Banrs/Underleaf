@@ -92,7 +92,7 @@ export class PdfViewer {
       // one event at roughly a 22% step while keeping pinch movement fluid, and
       // never let the preview run past the absolute limits, or settling would
       // snap back to them.
-      const base = this.currentScale();
+      const base = this.#currentScale();
       const delta = clamp(e.deltaY * (e.deltaMode === 1 ? 8 : 1), -20, 20);
       g.k = clamp(
         g.k * Math.exp(-delta * 0.01),
@@ -488,7 +488,7 @@ export class PdfViewer {
       return;
     }
     this._anchor = this.#pinchAnchor(g);
-    this.scale = clamp(this.currentScale() * g.k, MIN_SCALE, MAX_SCALE);
+    this.scale = clamp(this.#currentScale() * g.k, MIN_SCALE, MAX_SCALE);
     await this.render(this._pinchGeneration);
   }
 
@@ -776,11 +776,11 @@ export class PdfViewer {
 
   // ---------- zoom / fit ----------
 
-  currentScale() { return this.pages[0]?.scale ?? 1; }
+  #currentScale() { return this.pages[0]?.scale ?? 1; }
 
   async zoomBy(factor) {
     this._anchor ??= this.#centerAnchor();
-    this.scale = clamp(this.currentScale() * factor, MIN_SCALE, MAX_SCALE);
+    this.scale = clamp(this.#currentScale() * factor, MIN_SCALE, MAX_SCALE);
     await this.render();
   }
 
@@ -832,7 +832,7 @@ export class PdfViewer {
     return this.scrollEl.scrollTop - this._padT + this.scrollEl.clientHeight / 3;
   }
 
-  currentPage() {
+  #currentPage() {
     const mid = this.#viewMark();
     let best = 1;
     for (const p of this.pages) if (p.top <= mid) best = p.n;
@@ -840,7 +840,7 @@ export class PdfViewer {
   }
 
   #reportPage() {
-    if (this.pages.length) this.onPageChange?.(this.currentPage(), this.numPages);
+    if (this.pages.length) this.onPageChange?.(this.#currentPage(), this.numPages);
   }
 
   // ---------- SyncTeX ----------
@@ -851,7 +851,7 @@ export class PdfViewer {
   // hits whitespace and 404s. So snap to the first text-layer span at/below the
   // viewport top and use its centre, mirroring the (working) double-click math.
   async currentLocation() {
-    const p = this.pages[this.currentPage() - 1];
+    const p = this.pages[this.#currentPage() - 1];
     if (!p) return null;
     // Text layers are built with the canvas, so a page the reader has only just
     // scrolled to may not have one yet. Build it on demand rather than dropping to
