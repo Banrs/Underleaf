@@ -2,6 +2,8 @@
 // dialogs. Dialogs here own the accessibility contract (role, focus trap,
 // Escape, focus restore) so no caller has to remember it.
 
+import { icon } from './icons.js';
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 
 // Unique DOM ids for label/control wiring.
@@ -215,4 +217,37 @@ export function contextMenu(x, y, items) {
 export function menuUnder(target, items) {
   const r = target.getBoundingClientRect();
   return contextMenu(r.left, r.bottom + 4, items);
+}
+
+// ---------- pop-up button ----------
+
+// The macOS pop-up button: the current value on the leading edge, a chevron
+// trailing, backed by the menu above. A <select> is not an option for a control
+// this app styles — WKWebView keeps the native menulist chrome underneath
+// whatever the stylesheet says and WebView2 draws Chromium's, so the one control
+// that must look the same on both is drawn here instead. `get` is read on every
+// open and after every change rather than cached, so a rejected write reverts
+// the label with no bookkeeping at the call site.
+export function popupButton({ options, get, onChange, label }) {
+  const labelOf = (v) => options.find((o) => o.value === v)?.label ?? String(v);
+  const value = el('span', {}, labelOf(get()));
+  const button = el('button', {
+    class: 'btn small popup-button',
+    'aria-haspopup': 'menu',
+    'aria-label': label,
+    onclick: () => menuUnder(button, options.map((o) => ({
+      label: o.label,
+      checked: o.value === get(),
+      action: async () => {
+        // Menus dispatch fire-and-forget, so a rejected change has to be
+        // consumed here or it surfaces as an unhandled rejection. Callers
+        // report their own failures; re-reading `get` is what puts the label
+        // back to whatever actually stuck.
+        try { await onChange(o.value); }
+        catch (err) { console.error('Pop-up button change failed:', err); }
+        value.textContent = labelOf(get());
+      },
+    }))),
+  }, value, icon('chevron-down'));
+  return button;
 }

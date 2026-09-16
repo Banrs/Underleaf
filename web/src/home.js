@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { platform } from './bridge.js';
-import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
+import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder, popupButton } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip } from './commands.js';
@@ -88,21 +88,29 @@ async function deleteProject(p, reload) {
   catch (err) { toast(err.message, 'error'); }
 }
 
+const TEMPLATES = [
+  { value: 'article', label: 'Article' },
+  { value: 'report', label: 'Report' },
+  { value: 'beamer', label: 'Beamer Presentation' },
+  { value: 'blank', label: 'Blank' },
+];
+
 export async function newProjectFlow() {
   const result = await showModal((close) => {
     const name = el('input', { id: 'np-name', placeholder: 'Untitled' });
-    const tpl = el('select', { id: 'np-tpl' },
-      el('option', { value: 'article' }, 'Article'),
-      el('option', { value: 'report' }, 'Report'),
-      el('option', { value: 'beamer' }, 'Beamer Presentation'),
-      el('option', { value: 'blank' }, 'Blank'),
-    );
-    const go = () => close({ name: name.value.trim() || 'Untitled', template: tpl.value });
+    let template = TEMPLATES[0].value;
+    const tpl = popupButton({
+      options: TEMPLATES,
+      get: () => template,
+      label: 'Template',
+      onChange: (v) => { template = v; },
+    });
+    const go = () => close({ name: name.value.trim() || 'Untitled', template });
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     return el('div', { class: 'modal' },
       el('h2', { class: 'modal-title' }, 'New Project'),
       el('div', { class: 'field' }, el('label', { for: 'np-name' }, 'Name'), name),
-      el('div', { class: 'field' }, el('label', { for: 'np-tpl' }, 'Template'), tpl),
+      el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Template'), tpl),
       el('div', { class: 'modal-actions' },
         el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
         el('button', { class: 'btn primary', onclick: go }, 'Create'),

@@ -4,12 +4,15 @@
 // dialog shell (focus trap, Escape, focus restore) comes from dom.js.
 
 import { api } from './api.js';
-import { $, el, toast, showModal, nextId } from './dom.js';
+import { $, el, toast, showModal, nextId, popupButton } from './dom.js';
 import { icon } from './icons.js';
 import { runCommand } from './commands.js';
 import { refreshSidebarChrome } from './sidebar.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
+
+// The engines latexmk is wired for in texlocal-core's `engine_flags`.
+const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
 
 // A labelled row: title, optional hint, trailing control. The control is given
 // its accessible name from the title, so icon-only segments still read properly.
@@ -149,15 +152,16 @@ export function openSettings() {
     ];
 
     if (state.projectId) {
-      const engine = el('select', {
-        onchange: async () => {
-          const chosen = engine.value;
-          const previous = state.settings?.engine;
+      const engine = popupButton({
+        options: ENGINES.map((value) => ({ value, label: value })),
+        // Read back from state, so a save that failed leaves the button showing
+        // the engine the project actually still has.
+        get: () => state.settings?.engine ?? 'pdflatex',
+        label: 'TeX engine',
+        onChange: async (chosen) => {
           try {
             state.settings = await api.saveSettings(state.projectId, { engine: chosen });
           } catch (err) {
-            // The control must not keep claiming a setting that didn't save.
-            engine.value = previous ?? 'pdflatex';
             toast(err.message, 'error');
             return;
           }
@@ -170,8 +174,7 @@ export function openSettings() {
             ? `Recompiling with ${chosen}…`
             : `Engine set to ${chosen}`);
         },
-      }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>
-        el('option', { value: e, selected: state.settings?.engine === e ? '' : undefined }, e)));
+      });
       groups.push(group('Project', row('TeX engine', state.projectId, engine)));
     }
 

@@ -369,6 +369,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--label-4);
 }
 
+/* Pop-up button: value on the leading edge, chevron trailing. The menu it opens
+   is the app's own (dom.js), so this is one control with one look on both
+   platforms rather than two native menulists with none of this styling. */
+.popup-button { justify-content: space-between; gap: var(--sp-2); min-width: 128px; }
+.popup-button .icon { color: var(--label-2); }
+
 /* Switch: the kit's regular size is 54 × 24 with a 20px knob, inset 2 on every
    side. The track had drifted to --h-menu-row (28), which left the knob — pinned
    2 from the top — seated 2px above centre with 6 below it. The knob now sits in
@@ -541,7 +547,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   height: 56px;
   padding: 0 var(--sp-3);
   cursor: default;
-  transition: background-color 0.1s ease;
+  transition: background-color 0.12s ease;
 }
 .doc-row + .doc-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .doc-row:hover { background: var(--fill-4); }
@@ -552,7 +558,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .doc-name { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-meta { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
 /* Row actions appear on hover or keyboard focus — never only on hover. */
-.row-actions { opacity: 0; transition: opacity 0.1s ease; }
+.row-actions { opacity: 0; transition: opacity 0.12s ease; }
 .doc-row:hover .row-actions,
 .doc-row:focus-visible .row-actions,
 .row-actions:focus-within { opacity: 1; }
@@ -763,7 +769,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* A wider invisible grab zone, so a 1px hairline is still easy to hit. */
 .divider::before { content: ''; position: absolute; inset: 0 -4px; cursor: col-resize; }
 .divider:hover:not(:has(.sync-pill:hover)) { background: var(--label-3); }
-.divider.dragging { background: var(--accent); }
+.divider.dragging, .divider:focus-visible { background: var(--accent); }
+.divider:focus-visible { outline: none; }
 
 .sync-pill {
   position: absolute;
@@ -1054,8 +1061,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .modal-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; margin-bottom: var(--sp-4); }
 .modal-body { color: var(--label-2); font-size: var(--fs-small); line-height: var(--lh-small); }
 .modal .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: var(--sp-3); }
-.modal .field label { font-size: var(--fs-control); line-height: var(--lh-control); color: var(--label-2); font-weight: 500; }
-.modal .field input, .modal .field select { width: 100%; }
+.modal .field label, .modal .field .field-label { font-size: var(--fs-control); line-height: var(--lh-control); color: var(--label-2); font-weight: 500; }
+.modal .field input, .modal .field select, .modal .field .popup-button { width: 100%; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-5); }
 
 .settings-dialog { width: 520px; }

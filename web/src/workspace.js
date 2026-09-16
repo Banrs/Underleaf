@@ -879,12 +879,67 @@ function stepUiScale(dir) {
 }
 
 function setupResizer(handle, pane, mode, min, max, prefKey) {
-  const saved = prefs[prefKey];
-  if (saved) applyWidth(saved);
+  // `max` is open-ended for the PDF pane, which the window bounds instead.
+  const upperBound = () => max ?? Math.round(innerWidth * 0.7);
+  const clamp = (w) => Math.max(min, Math.min(upperBound(), w));
   function applyWidth(w) {
     if (mode === 'flex') pane.style.flex = 'none';
     pane.style.width = `${w}px`;
+    publishRange(w);
   }
+  // The splitter reports its range whether or not a width was ever stored, so a
+  // first run isn't a separator with no value on it.
+  function publishRange(w = pane.getBoundingClientRect().width) {
+    handle.setAttribute('aria-valuenow', String(Math.round(w)));
+    handle.setAttribute('aria-valuemin', String(min));
+    handle.setAttribute('aria-valuemax', String(upperBound()));
+  }
+
+  const saved = prefs[prefKey];
+  if (saved) applyWidth(saved); else publishRange();
+
+  // A draggable role=separator is a window splitter, and a splitter that only
+  // answers the pointer can't be used from the keyboard at all. Arrows nudge,
+  // Shift takes a coarse step, Home/End go to the limits. The PDF's live-resize
+  // preview is the same one the drag path uses, settled once the keys stop.
+  handle.tabIndex = 0;
+  let settleTimer = null;
+  let keyTarget = null;
+  let savedTransition = '';
+  handle.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 40 : 8;
+    const dir = mode === 'width' ? 1 : -1;
+    // Step from the target, not the measured width: the pane animates towards
+    // it, so a second key pressed mid-flight would otherwise step from a frame
+    // part-way there and the nudges would shrink.
+    const from = keyTarget ?? pane.getBoundingClientRect().width;
+    let next;
+    if (e.key === 'ArrowLeft') next = from - dir * step;
+    else if (e.key === 'ArrowRight') next = from + dir * step;
+    else if (e.key === 'Home') next = min;
+    else if (e.key === 'End') next = upperBound();
+    else return;
+    e.preventDefault();
+    if (!settleTimer) {
+      // The drag path suppresses the width transition for the same reason a
+      // keyboard burst has to: with it running, every read-back lands somewhere
+      // in the middle of the animation rather than on the width asked for.
+      savedTransition = pane.style.transition;
+      pane.style.transition = 'none';
+      state.pdf?.beginLiveResize?.();
+    }
+    keyTarget = clamp(next);
+    applyWidth(keyTarget);
+    state.pdf?.liveResize?.();
+    prefs[prefKey] = Math.round(keyTarget);
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      keyTarget = null;
+      pane.style.transition = savedTransition;
+      state.pdf?.endLiveResize?.();
+    }, 150);
+  });
   handle.addEventListener('pointerdown', (e) => {
     // The sync pill rides on this divider; a pointerdown there is a button click
     // or a pill drag, never a resize.
@@ -900,8 +955,7 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     const startW = pane.getBoundingClientRect().width;
     const dir = mode === 'width' ? 1 : -1;
     const onMove = (ev) => {
-      const w = Math.max(min, Math.min(max ?? innerWidth * 0.7, startW + dir * (ev.clientX - startX)));
-      applyWidth(w);
+      applyWidth(clamp(startW + dir * (ev.clientX - startX)));
       state.pdf?.liveResize?.();
     };
     let done = false;
