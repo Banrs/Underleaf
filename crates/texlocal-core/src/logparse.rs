@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Serialize)]
 pub struct LogItem {
     #[serde(rename = "type")]
     pub kind: &'static str, // "error" | "warning"

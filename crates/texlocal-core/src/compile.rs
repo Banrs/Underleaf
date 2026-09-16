@@ -287,7 +287,7 @@ pub async fn tex_available(path_env: Option<&str>) -> TexStatus {
 
 // ---------- compile ----------
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileOverrides {
     pub engine: Option<String>,

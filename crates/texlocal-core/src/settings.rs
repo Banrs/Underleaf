@@ -110,10 +110,15 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
 /// preserved, as the JS spread did) and write the result.
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let validated = validate_settings(root, patch)?;
-    let mut merged = serde_json::to_value(Settings::default())
-        .ok()
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
+    // Settings is a plain struct of two Strings and a bool: serialising it cannot
+    // fail and cannot yield anything but an object. The `.ok()`/`.unwrap_or_default()`
+    // chain this replaces turned that impossibility into a silent empty map, which
+    // would have written a settings file with none of the defaults in it.
+    let Value::Object(mut merged) =
+        serde_json::to_value(Settings::default()).expect("Settings always serialises")
+    else {
+        unreachable!("Settings serialises to a JSON object")
+    };
     for (k, v) in read_raw(root) {
         merged.insert(k, v);
     }
