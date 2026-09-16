@@ -58,7 +58,7 @@ const tauriApi = ipc?.fileUrl && {
     }
   },
 
-  compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
+  compile: (id) => ipc.invoke('compile', { id }),
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
   downloadPdf: (id) => ipc.invoke('save_pdf_as', { id }),
   exportProject: (id) => ipc.invoke('export_project', { id }),

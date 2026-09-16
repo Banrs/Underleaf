@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-use texlocal_core::compile::{CompileOverrides, CompileResult, TexStatus};
+use texlocal_core::compile::{CompileResult, TexStatus};
 use texlocal_core::projects::{self, ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
 use texlocal_core::settings::{self, Settings};
 use texlocal_core::synctex::{self, ForwardLoc, InverseLoc};
@@ -292,13 +292,9 @@ pub async fn compile(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-    options: Option<CompileOverrides>,
 ) -> CmdResult<CompileResult> {
     let root = root(&state, &id)?;
-    let result = state
-        .compile
-        .compile(&root, &options.unwrap_or_default())
-        .await?;
+    let result = state.compile.compile(&root, None).await?;
     announce(&app, &result);
     Ok(result)
 }

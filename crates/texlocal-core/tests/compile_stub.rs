@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides};
+use texlocal_core::compile::{tex_available, CompileManager};
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::settings::write_settings;
@@ -46,10 +46,7 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default())
-        .await
-        .unwrap();
+    let result = mgr.compile(&root, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
@@ -73,10 +70,7 @@ async fn a_stale_log_is_not_reported() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default())
-        .await
-        .unwrap();
+    let result = mgr.compile(&root, None).await.unwrap();
 
     assert!(result.ok);
     assert!(
@@ -99,10 +93,7 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default())
-        .await
-        .unwrap();
+    let result = mgr.compile(&root, None).await.unwrap();
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
@@ -122,10 +113,7 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
     mgr.path_env = Some(path);
     mgr.timeout = Some(Duration::from_millis(300));
     let started = std::time::Instant::now();
-    let result = mgr
-        .compile(&root, &CompileOverrides::default())
-        .await
-        .unwrap();
+    let result = mgr.compile(&root, None).await.unwrap();
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None);
@@ -153,19 +141,12 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
     let first = tokio::spawn({
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
-        async move {
-            mgr.compile(&root, &CompileOverrides::default())
-                .await
-                .unwrap()
-        }
+        async move { mgr.compile(&root, None).await.unwrap() }
     });
     tokio::time::sleep(Duration::from_millis(400)).await;
     fs::write(root.join("fast"), "").unwrap();
 
-    let second = mgr
-        .compile(&root, &CompileOverrides::default())
-        .await
-        .unwrap();
+    let second = mgr.compile(&root, None).await.unwrap();
     let first = first.await.unwrap();
 
     assert!(second.ok, "superseding compile should succeed");
@@ -197,11 +178,8 @@ esac
         m
     });
     let launch = |mgr: Arc<CompileManager>, root: std::path::PathBuf, engine: &str| {
-        let options = CompileOverrides {
-            engine: Some(engine.to_string()),
-            ..CompileOverrides::default()
-        };
-        tokio::spawn(async move { mgr.compile(&root, &options).await.unwrap() })
+        let engine = engine.to_string();
+        tokio::spawn(async move { mgr.compile(&root, Some(&engine)).await.unwrap() })
     };
 
     let first = launch(Arc::clone(&mgr), root.clone(), "pdflatex");

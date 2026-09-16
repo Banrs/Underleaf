@@ -308,7 +308,6 @@ function buildChrome(id) {
     el('button', { title: tooltip('sync.forward'), 'aria-label': 'Show cursor position in PDF', onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
     el('button', { title: tooltip('sync.inverse'), 'aria-label': 'Show PDF position in source', onclick: () => runCommand('sync.inverse') }, icon('arrow-left')),
   );
-  makeSyncPillDraggable(syncPill);
   const paneDivider = el('div', { class: 'divider divider-sync', role: 'separator', 'aria-orientation': 'vertical' }, syncPill);
 
   const workspace = el('div', { class: 'workspace' }, editorPane, paneDivider, pdfPane);
@@ -389,42 +388,42 @@ const hasPdf = () => !!state.pdf?.doc;
 
 function commandDefs() {
   return [
-    { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+Shift+N', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
-    { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
-    { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
-    { id: 'project.search', title: 'Find in Project', accel: 'CmdOrCtrl+Shift+F', run: focusSearch, enabled: hasProject },
+    { id: 'project.new', accel: 'CmdOrCtrl+Shift+N', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
+    { id: 'project.close', run: () => { location.hash = '#/'; }, enabled: hasProject },
+    { id: 'project.export', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
+    { id: 'project.search', accel: 'CmdOrCtrl+Shift+F', run: focusSearch, enabled: hasProject },
 
-    { id: 'file.new', title: 'New File…', accel: 'CmdOrCtrl+N', run: newFileFlow, enabled: hasProject },
-    { id: 'file.newFolder', title: 'New Folder…', accel: 'CmdOrCtrl+Shift+Alt+N', run: newFolderFlow, enabled: hasProject },
-    { id: 'file.upload', title: 'Add Files…', run: uploadFlow, enabled: hasProject },
-    { id: 'file.save', title: 'Save', accel: 'CmdOrCtrl+S', run: () => saveCurrent(), enabled: hasEditor },
-    { id: 'pdf.save', title: 'Save PDF As…', accel: 'CmdOrCtrl+Shift+S', run: savePdf, enabled: hasPdf },
+    { id: 'file.new', accel: 'CmdOrCtrl+N', run: newFileFlow, enabled: hasProject },
+    { id: 'file.newFolder', accel: 'CmdOrCtrl+Shift+Alt+N', run: newFolderFlow, enabled: hasProject },
+    { id: 'file.upload', run: uploadFlow, enabled: hasProject },
+    { id: 'file.save', accel: 'CmdOrCtrl+S', run: () => saveCurrent(), enabled: hasEditor },
+    { id: 'pdf.save', accel: 'CmdOrCtrl+Shift+S', run: savePdf, enabled: hasPdf },
 
-    { id: 'edit.undo', title: 'Undo', accel: 'CmdOrCtrl+Z', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
-    { id: 'edit.redo', title: 'Redo', accel: 'CmdOrCtrl+Shift+Z', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
-    { id: 'edit.find', title: 'Find & Replace', accel: 'CmdOrCtrl+F', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
-    { id: 'edit.bold', title: 'Bold', accel: 'CmdOrCtrl+B', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
-    { id: 'edit.italic', title: 'Italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
-    { id: 'edit.math', title: 'Inline Math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
-    { id: 'edit.comment', title: 'Toggle Comment', accel: 'CmdOrCtrl+/', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
-    { id: 'edit.gotoLine', title: 'Go to Line…', accel: 'CmdOrCtrl+L', run: gotoLineFlow, enabled: hasEditor },
-    { id: 'pdf.find', title: 'Find in PDF…', accel: 'CmdOrCtrl+Alt+F', run: openPdfFind, enabled: hasPdf },
+    { id: 'edit.undo', accel: 'CmdOrCtrl+Z', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
+    { id: 'edit.redo', accel: 'CmdOrCtrl+Shift+Z', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
+    { id: 'edit.find', accel: 'CmdOrCtrl+F', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.bold', accel: 'CmdOrCtrl+B', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
+    { id: 'edit.italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
+    { id: 'edit.math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
+    { id: 'edit.comment', accel: 'CmdOrCtrl+/', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
+    { id: 'edit.gotoLine', accel: 'CmdOrCtrl+L', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'pdf.find', accel: 'CmdOrCtrl+Alt+F', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
     { id: 'view.toggleSidebar', title: () => (prefs.sidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar'), accel: 'CmdOrCtrl+\\', run: toggleSidebar },
     { id: 'view.togglePdf', title: () => (prefs.pdfCollapsed ? 'Show PDF' : 'Hide PDF'), accel: 'CmdOrCtrl+Shift+\\', run: togglePdf, enabled: hasProject },
-    { id: 'view.toggleLogs', title: 'Compile Log', accel: 'CmdOrCtrl+Shift+L', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
-    { id: 'view.zoomIn', title: 'Zoom In', accel: 'CmdOrCtrl+Plus', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
-    { id: 'view.zoomOut', title: 'Zoom Out', accel: 'CmdOrCtrl+Minus', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
-    { id: 'view.fitWidth', title: 'Fit Width', accel: 'CmdOrCtrl+0', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
-    { id: 'view.fitHeight', title: 'Fit Height', accel: 'CmdOrCtrl+Alt+0', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
-    { id: 'view.uiScaleUp', title: 'Increase Interface Size', accel: 'CmdOrCtrl+Alt+Plus', run: () => stepUiScale(1) },
-    { id: 'view.uiScaleDown', title: 'Decrease Interface Size', accel: 'CmdOrCtrl+Alt+Minus', run: () => stepUiScale(-1) },
+    { id: 'view.toggleLogs', accel: 'CmdOrCtrl+Shift+L', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
+    { id: 'view.zoomIn', accel: 'CmdOrCtrl+Plus', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
+    { id: 'view.zoomOut', accel: 'CmdOrCtrl+Minus', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
+    { id: 'view.fitWidth', accel: 'CmdOrCtrl+0', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
+    { id: 'view.fitHeight', accel: 'CmdOrCtrl+Alt+0', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
+    { id: 'view.uiScaleUp', accel: 'CmdOrCtrl+Alt+Plus', run: () => stepUiScale(1) },
+    { id: 'view.uiScaleDown', accel: 'CmdOrCtrl+Alt+Minus', run: () => stepUiScale(-1) },
 
-    { id: 'compile.run', title: 'Compile', accel: 'CmdOrCtrl+Return', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
-    { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
-    { id: 'sync.forward', title: 'Go to PDF Position', accel: 'Ctrl+Return', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
-    { id: 'sync.inverse', title: 'Go to Source Position', accel: 'Ctrl+Shift+Return', run: inverseSync, enabled: hasPdf },
+    { id: 'compile.run', accel: 'CmdOrCtrl+Return', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
+    { id: 'compile.toggleAuto', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
+    { id: 'sync.forward', accel: 'Ctrl+Return', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
+    { id: 'sync.inverse', accel: 'Ctrl+Shift+Return', run: inverseSync, enabled: hasPdf },
 
     { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
   ];
@@ -950,8 +949,8 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     }, 150);
   });
   handle.addEventListener('pointerdown', (e) => {
-    // The sync pill rides on this divider; a pointerdown there is a button click
-    // or a pill drag, never a resize.
+    // The sync pill sits on this divider; a pointerdown there is aimed at one of
+    // its buttons, never at the resize handle underneath.
     if (e.target.closest('.sync-pill')) return;
     e.preventDefault();
     handle.classList.add('dragging');
@@ -985,36 +984,6 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
   });
 }
 
-// The sync pill slides vertically along the divider; its position persists.
-function makeSyncPillDraggable(pill) {
-  pill.style.top = `${prefs.syncPillTop}%`;
-  pill.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;   // arrows are their own controls
-    e.preventDefault();
-    e.stopPropagation();
-    const parent = pill.parentElement;
-    pill.setPointerCapture(e.pointerId);
-    pill.classList.add('dragging');
-    const onMove = (ev) => {
-      const r = parent.getBoundingClientRect();
-      const pct = Math.max(4, Math.min(92, ((ev.clientY - r.top) / r.height) * 100));
-      pill.style.top = `${pct}%`;
-    };
-    let done = false;
-    const onUp = () => {
-      if (done) return;
-      done = true;
-      pill.classList.remove('dragging');
-      pill.removeEventListener('pointermove', onMove);
-      pill.removeEventListener('pointerup', onUp);
-      pill.removeEventListener('pointercancel', onUp);
-      prefs.syncPillTop = Math.round(parseFloat(pill.style.top));
-    };
-    pill.addEventListener('pointermove', onMove);
-    pill.addEventListener('pointerup', onUp);
-    pill.addEventListener('pointercancel', onUp);
-  });
-}
 
 // ---------- insert templates ----------
 

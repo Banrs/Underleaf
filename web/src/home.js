@@ -133,7 +133,7 @@ export async function renderHome() {
   dispose?.();
   // registerCommands publishes the menu state itself.
   dispose = registerCommands([
-    { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+N', run: newProjectFlow },
+    { id: 'project.new', accel: 'CmdOrCtrl+N', run: newProjectFlow },
     { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
   ]);
 

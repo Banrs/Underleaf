@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Notify;
 
@@ -287,14 +287,6 @@ pub async fn tex_available(path_env: Option<&str>) -> TexStatus {
 
 // ---------- compile ----------
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompileOverrides {
-    pub engine: Option<String>,
-    pub main_file: Option<String>,
-    pub shell_escape: Option<bool>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
@@ -382,13 +374,16 @@ impl CompileManager {
     pub async fn compile(
         &self,
         root: &Path,
-        overrides: &CompileOverrides,
+        // The engine the stub-`latexmk` tests use to tell concurrent generations
+        // apart against one project. Nothing in the app passes it: a real engine
+        // change is a settings write, which this then reads like any other.
+        engine_override: Option<&str>,
     ) -> Result<CompileResult, CoreError> {
         let request_started = std::time::Instant::now();
         let settings = read_settings(root);
-        let engine = overrides.engine.clone().unwrap_or(settings.engine);
-        let main_file = overrides.main_file.clone().unwrap_or(settings.main_file);
-        let shell_escape = overrides.shell_escape.unwrap_or(settings.shell_escape);
+        let engine = engine_override.map_or(settings.engine, str::to_string);
+        let main_file = settings.main_file;
+        let shell_escape = settings.shell_escape;
 
         let flags = engine_flags(&engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;

@@ -14,74 +14,48 @@ const MENU = [
   {
     label: 'File',
     items: [
-      { id: 'project.new' }, '-',
-      { id: 'file.new' }, { id: 'file.newFolder' }, { id: 'file.upload' }, '-',
-      { id: 'file.save' }, '-',
-      { id: 'project.close' }, '-',
-      { id: 'pdf.save' }, { id: 'project.export' },
+      { id: 'project.new', label: 'New Project…' }, '-',
+      { id: 'file.new', label: 'New File…' }, { id: 'file.newFolder', label: 'New Folder…' }, { id: 'file.upload', label: 'Add Files…' }, '-',
+      { id: 'file.save', label: 'Save' }, '-',
+      { id: 'project.close', label: 'Close Project' }, '-',
+      { id: 'pdf.save', label: 'Save PDF As…' }, { id: 'project.export', label: 'Export Project as ZIP…' },
     ],
   },
   {
     label: 'Edit',
     items: [
-      { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
+      { id: 'edit.undo', label: 'Undo' }, { id: 'edit.redo', label: 'Redo' }, '-',
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
-      { id: 'edit.find' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
-      { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
+      { id: 'edit.find', label: 'Find & Replace' }, { id: 'project.search', label: 'Find in Project' }, { id: 'pdf.find', label: 'Find in PDF…' }, { id: 'edit.gotoLine', label: 'Go to Line…' }, '-',
+      { id: 'edit.bold', label: 'Bold' }, { id: 'edit.italic', label: 'Italic' }, { id: 'edit.math', label: 'Inline Math' }, { id: 'edit.comment', label: 'Toggle Comment' },
     ],
   },
   {
     label: 'View',
     items: [
-      { id: 'view.toggleSidebar' }, { id: 'view.togglePdf' }, { id: 'view.toggleLogs' }, '-',
-      { id: 'view.zoomIn' }, { id: 'view.zoomOut' }, { id: 'view.fitWidth' }, { id: 'view.fitHeight' }, '-',
-      { id: 'view.uiScaleUp' }, { id: 'view.uiScaleDown' },
+      { id: 'view.toggleSidebar', label: 'Toggle Sidebar' }, { id: 'view.togglePdf', label: 'Toggle PDF' }, { id: 'view.toggleLogs', label: 'Compile Log' }, '-',
+      { id: 'view.zoomIn', label: 'Zoom In' }, { id: 'view.zoomOut', label: 'Zoom Out' }, { id: 'view.fitWidth', label: 'Fit Width' }, { id: 'view.fitHeight', label: 'Fit Height' }, '-',
+      { id: 'view.uiScaleUp', label: 'Increase Interface Size' }, { id: 'view.uiScaleDown', label: 'Decrease Interface Size' },
     ],
   },
   {
     label: 'Compile',
     items: [
-      { id: 'compile.run' }, { id: 'compile.toggleAuto' }, '-',
-      { id: 'sync.forward' }, { id: 'sync.inverse' },
+      { id: 'compile.run', label: 'Compile' }, { id: 'compile.toggleAuto', label: 'Compile Automatically' }, '-',
+      { id: 'sync.forward', label: 'Go to PDF Position' }, { id: 'sync.inverse', label: 'Go to Source Position' },
     ],
   },
 ];
 
-// Native menus keep readable labels even when a view has not registered the
-// command (those entries remain disabled, but should never expose internal IDs).
-const FALLBACK_TITLES = {
-  'project.new': 'New Project…',
-  'file.new': 'New File…',
-  'file.newFolder': 'New Folder…',
-  'file.upload': 'Add Files…',
-  'file.save': 'Save',
-  'project.close': 'Close Project',
-  'pdf.save': 'Save PDF As…',
-  'project.export': 'Export Project as ZIP…',
-  'edit.undo': 'Undo',
-  'edit.redo': 'Redo',
-  'edit.find': 'Find & Replace',
-  'project.search': 'Find in Project',
-  'pdf.find': 'Find in PDF…',
-  'edit.gotoLine': 'Go to Line…',
-  'edit.bold': 'Bold',
-  'edit.italic': 'Italic',
-  'edit.math': 'Inline Math',
-  'edit.comment': 'Toggle Comment',
-  'view.toggleSidebar': 'Toggle Sidebar',
-  'view.togglePdf': 'Toggle PDF',
-  'view.toggleLogs': 'Compile Log',
-  'view.zoomIn': 'Zoom In',
-  'view.zoomOut': 'Zoom Out',
-  'view.fitWidth': 'Fit Width',
-  'view.fitHeight': 'Fit Height',
-  'view.uiScaleUp': 'Increase Interface Size',
-  'view.uiScaleDown': 'Decrease Interface Size',
-  'compile.run': 'Compile',
-  'compile.toggleAuto': 'Compile Automatically',
-  'sync.forward': 'Go to PDF Position',
-  'sync.inverse': 'Go to Source Position',
-};
+// Every menu label lives on the MENU entry above, so an item whose command is
+// not registered — the views register theirs on mount — still shows its real
+// name while disabled instead of an internal id. It used to be a second table
+// parallel to MENU, which meant 29 of these strings were also written out in
+// the command definitions, kept in step by hand.
+const MENU_LABELS = new Map(
+  MENU.flatMap((group) => group.items.filter((it) => it.id).map((it) => [it.id, it.label])),
+);
+
 
 let notifyHost = () => {};
 
@@ -98,11 +72,13 @@ export function registerCommands(defs) {
 
 export function getCommand(id) { return registry.get(id); }
 
-// Titles may be functions of state ("Hide Sidebar" / "Show Sidebar").
+// A command's own `title` wins — it may be a function of state ("Hide Sidebar" /
+// "Show Sidebar") — and anything that doesn't declare one takes its menu label.
 export function commandTitle(id) {
   const c = registry.get(id);
-  if (!c) return '';
-  return typeof c.title === 'function' ? c.title() : c.title;
+  if (!c) return MENU_LABELS.get(id) ?? '';
+  if (typeof c.title === 'function') return c.title();
+  return c.title ?? MENU_LABELS.get(id) ?? id;
 }
 
 function commandEnabled(id) {
@@ -135,7 +111,7 @@ function publish() {
       const c = registry.get(it.id);
       return {
         id: it.id,
-        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
+        label: commandTitle(it.id) || it.id,
         accelerator: c?.accel,
         enabled: commandEnabled(it.id),
         checked: c?.checked?.(),

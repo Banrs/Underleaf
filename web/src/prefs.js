@@ -19,7 +19,6 @@ const DEFS = {
   uiScale: { key: 'uiscale', def: 100, type: 'num' },
   sidebarWidth: { key: 'w-side', def: 0, type: 'num' },
   pdfWidth: { key: 'w-pdf', def: 0, type: 'num' },
-  syncPillTop: { key: 'syncpill-top', def: 42, type: 'num' },
   openDirs: { key: 'opendirs', def: [], type: 'json' },
 };
 
