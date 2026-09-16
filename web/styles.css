@@ -813,6 +813,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   cursor: grab;
 }
 .sync-pill.dragging { cursor: grabbing; }
+.sync-pill[hidden] { display: none; }
 .sync-pill button {
   width: var(--h-menu-row);
   height: var(--h-menu-row);
@@ -853,6 +854,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-content) 72%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
 }
+.pdf-view-controls { display: flex; align-items: center; gap: var(--sp-1); }
+.pdf-view-controls[hidden] { display: none; }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-value { min-width: 5ch; font-variant-numeric: tabular-nums; }
 [data-command="view.toggleLogs"] { position: relative; }

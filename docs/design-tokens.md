@@ -179,10 +179,20 @@ Three more places where the philosophy, not the measurement, decided:
 - **Two-state selection.** Accent-filled while the list is the focused pane,
   grey once focus moves on — the standard AppKit source-list behaviour.
 
-Still outstanding, and deliberately not changed here: the footer puts Settings
-and the engine readout at the bottom of the sidebar, against "Avoid putting
-critical information or actions at the bottom of a sidebar. People often
-relocate a window in a way that hides its bottom edge" (Sidebars → macOS).
+**The footer stays, deliberately.** "Avoid putting critical information or
+actions at the bottom of a sidebar. People often relocate a window in a way that
+hides its bottom edge" (Sidebars → macOS) is about a bottom edge being the
+*only* route to something. Neither thing down there is: Settings is a standard
+⌘, menu item and dialog, and the engine readout is a duplicate of what the
+Settings dialog and the disabled Compile button already say. A status band at
+the foot of a navigator is itself an AppKit pattern — Xcode's filter bar, the
+Finder status bar. If either becomes the sole path to something, it has to move.
+
+**Controls that describe a document are hidden without one.** The zoom readout
+and page counter used to render em-dash placeholders and the sync pill stayed
+clickable (its buttons aren't command-wired, so nothing disabled them) — chrome
+that looks broken rather than empty. `syncToolbarState` hides both while
+`state.pdf.doc` is null.
 
 ## The editor: Xcode 27's Default themes
 

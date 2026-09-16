@@ -18,7 +18,9 @@ const ENGINES = ['pdflatex', 'xelatex', 'lualatex'];
 // its accessible name from the title, so icon-only segments still read properly.
 function row(title, hint, control) {
   const id = nextId('set');
-  control.setAttribute('aria-labelledby', id);
+  // A control that already names itself keeps that name: the pop-up button's
+  // includes its current value, which the row title alone would throw away.
+  if (!control.hasAttribute('aria-label')) control.setAttribute('aria-labelledby', id);
   return el('div', { class: 'settings-row' },
     el('div', { class: 'settings-label' },
       el('span', { id }, title),

@@ -226,6 +226,18 @@ function buildChrome(id) {
     ]),
   }, zoomLabel, icon('chevron-down'));
 
+  // Zoom and page describe a document. With none open they showed em-dashes,
+  // which reads as broken chrome rather than as nothing to report, so the whole
+  // cluster goes away until there is something to say. (The buttons were
+  // already disabled by `hasPdf`; it was the readouts that looked wrong.)
+  const pdfViewControls = el('div', { class: 'pdf-view-controls' },
+    iconButton('view.zoomOut', 'minus', 'small'),
+    zoomButton,
+    iconButton('view.zoomIn', 'plus', 'small'),
+    el('span', { class: 'toolbar-separator' }),
+    pageIndicator,
+  );
+
   const compileButton = el('button', { class: 'btn primary', onclick: () => runCommand('compile.run') }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
   const pdfScroll = el('div', { class: 'pdf-scroll' });
@@ -282,12 +294,8 @@ function buildChrome(id) {
       logsButton,
       iconButton('pdf.save', 'download', 'small'),
       el('span', { class: 'spacer' }),
-      iconButton('view.zoomOut', 'minus', 'small'),
-      zoomButton,
-      iconButton('view.zoomIn', 'plus', 'small'),
-      el('span', { class: 'toolbar-separator' }),
       pdfFreshness,
-      pageIndicator,
+      pdfViewControls,
     ),
     findBar,
     logsView,
@@ -316,7 +324,7 @@ function buildChrome(id) {
 
   ui = {
     sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
-    compileButton, workspace, findBar, findInput, pdfFreshness,
+    compileButton, workspace, findBar, findInput, pdfFreshness, pdfViewControls, syncPill,
   };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
@@ -365,6 +373,12 @@ export function syncToolbarState() {
       b.setAttribute('aria-pressed', String(on));
     }
   }
+  // Controls that only mean something against a loaded document. The sync pill's
+  // buttons aren't command-wired, so nothing else disables them — with no PDF it
+  // was a floating control that silently did nothing when clicked.
+  const hasDocument = !!state.pdf?.doc;
+  if (ui.pdfViewControls) ui.pdfViewControls.hidden = !hasDocument;
+  if (ui.syncPill) ui.syncPill.hidden = !hasDocument;
 }
 
 // ---------- commands ----------
@@ -904,38 +918,33 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
   // preview is the same one the drag path uses, settled once the keys stop.
   handle.tabIndex = 0;
   let settleTimer = null;
-  let keyTarget = null;
   let savedTransition = '';
   handle.addEventListener('keydown', (e) => {
     const step = e.shiftKey ? 40 : 8;
     const dir = mode === 'width' ? 1 : -1;
-    // Step from the target, not the measured width: the pane animates towards
-    // it, so a second key pressed mid-flight would otherwise step from a frame
-    // part-way there and the nudges would shrink.
-    const from = keyTarget ?? pane.getBoundingClientRect().width;
+    const width = pane.getBoundingClientRect().width;
     let next;
-    if (e.key === 'ArrowLeft') next = from - dir * step;
-    else if (e.key === 'ArrowRight') next = from + dir * step;
+    if (e.key === 'ArrowLeft') next = width - dir * step;
+    else if (e.key === 'ArrowRight') next = width + dir * step;
     else if (e.key === 'Home') next = min;
     else if (e.key === 'End') next = upperBound();
     else return;
     e.preventDefault();
     if (!settleTimer) {
-      // The drag path suppresses the width transition for the same reason a
-      // keyboard burst has to: with it running, every read-back lands somewhere
-      // in the middle of the animation rather than on the width asked for.
+      // The drag path suppresses the pane's width transition; a keyboard burst
+      // needs it gone for the same reason, and for one more: with it running,
+      // each key would step from an animation frame part-way to the last
+      // target rather than from the width the pane actually has.
       savedTransition = pane.style.transition;
       pane.style.transition = 'none';
       state.pdf?.beginLiveResize?.();
     }
-    keyTarget = clamp(next);
-    applyWidth(keyTarget);
+    applyWidth(clamp(next));
     state.pdf?.liveResize?.();
-    prefs[prefKey] = Math.round(keyTarget);
+    prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
       settleTimer = null;
-      keyTarget = null;
       pane.style.transition = savedTransition;
       state.pdf?.endLiveResize?.();
     }, 150);

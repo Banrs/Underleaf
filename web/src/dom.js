@@ -235,15 +235,18 @@ export function popupButton({ options, get, onChange, label }) {
   // No picked-by-hand min-width, and none to re-pick when an option is added.
   const labels = options.map((o) => el('span', { class: 'popup-label' }, o.label));
   const showCurrent = () => {
-    const i = options.findIndex((o) => o.value === get());
-    labels.forEach((n, j) => n.classList.toggle('current', j === Math.max(0, i)));
+    const i = Math.max(0, options.findIndex((o) => o.value === get()));
+    labels.forEach((n, j) => n.classList.toggle('current', j === i));
+    // A pop-up button announces what it is *and* what it currently reads, the
+    // way the <select> it replaced did. The hidden labels are visibility:hidden
+    // and so out of the accessibility tree, but the name still has to be stated
+    // here because the caller's own label would otherwise be the whole of it.
+    button.setAttribute('aria-label', `${label}, ${options[i].label}`);
   };
   const value = el('span', { class: 'popup-labels' }, labels);
-  showCurrent();
   const button = el('button', {
     class: 'btn small popup-button',
     'aria-haspopup': 'menu',
-    'aria-label': label,
     onclick: () => menuUnder(button, options.map((o) => ({
       label: o.label,
       checked: o.value === get(),
@@ -258,5 +261,6 @@ export function popupButton({ options, get, onChange, label }) {
       },
     }))),
   }, value, icon('chevron-down'));
+  showCurrent();
   return button;
 }
