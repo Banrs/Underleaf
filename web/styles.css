@@ -801,6 +801,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-content) 72%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
 }
+/* Nothing to count before a PDF loads: no placeholder dash (it read as a second
+   zoom-out button), and no separator left dangling in front of it. */
+.page-indicator:empty { display: none; }
+.pdf-pane .toolbar-separator:has(+ .pdf-freshness[hidden] + .page-indicator:empty) { display: none; }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }

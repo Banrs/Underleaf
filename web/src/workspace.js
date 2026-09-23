@@ -205,7 +205,7 @@ function buildChrome(id) {
   const editorPane = el('div', { class: 'pane editor-pane' }, editorToolbar, editorHost, wordCountPill);
 
   // --- PDF pane ---
-  const pageIndicator = el('span', { class: 'page-indicator' }, '—');
+  const pageIndicator = el('span', { class: 'page-indicator' });
   const pdfFreshness = el('span', {
     class: 'pdf-freshness', role: 'status', hidden: true,
     title: 'The preview does not reflect the current source',
