@@ -236,28 +236,41 @@ pub(crate) async fn run(
 /// reach one of them and miss the other.
 async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, String, String) {
     let pid = child.id();
-    let out_task = tokio::spawn(read_capped(
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut out_task = tokio::spawn(read_capped(
         child.stdout.take().expect("stdout piped"),
         MAX_OUTPUT,
     ));
-    let err_task = tokio::spawn(read_capped(
+    let mut err_task = tokio::spawn(read_capped(
         child.stderr.take().expect("stderr piped"),
         MAX_OUTPUT,
     ));
 
     let status = tokio::select! {
         status = child.wait() => status.ok(),
-        _ = tokio::time::sleep(timeout) => {
+        _ = tokio::time::sleep_until(deadline) => {
             if let Some(pid) = pid { terminate_pid_tree(pid).await; }
             let _ = child.start_kill();
             child.wait().await.ok()
         }
     };
-    (
-        status.and_then(|s| s.code()).unwrap_or(-1),
-        out_task.await.unwrap_or_default(),
-        err_task.await.unwrap_or_default(),
-    )
+    // A descendant that outlives the child (a shell-escape `&`, a latexmkrc
+    // previewer) inherits the pipes and can hold them open indefinitely, so the
+    // deadline bounds the drain too. What was read by then is lost; the log
+    // file is the primary record.
+    let (stdout, stderr) = match tokio::time::timeout_at(deadline, async {
+        ((&mut out_task).await, (&mut err_task).await)
+    })
+    .await
+    {
+        Ok((out, err)) => (out.unwrap_or_default(), err.unwrap_or_default()),
+        Err(_) => {
+            out_task.abort();
+            err_task.abort();
+            (String::new(), String::new())
+        }
+    };
+    (status.and_then(|s| s.code()).unwrap_or(-1), stdout, stderr)
 }
 
 // ---------- availability ----------
