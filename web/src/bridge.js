@@ -88,3 +88,6 @@ export const bridge = tauri ? tauriBridge() : null;
 // the bridge itself uses — there is no second sniff to disagree with it.
 export const platform = bridge?.platform ?? agentPlatform();
 export const isMac = platform === 'darwin';
+// Deletes go to the platform bin (trash::delete in the core), named its way.
+export const trashName = platform === 'win32' ? 'Recycle Bin' : 'Trash';
+export const deleteLabel = isMac ? 'Move to Trash' : 'Delete';

@@ -136,7 +136,7 @@ function buildChrome(id) {
   const sidebar = buildSidebar({
     openFile,
     gotoLine: (line) => state.editor?.gotoLine(line),
-    openSettings,
+    openSettings: openProjectSettings,
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
@@ -221,7 +221,12 @@ function buildChrome(id) {
     ]),
   }, zoomLabel, icon('chevron-down'));
 
-  const compileButton = el('button', { class: 'btn primary', onclick: () => runCommand('compile.run') }, 'Compile');
+  // Wired like the icon buttons, so it is disabled whenever the command is
+  // (no TeX found, or a build already running).
+  const compileButton = el('button', {
+    class: 'btn primary', title: tooltip('compile.run'), dataset: { command: 'compile.run' },
+    onclick: () => runCommand('compile.run'),
+  }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
   const pdfScroll = el('div', { class: 'pdf-scroll' });
   const logsView = buildLogsView({
@@ -407,8 +412,19 @@ function commandDefs() {
     { id: 'sync.forward', title: 'Go to PDF Position', accel: 'Ctrl+Return', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
     { id: 'sync.inverse', title: 'Go to Source Position', accel: 'Ctrl+Shift+Return', run: inverseSync, enabled: hasPdf },
 
-    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
+    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openProjectSettings },
   ];
+}
+
+// A new engine only means something once a build uses it, so switching
+// relabels the sidebar and recompiles (queued behind any compile in flight).
+function openProjectSettings() {
+  return openSettings({
+    onEngineChange: () => {
+      refreshSidebarChrome();
+      if (state.tex.available) compile();
+    },
+  });
 }
 
 function openPdfFind() {
@@ -688,15 +704,20 @@ async function compile({ auto = false } = {}) {
   const viewer = state.pdf;
   const btn = ui.compileButton;
   let saveFailed = false;
+  // Busy from the first moment, not only once the save has flushed: the
+  // spinner is the only sign a compile (auto, menu, or engine switch) started.
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('busy');
+    btn.setAttribute('aria-busy', 'true');
+    btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Compiling…');
+  }
+  refreshSidebarChrome();
 
   try {
     if (!(await flushCurrent())) return;
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
 
-    if (btn) {
-      btn.disabled = true;
-      btn.replaceChildren(el('span', { class: 'spinner' }), 'Compiling');
-    }
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
@@ -738,8 +759,11 @@ async function compile({ auto = false } = {}) {
     state.compiling = false;
     if (btn) {
       btn.disabled = !state.tex.available;
+      btn.classList.remove('busy');
+      btn.removeAttribute('aria-busy');
       btn.replaceChildren('Compile');
     }
+    refreshSidebarChrome();
     refreshCommands();
     if (saveFailed) pendingCompile = false;
     else if (pendingCompile) {

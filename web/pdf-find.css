@@ -12,7 +12,8 @@
 
 /* The scroller normally reserves only the toolbar. When Find is open, reserve
    its row as well so page content and hit targets never sit underneath it. */
-.pdf-pane.find-open .pdf-scroll {
+.pdf-pane.find-open .pdf-scroll,
+.pdf-pane.find-open .logs {
   padding-top: calc(var(--h-toolbar) + 36px + var(--sp-3));
 }
 

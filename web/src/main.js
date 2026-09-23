@@ -19,6 +19,12 @@ root.classList.toggle('win', platform === 'win32');
 addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => e.preventDefault());
 
+// The webview's own menu (Reload, Inspect…) is not the app's. Text keeps it for
+// Copy/Paste and spelling; everything else either has its own menu or none.
+addEventListener('contextmenu', (e) => {
+  if (!e.target.closest?.('input, textarea, [contenteditable="true"], .pdf-text-layer, .logs-raw')) e.preventDefault();
+});
+
 // ---------- appearance ----------
 
 migratePrefs();

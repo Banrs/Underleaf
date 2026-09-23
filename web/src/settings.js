@@ -107,7 +107,9 @@ function stepper(values, get, set, format) {
   return el('div', { class: 'stepper', role: 'group' }, dec, label, inc);
 }
 
-export function openSettings() {
+// `onEngineChange` lets the open workspace react (relabel, recompile) once a new
+// engine has been saved; the home screen has no project and passes nothing.
+export function openSettings({ onEngineChange } = {}) {
   if ($('#modal-root .settings-dialog')) return Promise.resolve(null); // already open
 
   return showModal((close) => {
@@ -147,14 +149,37 @@ export function openSettings() {
     ];
 
     if (state.projectId) {
+      const projectId = state.projectId;
+      // Saving is a round trip to disk: show it, and don't accept a second
+      // choice until the first has landed (or been rolled back).
+      const saving = el('span', { class: 'spinner', hidden: '', 'aria-hidden': 'true' });
       const engine = el('select', {
         onchange: async () => {
-          try { state.settings = await api.saveSettings(state.projectId, { engine: engine.value }); }
-          catch (err) { toast(err.message, 'error'); }
+          const previous = state.settings?.engine ?? 'pdflatex';
+          engine.disabled = true;
+          saving.hidden = false;
+          engine.parentElement?.setAttribute('aria-busy', 'true');
+          try {
+            const settings = await api.saveSettings(projectId, { engine: engine.value });
+            if (state.projectId !== projectId) return;
+            state.settings = settings;
+            onEngineChange?.();
+          } catch (err) {
+            engine.value = previous;
+            toast(err.message, 'error');
+          } finally {
+            engine.disabled = false;
+            saving.hidden = true;
+            engine.parentElement?.removeAttribute('aria-busy');
+          }
         },
       }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>
         el('option', { value: e, selected: state.settings?.engine === e ? '' : undefined }, e)));
-      groups.push(group('Project', row('TeX engine', state.projectId, engine)));
+      const control = el('div', { class: 'settings-control' }, saving, engine);
+      groups.push(group('Project', row('TeX engine', state.settings?.title || projectId, control)));
+      // The row labels the control group; the select itself is what gets focus.
+      engine.setAttribute('aria-labelledby', control.getAttribute('aria-labelledby'));
+      control.removeAttribute('aria-labelledby');
     }
 
     return el('div', { class: 'modal settings-dialog' },
@@ -165,7 +190,9 @@ export function openSettings() {
           state.tex.available
             ? `${state.tex.version ?? 'TeX Live'} detected`
             : 'TeX Live not found — compilation disabled'),
-        el('button', { class: 'btn primary', onclick: () => close(null) }, 'Done'),
+        // The default button takes initial focus (Return dismisses), so the
+        // dialog opens at its top instead of scrolled to the first field.
+        el('button', { class: 'btn primary', autofocus: '', onclick: () => close(null) }, 'Done'),
       ),
     );
   });
