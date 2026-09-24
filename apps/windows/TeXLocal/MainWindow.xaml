@@ -27,7 +27,9 @@
             </TitleBar.IconSource>
         </TitleBar>
 
-        <InfoBar x:Name="MessageBar" Grid.Row="1" Margin="16,0,16,8" Severity="Error" IsOpen="False" />
+        <!-- Collapsed while closed, or its margin leaves a band under the title bar. -->
+        <InfoBar x:Name="MessageBar" Grid.Row="1" Margin="16,0,16,8" Severity="Error" IsOpen="False"
+                 Visibility="{x:Bind MessageBar.IsOpen, Mode=OneWay}" />
 
         <Grid Grid.Row="2">
             <local:HomeView x:Name="Home" />
