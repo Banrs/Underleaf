@@ -181,7 +181,7 @@ public sealed partial class WorkspaceView : UserControl
         CompileButton.IsEnabled = p.TexAvailable && !p.Compiling;
         CompileProgress.IsActive = p.Compiling;
         CompileIcon.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
-        ToolTipService.SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
+        SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
         var engine = p.Settings?.Engine ?? "pdflatex";
         EnginePdf.IsChecked = engine == "pdflatex";
         EngineXe.IsChecked = engine == "xelatex";
@@ -194,7 +194,7 @@ public sealed partial class WorkspaceView : UserControl
         var log = p.Result is null
             ? "Compile log (Ctrl+Shift+L)"
             : $"Compile log: {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")} (Ctrl+Shift+L)";
-        ToolTipService.SetToolTip(LogButton, log);
+        SetToolTip(LogButton, log);
         AutomationProperties.SetHelpText(LogButton, log);
         PdfToggle.IsChecked = Main.Preferences.PdfVisible;
         SavePdfItem.IsEnabled = Main.IsEnabled(MenuCommand.PdfSave);
@@ -209,6 +209,18 @@ public sealed partial class WorkspaceView : UserControl
             {
                 toggle.IsChecked = Main.IsChecked(command);
             }
+        }
+    }
+
+    /// <summary>
+    /// Render runs on every edit; setting a tooltip replaces it, closing one
+    /// the pointer has open, so it is set only when its text changes.
+    /// </summary>
+    private static void SetToolTip(DependencyObject element, string text)
+    {
+        if (ToolTipService.GetToolTip(element) as string != text)
+        {
+            ToolTipService.SetToolTip(element, text);
         }
     }
 
@@ -310,9 +322,19 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
+    private IReadOnlyList<OutlineItem>? shownSections;
+
     private void RenderOutline()
     {
-        var rows = project?.Sections.Select(s => new OutlineRow(s)).ToList() ?? [];
+        // Every save analyses the file again; an unchanged outline keeps its
+        // rows rather than flashing new ones in.
+        var sections = project?.Sections ?? [];
+        if (shownSections is not null && sections.SequenceEqual(shownSections))
+        {
+            return;
+        }
+        shownSections = sections;
+        var rows = sections.Select(s => new OutlineRow(s)).ToList();
         OutlineList.ItemsSource = rows;
         OutlineHeader.Visibility = OutlineList.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
