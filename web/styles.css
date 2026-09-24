@@ -56,7 +56,7 @@
   /* Control sizes, standardized to two from the kit's ramp (16/20/24/28/36):
      --h-control (28) for every interactive control below the title bar, and
      --h-xl (36) for the title-bar row — desktop-comfortable, no mini/small UI.
-     Components with their own kit spec keep it: menu rows 24, switch 54×24. */
+     Menu rows are 28 here (kit 24); the switch keeps its kit 54×24. */
   --h-control: 28px;
   --h-xl: 36px;
   --h-menu-row: 28px;
@@ -501,7 +501,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .brand-actions .btn { width: 100%; justify-content: flex-start; gap: var(--sp-2); }
 
 .home-recents { display: flex; flex-direction: column; min-height: 0; padding-top: var(--sp-5); }
-/* Subheadline 11 Bold, matching the sidebar's section headers. */
+/* 13 Bold, matching the sidebar's section headers. */
 .recents-heading { font-size: var(--fs-header); line-height: var(--lh-header); font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-2); padding-left: var(--sp-3); }
 /* Sizes to its rows rather than stretching, so two projects don't leave a tall
    empty box; scrolls once the rows exceed the column. */
@@ -593,8 +593,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }
-.section-header.disclosure .twisty { margin-left: auto; justify-content: center; }   /* section-to-section gap */
+.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
+.section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
 /* Square 20px targets so the header keeps its 20px band; the kit's own trailing
@@ -634,8 +634,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .search-input:focus-visible { outline: none; }
 .search-input::-webkit-search-cancel-button { appearance: none; }
 
-/* Rows: 32 tall, radius 8, selection pill inset 10 from the sidebar edge, icon
-   20 wide with a 4px gap to the label — all kit values. */
+/* Rows: 40 tall (kit "Large"), radius 10, selection pill inset 10 from the
+   sidebar edge, icon 24 wide with a 4px gap to the label. */
 .tree, .outline, .search-results { overflow-y: auto; padding: 0 10px var(--sp-3); }
 .tree { flex: 1 1 auto; min-height: 120px; }
 .outline { flex: 0 1 auto; max-height: 40%; padding-bottom: var(--sp-2); }
@@ -701,7 +701,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  height: var(--h-menu-row);
+  height: var(--h-control);
   padding: 0 var(--sp-2);
   border-radius: var(--r-menu);
   color: var(--label-2);
@@ -762,8 +762,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .sync-pill.dragging { cursor: grabbing; }
 .sync-pill button {
-  width: var(--h-menu-row);
-  height: var(--h-menu-row);
+  width: var(--h-control);
+  height: var(--h-control);
   border-radius: var(--r-menu);
   display: flex;
   align-items: center;
@@ -883,7 +883,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* ---------- PDF ---------- */
 
 /* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
-   and fit-width re-renders in a feedback loop. Top padding = 40px bar + 12px,
+   and fit-width re-renders in a feedback loop. Top padding = 44px bar + 12px,
    mirrored by V_PAD in pdfview.js. */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
@@ -1065,7 +1065,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .settings-control { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; color: var(--label-2); }
 .settings-status { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Menus use the vibrant material and the kit's 24px rows with radius 8. */
+/* Menus use the vibrant material; rows are 28 (kit 24) with radius 6. */
 .menu {
   position: fixed;
   z-index: 200;
