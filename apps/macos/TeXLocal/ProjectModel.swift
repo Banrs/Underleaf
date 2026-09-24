@@ -317,8 +317,10 @@ final class ProjectModel {
             // text; only where it is saved changes, so the next save cannot
             // bring the old path back.
             openPath = openPath.map { remapPath($0, from: result.from, to: result.to) }
+            let main = settings?.mainFile
             settings = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
+            if settings?.mainFile != main { await mainFileChanged() }
         } catch {
             report(error)
         }
@@ -339,11 +341,22 @@ final class ProjectModel {
     }
 
     func setMainFile(_ path: String) async {
+        guard path != settings?.mainFile else { return }
         do {
             settings = try await core.call("set_settings", ["id": id, "patch": ["mainFile": path]], as: ProjectSettings.self)
+            await mainFileChanged()
         } catch {
             report(error)
         }
+    }
+
+    /// The PDF is named after the main file, so a new main file means a new
+    /// PDF: point Save PDF As at it, and build it, as the web does
+    /// (sidebar.js `onMainFileChange`). The old one stays on screen until the
+    /// build replaces it.
+    private func mainFileChanged() async {
+        pdfURL = try? await pdfPath()
+        await compile(auto: true)
     }
 
     func importFiles(_ urls: [URL], into dir: String = "") async {
