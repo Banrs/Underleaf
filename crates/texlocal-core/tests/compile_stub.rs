@@ -59,6 +59,25 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 }
 
 #[tokio::test]
+async fn a_compile_reruns_even_after_a_failed_run() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n",
+    );
+
+    let mut mgr = CompileManager::new();
+    mgr.path_env = Some(path);
+    mgr.compile(&root, &CompileOverrides::default())
+        .await
+        .unwrap();
+
+    let args = fs::read_to_string(root.join("build/args")).unwrap();
+    assert!(args.split_whitespace().any(|a| a == "-g"), "{args}");
+}
+
+#[tokio::test]
 async fn a_stale_log_is_not_reported() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());

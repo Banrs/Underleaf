@@ -418,6 +418,10 @@ impl CompileManager {
 
         let mut args: Vec<&str> = flags.to_vec();
         args.extend([
+            // Always run. Without -g, latexmk declines to retry a document
+            // whose last run failed until a source file changes, so a compile
+            // after installing TeX or a missing package reports the stale error.
+            "-g",
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
