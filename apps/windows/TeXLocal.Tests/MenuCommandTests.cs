@@ -81,12 +81,26 @@ public sealed partial class MenuCommandTests
     }
 
     [Fact]
+    public void EachChordRunsOneCommand()
+    {
+        // CmdOrCtrl+Return and Ctrl+Return are the same keys on Windows;
+        // compile, listed first, keeps them.
+        Assert.True(MenuCommand.CompileRun.ClaimsChord());
+        Assert.False(MenuCommand.SyncForward.ClaimsChord());
+        var chords = Enum.GetValues<MenuCommand>()
+            .Where(c => c.ClaimsChord())
+            .Select(c => Accelerators.Parse(c.Accel()!))
+            .ToList();
+        Assert.Equal(chords.Count, chords.Distinct().Count());
+    }
+
+    [Fact]
     public void TheEditorKeepsTheChordsItImplements()
     {
         var ids = MenuCommands.HostKeys.Select(k => k.Id).ToHashSet();
         Assert.Contains("compile.run", ids);
         Assert.Contains("edit.gotoLine", ids);
-        Assert.Contains("sync.forward", ids);
+        Assert.Contains("sync.inverse", ids);
         Assert.DoesNotContain("edit.find", ids);
         Assert.DoesNotContain("edit.comment", ids);
         Assert.DoesNotContain("edit.undo", ids);
@@ -100,6 +114,6 @@ public sealed partial class MenuCommandTests
         Assert.Contains("edit.find", claimed);
         Assert.Contains("app.settings", claimed);
         Assert.DoesNotContain("edit.undo", claimed);
-        Assert.Superset(claimed, ids);
+        Assert.Subset(claimed, ids);
     }
 }

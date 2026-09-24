@@ -106,7 +106,7 @@
 
             <!-- Files, project search and the outline. Files dropped here are
                  added to the project. -->
-            <Grid x:Name="Sidebar" Padding="8,4,2,8" RowSpacing="8" AllowDrop="True"
+            <Grid x:Name="Sidebar" Padding="8,4,2,8" RowSpacing="8" Background="Transparent" AllowDrop="True"
                   DragOver="OnDragOver" Drop="OnDrop">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

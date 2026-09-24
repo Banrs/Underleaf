@@ -162,8 +162,21 @@ public static class MenuCommands
     /// page or a native box — so the menu shows their chords but never claims
     /// them.
     /// </summary>
+    public static bool IsTextEditing(this MenuCommand command) =>
+        command is MenuCommand.EditUndo or MenuCommand.EditRedo;
+
+    /// <summary>
+    /// Whether the window takes this command's chord. Windows has no Command
+    /// key, so CmdOrCtrl+Return (compile) and Ctrl+Return (forward search)
+    /// are one chord here; the command listed first keeps it, as it does in
+    /// the browser version, and the other is left to its menu item.
+    /// </summary>
     public static bool ClaimsChord(this MenuCommand command) =>
-        command.Accel() is not null && command is not (MenuCommand.EditUndo or MenuCommand.EditRedo);
+        command.Accel() is { } accel
+        && !command.IsTextEditing()
+        && !Enum.GetValues<MenuCommand>()
+            .TakeWhile(earlier => earlier != command)
+            .Any(earlier => earlier.Accel() is { } other && Accelerators.Parse(other) == Accelerators.Parse(accel));
 
     /// <summary>
     /// Every chord the menus claim. A page with focus sees a chord before the

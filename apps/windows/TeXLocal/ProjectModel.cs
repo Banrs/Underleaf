@@ -470,9 +470,10 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         var line = await editor.CurrentLineAsync();
         try
         {
-            Highlight = await core.CallAsync<ForwardLoc>("synctex_forward", new { id = Id, file = path, line });
+            var loc = await core.CallAsync<ForwardLoc>("synctex_forward", new { id = Id, file = path, line });
             ShowLogs = false;
             app.ShowPdf();
+            Highlight = loc;
         }
         catch (CoreException)
         {

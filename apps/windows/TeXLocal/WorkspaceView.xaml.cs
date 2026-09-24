@@ -170,7 +170,7 @@ public sealed partial class WorkspaceView : UserControl
         }
         Main.UpdateTitle();
 
-        CompileButton.IsEnabled = p.TexAvailable;
+        CompileButton.IsEnabled = p.TexAvailable && !p.Compiling;
         CompileProgress.IsActive = p.Compiling;
         CompileIcon.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
         ToolTipService.SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
@@ -240,7 +240,7 @@ public sealed partial class WorkspaceView : UserControl
                 }
                 MenuFlyoutItem item = MainWindow.IsToggle(command) ? new ToggleMenuFlyoutItem() : new MenuFlyoutItem();
                 item.Text = command.Title();
-                if (command.Accel() is { } accel)
+                if (command.Accel() is { } accel && (command.ClaimsChord() || command.IsTextEditing()))
                 {
                     // The chord itself is the window's; the menu only shows it.
                     item.KeyboardAcceleratorTextOverride = Accelerators.Label(accel);
@@ -272,7 +272,10 @@ public sealed partial class WorkspaceView : UserControl
     private void SelectOpenFile()
     {
         var open = project?.OpenPath;
-        Files.SelectedItem = FileItems.SelectMany(i => i.SelfAndDescendants()).FirstOrDefault(i => i.Node.Path == open);
+        if (FileItems.SelectMany(i => i.SelfAndDescendants()).FirstOrDefault(i => i.Node.Path == open) is { } item)
+        {
+            Files.SelectedItem = item;
+        }
     }
 
     private void RenderOutline()
