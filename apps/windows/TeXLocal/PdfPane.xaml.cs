@@ -14,11 +14,12 @@ namespace TeXLocal;
 /// </summary>
 public sealed partial class PdfPane : UserControl
 {
-    /// <summary>The project's build folder, the only other origin pdf.html's CSP lets it fetch from.</summary>
+    /// <summary>Where the page fetches the PDF, the only other origin pdf.html's CSP lets it fetch from.</summary>
     private const string ProjectHost = "project.texlocal";
 
     private readonly EmbeddedPage page;
-    private string? mappedFolder;
+    private string? pdfPath;
+    private bool serving;
 
     internal ProjectModel? Project { get; set; }
 
@@ -67,20 +68,39 @@ public sealed partial class PdfPane : UserControl
     {
         ShowDocument(true);
         var web = await page.WebAsync();
-        var folder = Path.GetDirectoryName(pdfPath)!;
-        if (folder != mappedFolder)
+        this.pdfPath = pdfPath;
+        if (!serving)
         {
-            if (mappedFolder is not null)
-            {
-                web.ClearVirtualHostNameToFolderMapping(ProjectHost);
-            }
-            // Allow: the page, on its own origin, fetches the PDF cross-origin.
-            web.SetVirtualHostNameToFolderMapping(ProjectHost, folder, CoreWebView2HostResourceAccessKind.Allow);
-            mappedFolder = folder;
+            // Served from here rather than through a folder mapping: WebView2
+            // applies a mapping only to pages loaded after it, and this page
+            // loaded long before the first PDF.
+            serving = true;
+            web.AddWebResourceRequestedFilter($"https://{ProjectHost}/*", CoreWebView2WebResourceContext.All);
+            web.WebResourceRequested += (_, e) => e.Response = PdfResponse(web.Environment);
         }
         // The version defeats the cache: the file keeps its name across builds.
         var url = $"https://{ProjectHost}/{Uri.EscapeDataString(Path.GetFileName(pdfPath))}?v={version}";
         await page.RunStickyAsync("load", $"texlocal.load({L(url)})");
+    }
+
+    /// <summary>
+    /// The current PDF, read whole, so a compile rewriting the file cannot
+    /// tear the copy pdf.js is reading. The page is on another origin, hence
+    /// the CORS header.
+    /// </summary>
+    private CoreWebView2WebResourceResponse PdfResponse(CoreWebView2Environment environment)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(pdfPath!);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return environment.CreateWebResourceResponse(null, 404, "Not Found", "");
+        }
+        return environment.CreateWebResourceResponse(new MemoryStream(bytes).AsRandomAccessStream(), 200, "OK",
+            $"Content-Type: application/pdf\nAccess-Control-Allow-Origin: https://{EmbeddedPage.AppHost}");
     }
 
     /// <summary>No PDF yet: say why instead of showing the last project's.</summary>
