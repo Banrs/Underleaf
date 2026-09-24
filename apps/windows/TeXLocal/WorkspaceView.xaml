@@ -19,24 +19,67 @@
             <MenuBar x:Name="Menu" VerticalAlignment="Center" />
             <CommandBar Grid.Column="1" HorizontalAlignment="Right" DefaultLabelPosition="Right"
                         Background="Transparent" VerticalContentAlignment="Center">
+                <!-- A switched-on toggle gets the subtle fill File Explorer's
+                     toolbar uses, not a block of accent colour. Contrast
+                     themes keep the system's own colours. -->
+                <CommandBar.Resources>
+                    <ResourceDictionary>
+                        <ResourceDictionary.ThemeDictionaries>
+                            <ResourceDictionary x:Key="Default">
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPressed" ResourceKey="ControlFillColorTransparentBrush" />
+                            </ResourceDictionary>
+                            <ResourceDictionary x:Key="Light">
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                                <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
+                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPressed" ResourceKey="ControlFillColorTransparentBrush" />
+                            </ResourceDictionary>
+                        </ResourceDictionary.ThemeDictionaries>
+                    </ResourceDictionary>
+                </CommandBar.Resources>
                 <AppBarButton Label="Insert" Icon="Add" AccessKey="I" ToolTipService.ToolTip="Insert an environment">
                     <AppBarButton.Flyout>
                         <MenuFlyout x:Name="InsertMenu" Placement="BottomEdgeAlignedLeft" />
                     </AppBarButton.Flyout>
                 </AppBarButton>
-                <AppBarButton Label="Bold" LabelPosition="Collapsed" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)">
+                <AppBarButton Label="Bold" LabelPosition="Collapsed" Width="40" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)">
                     <AppBarButton.Icon>
                         <FontIcon Glyph="&#xE8DD;" />
                     </AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton Label="Italic" LabelPosition="Collapsed" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)">
+                <AppBarButton Label="Italic" LabelPosition="Collapsed" Width="40" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)">
                     <AppBarButton.Icon>
                         <FontIcon Glyph="&#xE8DB;" />
                     </AppBarButton.Icon>
                 </AppBarButton>
-                <AppBarButton Label="Inline math" LabelPosition="Collapsed" Click="OnMath" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
+                <AppBarButton Label="Inline math" LabelPosition="Collapsed" Width="40" Click="OnMath" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
                     <AppBarButton.Icon>
-                        <FontIcon Glyph="&#xE8EF;" />
+                        <FontIcon Glyph="π" FontFamily="Cambria Math" FontSize="20" />
                     </AppBarButton.Icon>
                 </AppBarButton>
                 <AppBarSeparator />
@@ -68,7 +111,8 @@
                     </SplitButton>
                 </AppBarElementContainer>
                 <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
-                    <ToggleButton x:Name="LogButton" Click="OnToggleLogs" AccessKey="L" AutomationProperties.Name="Compile log">
+                    <ToggleButton x:Name="LogButton" Click="OnToggleLogs" AccessKey="L" AutomationProperties.Name="Compile log"
+                                  Background="Transparent" BorderThickness="0" Width="40" Height="40" Padding="0">
                         <Grid>
                             <FontIcon Glyph="&#xE8FD;" FontSize="16" />
                             <InfoBadge x:Name="ErrorBadge" Style="{StaticResource CriticalValueInfoBadgeStyle}"
@@ -77,7 +121,7 @@
                         </Grid>
                     </ToggleButton>
                 </AppBarElementContainer>
-                <AppBarToggleButton x:Name="PdfToggle" Label="PDF" LabelPosition="Collapsed" AccessKey="P" Click="OnTogglePdf"
+                <AppBarToggleButton x:Name="PdfToggle" Label="PDF" LabelPosition="Collapsed" Width="40" AccessKey="P" Click="OnTogglePdf"
                                     ToolTipService.ToolTip="Show or hide the PDF (Ctrl+Shift+\)">
                     <AppBarToggleButton.Icon>
                         <FontIcon Glyph="&#xE90D;" />
@@ -180,6 +224,13 @@
                                Style="{StaticResource BodyStrongTextBlockStyle}" />
                     <ListView x:Name="OutlineList" Grid.Row="3" SelectionMode="None" IsItemClickEnabled="True"
                               AutomationProperties.Name="Outline" ItemClick="OnOutlineClick">
+                        <!-- The tree's row height, so both lists read as one sidebar. -->
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                                <Setter Property="MinHeight" Value="32" />
+                                <Setter Property="Padding" Value="12,0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="local:OutlineRow">
                                 <TextBlock Text="{x:Bind Title}" Margin="{x:Bind Indent}" TextTrimming="CharacterEllipsis" />

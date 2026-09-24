@@ -41,6 +41,9 @@ internal sealed class EmbeddedPage
     {
         this.view = view;
         this.onMessage = onMessage;
+        // The page is drawn on the window's own surface (the layer over Mica),
+        // not on a panel of its own: no seam, and it follows the theme.
+        view.DefaultBackgroundColor = Microsoft.UI.Colors.Transparent;
         // WebView2 needs its window, so it starts once the control is in the tree.
         view.Loaded += async (_, _) =>
         {
@@ -92,6 +95,9 @@ internal sealed class EmbeddedPage
             OpenExternally(e.Uri);
         };
         web.WebMessageReceived += (_, e) => Receive(e.WebMessageAsJson);
+        await web.AddScriptToExecuteOnDocumentCreatedAsync(
+            "addEventListener('DOMContentLoaded', () => document.head.insertAdjacentHTML('beforeend', " +
+            "'<style>html, body, .cm-editor { background: transparent !important; }</style>'))");
         // A crashed renderer leaves a blank view; load the page again. Calls
         // made meanwhile wait for it, and Reloaded tells the owner to restore
         // what only it knows (the open document).

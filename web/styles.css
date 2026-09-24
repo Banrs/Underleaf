@@ -117,7 +117,7 @@
      and stays selectable in Settings, but it is no longer the default — an app
      that should read as native shouldn't ship its own code face ahead of the
      platform's. */
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   --mono-jetbrains: "JetBrains Mono", var(--mono);
 }
 
