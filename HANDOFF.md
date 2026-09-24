@@ -1,6 +1,6 @@
 # Handoff: native apps and browser version
 
-Status as of 2026-09-24, branch `claude/handoff-continuation-e94xnl` (continues `feat/browser-server`).
+Status as of 2026-09-25, branch `claude/handoff-continuation-e94xnl` (continues `feat/browser-server`).
 
 ## Goal
 
@@ -26,6 +26,7 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
 - **`crates/texlocal-core/src/service.rs` (`Service`)** holds every command's behaviour once.
   - `Service::call(cmd, json)` is the JSON dispatch table shared by all hosts.
   - It deliberately leaves out uploads (raw bytes) and anything that takes a host-chosen absolute path, because the browser server exposes it.
+  - The one exception is choosing the TeX folder. `set_tex_dir` stores it in `<data dir>/.texlocal-app.json`, and `list_dirs` lists folders (drives on Windows) so the browser version can browse for it. Both are documented in `Service::call`. The folder only goes first on latexmk's PATH; nothing is read from or written to it.
 - **`crates/texlocal-core/src/serve.rs`** handles the `__pdf` and `__raw` routes, byte ranges and MIME types. The Tauri protocol handler and the server both use it.
 - **`crates/texlocal-ffi`** is the C ABI the native apps link.
   - The functions are `tl_open`, `tl_call` (JSON in and out, blocking), `tl_free` and `tl_close`.
@@ -56,7 +57,7 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
 | `45cfe04` | Embed pages |
 | `4a5a6cf` | macOS app, first draft |
 
-- `cargo fmt`, clippy and `cargo test --workspace` are clean, and `npm test` passes (36 tests).
+- `cargo fmt`, clippy and `cargo test --workspace` are clean, and `npm test` passes (37 tests).
 - The browser version works end to end in real Chrome, driven over CDP:
   - sign-in, the editor, a compile, the PDF render, the menu bar, and ⌘↩ compiling;
   - a foreign Origin or Host is refused with 403.
@@ -116,7 +117,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The first delete shows the Finder Automation prompt.
   - A built `TeXLocal.app` launches after being copied to another location.
 
-## The Windows app (`apps/windows`): builds and tests green, not yet run by hand
+## The Windows app (`apps/windows`): run by hand on Windows 11, partly verified
 
 - **Projects:**
   - **`TeXLocal.Core`** has no WinUI. It holds:
@@ -128,7 +129,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
     - It is unpackaged and x64. .NET 10 and Windows App SDK 2.5.1 are both bundled, so users install neither.
     - `texlocal_ffi.dll` is copied from `target\debug` or `target\release` to match the configuration.
 - **Web surfaces:** the editor and PDF pages each run in a WebView2.
-  - The bundled `web\` is served at `app.texlocal`, and the project's build folder at `project.texlocal`.
+  - The bundled `web\` is served at `app.texlocal`. The PDF is answered at `project.texlocal` from `WebResourceRequested`, with a CORS header for `app.texlocal`. A folder mapping only applies to pages loaded after it is set, so it never reached the already-open viewer.
   - Window-level keyboard shortcuts stand down while a page has focus. The page posts the chord back instead: the editor page already did this, and `web/src/embed/pdf.js` now does too.
 - **Parity:** every command in `commandDefs`, and every setting the macOS app has.
   - Done: menus, toolbar, sidebar (tree, search, outline), autosave and the compile queue, compile and log, PDF find and zoom, SyncTeX, import and export.
@@ -151,12 +152,29 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Deliberate deviations:**
   - The settings cards and the divider are hand-written, rather than taken from the Community Toolkit, to avoid adding NuGet packages.
   - Interface size scales only the editor page. Native controls follow Windows text size.
+  - The file tree uses a copy of WinUI's own TreeViewItem template (`CompactTree.xaml`) with a 16 px expander column instead of 40 px. Re-copy it from the new `generic.xaml` when the Windows App SDK is upgraded.
 - **Not done yet:**
   - recovery when the whole WebView2 browser process dies;
   - trimming the output size (the Windows App SDK brings its AI/ML parts);
-  - an installer.
-- **Check by hand on Windows:**
-  - The PDF actually loads. This is the riskiest item: the page at `app.texlocal` fetches from `project.texlocal`.
+  - an installer. For now, run `cargo build --release -p texlocal-ffi`, then `dotnet publish apps/windows/TeXLocal/TeXLocal.csproj -c Release -p:Platform=x64 -r win-x64 -o %LOCALAPPDATA%\Programs\TeXLocal`, and add a Start-menu shortcut to the exe. The owner's PC is set up this way, with no desktop shortcut.
+- **Verified by hand on Windows 11 (build 26340), with TeX Live 2026:**
+  - The PDF loads and renders with a text layer, and find works.
+  - Compiling works, including a recompile after a failed run (latexmk now gets `-g`). A new TeX install is found without restarting the app.
+  - Choosing the TeX folder works in both versions:
+    - in the app, with Settings' Browse… and Use automatic;
+    - in the browser version, with its folder browser. The browser version still creates, compiles and shows a project.
+  - The title bar uses the tall height, with its content and the caption buttons on one line.
+  - The library, the workspace and Settings were measured with UI Automation:
+    - one left edge in the sidebar, and 16 px per tree level;
+    - no band under the title bar;
+    - 32 px buttons;
+    - Settings' columns aligned.
+  - The sidebar toggle, folders expanding and collapsing, the outline's disclosure, and the settings and engine footer.
+  - Moving between the library, a project and Settings animates.
+  - The installed Release build starts from the Start menu.
+- **Known issues:**
+  - Once, a window kept showing a frozen frame while it went on working. Fresh launches never did. It may be a GPU device loss on this Insider build, but that is unconfirmed.
+- **Still to check by hand on Windows:**
   - Every shortcut fires exactly once whether focus is in the editor, the PDF or the sidebar.
   - The title bar:
     - back and pane buttons, and dragging;
