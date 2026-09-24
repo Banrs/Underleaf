@@ -35,11 +35,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-      # texlocal-core carries no GUI dependencies on purpose, so the logic the
-      # app is built on is checked here without installing a webview stack.
+      # The core and the two hosts built on it without a webview — the native
+      # apps' C ABI and the browser server — carry no GUI dependencies on
+      # purpose, so they are checked here without installing a webview stack.
       - run: cargo fmt --all --check
-      - run: cargo clippy -p texlocal-core --all-targets -- -D warnings
-      - run: cargo test -p texlocal-core
+      - run: cargo clippy -p texlocal-core -p texlocal-ffi -p texlocal-server --all-targets -- -D warnings
+      - run: cargo test -p texlocal-core -p texlocal-ffi -p texlocal-server
 
   desktop:
     name: ${{ matrix.label }}

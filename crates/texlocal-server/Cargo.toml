@@ -1,0 +1,17 @@
+[package]
+name = "texlocal-server"
+description = "TeXLocal in a browser — a loopback-only HTTP host over texlocal-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+getrandom = "0.3"
+# Pinned to the release tag from GitHub: the crates.io download host is
+# unreachable from some networks, and httparse has no dependencies of its own.
+httparse = { git = "https://github.com/seanmonstar/httparse", tag = "v1.10.1" }
+percent-encoding = "2"
+serde_json = "1"
+tempfile = "3"
+texlocal-core = { path = "../texlocal-core" }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }

@@ -1529,6 +1529,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httparse"
+version = "1.10.1"
+source = "git+https://github.com/seanmonstar/httparse?tag=v1.10.1#9f29e79f9832dbd0ae5220acb17c1866745bdecd"
+
+[[package]]
 name = "hyper"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1540,7 +1545,7 @@ dependencies = [
  "futures-core",
  "http",
  "http-body",
- "httparse",
+ "httparse 1.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -3877,6 +3882,19 @@ dependencies = [
 name = "texlocal-ffi"
 version = "0.2.0"
 dependencies = [
+ "serde_json",
+ "tempfile",
+ "texlocal-core",
+ "tokio",
+]
+
+[[package]]
+name = "texlocal-server"
+version = "0.2.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "httparse 1.10.1 (git+https://github.com/seanmonstar/httparse?tag=v1.10.1)",
+ "percent-encoding",
  "serde_json",
  "tempfile",
  "texlocal-core",

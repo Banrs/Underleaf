@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/texlocal-core", "crates/texlocal-ffi", "src-tauri"]
+members = ["crates/texlocal-core", "crates/texlocal-ffi", "crates/texlocal-server", "src-tauri"]
 
 [workspace.package]
 version = "0.2.0"

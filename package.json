@@ -7,6 +7,7 @@
     "build": "node build.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
+    "serve": "npm run build && cargo run --release -p texlocal-server --",
     "package": "tauri build"
   },
   "keywords": [
