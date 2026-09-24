@@ -20,7 +20,7 @@
 
         <!-- The Windows App SDK title bar: icon, title, the project as the
              subtitle, back to the library, and the sidebar toggle. -->
-        <TitleBar x:Name="AppTitleBar" Title="TeXLocal"
+        <TitleBar x:Name="AppTitleBar" Title="TeXLocal" Height="48"
                   BackRequested="OnBackRequested" PaneToggleRequested="OnPaneToggleRequested">
             <TitleBar.IconSource>
                 <ImageIconSource x:Name="TitleIcon" />
