@@ -197,6 +197,11 @@ public sealed partial class WorkspaceView : UserControl
         SetToolTip(LogButton, log);
         AutomationProperties.SetHelpText(LogButton, log);
         PdfToggle.IsChecked = Main.Preferences.PdfVisible;
+        EngineText.Text = p.TexAvailable ? EngineName(engine) : "No TeX";
+        EngineWarning.Visibility = p.TexAvailable ? Visibility.Collapsed : Visibility.Visible;
+        EngineProgress.IsActive = p.Compiling;
+        EngineProgress.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
+        SetToolTip(EngineStatus, p.TexAvailable ? "TeX engine: open Settings to change it" : "TeX wasn’t found: open Settings");
         SavePdfItem.IsEnabled = Main.IsEnabled(MenuCommand.PdfSave);
         EditorPlaceholder.Visibility = p.OpenPath is null ? Visibility.Visible : Visibility.Collapsed;
 
@@ -234,7 +239,6 @@ public sealed partial class WorkspaceView : UserControl
         CountsText.Text = Main.Preferences.ShowWordCount && p.Stats is { } stats
             ? $"{Count(stats.Words, "word")} · {Count(stats.Lines, "line")}"
             : "";
-        EngineText.Text = EngineName(p.Settings?.Engine ?? "pdflatex");
         StatusText.Text = p.Status;
     }
 
@@ -336,7 +340,24 @@ public sealed partial class WorkspaceView : UserControl
         shownSections = sections;
         var rows = sections.Select(s => new OutlineRow(s)).ToList();
         OutlineList.ItemsSource = rows;
-        OutlineHeader.Visibility = OutlineList.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        OutlineToggle.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ShowOutline();
+    }
+
+    /// <summary>The outline's disclosure: open or closed, remembered as the browser version does.</summary>
+    private void ShowOutline()
+    {
+        var open = Main.Preferences.OutlineOpen;
+        OutlineList.Visibility = open && shownSections is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        OutlineChevron.Glyph = open ? "" : "";
+        AutomationProperties.SetItemStatus(OutlineToggle, open ? "Expanded" : "Collapsed");
+    }
+
+    private void OnToggleOutline(object sender, RoutedEventArgs e)
+    {
+        Main.Preferences.OutlineOpen = !Main.Preferences.OutlineOpen;
+        Main.SavePreferences();
+        ShowOutline();
     }
 
     private void RenderResults()

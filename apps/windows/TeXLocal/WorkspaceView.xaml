@@ -79,7 +79,7 @@
                 </AppBarButton>
                 <AppBarButton Label="Inline math" LabelPosition="Collapsed" Width="40" Click="OnMath" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
                     <AppBarButton.Icon>
-                        <FontIcon Glyph="π" FontFamily="Cambria Math" FontSize="20" />
+                        <PathIcon Data="M1,3 H15 V5 H11.5 V12 C11.5,12.8 11.9,13.2 12.6,13.2 H14 V15 H12.2 C10.6,15 9.5,14 9.5,12.4 V5 H6.5 V15 H4.5 V5 H1 Z" />
                     </AppBarButton.Icon>
                 </AppBarButton>
                 <AppBarSeparator />
@@ -158,49 +158,43 @@
 
             <!-- Files, project search and the outline, on Mica. Files dropped
                  here are added to the project, or to the folder under them. -->
-            <Grid x:Name="Sidebar" Padding="8,0,0,8" RowSpacing="8" Background="Transparent" AllowDrop="True"
+            <Grid x:Name="Sidebar" Padding="8,0,0,0" RowSpacing="8" Background="Transparent" AllowDrop="True"
                   DragOver="OnDragOver" Drop="OnDrop">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Search project" QueryIcon="Find" AccessKey="S"
                                 AutomationProperties.Name="Search project"
                                 TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown" />
 
-                <Grid x:Name="Browse" Grid.Row="1" RowSpacing="4">
+                <!-- As the browser version's sidebar: the files, then the
+                     outline under a disclosure that remembers its state. -->
+                <Grid x:Name="Browse" Grid.Row="1" RowSpacing="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="2*" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Grid>
+                    <Grid MinHeight="32">
                         <TextBlock Text="Files" Margin="12,0" VerticalAlignment="Center"
                                    Style="{StaticResource BodyStrongTextBlockStyle}" />
-                        <DropDownButton HorizontalAlignment="Right" AutomationProperties.Name="Add"
-                                        ToolTipService.ToolTip="New file, new folder, or add files">
-                            <FontIcon Glyph="&#xE710;" FontSize="12" />
-                            <DropDownButton.Flyout>
-                                <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                    <MenuFlyoutItem Text="New file…" Click="OnNewFile" KeyboardAcceleratorTextOverride="Ctrl+N">
-                                        <MenuFlyoutItem.Icon>
-                                            <FontIcon Glyph="&#xE8A5;" />
-                                        </MenuFlyoutItem.Icon>
-                                    </MenuFlyoutItem>
-                                    <MenuFlyoutItem Text="New folder…" Click="OnNewFolder" KeyboardAcceleratorTextOverride="Ctrl+Alt+Shift+N">
-                                        <MenuFlyoutItem.Icon>
-                                            <FontIcon Glyph="&#xE8F4;" />
-                                        </MenuFlyoutItem.Icon>
-                                    </MenuFlyoutItem>
-                                    <MenuFlyoutItem Text="Add files…" Click="OnAddFiles">
-                                        <MenuFlyoutItem.Icon>
-                                            <FontIcon Glyph="&#xE898;" />
-                                        </MenuFlyoutItem.Icon>
-                                    </MenuFlyoutItem>
-                                </MenuFlyout>
-                            </DropDownButton.Flyout>
-                        </DropDownButton>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnNewFile"
+                                    AutomationProperties.Name="New file" ToolTipService.ToolTip="New file (Ctrl+N)">
+                                <FontIcon Glyph="&#xE710;" FontSize="14" />
+                            </Button>
+                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnNewFolder"
+                                    AutomationProperties.Name="New folder" ToolTipService.ToolTip="New folder (Ctrl+Alt+Shift+N)">
+                                <FontIcon Glyph="&#xE8F4;" FontSize="14" />
+                            </Button>
+                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnAddFiles"
+                                    AutomationProperties.Name="Add files" ToolTipService.ToolTip="Add files">
+                                <FontIcon Glyph="&#xE898;" FontSize="14" />
+                            </Button>
+                        </StackPanel>
                     </Grid>
                     <TreeView x:Name="Files" Grid.Row="1" SelectionMode="Single" CanDragItems="False"
                               CanReorderItems="False" ItemInvoked="OnFileInvoked" AutomationProperties.Name="Files"
@@ -220,15 +214,23 @@
                             </DataTemplate>
                         </TreeView.ItemTemplate>
                     </TreeView>
-                    <TextBlock x:Name="OutlineHeader" Grid.Row="2" Text="Outline" Margin="12,8,12,0"
-                               Style="{StaticResource BodyStrongTextBlockStyle}" />
-                    <ListView x:Name="OutlineList" Grid.Row="3" SelectionMode="None" IsItemClickEnabled="True"
+                    <Button x:Name="OutlineToggle" Grid.Row="2" Style="{StaticResource SubtleButtonStyle}" MinHeight="32"
+                            Padding="12,0,8,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Click="OnToggleOutline" AutomationProperties.Name="Outline">
+                        <Grid>
+                            <TextBlock Text="Outline" VerticalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <FontIcon x:Name="OutlineChevron" Glyph="&#xE70D;" FontSize="12" HorizontalAlignment="Right"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
+                    </Button>
+                    <!-- Rows start where the file rows' icons do: TreeView keeps
+                         an expander column even for files, as File Explorer does. -->
+                    <ListView x:Name="OutlineList" Grid.Row="3" MaxHeight="280" SelectionMode="None" IsItemClickEnabled="True"
                               AutomationProperties.Name="Outline" ItemClick="OnOutlineClick">
-                        <!-- The tree's row height, so both lists read as one sidebar. -->
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
                                 <Setter Property="MinHeight" Value="32" />
-                                <Setter Property="Padding" Value="12,0" />
+                                <Setter Property="Padding" Value="44,0,12,0" />
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
@@ -257,6 +259,29 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
+
+                <!-- The browser version's sidebar footer: settings, and the
+                     engine that compiles, busy while it does. -->
+                <Grid Grid.Row="2" Padding="0,0,4,8" ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Style="{StaticResource SubtleButtonStyle}" Width="36" Height="32" Padding="0" Click="OnSettings"
+                            AutomationProperties.Name="Settings" ToolTipService.ToolTip="Settings (Ctrl+,)">
+                        <FontIcon Glyph="&#xE713;" FontSize="16" />
+                    </Button>
+                    <Button x:Name="EngineStatus" Grid.Column="1" Style="{StaticResource SubtleButtonStyle}" Height="32"
+                            Padding="8,0" HorizontalAlignment="Left" Click="OnSettings">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon x:Name="EngineWarning" Glyph="&#xE7BA;" FontSize="14" Visibility="Collapsed"
+                                      Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                            <ProgressRing x:Name="EngineProgress" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
+                            <TextBlock x:Name="EngineText" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
             </Grid>
 
             <!-- The document on a layer above Mica, rounded where it meets the
@@ -298,7 +323,6 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="CrumbsText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                Style="{StaticResource CaptionTextBlockStyle}"
@@ -306,10 +330,7 @@
                     <TextBlock x:Name="CountsText" Grid.Column="1" VerticalAlignment="Center"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock x:Name="EngineText" Grid.Column="2" VerticalAlignment="Center"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock x:Name="StatusText" Grid.Column="3" VerticalAlignment="Center"
+                    <TextBlock x:Name="StatusText" Grid.Column="2" VerticalAlignment="Center"
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                AutomationProperties.LiveSetting="Polite" />

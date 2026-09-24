@@ -30,6 +30,7 @@ public sealed class Preferences
     public bool AutoCompile { get; set; } = true;
     public bool SidebarVisible { get; set; } = true;
     public bool PdfVisible { get; set; } = true;
+    public bool OutlineOpen { get; set; } = true;
 
     /// <summary>web/src/prefs.js UI_SCALES, stepped by the interface-size commands.</summary>
     public static readonly int[] UiScales = [80, 90, 100, 110, 120, 130];
