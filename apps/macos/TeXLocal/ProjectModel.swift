@@ -364,12 +364,18 @@ final class ProjectModel {
     }
 
     func deleteEntry(_ path: String) async {
+        // Saved first, as the web saves before any path change (sidebar.js
+        // `beforePathMutation`): the Trash gets the latest text, and no
+        // pending autosave writes the file back after it.
+        guard await flush() else { return }
         do {
             try await core.perform("delete_entry", ["id": id, "path": path])
             await editor.forget(path: "\(id)/\(path)")
             if let open = openPath, open == path || open.hasPrefix(path + "/") {
                 openPath = nil
                 dirty = false
+                outline = []
+                counts = nil
             }
             await reloadTree()
         } catch {
@@ -399,10 +405,11 @@ final class ProjectModel {
     func importFiles(_ urls: [URL], into dir: String = "") async {
         do {
             _ = try await core.call("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)], as: Saved.self)
-            await reloadTree()
         } catch {
             report(error)
         }
+        // After a failure too: the files copied before it are there.
+        await reloadTree()
     }
 
     // ---------- export ----------

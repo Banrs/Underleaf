@@ -16,9 +16,17 @@ struct WorkspaceView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 400)
         } detail: {
             HSplitView {
-                EditorView(bridge: app.editor)
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottomTrailing) { wordCount }
+                Group {
+                    if project.openPath != nil {
+                        EditorView(bridge: app.editor)
+                            .overlay(alignment: .bottomTrailing) { wordCount }
+                    } else {
+                        // No file open, or it was deleted: nothing to type
+                        // into (workspace.js `showEditorPlaceholder`).
+                        ContentUnavailableView("Select a File to Edit", systemImage: "doc.text")
+                    }
+                }
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                 if project.showPDF || project.showLogs {
                     Group {
                         if project.showLogs {
