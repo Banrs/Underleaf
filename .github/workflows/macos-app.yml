@@ -45,16 +45,21 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep -i macos
           sw_vers
+      # The project targets macOS 27. While the runner image is older, build
+      # and test for the older of the host and the SDK instead: an SDK that
+      # predates 27 fails the build on any API that needs 27 either way.
+      - name: Deployment target for this runner
+        run: |
+          HOST=$(sw_vers -productVersion | cut -d. -f1-2)
+          SDK=$(xcrun --sdk macosx --show-sdk-version)
+          TARGET=$(printf '%s\n' "$HOST" "$SDK" | sort -V | head -1)
+          if [ "${TARGET%%.*}" -lt 27 ]; then
+            echo "::warning::Runner has macOS $HOST and SDK $SDK; building for $TARGET instead of 27.0"
+            echo "TARGET_OVERRIDE=MACOSX_DEPLOYMENT_TARGET=$TARGET" >> "$GITHUB_ENV"
+          fi
       - name: Build
         working-directory: apps/macos
-        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' build-for-testing
-      # A macOS 27 app cannot launch on an older host, so the tests run only
-      # once the runner itself is on 27.
+        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE build-for-testing
       - name: Test
         working-directory: apps/macos
-        run: |
-          if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]; then
-            echo "::warning::Host is macOS $(sw_vers -productVersion); built but not tested"
-            exit 0
-          fi
-          xcodebuild -scheme TeXLocal -destination 'platform=macOS' test-without-building
+        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE test-without-building

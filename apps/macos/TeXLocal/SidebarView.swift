@@ -38,7 +38,7 @@ struct SidebarView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(hit.file):\(hit.line)").font(.caption).foregroundStyle(.secondary)
-                                (Text(hit.before) + Text(hit.match).bold().foregroundStyle(.tint) + Text(hit.after))
+                                Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
                                     .lineLimit(1)
                             }
                         }
