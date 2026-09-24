@@ -196,11 +196,16 @@ function mathAtCursor(state) {
   return null;
 }
 
-function mathTooltip(state) {
+function mathTooltip(state, prev = null) {
   const m = mathAtCursor(state);
   if (!m || !m.tex) return null;
+  // The tooltip manager keys its views by `create`, so a fresh object rebuilds
+  // the DOM and reruns KaTeX. Moving within an unchanged equation keeps it.
+  if (prev && prev.pos === m.from && prev.tex === m.tex && prev.display === m.display) return prev;
   return {
     pos: m.from,
+    tex: m.tex,
+    display: m.display,
     above: true,
     arrow: false,
     create() {
@@ -217,14 +222,14 @@ function mathTooltip(state) {
 }
 
 const editorFocusEff = StateEffect.define();
-const mathPreviewField = StateField.define({
+export const mathPreviewField = StateField.define({
   create: mathTooltip,
   update(tt, tr) {
     for (const e of tr.effects) {
-      if (e.is(editorFocusEff)) return e.value ? mathTooltip(tr.state) : null;
+      if (e.is(editorFocusEff)) return e.value ? mathTooltip(tr.state, tt) : null;
     }
     if (!tr.docChanged && !tr.selection) return tt;
-    return mathTooltip(tr.state);
+    return mathTooltip(tr.state, tt);
   },
   provide: (f) => showTooltip.from(f),
 });
@@ -264,10 +269,13 @@ const commandCompletions = COMMANDS.map(([label, detail, snippet]) =>
   snippetCompletion(snippet, { label, detail, type: 'keyword' })
 );
 
-function latexCompletions(getSymbols) {
+export function latexCompletions(getSymbols) {
   return (ctx) => {
-    // \cite{...}, \ref{...}, \begin{...}: complete their arguments
-    const arg = ctx.matchBefore(/\\(\w+)\*?(\[[^\]]*\])?\{[^}]*$/);
+    // \cite{...}, \ref{...}, \begin{...}: complete their arguments. The tail
+    // excludes braces and backslashes so only the innermost open argument
+    // matches — otherwise `\footnote{see \cite{` resolves to \footnote, and
+    // `\frac{\al` never reaches the \command branch.
+    const arg = ctx.matchBefore(/\\(\w+)\*?(\[[^\]]*\])?\{[^{}\\]*$/);
     if (arg) {
       const cmd = arg.text.match(/\\(\w+)/)[1];
       const wordStart = ctx.pos - (ctx.matchBefore(/[^{,]*$/)?.text.length ?? 0);
