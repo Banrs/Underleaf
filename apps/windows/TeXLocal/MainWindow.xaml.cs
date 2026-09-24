@@ -1,7 +1,9 @@
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using System.Numerics;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
@@ -53,6 +55,7 @@ public sealed partial class MainWindow : Window
             area.X + area.Width / 10, area.Y + area.Height / 10, area.Width * 8 / 10, area.Height * 8 / 10));
 
         AddAccelerators();
+        AnimateScreens();
         Root.ActualThemeChanged += (_, _) => AppearanceChanged();
         uiSettings.TextScaleFactorChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
         uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
@@ -164,6 +167,39 @@ public sealed partial class MainWindow : Window
             SettingsPage.Render();
         }
         UpdateTitle();
+    }
+
+    /// <summary>
+    /// A screen coming into view fades in and rises a little, as a page does
+    /// when Windows apps navigate. Visibility alone never animates. Off when
+    /// Windows' animation effects are.
+    /// </summary>
+    private void AnimateScreens()
+    {
+        if (!uiSettings.AnimationsEnabled)
+        {
+            return;
+        }
+        var compositor = ElementCompositionPreview.GetElementVisual(Root).Compositor;
+        var decelerate = compositor.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1f));
+        var fade = compositor.CreateScalarKeyFrameAnimation();
+        fade.Target = "Opacity";
+        fade.InsertKeyFrame(0, 0);
+        fade.InsertKeyFrame(1, 1, decelerate);
+        fade.Duration = TimeSpan.FromMilliseconds(250);
+        var rise = compositor.CreateVector3KeyFrameAnimation();
+        rise.Target = "Translation";
+        rise.InsertKeyFrame(0, new Vector3(0, 24, 0));
+        rise.InsertKeyFrame(1, Vector3.Zero, decelerate);
+        rise.Duration = TimeSpan.FromMilliseconds(300);
+        var show = compositor.CreateAnimationGroup();
+        show.Add(fade);
+        show.Add(rise);
+        foreach (var screen in new UIElement[] { Home, Workspace, SettingsPage })
+        {
+            ElementCompositionPreview.SetIsTranslationEnabled(screen, true);
+            ElementCompositionPreview.SetImplicitShowAnimation(screen, show);
+        }
     }
 
     internal void OpenSettings() => ShowScreen(settings: true);
