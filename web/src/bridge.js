@@ -3,9 +3,10 @@
 // locally, so changing shell is a change to this file, not a hunt through the
 // views.
 //
-// A bridge exposes: invoke(command, args, options), platform, accent(),
-// setMenu(spec), onCommand(fn), onBeforeQuit(fn), and fileUrl(segments) for the
-// routes served over the texlocal:// scheme.
+// A bridge exposes: kind ('tauri' | 'browser'), invoke(command, args, options),
+// platform, accent(), fileUrl(segments) for the PDF and raw-file routes, and
+// either the desktop shell's setMenu(spec), onCommand(fn) and onBeforeQuit(fn)
+// or the browser's download(path).
 
 const tauri = typeof window !== 'undefined' ? window.__TAURI__ : undefined;
 
@@ -53,6 +54,7 @@ function tauriBridge() {
   const origin = platform === 'win32' ? 'http://texlocal.localhost' : 'texlocal://localhost';
 
   return {
+    kind: 'tauri',
     platform,
     invoke: (command, args, options) => invoke(command, args, options).catch((err) => {
       throw new Error(errorMessage(err));
@@ -80,12 +82,43 @@ function tauriBridge() {
   };
 }
 
-export const bridge = tauri ? tauriBridge() : null;
+// The browser host: texlocal-server on this machine, same origin. Commands
+// are POSTs with the desktop's names and arguments; there is no native menu,
+// so commands.js draws one and dispatches shortcuts itself; there is no quit
+// to intercept, so main.js's beforeunload guard is the only flush.
+export function httpBridge(fetchImpl = (...a) => fetch(...a)) {
+  return {
+    kind: 'browser',
+    platform: agentPlatform(),
+    invoke: async (command, args, options) => {
+      const raw = args instanceof ArrayBuffer;
+      const res = await fetchImpl(`/api/${command}`, {
+        method: 'POST',
+        headers: raw ? options?.headers : { 'content-type': 'application/json' },
+        body: raw ? args : JSON.stringify(args ?? {}),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+      return body;
+    },
+    accent: async () => null,
+    fileUrl: (segments) => `/${segments.map(encodeURIComponent).join('/')}`,
+    // An attachment link downloads without navigating, so no unload guard fires.
+    download: (path) => {
+      const a = document.createElement('a');
+      a.href = path;
+      a.download = '';
+      a.click();
+    },
+  };
+}
 
-// Only the shell ever runs this app, so `bridge` is non-null in practice; the
-// null case keeps this module importable by the unit tests, which exercise
-// runQuitFlush without a host. Platform falls back to the same user-agent read
-// the bridge itself uses — there is no second sniff to disagree with it.
+const inBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+export const bridge = tauri ? tauriBridge() : (inBrowser ? httpBridge() : null);
+
+// The null case keeps this module importable by the unit tests, which run
+// without a host. Platform falls back to the same user-agent read the bridges
+// use — there is no second sniff to disagree with them.
 export const platform = bridge?.platform ?? agentPlatform();
 export const isMac = platform === 'darwin';
 // Deletes go to the platform bin (trash::delete in the core), named its way.

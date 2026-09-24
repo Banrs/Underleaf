@@ -1099,6 +1099,22 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--red); color: #fff; }
 .menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: var(--fs-control); }
 .menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
+.menu-item:disabled { color: var(--label-3); }
+.menu-item:disabled:hover { background: none; }
+.menu-hint { margin-left: auto; padding-left: var(--sp-4); color: var(--label-2); font-variant-numeric: tabular-nums; }
+.menu-item:hover .menu-hint, .menu-item:focus-visible .menu-hint { color: inherit; }
+
+/* In a browser no shell draws a menu bar, so the title bar carries one. */
+.menubar { display: flex; flex: none; gap: 2px; margin-right: var(--sp-1); }
+.menubar-item {
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-menu);
+  font-size: var(--fs-control);
+  font-weight: 500;
+  color: var(--label);
+}
+.menubar-item:hover, .menubar-item:focus-visible { background: var(--fill-3); outline: none; }
 
 #toast-root {
   position: fixed;

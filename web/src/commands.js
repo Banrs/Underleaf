@@ -191,9 +191,99 @@ export function tooltip(id) {
 
 // ---------- menu events ----------
 
-// The native menu owns its accelerators, so nothing here listens for keys —
-// handling them a second time would fire every command twice. This only routes
-// what the shell reports back.
+// Whether the shell draws a native menu. In a browser nothing does, so the
+// menu bar and its shortcuts are drawn and dispatched here instead.
+const nativeMenu = () => ipc?.kind !== 'browser';
+
+// A native menu owns its accelerators, so on the desktop nothing here listens
+// for keys — handling them a second time would fire every command twice. In a
+// browser the listener runs in the capture phase, ahead of the editor's own
+// keymap, which is the order a native menu's key equivalents take too.
 export function installMenuBridge() {
-  ipc?.onCommand?.((id) => runCommand(id));
+  if (nativeMenu()) {
+    ipc?.onCommand?.((id) => runCommand(id));
+    return;
+  }
+  addEventListener('keydown', (e) => {
+    for (const [id, c] of registry) {
+      if (c.accel && matchesAccel(c.accel, e, isMac) && runCommand(id)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
+  }, true);
+}
+
+// ---------- shortcuts without a native menu ----------
+
+// Physical keys (KeyboardEvent.code), so Option/Alt and Shift, which change
+// e.key, cannot change which command a chord means.
+const CODES = {
+  Return: ['Enter', 'NumpadEnter'], Enter: ['Enter', 'NumpadEnter'],
+  Plus: ['Equal', 'NumpadAdd'], Minus: ['Minus', 'NumpadSubtract'],
+  ',': ['Comma'], '/': ['Slash'], '\\': ['Backslash'], '.': ['Period'],
+};
+
+function codesFor(key) {
+  if (CODES[key]) return CODES[key];
+  if (/^[a-z]$/i.test(key)) return [`Key${key.toUpperCase()}`];
+  if (/^[0-9]$/.test(key)) return [`Digit${key}`, `Numpad${key}`];
+  return [key];
+}
+
+// Whether a keydown is exactly this accelerator: the key, and the modifiers
+// it names, no more. `mac` decides what CmdOrCtrl means.
+export function matchesAccel(accel, e, mac) {
+  const parts = accel.split('+');
+  const key = parts.pop();
+  const want = { meta: false, ctrl: false, alt: false, shift: false };
+  for (const p of parts) {
+    if (p === 'CmdOrCtrl') want[mac ? 'meta' : 'ctrl'] = true;
+    else if (p === 'Cmd' || p === 'Command') want.meta = true;
+    else if (p === 'Ctrl' || p === 'Control') want.ctrl = true;
+    else if (p === 'Alt' || p === 'Option') want.alt = true;
+    else if (p === 'Shift') want.shift = true;
+  }
+  return e.metaKey === want.meta && e.ctrlKey === want.ctrl
+    && e.altKey === want.alt && e.shiftKey === want.shift
+    && codesFor(key).includes(e.code);
+}
+
+// The browser's menu bar, drawn from the same MENU the native one is. Returns
+// null wherever the shell draws a native menu. Roles (Cut/Copy/Paste) belong to
+// the browser there, so they are left out along with separators they strand.
+export function menuBar(openMenu) {
+  if (nativeMenu()) return null;
+  const itemsOf = (group) => {
+    const items = [];
+    for (const it of group.items) {
+      if (it.role) continue;
+      if (it === '-') {
+        if (items.length && items.at(-1) !== '-') items.push('-');
+        continue;
+      }
+      const c = registry.get(it.id);
+      items.push({
+        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
+        hint: accelLabel(c?.accel),
+        disabled: !commandEnabled(it.id),
+        checked: c?.checked?.(),
+        action: () => runCommand(it.id),
+      });
+    }
+    if (items.at(-1) === '-') items.pop();
+    return items;
+  };
+  const bar = document.createElement('nav');
+  bar.className = 'menubar';
+  bar.setAttribute('aria-label', 'Menu');
+  for (const group of MENU) {
+    const b = document.createElement('button');
+    b.className = 'menubar-item';
+    b.textContent = group.label;
+    b.addEventListener('click', (e) => openMenu(e.currentTarget, itemsOf(group)));
+    bar.append(b);
+  }
+  return bar;
 }

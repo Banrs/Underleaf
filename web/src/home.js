@@ -7,7 +7,7 @@ import { platform, trashName, deleteLabel } from './bridge.js';
 import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
-import { registerCommands, tooltip } from './commands.js';
+import { registerCommands, tooltip, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
 
 let dispose = null;
@@ -145,6 +145,7 @@ export async function renderHome() {
   app.replaceChildren(
     el('div', { class: 'home' },
       el('header', { class: 'titlebar home-titlebar', 'data-tauri-drag-region': 'deep' },
+        menuBar(menuUnder),
         el('span', { class: 'spacer' }),
         el('button', {
           class: 'icon-btn', title: tooltip('app.settings'), 'aria-label': 'Settings', onclick: openSettings,

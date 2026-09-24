@@ -144,8 +144,8 @@ export function confirmModal({ title, body, confirm = 'Delete', destructive = tr
 
 // ---------- menus ----------
 
-// `items` is a list of `{ label, action, danger, checked }` or the string '-'
-// for a separator. Anchored menus keep keyboard operation: arrows move, Enter
+// `items` is a list of `{ label, action, danger, checked, disabled, hint }` or
+// the string '-' for a separator; `hint` is a trailing shortcut label. Anchored menus keep keyboard operation: arrows move, Enter
 // activates, Escape dismisses and restores focus.
 let openMenu = null;
 
@@ -169,9 +169,13 @@ export function contextMenu(x, y, items) {
       const b = el('button', {
         class: `menu-item ${it.danger ? 'danger' : ''}`,
         role: 'menuitem',
+        disabled: it.disabled ? '' : null,
         onclick: () => { dismiss({ restore: false }); it.action(); },
-      }, el('span', { class: 'menu-check' }, it.checked ? '✓' : ''), it.label);
-      buttons.push(b);
+      },
+      el('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+      it.label,
+      it.hint ? el('span', { class: 'menu-hint' }, it.hint) : null);
+      if (!it.disabled) buttons.push(b);
       return b;
     }),
   );

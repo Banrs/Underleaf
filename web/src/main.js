@@ -9,9 +9,13 @@ import { renderHome, destroyHome } from './home.js';
 
 // ---------- platform ----------
 
+// html.mac / html.win gate desktop-window chrome (vibrancy, traffic-light
+// insets), which a browser tab does not have; it gets html.browser instead.
 const root = document.documentElement;
-root.classList.toggle('mac', platform === 'darwin');
-root.classList.toggle('win', platform === 'win32');
+const desktop = bridge?.kind === 'tauri';
+root.classList.toggle('mac', desktop && platform === 'darwin');
+root.classList.toggle('win', desktop && platform === 'win32');
+root.classList.toggle('browser', !desktop);
 
 // A file dropped outside the drop zones must never navigate the page — on the
 // desktop that would load file:// on an origin holding the command bridge.

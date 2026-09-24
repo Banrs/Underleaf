@@ -1,5 +1,6 @@
-// The API client. One backend: Tauri commands, with project files served over
-// the texlocal:// scheme. The app speaks no HTTP at all.
+// The API client. One table for both hosts: the bridge turns a command into a
+// Tauri invoke on the desktop or a POST to texlocal-server in a browser, and
+// fileUrl() points at the texlocal:// scheme or the same-origin routes.
 import { bridge as ipc } from './bridge.js';
 
 // Upload metadata travels in headers, which carry bytes rather than text, so a
@@ -7,9 +8,7 @@ import { bridge as ipc } from './bridge.js';
 // side percent-decodes it back (`upload_file` in commands.rs).
 const enc = encodeURIComponent;
 
-// ---------- Tauri (command) backend ----------
-
-const tauriApi = ipc?.fileUrl && {
+const commandApi = ipc && {
   status: () => ipc.invoke('status'),
 
   listProjects: () => ipc.invoke('list_projects'),
@@ -60,11 +59,17 @@ const tauriApi = ipc?.fileUrl && {
 
   compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
-  downloadPdf: (id) => ipc.invoke('save_pdf_as', { id }),
-  exportProject: (id) => ipc.invoke('export_project', { id }),
+  // The desktop asks for a destination with a native save dialog; a browser
+  // downloads the attachment instead.
+  downloadPdf: (id) => (ipc.download
+    ? ipc.download(`/__download/pdf/${enc(id)}`)
+    : ipc.invoke('save_pdf_as', { id })),
+  exportProject: (id) => (ipc.download
+    ? ipc.download(`/__download/zip/${enc(id)}`)
+    : ipc.invoke('export_project', { id })),
 
   syncForward: (id, file, line) => ipc.invoke('synctex_forward', { id, file, line }),
   syncInverse: (id, page, x, y) => ipc.invoke('synctex_inverse', { id, page, x, y }),
 };
 
-export const api = tauriApi;
+export const api = commandApi;

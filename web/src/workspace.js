@@ -8,7 +8,7 @@ import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
 import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
-import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle } from './commands.js';
+import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
@@ -169,6 +169,7 @@ function buildChrome(id) {
   // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
   // and other interactive elements on its own.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
+    menuBar(menuUnder),
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
     el('span', { class: 'window-title' }, state.settings?.title || id),
