@@ -52,6 +52,17 @@ const builds = [
     splitting: true,
     chunkNames: 'chunks/[name]-[hash]',
   },
+  // The editor and PDF viewer as standalone pages for the native apps to
+  // embed (web/embed/*.html). Each page loads exactly one of them, so no
+  // splitting.
+  {
+    ...common,
+    entryPoints: {
+      'embed-editor': at('web/src/embed/editor.js'),
+      'embed-pdf': at('web/src/embed/pdf.js'),
+    },
+    outdir: at('web/dist'),
+  },
 ];
 
 if (watch) {

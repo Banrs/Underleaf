@@ -1,0 +1,93 @@
+// The LaTeX editor as a page of its own, for the native apps to embed as
+// content inside their native chrome (WKWebView on macOS, WebView2 on
+// Windows). The same createEditor the browser UI uses — completions, math
+// preview, find — so the editor exists once.
+//
+// Host → page: call methods on window.texlocal (evaluateJavaScript /
+// ExecuteScriptAsync); their return values come back as the script result.
+// Page → host: postMessage of { type, ... } through whichever channel exists.
+
+import { createEditor } from '../editor.js';
+import { prefs } from '../prefs.js';
+import { matchesAccel } from '../commands.js';
+import { isMac } from '../bridge.js';
+import { post } from './channel.js';
+
+const parent = document.getElementById('editor');
+const cached = new Map(); // path → EditorState, so undo history survives a file switch
+let editor = null;
+let path = null;
+let symbols = { labels: [], citations: [] };
+let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+let hostKeys = [];
+
+const WRAPS = {
+  bold: ['\\textbf{', '}'],
+  italic: ['\\textit{', '}'],
+  math: ['$', '$'],
+};
+
+window.texlocal = {
+  // Show a file. Its earlier state (undo history, selection) comes back only
+  // when the text is unchanged since; anything else starts fresh.
+  open(nextPath, text, scrollTop = 0) {
+    if (editor && path) cached.set(path, editor.getState());
+    editor?.destroy();
+    const prior = cached.get(nextPath);
+    path = nextPath;
+    editor = createEditor({
+      parent,
+      content: text,
+      restore: prior && prior.doc.toString() === text ? prior : undefined,
+      dark,
+      getSymbols: () => symbols,
+      onChange: () => post({ type: 'changed', path }),
+      onCursor: (line) => post({ type: 'cursor', path, line }),
+    });
+    editor.setScrollTop(scrollTop);
+    editor.focus();
+    return true;
+  },
+  // Forget a file's cached state after the host renames or deletes it.
+  forget(oldPath) { cached.delete(oldPath); },
+  getText: () => editor?.getContent() ?? null,
+  currentLine: () => editor?.currentLine() ?? 1,
+  reveal(line) { editor?.gotoLine(line); },
+  setSymbols(labels, citations) { symbols = { labels, citations }; },
+  // The accelerators the host's native menu owns. The page sees a chord
+  // before the menu does, and the editor's keymap would otherwise take some
+  // of them (Mod-Enter inserts a blank line), so these are handed back.
+  setHostKeys(list) { hostKeys = list; },
+  setAppearance({ theme, palette, font, fontSize, accent }) {
+    const root = document.documentElement;
+    dark = theme === 'dark';
+    root.dataset.theme = theme;
+    if (palette) prefs.editorTheme = palette;
+    if (font) root.style.setProperty('--editor-font', font === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
+    if (fontSize) root.style.setProperty('--editor-fs', `${fontSize}px`);
+    if (accent) root.style.setProperty('--accent', accent);
+    editor?.setTheme(dark);
+  },
+  command(name, arg) {
+    if (!editor) return false;
+    if (WRAPS[name]) editor.wrapSelection(...WRAPS[name]);
+    else if (name === 'undo') editor.undo();
+    else if (name === 'redo') editor.redo();
+    else if (name === 'comment') editor.toggleComment();
+    else if (name === 'find') editor.openSearch();
+    else if (name === 'insert') editor.insertTemplate(arg);
+    else return false;
+    return true;
+  },
+};
+
+addEventListener('keydown', (e) => {
+  const hit = hostKeys.find((k) => matchesAccel(k.accel, e, isMac));
+  if (!hit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  post({ type: 'command', id: hit.id });
+}, true);
+
+document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+post({ type: 'ready' });

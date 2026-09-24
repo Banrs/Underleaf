@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- The PDF page the Windows app embeds (see web/src/embed/pdf.js). The
+       compiled PDF arrives from the host's project mapping, hence connect-src. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self' https://project.texlocal" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/pdf-find.css" />
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #pdf { height: 100%; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div id="pdf" class="pdf-scroll"></div>
+  <script type="module" src="/dist/embed-pdf.js"></script>
+</body>
+</html>

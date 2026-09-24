@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- The editor page the native apps embed (see web/src/embed/editor.js).
+       Everything is same-origin: the host serves web/ on its own scheme. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/dist/katex.min.css" />
+  <style>
+    html, body { height: 100%; margin: 0; background: var(--bg-content); }
+    #editor { height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="editor" class="editor-host"></div>
+  <script type="module" src="/dist/embed-editor.js"></script>
+</body>
+</html>
