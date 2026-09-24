@@ -245,6 +245,7 @@ export class PdfViewer {
       : 0.5;
     const anchor = this._anchor;
     this._anchor = null;
+    const prev = this.pages;
 
     // Build the page shells (one scale for the whole pass). The proxies were
     // fetched at load time, so this loop never awaits — a zoom step lays out a
@@ -289,11 +290,19 @@ export class PdfViewer {
       });
 
       pagesEl.appendChild(wrap);
-      pages.push({ n, page, wrap, canvas, textLayer, viewport, scale });
+      pages.push({ n, page, wrap, canvas, textLayer, viewport, scale, held: this.#heldPixels(prev[n - 1], viewport) });
     }
     if (this.#stale(seq, pinchGeneration)) return;
+    // Adopted only once this pass is certain to commit: the held canvases are
+    // still on screen in the old shells until the swap below.
+    for (const p of pages) {
+      if (!p.held) continue;
+      p.held.className = 'pdf-held';
+      p.held.removeAttribute('style');
+      p.canvas.after(p.held);
+    }
 
-    // Swap the (still blank) pages in and restore the position in the same frame.
+    // Swap the (still unpainted) pages in and restore the position in the same frame.
     // Canvases must be attached AND visible before page.render(): Chromium does
     // not rasterize a detached or `visibility: hidden` canvas, so painting into an
     // off-screen buffer first leaves render() pending forever.
@@ -341,6 +350,27 @@ export class PdfViewer {
     }
   }
 
+  // A new pass lays out blank shells, so every recompile, zoom step, pinch
+  // settle and divider release used to flash the viewport white until the
+  // repaint landed. Instead the previous pass's pixels for the same page stay
+  // on top, stretched to the new size — exactly what the pinch and resize
+  // previews already show — until this pass paints underneath them. The canvas
+  // pdf.js draws into stays attached and visible, as it must.
+  #heldPixels(old, viewport) {
+    const c = old?._painted ? old.canvas : old?.held;
+    if (!c?.width) return null;
+    // A landscape page stretched into a portrait slot is a glitch, not a preview.
+    if (Math.abs(c.width / c.height - viewport.width / viewport.height) > 0.01) return null;
+    return c;
+  }
+
+  #dropHeld(p) {
+    if (!p.held) return;
+    p.held.width = 0;   // release the buffer now, not whenever it is collected
+    p.held.remove();
+    p.held = null;
+  }
+
   #nearPages() {
     const top = this.scrollEl.scrollTop - this._padT;
     const vh = this.scrollEl.clientHeight;
@@ -375,6 +405,7 @@ export class PdfViewer {
 
     for (const [i, p] of this.pages.entries()) {
       if (near.has(i)) continue;
+      this.#dropHeld(p);
       // Stop work already in flight on a page that has gone off-screen, rather
       // than letting it finish into a buffer about to be thrown away. A page
       // whose paint promise hasn't settled yet keeps its buffer for now —
@@ -412,6 +443,8 @@ export class PdfViewer {
         if (p.canvas.width) p._failed = true;
         console.error(`PDF page ${p.n} failed to render:`, err);
       }
+      // A cancelled paint keeps its stand-in for the pass that replaced it.
+      if (ok || p._failed) this.#dropHeld(p);
       if (ok) {
         void this.#buildTextLayer(p, seq).catch((err) => {
           console.error(`PDF page ${p.n} text layer failed:`, err);

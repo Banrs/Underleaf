@@ -898,6 +898,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pdf-page-wrap { position: relative; margin: 0 auto var(--sp-2); width: fit-content; border-radius: 3px; box-shadow: 0 0 0 0.5px var(--label-4), 0 2px 8px rgba(0, 0, 0, 0.14); }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
 .pdf-page-wrap canvas { display: block; border-radius: 3px; background: #fff; }
+/* The previous render's pixels, stretched over the page until it repaints. */
+.pdf-page-wrap .pdf-held { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* Selectable text layer (pdf.js): transparent glyphs over the canvas */
 .pdf-text-layer {
