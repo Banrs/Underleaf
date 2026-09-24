@@ -126,6 +126,20 @@ public sealed partial class MainWindow : Window
         MessageBar.Severity = severity;
         MessageBar.Message = message;
         MessageBar.IsOpen = true;
+        if (severity == InfoBarSeverity.Success)
+        {
+            _ = DismissLaterAsync(message);
+        }
+    }
+
+    /// <summary>Good news goes away by itself; errors stay until read.</summary>
+    private async Task DismissLaterAsync(string message)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(6));
+        if (MessageBar.Message == message)
+        {
+            MessageBar.IsOpen = false;
+        }
     }
 
     internal void UpdateTitle()
