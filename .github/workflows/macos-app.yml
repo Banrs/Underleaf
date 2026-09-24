@@ -62,6 +62,18 @@ jobs:
       - name: Build
         working-directory: apps/macos
         run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE build-for-testing
+      # The core must be linked in, not loaded: a dylib from target/ would be
+      # loaded from its build path, which exists only on the machine that
+      # built the app.
+      - name: Core linked statically
+        working-directory: apps/macos
+        run: |
+          DIR=$(xcodebuild -scheme TeXLocal -showBuildSettings | awk '$1 == "BUILT_PRODUCTS_DIR" { print $3; exit }')
+          otool -L "$DIR"/TeXLocal.app/Contents/MacOS/*
+          if otool -L "$DIR"/TeXLocal.app/Contents/MacOS/* | grep -q texlocal_ffi; then
+            echo "::error::The app loads the Rust core as a dylib"
+            exit 1
+          fi
       - name: Test
         working-directory: apps/macos
         run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE test-without-building
