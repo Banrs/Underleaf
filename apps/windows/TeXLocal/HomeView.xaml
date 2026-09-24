@@ -11,46 +11,52 @@
         </Grid.ColumnDefinitions>
 
         <StackPanel Padding="32" Spacing="12">
-            <Image x:Name="Logo" Width="48" Height="48" HorizontalAlignment="Left" />
+            <Image x:Name="Logo" Width="48" Height="48" HorizontalAlignment="Left" AutomationProperties.AccessibilityView="Raw" />
             <TextBlock Text="TeXLocal" Style="{StaticResource TitleLargeTextBlockStyle}" />
             <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        Text="Offline LaTeX editing and compilation. Your files never leave this computer." />
             <InfoBar x:Name="TexMissing" Severity="Warning" IsClosable="False" IsOpen="False"
                      Title="TeX isn’t installed"
-                     Message="Install MiKTeX or TeX Live to compile documents. TeXLocal notices once it is installed.">
+                     Message="Install MiKTeX or TeX Live to compile documents. TeXLocal finds it once it’s installed.">
                 <InfoBar.ActionButton>
                     <HyperlinkButton Content="Get MiKTeX" NavigateUri="https://miktex.org/download" />
                 </InfoBar.ActionButton>
             </InfoBar>
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                <Button Style="{StaticResource AccentButtonStyle}" Click="OnNewProject">
+                <Button Style="{StaticResource AccentButtonStyle}" Click="OnNewProject" AccessKey="N"
+                        ToolTipService.ToolTip="New project (Ctrl+Shift+N)">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE710;" FontSize="14" />
-                        <TextBlock Text="New Project" />
+                        <FontIcon Glyph="&#xE710;" FontSize="16" />
+                        <TextBlock Text="New project" />
                     </StackPanel>
                 </Button>
-                <Button Click="OnSettings" ToolTipService.ToolTip="Settings (Ctrl+,)">
-                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+                <Button Click="OnSettings" AccessKey="S" ToolTipService.ToolTip="Settings (Ctrl+,)"
+                        AutomationProperties.Name="Settings">
+                    <FontIcon Glyph="&#xE713;" FontSize="16" />
                 </Button>
             </StackPanel>
         </StackPanel>
 
-        <Grid Grid.Column="1" Padding="0,24,24,24" RowSpacing="8">
+        <!-- The projects on a layer above Mica, rounded where it meets the chrome. -->
+        <Grid Grid.Column="1" Padding="24,24,24,0" RowSpacing="8"
+              Background="{ThemeResource LayerFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <TextBlock Text="Projects" Style="{StaticResource SubtitleTextBlockStyle}" Margin="12,0" />
             <ListView x:Name="Projects" Grid.Row="1" SelectionMode="None" IsItemClickEnabled="True"
+                      AutomationProperties.Name="Projects" KeyDown="OnProjectsKeyDown"
                       ItemClick="OnProjectClick" ContextRequested="OnProjectContextRequested">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:ProjectRow">
-                        <Grid ColumnSpacing="12" Padding="0,8">
+                        <Grid ColumnSpacing="12" Padding="0,8" AutomationProperties.Name="{x:Bind Name}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE8A5;" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                            <FontIcon Glyph="&#xE8A5;" FontSize="20" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="{x:Bind Name}" />
                                 <TextBlock Text="{x:Bind Modified}" Style="{StaticResource CaptionTextBlockStyle}"
@@ -61,8 +67,9 @@
                 </ListView.ItemTemplate>
             </ListView>
             <StackPanel x:Name="NoProjects" Grid.Row="1" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE8A5;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                <TextBlock Text="No projects" HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <FontIcon Glyph="&#xE8A5;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                          AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock Text="No projects yet" HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" />
                 <TextBlock Text="Create a project to start writing." HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>

@@ -44,16 +44,35 @@ public sealed partial class HomeView : UserControl
         }
         var project = row.Info;
         var menu = new MenuFlyout();
-        menu.Items.Add(ContextMenus.Item("Open", () => _ = Main.OpenAsync(project.Id)));
-        menu.Items.Add(ContextMenus.Item("Rename…", () => _ = RenameAsync(project)));
+        menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = Main.OpenAsync(project.Id)));
+        menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(project), "F2"));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Delete…", () => _ = DeleteAsync(project)));
+        menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(project), "Delete"));
         ContextMenus.Show(menu, item, e);
+    }
+
+    /// <summary>F2 renames and Delete deletes the focused project, as in File Explorer.</summary>
+    private void OnProjectsKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (FocusManager.GetFocusedElement(XamlRoot) is not ListViewItem { Content: ProjectRow row })
+        {
+            return;
+        }
+        if (e.Key == Windows.System.VirtualKey.F2)
+        {
+            e.Handled = true;
+            _ = RenameAsync(row.Info);
+        }
+        else if (e.Key == Windows.System.VirtualKey.Delete)
+        {
+            e.Handled = true;
+            _ = DeleteAsync(row.Info);
+        }
     }
 
     private async Task RenameAsync(ProjectInfo project)
     {
-        if (await Dialogs.PromptAsync(XamlRoot, "Rename Project", "Name", "Rename", project.Name) is { } name)
+        if (await Dialogs.PromptAsync(XamlRoot, "Rename project", "Name", "Rename", project.Name) is { } name)
         {
             await Main.RenameProjectAsync(project, name);
         }
@@ -61,8 +80,8 @@ public sealed partial class HomeView : UserControl
 
     private async Task DeleteAsync(ProjectInfo project)
     {
-        if (await Dialogs.ConfirmAsync(XamlRoot, $"Delete “{project.Name}”?",
-                "The project moves to the Recycle Bin, where you can restore it.", "Delete"))
+        if (await Dialogs.ConfirmAsync(XamlRoot, $"Delete {project.Name}?",
+                "The project will be moved to the Recycle Bin, where you can restore it.", "Delete"))
         {
             await Main.DeleteProjectAsync(project);
         }

@@ -89,9 +89,39 @@ public sealed partial class MenuCommandTests
         Assert.False(MenuCommand.SyncForward.ClaimsChord());
         var chords = Enum.GetValues<MenuCommand>()
             .Where(c => c.ClaimsChord())
-            .Select(c => Accelerators.Parse(c.Accel()!))
+            .SelectMany(c => Accelerators.Chords(c.Accel()!))
             .ToList();
         Assert.Equal(chords.Count, chords.Distinct().Count());
+    }
+
+    [Fact]
+    public void TheKeypadWorksAsTheWebAcceptsIt()
+    {
+        const VirtualKeyModifiers ctrl = VirtualKeyModifiers.Control;
+        Assert.Equal(
+            new[] { new Chord((VirtualKey)0xBB, ctrl), new Chord(VirtualKey.Add, ctrl) },
+            Accelerators.Chords("CmdOrCtrl+Plus"));
+        Assert.Equal(
+            new[] { new Chord((VirtualKey)0xBD, ctrl | VirtualKeyModifiers.Menu), new Chord(VirtualKey.Subtract, ctrl | VirtualKeyModifiers.Menu) },
+            Accelerators.Chords("CmdOrCtrl+Alt+Minus"));
+        Assert.Equal(
+            new[] { new Chord(VirtualKey.Number0, ctrl), new Chord(VirtualKey.NumberPad0, ctrl) },
+            Accelerators.Chords("CmdOrCtrl+0"));
+        Assert.Equal(new[] { new Chord(VirtualKey.S, ctrl) }, Accelerators.Chords("CmdOrCtrl+S"));
+        Assert.Empty(Accelerators.Chords("Cmd+K"));
+    }
+
+    [Fact]
+    public void AccessKeysAreUniqueAndPreferWordStarts()
+    {
+        Assert.Equal(new[] { "F", "E", "V", "C" }, AccessKeys.Assign(["File", "Edit", "View", "Compile"]));
+        // "Save" takes S; "Save PDF as…" then takes the P of PDF.
+        Assert.Equal(new[] { "S", "P", "E" }, AccessKeys.Assign(["Save", "Save PDF as…", "Export project as ZIP…"]));
+        Assert.Equal(new[] { "A", "B", "" }, AccessKeys.Assign(["a", "ab", "…"]));
+        var keys = AccessKeys.Assign(Enum.GetValues<MenuCommand>().Select(c => c.Title()).ToList())
+            .Where(k => k.Length > 0)
+            .ToList();
+        Assert.Equal(keys.Count, keys.Distinct().Count());
     }
 
     [Fact]

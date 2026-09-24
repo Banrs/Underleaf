@@ -1,5 +1,4 @@
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Media;
 
 namespace TeXLocal;
 
@@ -25,14 +24,18 @@ public sealed class FileItem
 
     public Visibility MainVisibility { get; }
 
+    /// <summary>What a screen reader says: the name, and what kind of entry it is.</summary>
+    public string AccessibleName => Node.IsDirectory ? $"{Node.Name}, folder"
+        : MainVisibility == Visibility.Visible ? $"{Node.Name}, main file" : Node.Name;
+
     /// <summary>Segoe Fluent Icons glyphs by kind of file.</summary>
-    public string Glyph => Node.IsDirectory ? "" : Path.GetExtension(Node.Name).ToLowerInvariant() switch
+    public string Glyph => Node.IsDirectory ? "\uE8B7" : Path.GetExtension(Node.Name).ToLowerInvariant() switch
     {
-        ".tex" => "",
-        ".bib" => "",
-        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".svg" => "",
-        ".pdf" => "",
-        _ => "",
+        ".tex" => "\uE8A5",
+        ".bib" => "\uE8F1",
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".svg" => "\uE91B",
+        ".pdf" => "\uEA90",
+        _ => "\uE7C3",
     };
 
     public IEnumerable<FileItem> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
@@ -51,8 +54,11 @@ public sealed class LogRow(LogItem item)
     public string Message => item.Message;
     public string Location => item.File is null ? "" : item.Line is { } line ? $"{item.File}:{line}" : item.File;
     public Visibility LocationVisibility => item.File is null ? Visibility.Collapsed : Visibility.Visible;
-    public string Glyph => item.IsError ? "" : "";
-    public Brush Tint => (Brush)Application.Current.Resources[item.IsError ? "SystemFillColorCriticalBrush" : "SystemFillColorCautionBrush"];
+    public Visibility ErrorVisibility => item.IsError ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility WarningVisibility => item.IsError ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>What a screen reader says for the row.</summary>
+    public string AccessibleName => $"{(item.IsError ? "Error" : "Warning")}: {item.Message} {Location}";
 }
 
 public sealed class ProjectRow(ProjectInfo info)

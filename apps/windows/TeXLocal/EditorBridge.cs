@@ -15,7 +15,17 @@ internal sealed class EditorBridge
     private readonly EmbeddedPage page;
 
     public Action? Changed { get; set; }
+    public Action<int>? CursorMoved { get; set; }
     public Action<string>? Command { get; set; }
+
+    /// <summary>The page's renderer failed, taking the document with it.</summary>
+    public event Action? Crashed
+    {
+        add => page.Crashed += value;
+        remove => page.Crashed -= value;
+    }
+
+    public int Crashes => page.Crashes;
 
     /// <summary>The page reloaded after a crash and shows no document.</summary>
     public event Action? Reloaded
@@ -39,6 +49,9 @@ internal sealed class EditorBridge
         {
             case "changed":
                 Changed?.Invoke();
+                break;
+            case "cursor" when body.TryGetProperty("line", out var line) && line.ValueKind == JsonValueKind.Number:
+                CursorMoved?.Invoke(line.GetInt32());
                 break;
             case "command" when body.TryGetProperty("id", out var id) && id.GetString() is { } command:
                 Command?.Invoke(command);
@@ -69,6 +82,28 @@ internal sealed class EditorBridge
         page.RunAsync($"texlocal.command({L(name)}, {L(arg)})");
 
     public Task ForgetAsync(string path) => page.RunAsync($"texlocal.forget({L(path)})");
+
+    /// <summary>
+    /// Move a file's remembered state (undo history) to its new path. Pages
+    /// without rename() just forget it.
+    /// </summary>
+    public Task RenameAsync(string from, string to) =>
+        page.RunAsync($"texlocal.rename ? texlocal.rename({L(from)}, {L(to)}) : texlocal.forget({L(from)})");
+
+    /// <summary>
+    /// Undo or redo in the page. The editor declines when focus is in one of
+    /// its own inputs (the find panel), which then takes the browser's own.
+    /// </summary>
+    public Task UndoAsync(bool redo) => page.RunAsync(
+        $"texlocal.command({L(redo ? "redo" : "undo")}) || document.execCommand({L(redo ? "redo" : "undo")})");
+
+    /// <summary>
+    /// The editor's size: the interface-size setting times Windows' text
+    /// size (Settings › Accessibility), which a web page does not follow by
+    /// itself. The page scales as the browser version's window does.
+    /// </summary>
+    public Task SetZoomAsync(double zoom) =>
+        page.RunStickyAsync("zoom", $"document.body.style.zoom = {L(zoom)}");
 
     public Task SetSymbolsAsync(Symbols symbols) =>
         page.RunStickyAsync("symbols", $"texlocal.setSymbols({L(symbols.Labels)}, {L(symbols.Citations)})");

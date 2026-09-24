@@ -102,7 +102,16 @@ public sealed partial class PdfPane : UserControl
         ZoomOutButton.IsEnabled = ZoomInButton.IsEnabled = FitWidthButton.IsEnabled = shown;
     }
 
-    public void SetTheme(bool dark) => _ = page.RunStickyAsync("theme", $"texlocal.setTheme({L(dark ? "dark" : "light")})");
+    /// <summary>
+    /// The app's theme and the Windows accent, and the paper: dark paper
+    /// inverts the pages as the browser version's pdf-dark class does.
+    /// </summary>
+    public void SetAppearance(bool dark, string accent, bool darkPaper)
+    {
+        _ = page.RunStickyAsync("theme", $"texlocal.setTheme({L(dark ? "dark" : "light")})");
+        _ = page.RunStickyAsync("accent", $"document.documentElement.style.setProperty('--accent', {L(accent)})");
+        _ = page.RunStickyAsync("paper", $"document.documentElement.classList.toggle('pdf-dark', {L(darkPaper)})");
+    }
 
     public void Highlight(ForwardLoc loc) => _ = page.RunAsync($"texlocal.highlight({L(loc)})");
 

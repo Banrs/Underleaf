@@ -39,6 +39,9 @@ public sealed class PreferencesTests
             Assert.Equal(18, loaded.EditorFontSize);
             Assert.False(loaded.AutoCompile);
             Assert.Equal("onedark", loaded.EditorPalette);
+            Assert.Equal(100, loaded.UiScale);
+            Assert.Equal("white", loaded.PdfPaper);
+            Assert.True(loaded.ShowWordCount);
 
             File.WriteAllText(path, "{not json");
             Assert.Equal("system", Preferences.Load(path).Theme);
@@ -47,5 +50,19 @@ public sealed class PreferencesTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+}
+
+public sealed class InterfaceSizeTests
+{
+    [Fact]
+    public void TheEditorSizeStepsAlongTheWebsScalesAndStopsAtTheEnds()
+    {
+        Assert.Equal(110, Preferences.StepUiScale(100, 1));
+        Assert.Equal(90, Preferences.StepUiScale(100, -1));
+        Assert.Equal(130, Preferences.StepUiScale(130, 1));
+        Assert.Equal(80, Preferences.StepUiScale(80, -1));
+        // A hand-edited settings file with an odd size starts over at 100.
+        Assert.Equal(100, Preferences.StepUiScale(105, 1));
     }
 }

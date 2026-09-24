@@ -29,7 +29,10 @@ public sealed partial class MainWindow : Window
     internal TexStatus? Tex { get; private set; }
     internal ProjectModel? Project { get; private set; }
 
+    // Kept alive for their change events: Windows' text size and accent.
+    private readonly UISettings uiSettings = new();
     private bool closing;
+    private bool active = true;
 
     public MainWindow()
     {
@@ -38,8 +41,10 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        // Tall, as the guidance asks of a title bar with a back button.
+        AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.ico"));
-        TitleIcon.Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
+        TitleIcon.ImageSource = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
         // Most of the screen, centred: an editor and a PDF side by side want room.
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
         AppWindow.MoveAndResize(new RectInt32(
@@ -47,7 +52,10 @@ public sealed partial class MainWindow : Window
 
         AddAccelerators();
         Root.ActualThemeChanged += (_, _) => AppearanceChanged();
+        uiSettings.TextScaleFactorChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
+        uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
         ApplyTheme();
+        UpdateTitle();
 
         AppWindow.Closing += OnClosing;
         Closed += (_, _) =>
@@ -61,8 +69,6 @@ public sealed partial class MainWindow : Window
         _ = StartAsync();
     }
 
-    private bool active = true;
-
     private async Task StartAsync()
     {
         await RefreshProjectsAsync();
@@ -75,7 +81,7 @@ public sealed partial class MainWindow : Window
             await RefreshTexAsync();
             if (Tex is { Available: true })
             {
-                Report("TeX distribution detected — compilation enabled.", InfoBarSeverity.Success);
+                Report("TeX was found. You can compile now.", InfoBarSeverity.Success);
             }
         }
     }
@@ -93,6 +99,7 @@ public sealed partial class MainWindow : Window
         }
         Home.RenderTex();
         Workspace.TexChanged();
+        SettingsPage.Render();
     }
 
     private async Task RefreshProjectsAsync()
@@ -109,8 +116,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Show a message above the content: errors by default. Not a dialog, so
-    /// it never interrupts typing.
+    /// Show a message above the content: errors by default. An InfoBar, not
+    /// a dialog, so it never interrupts typing.
     /// </summary>
     internal void Report(string message, InfoBarSeverity severity = InfoBarSeverity.Error)
     {
@@ -121,10 +128,45 @@ public sealed partial class MainWindow : Window
 
     internal void UpdateTitle()
     {
-        TitleText.Text = Project is { } p ? (p.OpenPath is { } file ? $"{p.Id} — {file}" : p.Id) : "TeXLocal";
-        StatusText.Text = Project?.Status ?? "";
-        Title = Project is { } q ? $"{q.Id} - TeXLocal" : "TeXLocal";
+        var settings = SettingsPage.Visibility == Visibility.Visible;
+        AppTitleBar.Subtitle = settings ? "Settings" : Project?.Id ?? "";
+        AppTitleBar.IsBackButtonVisible = settings || Project is not null;
+        AppTitleBar.IsPaneToggleButtonVisible = !settings && Project is not null;
+        Title = Project is { } p ? $"{p.Id} - TeXLocal" : "TeXLocal";
     }
+
+    // ---------- screens ----------
+
+    /// <summary>The library, the open project, or settings over either.</summary>
+    private void ShowScreen(bool settings)
+    {
+        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+        Workspace.Visibility = !settings && Project is not null ? Visibility.Visible : Visibility.Collapsed;
+        Home.Visibility = !settings && Project is null ? Visibility.Visible : Visibility.Collapsed;
+        if (settings)
+        {
+            SettingsPage.Render();
+        }
+        UpdateTitle();
+    }
+
+    internal void OpenSettings() => ShowScreen(settings: true);
+
+    internal void CloseSettings() => ShowScreen(settings: false);
+
+    private void OnBackRequested(TitleBar sender, object args)
+    {
+        if (SettingsPage.Visibility == Visibility.Visible)
+        {
+            CloseSettings();
+        }
+        else
+        {
+            Perform(MenuCommand.ProjectClose);
+        }
+    }
+
+    private void OnPaneToggleRequested(TitleBar sender, object args) => Perform(MenuCommand.ViewToggleSidebar);
 
     // ---------- projects ----------
 
@@ -136,8 +178,7 @@ public sealed partial class MainWindow : Window
         }
         var project = new ProjectModel(id, Core, Editor, this);
         Project = project;
-        Home.Visibility = Visibility.Collapsed;
-        Workspace.Visibility = Visibility.Visible;
+        ShowScreen(settings: false);
         Workspace.Attach(project);
         await project.LoadAsync();
     }
@@ -159,9 +200,7 @@ public sealed partial class MainWindow : Window
         project.Detach();
         Workspace.Detach();
         Project = null;
-        Workspace.Visibility = Visibility.Collapsed;
-        Home.Visibility = Visibility.Visible;
-        UpdateTitle();
+        ShowScreen(settings: false);
         await RefreshProjectsAsync();
         return true;
     }
@@ -223,20 +262,28 @@ public sealed partial class MainWindow : Window
         AppearanceChanged();
     }
 
-    private void AppearanceChanged()
+    /// <summary>Carry the theme, accent, text size and settings to what XAML does not reach.</summary>
+    internal void AppearanceChanged()
     {
         var dark = Root.ActualTheme == ElementTheme.Dark;
         // The caption buttons are the system's, drawn for the Windows theme,
-        // so a pinned app theme has to recolour them.
+        // so a pinned app theme recolours them — except in a contrast theme,
+        // whose colours are the user's and stay the system's.
         var titleBar = AppWindow.TitleBar;
-        titleBar.ButtonForegroundColor = dark ? Colors.White : Colors.Black;
-        titleBar.ButtonBackgroundColor = Colors.Transparent;
-        titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        var contrast = new AccessibilitySettings().HighContrast;
+        titleBar.ButtonForegroundColor = contrast ? null : dark ? Colors.White : Colors.Black;
+        titleBar.ButtonBackgroundColor = contrast ? null : Colors.Transparent;
+        titleBar.ButtonInactiveBackgroundColor = contrast ? null : Colors.Transparent;
+
         // The web pages have no access to the Windows accent colour (Chromium
         // dropped CSS AccentColor), so it reaches them from here.
-        var accent = new UISettings().GetColorValue(UIColorType.Accent);
-        _ = Editor.SetAppearanceAsync(dark, Preferences, $"#{accent.R:x2}{accent.G:x2}{accent.B:x2}");
-        Workspace.SetTheme(dark);
+        var color = uiSettings.GetColorValue(UIColorType.Accent);
+        var accent = $"#{color.R:x2}{color.G:x2}{color.B:x2}";
+        _ = Editor.SetAppearanceAsync(dark, Preferences, accent);
+        _ = Editor.SetZoomAsync(Preferences.UiScale / 100.0 * uiSettings.TextScaleFactor);
+        var darkPaper = Preferences.PdfPaper == "dark" || (Preferences.PdfPaper == "auto" && dark);
+        Workspace.SetAppearance(dark, accent, darkPaper);
+        Workspace.Render();
     }
 
     // ---------- keyboard ----------
@@ -250,21 +297,24 @@ public sealed partial class MainWindow : Window
     {
         foreach (var command in Enum.GetValues<MenuCommand>())
         {
-            if (!command.ClaimsChord() || Accelerators.Parse(command.Accel()!) is not { } chord)
+            if (!command.ClaimsChord())
             {
                 continue;
             }
-            var accelerator = new KeyboardAccelerator { Key = chord.Key, Modifiers = chord.Modifiers };
-            accelerator.Invoked += (_, args) =>
+            foreach (var chord in Accelerators.Chords(command.Accel()!))
             {
-                if (FocusManager.GetFocusedElement(Root.XamlRoot) is WebView2)
+                var accelerator = new KeyboardAccelerator { Key = chord.Key, Modifiers = chord.Modifiers };
+                accelerator.Invoked += (_, args) =>
                 {
-                    return;
-                }
-                args.Handled = true;
-                Perform(command);
-            };
-            Root.KeyboardAccelerators.Add(accelerator);
+                    if (FocusManager.GetFocusedElement(Root.XamlRoot) is WebView2)
+                    {
+                        return;
+                    }
+                    args.Handled = true;
+                    Perform(command);
+                };
+                Root.KeyboardAccelerators.Add(accelerator);
+            }
         }
     }
 
@@ -288,7 +338,7 @@ public sealed partial class MainWindow : Window
         }
         if (!await project.FlushAsync()
             && !await Dialogs.ConfirmAsync(Root.XamlRoot, "Close without saving?",
-                "TeXLocal couldn’t save your latest edits. If you close now, they are lost.", "Close Without Saving"))
+                "TeXLocal couldn’t save your latest changes. If you close now, they’ll be lost.", "Close without saving"))
         {
             return;
         }
@@ -308,8 +358,8 @@ public sealed partial class MainWindow : Window
             : result.Errors.Count switch
             {
                 0 => "Compile failed",
-                1 => "Compile failed — 1 error",
-                var n => $"Compile failed — {n} errors",
+                1 => "Compile failed with 1 error",
+                var n => $"Compile failed with {n} errors",
             });
     }
 }

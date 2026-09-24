@@ -19,9 +19,28 @@ public sealed class Preferences
     public string EditorFont { get; set; } = "system";
 
     public int EditorFontSize { get; set; } = 14;
+
+    /// <summary>The editor page's size in percent, one of UiScales.</summary>
+    public int UiScale { get; set; } = 100;
+
+    /// <summary>"white", "dark" (inverted) or "auto" (dark with the app).</summary>
+    public string PdfPaper { get; set; } = "white";
+
+    public bool ShowWordCount { get; set; } = true;
     public bool AutoCompile { get; set; } = true;
     public bool SidebarVisible { get; set; } = true;
     public bool PdfVisible { get; set; } = true;
+
+    /// <summary>web/src/prefs.js UI_SCALES, stepped by the interface-size commands.</summary>
+    public static readonly int[] UiScales = [80, 90, 100, 110, 120, 130];
+
+    /// <summary>One step along UiScales, stopping at either end; an unknown size starts from 100.</summary>
+    public static int StepUiScale(int current, int delta)
+    {
+        var i = Array.IndexOf(UiScales, current);
+        i = i < 0 ? Array.IndexOf(UiScales, 100) : Math.Clamp(i + delta, 0, UiScales.Length - 1);
+        return UiScales[i];
+    }
 
     /// <summary>The saved settings, or the defaults when there are none or they cannot be read.</summary>
     public static Preferences Load(string path)

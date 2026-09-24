@@ -28,8 +28,14 @@ internal sealed class EmbeddedPage
     // it, so it is replayed before anything else runs.
     private readonly Dictionary<string, string> sticky = [];
 
+    /// <summary>Raised when the page's renderer failed; whatever the page held is gone.</summary>
+    public event Action? Crashed;
+
     /// <summary>Raised when the page came back after its renderer failed.</summary>
     public event Action? Reloaded;
+
+    /// <summary>How many times the renderer has failed, to tell a lost answer from an empty one.</summary>
+    public int Crashes { get; private set; }
 
     public EmbeddedPage(WebView2 view, string page, Action<string, JsonElement> onMessage)
     {
@@ -97,6 +103,8 @@ internal sealed class EmbeddedPage
                 {
                     ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
+                Crashes++;
+                Crashed?.Invoke();
                 web.Reload();
             }
         };

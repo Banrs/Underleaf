@@ -1,6 +1,5 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 
 namespace TeXLocal;
 
@@ -25,14 +24,13 @@ public sealed partial class LogsView : UserControl
         Issues.ItemsSource = rows;
         NoIssues.Text = result is null ? "Not compiled yet" : rows.Count == 0 ? "No issues" : "";
         RawText.Text = result?.Log ?? "";
+        SuccessIcon.Visibility = result is { Ok: true } ? Visibility.Visible : Visibility.Collapsed;
+        FailureIcon.Visibility = result is { Ok: false } ? Visibility.Visible : Visibility.Collapsed;
         if (result is null)
         {
-            OutcomeIcon.Glyph = OutcomeText.Text = DurationText.Text = "";
+            OutcomeText.Text = DurationText.Text = "";
             return;
         }
-        OutcomeIcon.Glyph = result.Ok ? "" : "";
-        OutcomeIcon.Foreground = (Brush)Application.Current.Resources[
-            result.Ok ? "SystemFillColorSuccessBrush" : "SystemFillColorCriticalBrush"];
         OutcomeText.Text = result.Ok ? "Compiled" : "Failed";
         DurationText.Text = $"{result.DurationMs / 1000.0:0.0}s";
     }

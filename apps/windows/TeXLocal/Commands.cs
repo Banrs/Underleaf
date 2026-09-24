@@ -10,7 +10,7 @@ public sealed partial class MainWindow
 {
     internal bool IsEnabled(MenuCommand command) => command switch
     {
-        MenuCommand.ProjectNew or MenuCommand.AppSettings => true,
+        MenuCommand.ProjectNew or MenuCommand.AppSettings or MenuCommand.ViewUiScaleUp or MenuCommand.ViewUiScaleDown => true,
         MenuCommand.CompileRun => Project is { Compiling: false, TexAvailable: true },
         MenuCommand.PdfSave or MenuCommand.PdfFind or MenuCommand.ViewZoomIn or MenuCommand.ViewZoomOut
             or MenuCommand.ViewFitWidth or MenuCommand.ViewFitHeight or MenuCommand.SyncInverse =>
@@ -50,11 +50,14 @@ public sealed partial class MainWindow
                 }
                 return;
             case MenuCommand.AppSettings:
-                await Dialogs.SettingsAsync(Root.XamlRoot, Preferences, () =>
-                {
-                    SavePreferences();
-                    ApplyTheme();
-                });
+                OpenSettings();
+                return;
+            case MenuCommand.ViewUiScaleUp:
+            case MenuCommand.ViewUiScaleDown:
+                Preferences.UiScale = Preferences.StepUiScale(Preferences.UiScale, command == MenuCommand.ViewUiScaleUp ? 1 : -1);
+                SavePreferences();
+                AppearanceChanged();
+                SettingsPage.Render();
                 return;
             case MenuCommand.CompileToggleAuto:
                 Preferences.AutoCompile = !Preferences.AutoCompile;
@@ -82,13 +85,13 @@ public sealed partial class MainWindow
                 Workspace.FocusSearch();
                 break;
             case MenuCommand.FileNew:
-                if (await Dialogs.PromptAsync(Root.XamlRoot, "New File", "Path — folders are created as needed", "Create") is { } file)
+                if (await Dialogs.PromptAsync(Root.XamlRoot, "New file", "Path (folders are created as needed)", "Create", placeholder: "sections/intro.tex") is { } file)
                 {
                     await project.CreateEntryAsync(file, directory: false);
                 }
                 break;
             case MenuCommand.FileNewFolder:
-                if (await Dialogs.PromptAsync(Root.XamlRoot, "New Folder", "Path — folders are created as needed", "Create") is { } folder)
+                if (await Dialogs.PromptAsync(Root.XamlRoot, "New folder", "Path (folders are created as needed)", "Create", placeholder: "figures") is { } folder)
                 {
                     await project.CreateEntryAsync(folder, directory: true);
                 }
@@ -109,10 +112,9 @@ public sealed partial class MainWindow
                 }
                 break;
             case MenuCommand.EditUndo:
-                Format(project, "undo");
-                break;
             case MenuCommand.EditRedo:
-                Format(project, "redo");
+                _ = Editor.UndoAsync(redo: command == MenuCommand.EditRedo);
+                Editor.Focus();
                 break;
             case MenuCommand.EditFind:
                 Format(project, "find");
@@ -130,7 +132,7 @@ public sealed partial class MainWindow
                 Format(project, "comment");
                 break;
             case MenuCommand.EditGotoLine:
-                if (await Dialogs.PromptAsync(Root.XamlRoot, "Go to Line", "Line number", "Go") is { } text
+                if (await Dialogs.PromptAsync(Root.XamlRoot, "Go to line", "Line number", "Go") is { } text
                     && int.TryParse(text, out var line))
                 {
                     project.Reveal(line);
@@ -154,16 +156,28 @@ public sealed partial class MainWindow
                 project.ShowLogs = !project.ShowLogs;
                 break;
             case MenuCommand.ViewZoomIn:
-                Workspace.Pdf.ZoomBy(1.15);
-                break;
             case MenuCommand.ViewZoomOut:
-                Workspace.Pdf.ZoomBy(1 / 1.15);
-                break;
             case MenuCommand.ViewFitWidth:
-                Workspace.Pdf.FitWidth();
-                break;
             case MenuCommand.ViewFitHeight:
-                Workspace.Pdf.FitHeight();
+                // They act on a PDF the reader can see, so it comes into view
+                // first rather than changing out of sight.
+                project.ShowLogs = false;
+                ShowPdf();
+                switch (command)
+                {
+                    case MenuCommand.ViewZoomIn:
+                        Workspace.Pdf.ZoomBy(1.15);
+                        break;
+                    case MenuCommand.ViewZoomOut:
+                        Workspace.Pdf.ZoomBy(1 / 1.15);
+                        break;
+                    case MenuCommand.ViewFitWidth:
+                        Workspace.Pdf.FitWidth();
+                        break;
+                    default:
+                        Workspace.Pdf.FitHeight();
+                        break;
+                }
                 break;
             case MenuCommand.CompileRun:
                 await project.CompileAsync();

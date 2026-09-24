@@ -18,28 +18,37 @@
             </Grid.ColumnDefinitions>
             <SelectorBar x:Name="Tabs" SelectionChanged="OnTabChanged">
                 <SelectorBarItem x:Name="IssuesTab" Text="Issues" />
-                <SelectorBarItem x:Name="RawTab" Text="Raw Log" />
+                <SelectorBarItem x:Name="RawTab" Text="Raw log" />
             </SelectorBar>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <FontIcon x:Name="OutcomeIcon" FontSize="14" />
+                <FontIcon x:Name="SuccessIcon" Glyph="&#xE73E;" FontSize="16" Visibility="Collapsed"
+                          Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                <FontIcon x:Name="FailureIcon" Glyph="&#xEB90;" FontSize="16" Visibility="Collapsed"
+                          Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                 <TextBlock x:Name="OutcomeText" />
                 <TextBlock x:Name="DurationText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>
-            <Button Grid.Column="2" Click="OnClose" ToolTipService.ToolTip="Close the log" VerticalAlignment="Center">
+            <Button Grid.Column="2" Click="OnClose" ToolTipService.ToolTip="Close the log (Ctrl+Shift+L)"
+                    AutomationProperties.Name="Close the log" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE711;" FontSize="12" />
             </Button>
         </Grid>
 
         <Grid Grid.Row="1">
-            <ListView x:Name="Issues" SelectionMode="None" IsItemClickEnabled="True" ItemClick="OnIssueClick">
+            <ListView x:Name="Issues" SelectionMode="None" IsItemClickEnabled="True" ItemClick="OnIssueClick"
+                      AutomationProperties.Name="Issues">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:LogRow">
-                        <Grid ColumnSpacing="8" Padding="0,6">
+                        <Grid ColumnSpacing="12" Padding="0,8" AutomationProperties.Name="{x:Bind AccessibleName}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="{x:Bind Glyph}" Foreground="{x:Bind Tint}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0" />
+                            <!-- Two icons rather than a bound colour, so a contrast theme recolours them. -->
+                            <FontIcon Glyph="&#xEB90;" Foreground="{ThemeResource SystemFillColorCriticalBrush}" FontSize="16"
+                                      VerticalAlignment="Top" Margin="0,2,0,0" Visibility="{x:Bind ErrorVisibility}" />
+                            <FontIcon Glyph="&#xE7BA;" Foreground="{ThemeResource SystemFillColorCautionBrush}" FontSize="16"
+                                      VerticalAlignment="Top" Margin="0,2,0,0" Visibility="{x:Bind WarningVisibility}" />
                             <StackPanel Grid.Column="1" Spacing="2">
                                 <TextBlock Text="{x:Bind Message}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                                 <TextBlock Text="{x:Bind Location}" Visibility="{x:Bind LocationVisibility}"
@@ -54,7 +63,8 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ScrollViewer x:Name="Raw" Visibility="Collapsed" Padding="12,8"
                           HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto">
-                <TextBlock x:Name="RawText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" />
+                <TextBlock x:Name="RawText" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True"
+                           AutomationProperties.Name="Raw log" />
             </ScrollViewer>
         </Grid>
     </Grid>

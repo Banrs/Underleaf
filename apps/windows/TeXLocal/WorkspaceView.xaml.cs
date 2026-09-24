@@ -1,15 +1,18 @@
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
 
 namespace TeXLocal;
 
 /// <summary>
-/// An open project: menus and toolbar, the sidebar, the editor, and the PDF
-/// or the compile log beside it. It renders a ProjectModel and sends every
-/// action through the window's commands.
+/// An open project: menus and toolbar, the sidebar, the editor, the PDF or
+/// the compile log beside it, and a status bar. It renders a ProjectModel and
+/// sends every action through the window's commands.
 /// </summary>
 public sealed partial class WorkspaceView : UserControl
 {
@@ -29,9 +32,9 @@ public sealed partial class WorkspaceView : UserControl
             MenuCommand.ProjectNew, null,
             MenuCommand.FileNew, MenuCommand.FileNewFolder, MenuCommand.FileUpload, null,
             MenuCommand.FileSave, null,
-            MenuCommand.ProjectClose, null,
             MenuCommand.PdfSave, MenuCommand.ProjectExport, null,
-            MenuCommand.AppSettings,
+            MenuCommand.AppSettings, null,
+            MenuCommand.ProjectClose,
         ]),
         ("Edit", [
             MenuCommand.EditUndo, MenuCommand.EditRedo, null,
@@ -40,7 +43,8 @@ public sealed partial class WorkspaceView : UserControl
         ]),
         ("View", [
             MenuCommand.ViewToggleSidebar, MenuCommand.ViewTogglePdf, MenuCommand.ViewToggleLogs, null,
-            MenuCommand.ViewZoomIn, MenuCommand.ViewZoomOut, MenuCommand.ViewFitWidth, MenuCommand.ViewFitHeight,
+            MenuCommand.ViewZoomIn, MenuCommand.ViewZoomOut, MenuCommand.ViewFitWidth, MenuCommand.ViewFitHeight, null,
+            MenuCommand.ViewUiScaleUp, MenuCommand.ViewUiScaleDown,
         ]),
         ("Compile", [
             MenuCommand.CompileRun, MenuCommand.CompileToggleAuto, null,
@@ -55,9 +59,9 @@ public sealed partial class WorkspaceView : UserControl
         ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
         ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
         ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-        ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-        ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-        ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
+        ("Bulleted list", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
+        ("Numbered list", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
+        ("Code block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
     ];
 
     public WorkspaceView()
@@ -65,14 +69,14 @@ public sealed partial class WorkspaceView : UserControl
         InitializeComponent();
         EditorHost.Children.Insert(0, Main.Editor.View);
 
-        sidebarSplitter = new Splitter(SidebarColumn, targetIsBefore: true, minimum: 160);
+        sidebarSplitter = new Splitter(SidebarColumn, targetIsBefore: true, minimum: 160, "Resize the sidebar");
         sidebarSplitter.Resized += width => sidebarWidth = new GridLength(width);
         Grid.SetColumn(sidebarSplitter, 1);
-        previewSplitter = new Splitter(PreviewColumn, targetIsBefore: false, minimum: 240);
-        previewSplitter.Resized += width => previewWidth = new GridLength(width);
-        Grid.SetColumn(previewSplitter, 3);
         Panes.Children.Add(sidebarSplitter);
-        Panes.Children.Add(previewSplitter);
+        previewSplitter = new Splitter(PreviewColumn, targetIsBefore: false, minimum: 240, "Resize the PDF");
+        previewSplitter.Resized += width => previewWidth = new GridLength(width);
+        Grid.SetColumn(previewSplitter, 1);
+        Document.Children.Add(previewSplitter);
 
         BuildMenu();
         foreach (var (label, template) in InsertTemplates)
@@ -113,6 +117,10 @@ public sealed partial class WorkspaceView : UserControl
     {
         switch (e.PropertyName)
         {
+            case nameof(ProjectModel.CursorLine):
+                // On every cursor move: only the breadcrumb follows it.
+                RenderStatusBar();
+                return;
             case nameof(ProjectModel.Tree):
             case nameof(ProjectModel.Settings):
                 RenderTree();
@@ -120,7 +128,7 @@ public sealed partial class WorkspaceView : UserControl
             case nameof(ProjectModel.OpenPath):
                 SelectOpenFile();
                 break;
-            case nameof(ProjectModel.Sections):
+            case nameof(ProjectModel.Stats):
                 RenderOutline();
                 break;
             case nameof(ProjectModel.SearchHits):
@@ -155,7 +163,7 @@ public sealed partial class WorkspaceView : UserControl
         Render();
     }
 
-    internal void SetTheme(bool dark) => Pdf.SetTheme(dark);
+    internal void SetAppearance(bool dark, string accent, bool darkPaper) => Pdf.SetAppearance(dark, accent, darkPaper);
 
     internal void FocusSearch() => SearchBox.Focus(FocusState.Programmatic);
 
@@ -178,19 +186,21 @@ public sealed partial class WorkspaceView : UserControl
         EnginePdf.IsChecked = engine == "pdflatex";
         EngineXe.IsChecked = engine == "xelatex";
         EngineLua.IsChecked = engine == "lualatex";
-        EngineLabel.Text = EngineName(engine);
         AutoCompileItem.IsChecked = Main.Preferences.AutoCompile;
 
         ErrorBadge.Value = p.ErrorCount;
         ErrorBadge.Visibility = p.ErrorCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         LogButton.IsChecked = p.ShowLogs;
-        ToolTipService.SetToolTip(LogButton, p.Result is null
-            ? "Compile Log (Ctrl+Shift+L)"
-            : $"Compile Log — {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")}");
+        var log = p.Result is null
+            ? "Compile log (Ctrl+Shift+L)"
+            : $"Compile log: {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")} (Ctrl+Shift+L)";
+        ToolTipService.SetToolTip(LogButton, log);
+        AutomationProperties.SetHelpText(LogButton, log);
         PdfToggle.IsChecked = Main.Preferences.PdfVisible;
         SavePdfItem.IsEnabled = Main.IsEnabled(MenuCommand.PdfSave);
         EditorPlaceholder.Visibility = p.OpenPath is null ? Visibility.Visible : Visibility.Collapsed;
 
+        RenderStatusBar();
         Layout();
         foreach (var (command, item) in menuItems)
         {
@@ -202,7 +212,21 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
+    private void RenderStatusBar()
+    {
+        if (project is not { } p)
+        {
+            return;
+        }
+        CrumbsText.Text = string.Join(" › ", p.Breadcrumb);
+        CountsText.Text = Main.Preferences.ShowWordCount && p.Stats is { } stats
+            ? $"{Count(stats.Words, "word")} · {Count(stats.Lines, "line")}"
+            : "";
+        EngineText.Text = EngineName(p.Settings?.Engine ?? "pdflatex");
+        StatusText.Text = p.Status;
+    }
+
+    private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
     private static string EngineName(string engine) => engine switch
     {
@@ -217,6 +241,9 @@ public sealed partial class WorkspaceView : UserControl
         var sidebar = Main.Preferences.SidebarVisible;
         Sidebar.Visibility = sidebarSplitter.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
         SidebarColumn.Width = sidebar ? sidebarWidth : new GridLength(0);
+        // Without the sidebar the layer meets the window's edge: no corner.
+        Layer.CornerRadius = sidebar ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
+        Layer.BorderThickness = sidebar ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
 
         var logs = project?.ShowLogs == true;
         var preview = logs || Main.Preferences.PdfVisible;
@@ -228,9 +255,13 @@ public sealed partial class WorkspaceView : UserControl
 
     private void BuildMenu()
     {
-        foreach (var (title, items) in MenuLayout)
+        var menuKeys = AccessKeys.Assign(MenuLayout.Select(m => m.Title).ToList());
+        for (var m = 0; m < MenuLayout.Length; m++)
         {
-            var menu = new MenuBarItem { Title = title };
+            var (title, items) = MenuLayout[m];
+            var menu = new MenuBarItem { Title = title, AccessKey = menuKeys[m] };
+            var commands = items.OfType<MenuCommand>().ToList();
+            var keys = AccessKeys.Assign(commands.Select(c => c.Title()).ToList());
             foreach (var entry in items)
             {
                 if (entry is not { } command)
@@ -240,6 +271,7 @@ public sealed partial class WorkspaceView : UserControl
                 }
                 MenuFlyoutItem item = MainWindow.IsToggle(command) ? new ToggleMenuFlyoutItem() : new MenuFlyoutItem();
                 item.Text = command.Title();
+                item.AccessKey = keys[commands.IndexOf(command)];
                 if (command.Accel() is { } accel && (command.ClaimsChord() || command.IsTextEditing()))
                 {
                     // The chord itself is the window's; the menu only shows it.
@@ -300,8 +332,6 @@ public sealed partial class WorkspaceView : UserControl
         Main.Editor.Focus();
     }
 
-    private void OnBack(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ProjectClose);
-
     private void OnBold(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditBold);
 
     private void OnItalic(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditItalic);
@@ -312,7 +342,7 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnEngine(object sender, RoutedEventArgs e)
     {
-        if (project is not null && sender is FrameworkElement { Tag: string engine } && engine != project.Settings?.Engine)
+        if (project is not null && sender is FrameworkElement { Tag: string engine })
         {
             _ = project.SetEngineAsync(engine);
         }
@@ -327,6 +357,8 @@ public sealed partial class WorkspaceView : UserControl
     private void OnSavePdf(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.PdfSave);
 
     private void OnExportZip(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ProjectExport);
+
+    private void OnSettings(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.AppSettings);
 
     // ---------- sidebar ----------
 
@@ -349,7 +381,7 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == Windows.System.VirtualKey.Escape)
+        if (e.Key == VirtualKey.Escape)
         {
             SearchBox.Text = "";
             e.Handled = true;
@@ -382,6 +414,25 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
+    /// <summary>F2 renames and Delete deletes, as in File Explorer.</summary>
+    private void OnFilesKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (project is not { } p || Files.SelectedItem is not FileItem { Node: var node })
+        {
+            return;
+        }
+        if (e.Key == VirtualKey.F2)
+        {
+            e.Handled = true;
+            _ = RenameAsync(p, node);
+        }
+        else if (e.Key == VirtualKey.Delete)
+        {
+            e.Handled = true;
+            _ = DeleteAsync(p, node);
+        }
+    }
+
     private void OnFileContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
         if (project is not { } p
@@ -390,22 +441,28 @@ public sealed partial class WorkspaceView : UserControl
         {
             return;
         }
+        // The usual order: open, then the file's own commands, then its
+        // location, and the destructive one last.
         var menu = new MenuFlyout();
+        if (!node.IsDirectory)
+        {
+            menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = p.OpenAsync(node.Path)));
+        }
         if (!node.IsDirectory && node.Path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) && node.Path != p.Settings?.MainFile)
         {
-            menu.Items.Add(ContextMenus.Item("Set as Main File", () => _ = p.SetMainFileAsync(node.Path)));
-            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(ContextMenus.Item("Set as main file", "\uE735", () => _ = p.SetMainFileAsync(node.Path)));
         }
-        menu.Items.Add(ContextMenus.Item("Rename…", () => _ = RenameAsync(p, node)));
-        menu.Items.Add(ContextMenus.Item("Show in File Explorer", () => _ = p.RevealAsync(node.Path)));
+        menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(p, node), "F2"));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Delete…", () => _ = DeleteAsync(p, node)));
+        menu.Items.Add(ContextMenus.Item("Open file location", "\uE838", () => _ = p.RevealAsync(node.Path)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(p, node), "Delete"));
         ContextMenus.Show(menu, row, e);
     }
 
     private async Task RenameAsync(ProjectModel p, TreeNode node)
     {
-        if (await Dialogs.PromptAsync(XamlRoot, $"Rename “{node.Name}”", "Path", "Rename", node.Path) is { } to)
+        if (await Dialogs.PromptAsync(XamlRoot, $"Rename {node.Name}", "New path", "Rename", node.Path) is { } to)
         {
             await p.RenameEntryAsync(node.Path, to);
         }
@@ -416,14 +473,33 @@ public sealed partial class WorkspaceView : UserControl
         // Refuse before asking, not after the user has already confirmed.
         if (ProjectPaths.Contains(node.Path, p.Settings?.MainFile))
         {
-            Main.Report("Choose a different main file before deleting this entry.");
+            Main.Report("Choose a different main file before you delete this.", InfoBarSeverity.Warning);
             return;
         }
-        var what = node.IsDirectory ? "This folder and everything inside it" : "This file";
-        if (await Dialogs.ConfirmAsync(XamlRoot, $"Delete “{node.Name}”?", $"{what} will be moved to the Recycle Bin.", "Delete"))
+        var what = node.IsDirectory ? "This folder and everything in it" : "This file";
+        if (await Dialogs.ConfirmAsync(XamlRoot, $"Delete {node.Name}?", $"{what} will be moved to the Recycle Bin.", "Delete"))
         {
             await p.DeleteEntryAsync(node.Path);
         }
+    }
+
+    // ---------- dropping files in ----------
+
+    /// <summary>
+    /// The folder a drop lands in: the folder under the pointer, the folder
+    /// of the file under it, or the project's root.
+    /// </summary>
+    private string DropFolder(DragEventArgs e)
+    {
+        var point = e.GetPosition(null);
+        foreach (var element in VisualTreeHelper.FindElementsInHostCoordinates(point, Files))
+        {
+            if (element is TreeViewItem row && Files.ItemFromContainer(row) is FileItem { Node: var node })
+            {
+                return node.IsDirectory ? node.Path : node.Path.Contains('/') ? node.Path[..node.Path.LastIndexOf('/')] : "";
+            }
+        }
+        return "";
     }
 
     private void OnDragOver(object sender, DragEventArgs e)
@@ -431,7 +507,8 @@ public sealed partial class WorkspaceView : UserControl
         if (project is not null && e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
-            e.DragUIOverride.Caption = "Add to project";
+            var folder = DropFolder(e);
+            e.DragUIOverride.Caption = folder.Length == 0 ? "Add to project" : $"Add to {folder}";
         }
     }
 
@@ -441,6 +518,7 @@ public sealed partial class WorkspaceView : UserControl
         {
             return;
         }
+        var folder = DropFolder(e);
         var deferral = e.GetDeferral();
         List<string> paths;
         try
@@ -451,6 +529,6 @@ public sealed partial class WorkspaceView : UserControl
         {
             deferral.Complete();
         }
-        await p.ImportFilesAsync(paths);
+        await p.ImportFilesAsync(paths, folder);
     }
 }

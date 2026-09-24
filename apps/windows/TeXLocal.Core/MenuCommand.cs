@@ -35,6 +35,8 @@ public enum MenuCommand
     ViewZoomOut,
     ViewFitWidth,
     ViewFitHeight,
+    ViewUiScaleUp,
+    ViewUiScaleDown,
     CompileRun,
     CompileToggleAuto,
     SyncForward,
@@ -71,6 +73,8 @@ public static class MenuCommands
         MenuCommand.ViewZoomOut => "view.zoomOut",
         MenuCommand.ViewFitWidth => "view.fitWidth",
         MenuCommand.ViewFitHeight => "view.fitHeight",
+        MenuCommand.ViewUiScaleUp => "view.uiScaleUp",
+        MenuCommand.ViewUiScaleDown => "view.uiScaleDown",
         MenuCommand.CompileRun => "compile.run",
         MenuCommand.CompileToggleAuto => "compile.toggleAuto",
         MenuCommand.SyncForward => "sync.forward",
@@ -79,38 +83,44 @@ public static class MenuCommands
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 
+    /// <summary>
+    /// Menu text in sentence case, as Windows writes commands; an ellipsis
+    /// marks a command that asks for more before it acts.
+    /// </summary>
     public static string Title(this MenuCommand command) => command switch
     {
-        MenuCommand.ProjectNew => "New Project…",
-        MenuCommand.ProjectClose => "Close Project",
-        MenuCommand.ProjectExport => "Export Project as ZIP…",
-        MenuCommand.ProjectSearch => "Find in Project",
-        MenuCommand.FileNew => "New File…",
-        MenuCommand.FileNewFolder => "New Folder…",
-        MenuCommand.FileUpload => "Add Files…",
+        MenuCommand.ProjectNew => "New project…",
+        MenuCommand.ProjectClose => "Close project",
+        MenuCommand.ProjectExport => "Export project as ZIP…",
+        MenuCommand.ProjectSearch => "Find in project",
+        MenuCommand.FileNew => "New file…",
+        MenuCommand.FileNewFolder => "New folder…",
+        MenuCommand.FileUpload => "Add files…",
         MenuCommand.FileSave => "Save",
-        MenuCommand.PdfSave => "Save PDF As…",
+        MenuCommand.PdfSave => "Save PDF as…",
         MenuCommand.EditUndo => "Undo",
         MenuCommand.EditRedo => "Redo",
-        MenuCommand.EditFind => "Find & Replace",
+        MenuCommand.EditFind => "Find and replace",
         MenuCommand.EditBold => "Bold",
         MenuCommand.EditItalic => "Italic",
-        MenuCommand.EditMath => "Inline Math",
-        MenuCommand.EditComment => "Toggle Comment",
-        MenuCommand.EditGotoLine => "Go to Line…",
-        MenuCommand.PdfFind => "Find in PDF…",
+        MenuCommand.EditMath => "Inline math",
+        MenuCommand.EditComment => "Toggle comment",
+        MenuCommand.EditGotoLine => "Go to line…",
+        MenuCommand.PdfFind => "Find in PDF",
         MenuCommand.ViewToggleSidebar => "Sidebar",
         MenuCommand.ViewTogglePdf => "PDF",
-        MenuCommand.ViewToggleLogs => "Compile Log",
-        MenuCommand.ViewZoomIn => "Zoom In",
-        MenuCommand.ViewZoomOut => "Zoom Out",
-        MenuCommand.ViewFitWidth => "Fit Width",
-        MenuCommand.ViewFitHeight => "Fit Height",
+        MenuCommand.ViewToggleLogs => "Compile log",
+        MenuCommand.ViewZoomIn => "Zoom in",
+        MenuCommand.ViewZoomOut => "Zoom out",
+        MenuCommand.ViewFitWidth => "Fit width",
+        MenuCommand.ViewFitHeight => "Fit height",
+        MenuCommand.ViewUiScaleUp => "Increase editor size",
+        MenuCommand.ViewUiScaleDown => "Decrease editor size",
         MenuCommand.CompileRun => "Compile",
-        MenuCommand.CompileToggleAuto => "Compile Automatically",
-        MenuCommand.SyncForward => "Go to PDF Position",
-        MenuCommand.SyncInverse => "Go to Source Position",
-        MenuCommand.AppSettings => "Settings…",
+        MenuCommand.CompileToggleAuto => "Compile automatically",
+        MenuCommand.SyncForward => "Go to PDF position",
+        MenuCommand.SyncInverse => "Go to source position",
+        MenuCommand.AppSettings => "Settings",
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 
@@ -138,6 +148,8 @@ public static class MenuCommands
         MenuCommand.ViewZoomOut => "CmdOrCtrl+Minus",
         MenuCommand.ViewFitWidth => "CmdOrCtrl+0",
         MenuCommand.ViewFitHeight => "CmdOrCtrl+Alt+0",
+        MenuCommand.ViewUiScaleUp => "CmdOrCtrl+Alt+Plus",
+        MenuCommand.ViewUiScaleDown => "CmdOrCtrl+Alt+Minus",
         MenuCommand.CompileRun => "CmdOrCtrl+Return",
         MenuCommand.SyncForward => "Ctrl+Return",
         MenuCommand.SyncInverse => "Ctrl+Shift+Return",
@@ -249,6 +261,31 @@ public static class Accelerators
     }
 
     /// <summary>
+    /// Every key combination an accelerator stands for: its own, plus the
+    /// numeric keypad's +, − and digits, as the web side accepts them
+    /// (web/src/commands.js CODES). Enter is one key code for both keys.
+    /// </summary>
+    public static IReadOnlyList<Chord> Chords(string accel)
+    {
+        if (Parse(accel) is not { } chord)
+        {
+            return [];
+        }
+        VirtualKey? keypad = chord.Key switch
+        {
+            OemPlus => VirtualKey.Add,
+            OemMinus => VirtualKey.Subtract,
+            >= VirtualKey.Number0 and <= VirtualKey.Number9 => VirtualKey.NumberPad0 + (chord.Key - VirtualKey.Number0),
+            _ => null,
+        };
+        if (keypad is { } key)
+        {
+            return [chord, chord with { Key = key }];
+        }
+        return [chord];
+    }
+
+    /// <summary>
     /// The shortcut text a Windows menu shows: "CmdOrCtrl+Shift+Alt+N" →
     /// "Ctrl+Alt+Shift+N", modifiers in the order Windows lists them.
     /// </summary>
@@ -267,5 +304,31 @@ public static class Accelerators
             var key => key,
         });
         return string.Join('+', names);
+    }
+}
+
+/// <summary>
+/// Access keys (the letters Alt reveals) for a list of labels: a letter each,
+/// unique within the list, preferring the start of a word as Windows does.
+/// </summary>
+public static class AccessKeys
+{
+    public static IReadOnlyList<string> Assign(IReadOnlyList<string> labels)
+    {
+        var taken = new HashSet<char>();
+        var keys = new List<string>();
+        foreach (var label in labels)
+        {
+            var starts = label.Where((c, i) => char.IsAsciiLetter(c) && (i == 0 || label[i - 1] == ' '));
+            var key = starts.Concat(label.Where(char.IsAsciiLetter))
+                .Select(char.ToUpperInvariant)
+                .FirstOrDefault(c => !taken.Contains(c));
+            if (key != default)
+            {
+                taken.Add(key);
+            }
+            keys.Add(key == default ? "" : key.ToString());
+        }
+        return keys;
     }
 }

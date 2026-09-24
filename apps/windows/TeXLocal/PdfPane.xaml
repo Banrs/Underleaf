@@ -16,36 +16,40 @@
                     <TextBlock x:Name="PageLabel" VerticalAlignment="Center"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <StackPanel x:Name="FindBar" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
-                        <TextBox x:Name="FindBox" Width="200" PlaceholderText="Find in PDF"
+                        <TextBox x:Name="FindBox" Width="200" PlaceholderText="Find in PDF" AutomationProperties.Name="Find in PDF"
                                  TextChanged="OnFindChanged" KeyDown="OnFindKeyDown" />
                         <TextBlock x:Name="FindStatus" MinWidth="64" Margin="4,0" VerticalAlignment="Center"
+                                   AutomationProperties.LiveSetting="Polite"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <Button x:Name="PreviousMatch" Click="OnPreviousMatch" ToolTipService.ToolTip="Previous match (Shift+Enter)">
+                        <Button x:Name="PreviousMatch" Click="OnPreviousMatch" ToolTipService.ToolTip="Previous match (Shift+Enter)"
+                                AutomationProperties.Name="Previous match">
                             <FontIcon Glyph="&#xE70E;" FontSize="12" />
                         </Button>
-                        <Button x:Name="NextMatch" Click="OnNextMatch" ToolTipService.ToolTip="Next match (Enter)">
+                        <Button x:Name="NextMatch" Click="OnNextMatch" ToolTipService.ToolTip="Next match (Enter)"
+                                AutomationProperties.Name="Next match">
                             <FontIcon Glyph="&#xE70D;" FontSize="12" />
                         </Button>
                         <Button Content="Done" Click="OnFindDone" />
                     </StackPanel>
                 </Grid>
             </CommandBar.Content>
-            <AppBarButton x:Name="ZoomOutButton" Label="Zoom Out" Icon="ZoomOut" Click="OnZoomOut"
-                          ToolTipService.ToolTip="Zoom Out (Ctrl+Minus)" />
-            <AppBarButton x:Name="FitWidthButton" Label="Fit Width" Click="OnFitWidth"
-                          ToolTipService.ToolTip="Fit Width (Ctrl+0)">
+            <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Click="OnZoomOut"
+                          ToolTipService.ToolTip="Zoom out (Ctrl+Minus)" />
+            <AppBarButton x:Name="FitWidthButton" Label="Fit width" Click="OnFitWidth"
+                          ToolTipService.ToolTip="Fit width (Ctrl+0)">
                 <AppBarButton.Icon>
                     <FontIcon Glyph="&#xE9A6;" />
                 </AppBarButton.Icon>
             </AppBarButton>
-            <AppBarButton x:Name="ZoomInButton" Label="Zoom In" Icon="ZoomIn" Click="OnZoomIn"
-                          ToolTipService.ToolTip="Zoom In (Ctrl+Plus)" />
+            <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Click="OnZoomIn"
+                          ToolTipService.ToolTip="Zoom in (Ctrl+Plus)" />
         </CommandBar>
 
         <Grid Grid.Row="1">
             <WebView2 x:Name="View" />
             <StackPanel x:Name="Empty" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <FontIcon Glyph="&#xEA90;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <FontIcon Glyph="&#xEA90;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                          AutomationProperties.AccessibilityView="Raw" />
                 <TextBlock x:Name="EmptyTitle" HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" />
                 <TextBlock x:Name="EmptyDetail" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                            MaxWidth="320" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
