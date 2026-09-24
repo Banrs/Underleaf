@@ -61,6 +61,8 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal
         BUNDLE_LOADER: $(TEST_HOST)
+        # @testable import TeXLocal loads the core's module too.
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
 schemes:
   TeXLocal:
     build:

@@ -280,6 +280,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
 				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
 			};
 			name = Release;
@@ -298,6 +299,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
 				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
 			};
 			name = Debug;
