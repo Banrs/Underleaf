@@ -1079,7 +1079,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: var(--shadow-menu);
   animation: pop-in 0.12s ease-out;
 }
-.win .menu { background: var(--bg-window); }
+/* An opaque fill hides the blur entirely, so skip computing it. */
+.win .menu { background: var(--bg-window); backdrop-filter: none; }
 .menu-item {
   display: flex;
   align-items: center;
@@ -1123,7 +1124,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-weight: 500;
   animation: toast-in 0.18s ease-out;
 }
-.toast.error { background: var(--red); color: #fff; }
+.toast.error { background: var(--red); color: #fff; backdrop-filter: none; }   /* opaque: nothing to blur */
 
 /* ---------- motion ---------- */
 
