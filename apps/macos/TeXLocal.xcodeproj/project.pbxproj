@@ -1,0 +1,515 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		14906C82983B6895CDF14DC3 /* PDFPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378CDE594945FFCE3DBAD8D1 /* PDFPane.swift */; };
+		191D9AEFC97A04F87B0D8229 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92DFFB06FAB61A26B9807116 /* HomeView.swift */; };
+		26B6DB4317B0759E315F3E89 /* Outline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A947A0ACCBDB707B2BE2099 /* Outline.swift */; };
+		2E7B6FE592C7CC4B81A8A946 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11F66D3B533CFDC0A8F7EFF /* WorkspaceView.swift */; };
+		4C7433C91108513A006DD93F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA2F926379249A44F9F564D /* SettingsView.swift */; };
+		568D8E6CB9EAE830FB20FCA4 /* Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67C8D90033DCF0BC03B38114 /* Commands.swift */; };
+		67CE7AFF7CE33C6B50A05521 /* TeXLocalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55756959E4BD347AD47DCBDB /* TeXLocalApp.swift */; };
+		7D71DA4678CDD55C2526532E /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0F16D19E664BB5F8D928B2 /* ProjectModel.swift */; };
+		8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939F94A0F5465E021016E2B5 /* SidebarView.swift */; };
+		91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */; };
+		9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31AE196AE79CB996B7DD97A2 /* AppModel.swift */; };
+		A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */; };
+		A79D4BB8D245D798C911B3FD /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1B774F61877030414C0844 /* LogsView.swift */; };
+		B9BF8EBB439CAEEFB9B1B028 /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 158D7A52185B6F0E80D9FCE5 /* EditorView.swift */; };
+		BA8ED02AC38A333937229C03 /* EditorBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898AA6334E9C879C8C0A855E /* EditorBridge.swift */; };
+		BB2498A6412AF35FA6A971E9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB64852D001BF573F24FB9C8 /* Models.swift */; };
+		FF0C4B2E0DA826554AC37833 /* Core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D6C8EACCE460267B2C9DA6 /* Core.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6CCDE3FAE10639D9F1004137 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AB534688020F730799B070D9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6C934F26C451BB83C7839F4E;
+			remoteInfo = TeXLocal;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		158D7A52185B6F0E80D9FCE5 /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
+		16D6C8EACCE460267B2C9DA6 /* Core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core.swift; sourceTree = "<group>"; };
+		31AE196AE79CB996B7DD97A2 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		378CDE594945FFCE3DBAD8D1 /* PDFPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPane.swift; sourceTree = "<group>"; };
+		4AA2F926379249A44F9F564D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		55756959E4BD347AD47DCBDB /* TeXLocalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalApp.swift; sourceTree = "<group>"; };
+		639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeXLocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		67C8D90033DCF0BC03B38114 /* Commands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commands.swift; sourceTree = "<group>"; };
+		6A947A0ACCBDB707B2BE2099 /* Outline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Outline.swift; sourceTree = "<group>"; };
+		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXGeometry.swift; sourceTree = "<group>"; };
+		898AA6334E9C879C8C0A855E /* EditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridge.swift; sourceTree = "<group>"; };
+		92DFFB06FAB61A26B9807116 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		939F94A0F5465E021016E2B5 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		B11F66D3B533CFDC0A8F7EFF /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		BB0F16D19E664BB5F8D928B2 /* ProjectModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectModel.swift; sourceTree = "<group>"; };
+		BB64852D001BF573F24FB9C8 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		CE1B774F61877030414C0844 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
+		DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		22F53F21D7EBE15800D0EC64 = {
+			isa = PBXGroup;
+			children = (
+				828D4CA0BCC36654846EAE79 /* TeXLocal */,
+				6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */,
+				4AACD0AA9786B91F34A573C0 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4AACD0AA9786B91F34A573C0 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */,
+				639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */ = {
+			isa = PBXGroup;
+			children = (
+				DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */,
+			);
+			path = TeXLocalTests;
+			sourceTree = "<group>";
+		};
+		828D4CA0BCC36654846EAE79 /* TeXLocal */ = {
+			isa = PBXGroup;
+			children = (
+				31AE196AE79CB996B7DD97A2 /* AppModel.swift */,
+				67C8D90033DCF0BC03B38114 /* Commands.swift */,
+				16D6C8EACCE460267B2C9DA6 /* Core.swift */,
+				898AA6334E9C879C8C0A855E /* EditorBridge.swift */,
+				158D7A52185B6F0E80D9FCE5 /* EditorView.swift */,
+				92DFFB06FAB61A26B9807116 /* HomeView.swift */,
+				CE1B774F61877030414C0844 /* LogsView.swift */,
+				BB64852D001BF573F24FB9C8 /* Models.swift */,
+				6A947A0ACCBDB707B2BE2099 /* Outline.swift */,
+				378CDE594945FFCE3DBAD8D1 /* PDFPane.swift */,
+				BB0F16D19E664BB5F8D928B2 /* ProjectModel.swift */,
+				4AA2F926379249A44F9F564D /* SettingsView.swift */,
+				939F94A0F5465E021016E2B5 /* SidebarView.swift */,
+				80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */,
+				55756959E4BD347AD47DCBDB /* TeXLocalApp.swift */,
+				B11F66D3B533CFDC0A8F7EFF /* WorkspaceView.swift */,
+			);
+			path = TeXLocal;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		58BBAFD9B174BFE49BC1CB1F /* TeXLocalTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BABBEBC2377F054FB4480119 /* Build configuration list for PBXNativeTarget "TeXLocalTests" */;
+			buildPhases = (
+				54EA5E9FA55A75BBBD1F73F0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EE62513E5B941AB7772FAFF6 /* PBXTargetDependency */,
+			);
+			name = TeXLocalTests;
+			packageProductDependencies = (
+			);
+			productName = TeXLocalTests;
+			productReference = 639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		6C934F26C451BB83C7839F4E /* TeXLocal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 99D97EAB41EEF95B6750258D /* Build configuration list for PBXNativeTarget "TeXLocal" */;
+			buildPhases = (
+				D0BFDCD8EC49557EEE2F31DA /* Build Rust core */,
+				4DB01B4638613538B369BFF0 /* Sources */,
+				848787D0905848F69BE833D8 /* Copy editor page */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TeXLocal;
+			packageProductDependencies = (
+			);
+			productName = TeXLocal;
+			productReference = 6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AB534688020F730799B070D9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					6C934F26C451BB83C7839F4E = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 1C29D7771F9F6C79F583AC8D /* Build configuration list for PBXProject "TeXLocal" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 22F53F21D7EBE15800D0EC64;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4AACD0AA9786B91F34A573C0 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6C934F26C451BB83C7839F4E /* TeXLocal */,
+				58BBAFD9B174BFE49BC1CB1F /* TeXLocalTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		848787D0905848F69BE833D8 /* Copy editor page */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy editor page";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Xcode build step: the embedded editor page and what it loads, into the app's\n# Resources/web — only the embed files, not the browser UI.\nset -e\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nnpm run build --silent\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/web\"\nrm -rf \"$DEST\"\nmkdir -p \"$DEST/dist\" \"$DEST/embed\"\ncp web/styles.css \"$DEST/\"\ncp web/embed/editor.html \"$DEST/embed/\"\ncp web/dist/embed-editor.js web/dist/katex.min.css \"$DEST/dist/\"\ncp -R web/dist/fonts web/dist/fonts-jbm \"$DEST/dist/\"\n";
+		};
+		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust core";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Xcode pre-build step: the Rust core as a static library for the app to link.\n# Debug builds link target/debug, Release builds target/release.\nset -e\nexport PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  cargo build -p texlocal-ffi --release\nelse\n  cargo build -p texlocal-ffi\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4DB01B4638613538B369BFF0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */,
+				568D8E6CB9EAE830FB20FCA4 /* Commands.swift in Sources */,
+				FF0C4B2E0DA826554AC37833 /* Core.swift in Sources */,
+				BA8ED02AC38A333937229C03 /* EditorBridge.swift in Sources */,
+				B9BF8EBB439CAEEFB9B1B028 /* EditorView.swift in Sources */,
+				191D9AEFC97A04F87B0D8229 /* HomeView.swift in Sources */,
+				A79D4BB8D245D798C911B3FD /* LogsView.swift in Sources */,
+				BB2498A6412AF35FA6A971E9 /* Models.swift in Sources */,
+				26B6DB4317B0759E315F3E89 /* Outline.swift in Sources */,
+				14906C82983B6895CDF14DC3 /* PDFPane.swift in Sources */,
+				7D71DA4678CDD55C2526532E /* ProjectModel.swift in Sources */,
+				4C7433C91108513A006DD93F /* SettingsView.swift in Sources */,
+				8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */,
+				91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */,
+				67CE7AFF7CE33C6B50A05521 /* TeXLocalApp.swift in Sources */,
+				2E7B6FE592C7CC4B81A8A946 /* WorkspaceView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		54EA5E9FA55A75BBBD1F73F0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EE62513E5B941AB7772FAFF6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6C934F26C451BB83C7839F4E /* TeXLocal */;
+			targetProxy = 6CCDE3FAE10639D9F1004137 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		422C06F0060F946E0EDE7265 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
+			};
+			name = Release;
+		};
+		CAF446C16588ABB65A8BB35A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
+			};
+			name = Debug;
+		};
+		DC7CB853033D63C06A3A7591 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		DC8983DB3DD2390A86C1C14D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		E7DA4BF3B9007896C624FEDD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../target/release";
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "-ltexlocal_ffi -liconv";
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
+				PRODUCT_NAME = TeXLocal;
+				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
+			};
+			name = Release;
+		};
+		FECB5F4341ED04EE776B7C69 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../target/debug";
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "-ltexlocal_ffi -liconv";
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
+				PRODUCT_NAME = TeXLocal;
+				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1C29D7771F9F6C79F583AC8D /* Build configuration list for PBXProject "TeXLocal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DC7CB853033D63C06A3A7591 /* Debug */,
+				DC8983DB3DD2390A86C1C14D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		99D97EAB41EEF95B6750258D /* Build configuration list for PBXNativeTarget "TeXLocal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FECB5F4341ED04EE776B7C69 /* Debug */,
+				E7DA4BF3B9007896C624FEDD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BABBEBC2377F054FB4480119 /* Build configuration list for PBXNativeTarget "TeXLocalTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CAF446C16588ABB65A8BB35A /* Debug */,
+				422C06F0060F946E0EDE7265 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AB534688020F730799B070D9 /* Project object */;
+}

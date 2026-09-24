@@ -118,3 +118,51 @@ fn null_and_malformed_inputs_are_rejected_safely() {
         tl_close(ptr::null_mut());
     }
 }
+
+#[test]
+fn dropped_files_and_folders_import_into_the_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = CString::new(dir.path().join("data").to_str().unwrap()).unwrap();
+    let handle = unsafe { tl_open(path.as_ptr()) };
+    call(
+        handle,
+        "create_project",
+        Some(json!({ "name": "P", "template": "blank" })),
+    );
+
+    let drop = dir.path().join("drop");
+    std::fs::create_dir_all(drop.join("figs/sub")).unwrap();
+    std::fs::write(drop.join("figs/a.png"), b"a").unwrap();
+    std::fs::write(drop.join("figs/sub/b.png"), b"b").unwrap();
+    std::fs::write(drop.join("notes.tex"), b"n").unwrap();
+    let paths = [drop.join("figs"), drop.join("notes.tex")].map(|p| p.to_str().unwrap().to_owned());
+
+    let out = call(
+        handle,
+        "import_files",
+        Some(json!({ "id": "P", "dir": "in", "paths": paths })),
+    );
+    let mut saved: Vec<String> = serde_json::from_value(out["ok"]["saved"].clone()).unwrap();
+    saved.sort();
+    assert_eq!(
+        saved,
+        ["in/figs/a.png", "in/figs/sub/b.png", "in/notes.tex"]
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("data/P/in/figs/sub/b.png")).unwrap(),
+        b"b"
+    );
+
+    // A batch that would collide fails before anything is written.
+    let twice =
+        [drop.join("notes.tex"), drop.join("notes.tex")].map(|p| p.to_str().unwrap().to_owned());
+    let refused = call(
+        handle,
+        "import_files",
+        Some(json!({ "id": "P", "dir": "again", "paths": twice })),
+    );
+    assert_eq!(refused["status"], 400);
+    assert!(!dir.path().join("data/P/again").exists());
+
+    unsafe { tl_close(handle) };
+}

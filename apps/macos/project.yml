@@ -1,0 +1,75 @@
+# The macOS app. Generate TeXLocal.xcodeproj with `xcodegen` from this folder;
+# the generated project is committed too, so building needs only Xcode.
+name: TeXLocal
+options:
+  bundleIdPrefix: com.texlocal
+  deploymentTarget:
+    macOS: "27.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "27.0"
+    ARCHS: arm64
+targets:
+  TeXLocal:
+    type: application
+    platform: macOS
+    sources:
+      - path: TeXLocal
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.texlocal.mac
+        PRODUCT_NAME: TeXLocal
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        # The app runs latexmk and reads ~/TeXLocal, which the sandbox forbids.
+        ENABLE_APP_SANDBOX: NO
+        # The build scripts run cargo and npm in the repository.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
+        OTHER_LDFLAGS: -ltexlocal_ffi -liconv
+      configs:
+        Debug:
+          LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/debug
+        Release:
+          LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/release
+    preBuildScripts:
+      - name: Build Rust core
+        path: scripts/build-core.sh
+        basedOnDependencyAnalysis: false
+    postCompileScripts:
+      - name: Copy editor page
+        path: scripts/copy-web.sh
+        basedOnDependencyAnalysis: false
+  TeXLocalTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: TeXLocalTests
+    dependencies:
+      - target: TeXLocal
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  TeXLocal:
+    build:
+      targets:
+        TeXLocal: all
+        TeXLocalTests: [test]
+    test:
+      targets: [TeXLocalTests]
+      environmentVariables:
+        TEXLOCAL_DATA: /tmp/texlocal-xctest
+    run:
+      config: Debug

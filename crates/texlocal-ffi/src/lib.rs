@@ -11,7 +11,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
-use texlocal_core::service::Service;
+use texlocal_core::service::{Service, UploadSpec};
 use texlocal_core::{zipexport, CoreError};
 
 pub struct TlHandle {
@@ -38,8 +38,66 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
             zipexport::export_zip(&root, PathBuf::from(s("dest")?).as_path())?;
             Ok(Value::Null)
         })(),
+        // On quit, while a compile call may still be in flight — which rules
+        // out tl_close — stop the latexmk trees that would otherwise outlive
+        // the app.
+        "kill_all" => {
+            service.compile.kill_all();
+            Ok(Value::Null)
+        }
+        "import_files" => (|| {
+            let id = s("id")?;
+            let dir = args.get("dir").and_then(Value::as_str).unwrap_or_default();
+            let mut files = Vec::new();
+            for p in args
+                .get("paths")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let abs = PathBuf::from(p.as_str().unwrap_or_default());
+                let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
+                collect(&abs, name.unwrap_or_default(), &mut files)?;
+            }
+            // The same validate-then-write rule as a browser upload: a bad
+            // path or oversize file fails the drop before anything lands.
+            let specs: Vec<UploadSpec> = files
+                .iter()
+                .map(|(rel, _, size)| UploadSpec {
+                    path: rel.clone(),
+                    size: *size,
+                })
+                .collect();
+            service.validate_uploads(&id, dir, &specs)?;
+            let mut saved = Vec::new();
+            for (rel, abs, _) in &files {
+                saved.push(service.upload_file(&id, dir, rel, &std::fs::read(abs)?)?);
+            }
+            Ok(json!({ "saved": saved }))
+        })(),
         _ => return None,
     })
+}
+
+/// Files under a dropped path, with project-relative names that keep a
+/// dropped folder's own name. Symlinks are skipped, not followed: a drop
+/// imports what was dropped, never what a link inside it points at.
+fn collect(
+    abs: &std::path::Path,
+    rel: String,
+    out: &mut Vec<(String, PathBuf, usize)>,
+) -> Result<(), CoreError> {
+    let meta = std::fs::symlink_metadata(abs)?;
+    if meta.is_file() {
+        out.push((rel, abs.to_path_buf(), meta.len() as usize));
+    } else if meta.is_dir() {
+        for entry in std::fs::read_dir(abs)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            collect(&entry.path(), format!("{rel}/{name}"), out)?;
+        }
+    }
+    Ok(())
 }
 
 fn envelope(result: Result<Value, CoreError>) -> String {
