@@ -27,7 +27,7 @@
                     <TextBlock Text="New project" />
                 </StackPanel>
             </Button>
-            <Button Grid.Column="2" Click="OnSettings" AccessKey="S" ToolTipService.ToolTip="Settings (Ctrl+,)"
+            <Button Grid.Column="2" Height="32" Click="OnSettings" AccessKey="S" ToolTipService.ToolTip="Settings (Ctrl+,)"
                     AutomationProperties.Name="Settings">
                 <FontIcon Glyph="&#xE713;" FontSize="16" />
             </Button>
@@ -69,7 +69,7 @@
                             <TextBlock Text="{x:Bind Details}" Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
-                        <Button Grid.Column="2" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center"
+                        <Button Grid.Column="2" Style="{StaticResource SubtleButtonStyle}" Height="32" VerticalAlignment="Center"
                                 Click="OnProjectMore" ToolTipService.ToolTip="More options"
                                 AutomationProperties.Name="More options">
                             <FontIcon Glyph="&#xE712;" FontSize="16" />
