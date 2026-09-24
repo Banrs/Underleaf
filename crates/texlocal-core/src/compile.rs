@@ -99,12 +99,23 @@ fn tex_dirs() -> Vec<PathBuf> {
     }
 }
 
-/// PATH for spawned TeX tools: the user's PATH first (it always wins), then
-/// the discovered TeX dirs. Built per use — a couple of read_dirs — so a TeX
-/// install performed while the app runs is found without a restart.
-pub fn tex_path() -> String {
+/// latexmk's file name, as the PATH search that spawns it looks for it.
+const LATEXMK: &str = if cfg!(windows) {
+    "latexmk.exe"
+} else {
+    "latexmk"
+};
+
+/// PATH for spawned TeX tools: the folder the user chose first, then the
+/// user's PATH, then the discovered TeX dirs. Built per use — a couple of
+/// read_dirs — so a TeX install performed while the app runs is found without
+/// a restart.
+pub fn tex_path(chosen: Option<&Path>) -> String {
     let delim = if cfg!(windows) { ";" } else { ":" };
     let mut parts: Vec<String> = Vec::new();
+    if let Some(dir) = chosen {
+        parts.push(dir.to_string_lossy().into_owned());
+    }
     if let Ok(cur) = std::env::var("PATH") {
         if !cur.is_empty() {
             parts.push(cur);
@@ -116,6 +127,28 @@ pub fn tex_path() -> String {
             .map(|p| p.to_string_lossy().into_owned()),
     );
     parts.join(delim)
+}
+
+pub fn has_latexmk(dir: &Path) -> bool {
+    dir.join(LATEXMK).is_file()
+}
+
+/// The PATH entry latexmk is spawned from, if any.
+pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
+    std::env::split_paths(path_env).find(|dir| has_latexmk(dir))
+}
+
+/// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
+/// TeX Live or MiKTeX root picked in its place.
+pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
+    let mut candidates = vec![
+        dir.to_path_buf(),
+        dir.join("miktex").join("bin").join("x64"),
+    ];
+    if let Ok(rd) = std::fs::read_dir(dir.join("bin")) {
+        candidates.extend(rd.filter_map(|e| e.ok()).map(|e| e.path()));
+    }
+    candidates.into_iter().find(|c| has_latexmk(c))
 }
 
 // ---------- process plumbing ----------
@@ -277,14 +310,18 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
 pub struct TexStatus {
     pub available: bool,
     pub version: Option<String>,
+    /// The TeX folder the user chose; None finds TeX automatically.
+    pub tex_dir: Option<String>,
+    /// The folder the working latexmk runs from.
+    pub found: Option<String>,
 }
 
-pub async fn tex_available(path_env: Option<&str>) -> TexStatus {
-    let path = path_env.map_or_else(tex_path, str::to_string);
-    let out = run("latexmk", &["-version"], None, PROBE_TIMEOUT, &path).await;
+pub async fn tex_available(path_env: &str) -> TexStatus {
+    let out = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
+    let available = out.code == 0;
     TexStatus {
-        available: out.code == 0,
-        version: (out.code == 0).then(|| {
+        available,
+        version: available.then(|| {
             out.stdout
                 .split('\n')
                 .next()
@@ -292,6 +329,11 @@ pub async fn tex_available(path_env: Option<&str>) -> TexStatus {
                 .trim()
                 .to_string()
         }),
+        tex_dir: None,
+        found: available
+            .then(|| latexmk_dir(path_env))
+            .flatten()
+            .map(|dir| dir.to_string_lossy().into_owned()),
     }
 }
 
@@ -357,8 +399,8 @@ impl CompileManager {
         Self::default()
     }
 
-    fn path(&self) -> String {
-        self.path_env.clone().unwrap_or_else(tex_path)
+    fn path(&self, tex_dir: Option<&Path>) -> String {
+        self.path_env.clone().unwrap_or_else(|| tex_path(tex_dir))
     }
 
     pub fn kill_all(&self) {
@@ -393,6 +435,7 @@ impl CompileManager {
         &self,
         root: &Path,
         overrides: &CompileOverrides,
+        tex_dir: Option<&Path>,
     ) -> Result<CompileResult, CoreError> {
         let request_started = std::time::Instant::now();
         let settings = read_settings(root);
@@ -479,7 +522,7 @@ impl CompileManager {
             request_started,
         };
 
-        let mut cmd = base_command("latexmk", Some(root), &self.path());
+        let mut cmd = base_command("latexmk", Some(root), &self.path(tex_dir));
         cmd.args(&args);
         let spawn_result = {
             // Hold the registry lock across synchronous spawn + PID publication.

@@ -47,7 +47,7 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
     let result = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
@@ -93,7 +93,7 @@ async fn a_stale_log_is_not_reported() {
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
     let result = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
@@ -119,7 +119,7 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
     let result = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
@@ -142,7 +142,7 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
     mgr.timeout = Some(Duration::from_millis(300));
     let started = std::time::Instant::now();
     let result = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
@@ -173,7 +173,7 @@ async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
     mgr.timeout = Some(Duration::from_secs(2));
     let started = std::time::Instant::now();
     let result = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
@@ -204,7 +204,7 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
         async move {
-            mgr.compile(&root, &CompileOverrides::default())
+            mgr.compile(&root, &CompileOverrides::default(), None)
                 .await
                 .unwrap()
         }
@@ -213,7 +213,7 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
     fs::write(root.join("fast"), "").unwrap();
 
     let second = mgr
-        .compile(&root, &CompileOverrides::default())
+        .compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
     let first = first.await.unwrap();
@@ -251,7 +251,7 @@ esac
             engine: Some(engine.to_string()),
             ..CompileOverrides::default()
         };
-        tokio::spawn(async move { mgr.compile(&root, &options).await.unwrap() })
+        tokio::spawn(async move { mgr.compile(&root, &options, None).await.unwrap() })
     };
 
     let first = launch(Arc::clone(&mgr), root.clone(), "pdflatex");
@@ -287,11 +287,11 @@ async fn tex_available_reports_the_stub_version() {
         &tmp.path().join("bin"),
         "#!/bin/sh\nprintf 'Latexmk, John Collins, 1 January 2024. Version 4.83\\n'\nexit 0\n",
     );
-    let status = tex_available(Some(&path)).await;
+    let status = tex_available(&path).await;
     assert!(status.available);
     assert!(status.version.unwrap().starts_with("Latexmk"));
 
-    let none = tex_available(Some("/nonexistent-dir-for-test")).await;
+    let none = tex_available("/nonexistent-dir-for-test").await;
     assert!(!none.available);
     assert_eq!(none.version, None);
 }

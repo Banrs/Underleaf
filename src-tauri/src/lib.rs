@@ -26,6 +26,8 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             commands::status,
+            commands::set_tex_dir,
+            commands::list_dirs,
             commands::list_projects,
             commands::create_project,
             commands::rename_project,

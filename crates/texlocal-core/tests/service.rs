@@ -1,6 +1,8 @@
 // The shared command surface: the JSON dispatch every non-Tauri host forwards
 // to, and the route table both URL-serving hosts use.
 
+use std::path::Path;
+
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use texlocal_core::serve;
@@ -216,4 +218,172 @@ fn serve_routes_resolve_through_the_project_boundary() {
             .status,
         404
     );
+}
+
+/// A folder holding a stand-in `latexmk`. On Unix it runs and prints a
+/// version; on Windows it is not a real program, so it is found but fails.
+fn fake_tex(dir: &Path) -> String {
+    std::fs::create_dir_all(dir).unwrap();
+    let exe = dir.join(if cfg!(windows) {
+        "latexmk.exe"
+    } else {
+        "latexmk"
+    });
+    std::fs::write(&exe, "#!/bin/sh\necho 'Latexmk, stub 1.0'\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    dir.to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn set_tex_dir_accepts_only_a_folder_with_latexmk() {
+    let (_dir, service) = service();
+    let tex = TempDir::new().unwrap();
+
+    let empty = service
+        .call("set_tex_dir", &json!({ "dir": tex.path() }))
+        .await
+        .unwrap_err();
+    assert_eq!(empty.status, 400);
+    assert!(empty.message.contains("doesn't contain latexmk"));
+    assert_eq!(
+        status_of(&service, "set_tex_dir", json!({ "dir": "relative/bin" })).await,
+        400
+    );
+    assert_eq!(service.tex_dir(), None);
+
+    let bin = fake_tex(&tex.path().join("bin").join("x"));
+    let status = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+    assert_eq!(status["texDir"], bin);
+}
+
+#[tokio::test]
+async fn set_tex_dir_resolves_a_picked_tex_root_to_its_bin_folder() {
+    let (_dir, service) = service();
+    let root = TempDir::new().unwrap();
+    let bin = fake_tex(&root.path().join("bin").join("windows"));
+
+    let status = call(&service, "set_tex_dir", json!({ "dir": root.path() })).await;
+    assert_eq!(status["texDir"], bin);
+}
+
+#[tokio::test]
+async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
+    let (dir, service) = service();
+    let tex = TempDir::new().unwrap();
+    let bin = fake_tex(tex.path());
+    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+
+    // Another host on the same data dir sees the same choice.
+    let other = Service::new(dir.path().to_path_buf());
+    assert_eq!(other.tex_dir(), Some(tex.path().to_path_buf()));
+    let saved: Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join(texlocal_core::service::APP_SETTINGS_FILE)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved, json!({ "texDir": bin }));
+
+    let status = call(&service, "set_tex_dir", json!({ "dir": null })).await;
+    assert_eq!(status["texDir"], Value::Null);
+    assert_eq!(other.tex_dir(), None);
+
+    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+    call(&service, "set_tex_dir", json!({ "dir": "  " })).await;
+    assert_eq!(service.tex_dir(), None);
+}
+
+#[tokio::test]
+async fn changing_the_tex_dir_invalidates_the_cached_status() {
+    let (_dir, service) = service();
+    let first = call(&service, "status", json!({})).await;
+    assert_eq!(first["texDir"], Value::Null);
+    assert!(first.as_object().unwrap().contains_key("found"));
+
+    let tex = TempDir::new().unwrap();
+    let bin = fake_tex(tex.path());
+    let chosen = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+    assert_eq!(chosen["texDir"], bin);
+    assert_eq!(call(&service, "status", json!({})).await, chosen);
+    if cfg!(unix) {
+        assert_eq!(chosen["available"], true);
+        assert_eq!(chosen["version"], "Latexmk, stub 1.0");
+        assert_eq!(chosen["found"], bin);
+    } else {
+        // First on the PATH but not a program: whatever TeX the first status
+        // found and cached, this one was probed afresh.
+        assert_eq!(chosen["available"], false);
+    }
+
+    let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
+    assert_eq!(automatic["texDir"], Value::Null);
+    assert_ne!(automatic["version"], "Latexmk, stub 1.0");
+}
+
+#[tokio::test]
+async fn list_dirs_lists_visible_subfolders_by_name() {
+    let (_dir, service) = service();
+    let tmp = TempDir::new().unwrap();
+    for name in ["beta", "Alpha", ".hidden"] {
+        std::fs::create_dir(tmp.path().join(name)).unwrap();
+    }
+    std::fs::write(tmp.path().join("file.txt"), "secret").unwrap();
+
+    let listing = call(&service, "list_dirs", json!({ "path": tmp.path() })).await;
+    assert_eq!(listing["path"], tmp.path().to_string_lossy().as_ref());
+    assert_eq!(
+        listing["parent"],
+        tmp.path().parent().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(listing["dirs"], json!(["Alpha", "beta"]));
+    assert_eq!(listing["hasLatexmk"], false);
+    assert!(!listing["roots"].as_array().unwrap().is_empty());
+
+    let bin = fake_tex(&tmp.path().join("beta"));
+    let tex = call(&service, "list_dirs", json!({ "path": bin })).await;
+    assert_eq!(tex["hasLatexmk"], true);
+
+    // With no path it starts at the chosen TeX folder.
+    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+    let start = call(&service, "list_dirs", json!({ "path": null })).await;
+    assert_eq!(start["path"], bin);
+
+    let missing = tmp.path().join("missing");
+    assert_eq!(
+        status_of(&service, "list_dirs", json!({ "path": missing })).await,
+        400
+    );
+    assert_eq!(
+        status_of(&service, "list_dirs", json!({ "path": "relative" })).await,
+        400
+    );
+}
+
+#[tokio::test]
+async fn the_app_settings_file_is_not_listed_as_a_project() {
+    let (_dir, service) = service();
+    call(
+        &service,
+        "create_project",
+        json!({ "name": "P", "template": "blank" }),
+    )
+    .await;
+    let tex = TempDir::new().unwrap();
+    call(
+        &service,
+        "set_tex_dir",
+        json!({ "dir": fake_tex(tex.path()) }),
+    )
+    .await;
+
+    let listed = call(&service, "list_projects", json!({})).await;
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["P"]);
 }

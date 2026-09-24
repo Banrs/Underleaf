@@ -14,7 +14,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use texlocal_core::compile::{CompileOverrides, CompileResult, TexStatus};
 use texlocal_core::projects::{ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
-use texlocal_core::service::UploadSpec;
+use texlocal_core::service::{DirListing, UploadSpec};
 use texlocal_core::settings::Settings;
 use texlocal_core::synctex::{ForwardLoc, InverseLoc};
 use texlocal_core::zipexport;
@@ -38,6 +38,16 @@ pub struct Saved {
 #[tauri::command]
 pub async fn status(state: State<'_, AppState>) -> CmdResult<TexStatus> {
     Ok(state.service.status().await)
+}
+
+#[tauri::command]
+pub async fn set_tex_dir(state: State<'_, AppState>, dir: Option<String>) -> CmdResult<TexStatus> {
+    Ok(state.service.set_tex_dir(dir.as_deref()).await?)
+}
+
+#[tauri::command]
+pub async fn list_dirs(state: State<'_, AppState>, path: Option<String>) -> CmdResult<DirListing> {
+    Ok(state.service.list_dirs(path.as_deref())?)
 }
 
 // ---------- projects ----------

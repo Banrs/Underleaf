@@ -20,6 +20,27 @@ use crate::{paths, CoreError};
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
 const SEARCH_LIMIT: usize = 100;
+/// App-wide settings, beside the projects: every host shares the data dir, so
+/// every host sees one TeX folder. A file, not a folder, so no project list
+/// shows it.
+pub const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
+const NO_LATEXMK: &str = if cfg!(windows) {
+    r"That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as C:\texlive\2026\bin\windows."
+} else {
+    "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin."
+};
+
+/// One folder of the TeX folder browser: its subfolders' names, never file
+/// contents.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub dirs: Vec<String>,
+    pub has_latexmk: bool,
+    pub roots: Vec<String>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +78,35 @@ fn too_large() -> CoreError {
     ))
 }
 
+/// Dot-folders, and on Windows the protected system folders Explorer hides
+/// ($Recycle.Bin, System Volume Information). Merely hidden ones such as
+/// AppData stay: a per-user TeX install lives there.
+fn hidden(entry: &std::fs::DirEntry) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN_SYSTEM: u32 = 0x2 | 0x4;
+        if entry
+            .metadata()
+            .is_ok_and(|m| m.file_attributes() & HIDDEN_SYSTEM == HIDDEN_SYSTEM)
+        {
+            return true;
+        }
+    }
+    entry.file_name().to_string_lossy().starts_with('.')
+}
+
+fn roots() -> Vec<String> {
+    if cfg!(windows) {
+        (b'A'..=b'Z')
+            .map(|drive| format!(r"{}:\", drive as char))
+            .filter(|root| Path::new(root).is_dir())
+            .collect()
+    } else {
+        vec!["/".into()]
+    }
+}
+
 impl Service {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
@@ -77,25 +127,93 @@ impl Service {
 
     // ---------- status ----------
 
-    /// A found TeX is cached for the process lifetime; a missing one only
-    /// briefly, so the UI's install poll notices a new install.
+    /// A found TeX is cached until the chosen TeX folder changes; a missing
+    /// one only briefly, so the UI's install poll notices a new install.
     pub async fn status(&self) -> TexStatus {
+        let tex_dir = self.tex_dir();
+        let chosen = tex_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
         {
             let cache = self.status.lock().unwrap();
             if let Some(status) = &cache.available {
                 let fresh = cache
                     .checked_at
                     .is_some_and(|at| at.elapsed() < TEX_MISSING_TTL);
-                if status.available || fresh {
+                if status.tex_dir == chosen && (status.available || fresh) {
                     return status.clone();
                 }
             }
         }
-        let found = compile::tex_available(None).await;
+        let mut found = compile::tex_available(&compile::tex_path(tex_dir.as_deref())).await;
+        found.tex_dir = chosen;
         let mut cache = self.status.lock().unwrap();
         cache.available = Some(found.clone());
         cache.checked_at = Some(Instant::now());
         found
+    }
+
+    // ---------- TeX folder ----------
+
+    /// The TeX programs folder the user chose, or None to find TeX
+    /// automatically. Read per use, so a choice made in another host applies.
+    pub fn tex_dir(&self) -> Option<PathBuf> {
+        let bytes = std::fs::read(self.data_dir.join(APP_SETTINGS_FILE)).ok()?;
+        let value: Value = serde_json::from_slice(&bytes).ok()?;
+        let dir = value.get("texDir")?.as_str()?;
+        (!dir.is_empty()).then(|| PathBuf::from(dir))
+    }
+
+    fn tex_path(&self) -> String {
+        compile::tex_path(self.tex_dir().as_deref())
+    }
+
+    /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
+    /// or MiKTeX root is accepted and saved as its bin folder.
+    pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
+        let chosen = match dir.map(str::trim).filter(|d| !d.is_empty()) {
+            None => None,
+            Some(dir) => {
+                let dir = Path::new(dir);
+                let bin = dir.is_absolute().then(|| compile::tex_bin_dir(dir));
+                Some(
+                    bin.flatten()
+                        .ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?,
+                )
+            }
+        };
+        let text = json!({ "texDir": chosen.map(|d| d.to_string_lossy().into_owned()) });
+        std::fs::write(self.data_dir.join(APP_SETTINGS_FILE), text.to_string())?;
+        Ok(self.status().await)
+    }
+
+    /// A folder's subfolders, for the browser version's TeX folder picker.
+    /// None starts at the TeX folder in use, else the home folder.
+    pub fn list_dirs(&self, path: Option<&str>) -> Result<DirListing, CoreError> {
+        let dir = match path.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(path) => PathBuf::from(path),
+            None => self
+                .tex_dir()
+                .or_else(|| compile::latexmk_dir(&self.tex_path()))
+                .or_else(std::env::home_dir)
+                .unwrap_or_default(),
+        };
+        let unreadable = || CoreError::bad_request("Couldn't open that folder.");
+        if !dir.is_absolute() {
+            return Err(unreadable());
+        }
+        let mut dirs: Vec<String> = std::fs::read_dir(&dir)
+            .map_err(|_| unreadable())?
+            .filter_map(|e| e.ok())
+            .filter(|e| !hidden(e) && e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        dirs.sort_by_key(|name| name.to_lowercase());
+        Ok(DirListing {
+            path: dir.to_string_lossy().into_owned(),
+            parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
+            dirs,
+            has_latexmk: compile::has_latexmk(&dir),
+            roots: roots(),
+        })
     }
 
     // ---------- projects ----------
@@ -271,7 +389,11 @@ impl Service {
         overrides: &CompileOverrides,
     ) -> Result<CompileResult, CoreError> {
         self.compile
-            .compile(&self.project_root(id)?, overrides)
+            .compile(
+                &self.project_root(id)?,
+                overrides,
+                self.tex_dir().as_deref(),
+            )
             .await
     }
 
@@ -281,7 +403,7 @@ impl Service {
         file: &str,
         line: u32,
     ) -> Result<ForwardLoc, CoreError> {
-        synctex::synctex_forward(&self.project_root(id)?, file, line, &compile::tex_path()).await
+        synctex::synctex_forward(&self.project_root(id)?, file, line, &self.tex_path()).await
     }
 
     pub async fn synctex_inverse(
@@ -291,7 +413,7 @@ impl Service {
         x: f64,
         y: f64,
     ) -> Result<InverseLoc, CoreError> {
-        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, &compile::tex_path()).await
+        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, &self.tex_path()).await
     }
 
     // ---------- dispatch ----------
@@ -305,10 +427,22 @@ impl Service {
     /// here. Anything that takes a host-chosen absolute path (export
     /// destinations) or raw bytes (uploads) is a direct method instead, so a
     /// remote caller cannot reach it by name.
+    ///
+    /// The exception is the TeX folder: `set_tex_dir` and `list_dirs` take an
+    /// absolute path by name, because a browser page has no native folder
+    /// picker. That grants nothing new. The browser server listens on
+    /// 127.0.0.1 only, behind its token cookie and Host/Origin checks, and a
+    /// caller that can compile can already run code as this user, so choosing
+    /// which latexmk runs adds no power; `list_dirs` returns folder names, never
+    /// file contents.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| arg::<String>(args, key);
         match command {
             "status" => out(self.status().await),
+            "set_tex_dir" => out(self
+                .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
+                .await?),
+            "list_dirs" => out(self.list_dirs(arg::<Option<String>>(args, "path")?.as_deref())?),
             "list_projects" => out(self.list_projects()?),
             "create_project" => out(self.create_project(
                 &s("name")?,
