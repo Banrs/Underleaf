@@ -55,7 +55,8 @@ export function chooseTexFolder() {
       // Keep keyboard focus in the list as its rows are replaced.
       const hadFocus = list.contains(document.activeElement);
       list.replaceChildren(
-        listing.parent ? row('chevron-up', 'Up one level', () => load(listing.parent)) : null,
+        // Not a bare null at a root: replaceChildren would show it as text.
+        ...(listing.parent ? [row('chevron-up', 'Up one level', () => load(listing.parent))] : []),
         ...listing.dirs.map((name) => row('folder', name, () => load(childPath(listing.path, name)))),
       );
       if (!list.childElementCount) list.append(el('p', { class: 'placeholder' }, 'No folders here.'));
