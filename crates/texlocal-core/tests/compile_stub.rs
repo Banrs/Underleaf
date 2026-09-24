@@ -69,7 +69,7 @@ async fn a_compile_reruns_even_after_a_failed_run() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    mgr.compile(&root, &CompileOverrides::default())
+    mgr.compile(&root, &CompileOverrides::default(), None)
         .await
         .unwrap();
 
