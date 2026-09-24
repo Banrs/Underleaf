@@ -357,16 +357,19 @@ private struct PDFRepresentable: NSViewRepresentable {
         }
     }
 
-    /// Load a rebuilt PDF where the reader was: same page, same zoom.
+    /// Load a rebuilt PDF where the reader was: same spot on the same page,
+    /// same zoom. It is read whole: PDFKit reads a document from its file as
+    /// it goes, and the next compile rewrites that file in place.
     private func reload(_ view: SyncPDFView, from url: URL) {
-        let pageIndex = view.currentPage.flatMap { view.document?.index(for: $0) }
+        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return }
+        let spot = view.currentDestination
+        let pageIndex = spot?.page.flatMap { view.document?.index(for: $0) }
         let autoScales = view.autoScales
         let scale = view.scaleFactor
-        guard let document = PDFDocument(url: url) else { return }
         view.document = document
         if !autoScales { view.scaleFactor = scale }
-        if let pageIndex, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
-            view.go(to: page)
+        if let pageIndex, let spot, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
+            view.go(to: PDFDestination(page: page, at: spot.point))
         }
         controller.pageCount = document.pageCount
         controller.page = (pageIndex ?? 0) + 1
