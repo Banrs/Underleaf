@@ -59,10 +59,13 @@ public sealed partial class SettingsView : UserControl
         TexDescription.Text = tex switch
         {
             null => "Looking for TeX…",
-            { Available: true } => tex.Version ?? "Installed",
-            _ => "Not found. Install MiKTeX or TeX Live to compile.",
+            { Available: true } => $"{tex.Version ?? "Installed"}\n"
+                + (tex.TexDir is { } dir ? $"Using {dir}" : tex.Found is { } found ? $"Found automatically in {found}" : "Found automatically"),
+            { TexDir: { } dir } => $"latexmk in {dir} didn’t run.",
+            _ => "Not found. Install MiKTeX or TeX Live, or choose the folder it’s in.",
         };
         GetTex.Visibility = tex is { Available: false } ? Visibility.Visible : Visibility.Collapsed;
+        AutomaticTex.Visibility = tex?.TexDir is null ? Visibility.Collapsed : Visibility.Visible;
         rendering = false;
     }
 
@@ -106,6 +109,10 @@ public sealed partial class SettingsView : UserControl
             _ = project.SetEngineAsync(Engines[Math.Max(0, EngineBox.SelectedIndex)]);
         }
     }
+
+    private void OnBrowseTex(object sender, RoutedEventArgs e) => _ = Main.ChooseTexFolderAsync();
+
+    private void OnAutomaticTex(object sender, RoutedEventArgs e) => _ = Main.SetTexDirAsync(null);
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {

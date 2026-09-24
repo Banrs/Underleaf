@@ -196,8 +196,13 @@
                     <TextBlock Text="TeX distribution" />
                     <TextBlock x:Name="TexDescription" Style="{StaticResource CardDescription}" IsTextSelectionEnabled="True" />
                 </StackPanel>
-                <HyperlinkButton x:Name="GetTex" Grid.Column="2" VerticalAlignment="Center"
-                                 Content="Get MiKTeX" NavigateUri="https://miktex.org/download" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <HyperlinkButton x:Name="GetTex" Content="Get MiKTeX" NavigateUri="https://miktex.org/download" />
+                    <Button x:Name="AutomaticTex" Content="Use automatic" Click="OnAutomaticTex"
+                            ToolTipService.ToolTip="Find TeX by itself again" />
+                    <Button Content="Browse…" Click="OnBrowseTex" AutomationProperties.Name="Choose the TeX folder"
+                            ToolTipService.ToolTip="Choose the folder with TeX’s programs, the one that contains latexmk" />
+                </StackPanel>
             </Grid>
         </StackPanel>
     </ScrollViewer>

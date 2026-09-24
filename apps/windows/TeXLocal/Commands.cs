@@ -245,6 +245,24 @@ public sealed partial class MainWindow
         }
     }
 
+    /// <summary>Choose the folder with TeX's programs; a TeX Live or MiKTeX root works too.</summary>
+    internal async Task ChooseTexFolderAsync()
+    {
+        var picker = Owned(new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder, CommitButtonText = "Use this folder" });
+        picker.FileTypeFilter.Add("*");
+        try
+        {
+            if (await picker.PickSingleFolderAsync() is { } folder)
+            {
+                await SetTexDirAsync(folder.Path);
+            }
+        }
+        catch (COMException e)
+        {
+            Report(e.Message);
+        }
+    }
+
     private async Task<IReadOnlyList<string>?> PickFilesAsync()
     {
         var picker = Owned(new FileOpenPicker { CommitButtonText = "Add" });

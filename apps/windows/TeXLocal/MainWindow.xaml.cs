@@ -102,6 +102,29 @@ public sealed partial class MainWindow : Window
             // Reported as missing; the next look may succeed.
             Tex = new TexStatus(false, null);
         }
+        TexChanged();
+    }
+
+    /// <summary>
+    /// Use TeX from this folder, or find it by itself again (null). The core
+    /// refuses a folder without latexmk, and says so in words.
+    /// </summary>
+    internal async Task SetTexDirAsync(string? dir)
+    {
+        try
+        {
+            Tex = await Core.CallAsync<TexStatus>("set_tex_dir", new { dir });
+        }
+        catch (CoreException e)
+        {
+            Report(e.Message);
+            return;
+        }
+        TexChanged();
+    }
+
+    private void TexChanged()
+    {
         Home.RenderTex();
         Workspace.TexChanged();
         SettingsPage.Render();

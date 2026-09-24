@@ -14,7 +14,8 @@ public sealed record TreeNode(string Type, string Name, string Path, IReadOnlyLi
     public bool IsDirectory => Type == "dir";
 }
 
-public sealed record TexStatus(bool Available, string? Version);
+/// <summary>TexDir is the folder the user chose (null: found automatically); Found is where latexmk runs from.</summary>
+public sealed record TexStatus(bool Available, string? Version, string? TexDir = null, string? Found = null);
 
 public sealed record ProjectSettings(string MainFile, string Engine, bool ShellEscape);
 
