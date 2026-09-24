@@ -478,8 +478,17 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
             if hits.len() >= limit {
                 break;
             }
-            lower_into(line, &mut lower);
-            let Some(col) = find_from(&lower, &q, 0) else {
+            // The same reasoning holds per line: an ASCII line needs no char
+            // decode, and its byte offsets are its char offsets. A file that
+            // passed the prefilter is otherwise decoded line by line in full.
+            let found = match &q_ascii {
+                Some(needle) if line.is_ascii() => find_ci_ascii(line.as_bytes(), needle),
+                _ => {
+                    lower_into(line, &mut lower);
+                    find_from(&lower, &q, 0)
+                }
+            };
+            let Some(col) = found else {
                 continue;
             };
             let chars: Vec<char> = line.chars().collect();

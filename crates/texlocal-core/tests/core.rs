@@ -418,6 +418,13 @@ fn search_is_case_insensitive_in_both_folding_branches() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].matched, "ÉCOLE");
     assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
+    // An ASCII line in a non-ASCII file takes the byte branch on its own.
+    fs::write(root.join("mixed.tex"), "Café\nsee Lemma 3\n").unwrap();
+    let hits = search_project(&root, "lemma", 50).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].line, 2);
+    assert_eq!(hits[0].before, "see ");
+    assert_eq!(hits[0].matched, "Lemma");
 }
 
 #[test]
