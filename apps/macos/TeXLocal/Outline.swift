@@ -11,9 +11,10 @@ struct OutlineItem: Identifiable, Hashable {
 /// them (web/src/state.js `SECTION_RE`).
 enum Outline {
     private static let levels = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph"]
-    private static let pattern = /\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/
 
     static func parse(_ text: String) -> [OutlineItem] {
+        // Local rather than a static: Regex is not Sendable.
+        let pattern = /\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/
         var items: [OutlineItem] = []
         var number = 0
         text.enumerateLines { line, _ in

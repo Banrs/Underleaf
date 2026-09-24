@@ -61,7 +61,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     }
 
     func command(_ name: String, _ arg: String? = nil) async {
-        await js("return texlocal.command(name, arg)", ["name": name, "arg": arg ?? NSNull()])
+        await js("return texlocal.command(name, arg)", ["name": name, "arg": arg as Any? ?? NSNull()])
     }
 
     func forget(path: String) async {
@@ -78,9 +78,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     }
 
     func setAppearance(theme: String, palette: String, font: String, fontSize: Int) async {
-        await js("texlocal.setAppearance(a)", ["a": [
-            "theme": theme, "palette": palette, "font": font, "fontSize": fontSize,
-        ]])
+        let appearance: [String: Any] = ["theme": theme, "palette": palette, "font": font, "fontSize": fontSize]
+        await js("texlocal.setAppearance(a)", ["a": appearance])
     }
 
     func focus() {

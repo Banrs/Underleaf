@@ -111,13 +111,14 @@ enum MenuCommand: String, CaseIterable {
             default: return nil
             }
         }
-        let equivalent: KeyEquivalent = switch key {
-        case "Return", "Enter": .return
-        case "Plus": "="
-        case "Minus": "-"
+        let equivalent: KeyEquivalent
+        switch key {
+        case "Return", "Enter": equivalent = .return
+        case "Plus": equivalent = "="
+        case "Minus": equivalent = "-"
         default:
             guard key.count == 1, let c = key.lowercased().first else { return nil }
-            KeyEquivalent(c)
+            equivalent = KeyEquivalent(c)
         }
         return KeyboardShortcut(equivalent, modifiers: modifiers)
     }

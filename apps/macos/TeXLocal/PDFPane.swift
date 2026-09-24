@@ -35,7 +35,7 @@ struct PDFPane: View {
             case .fitHeight: controller.fitHeight()
             case .find: finding = true; findFocused = true
             case .inverseFromView:
-                if let (page, point) = controller.sourcePoint() {
+                if case let (page, point)? = controller.sourcePoint() {
                     Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
                 }
             }
