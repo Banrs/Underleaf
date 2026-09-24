@@ -15,8 +15,10 @@ on:
   push:
     paths: *paths
 
+# A newer push to a pull request supersedes the older run. Pushes are grouped
+# by commit instead, so parallel work on one branch never cancels another's run.
 concurrency:
-  group: macos-app-${{ github.ref }}
+  group: macos-app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
