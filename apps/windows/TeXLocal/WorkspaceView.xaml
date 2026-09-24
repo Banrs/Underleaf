@@ -179,7 +179,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid MinHeight="32">
-                        <TextBlock Text="Files" Margin="12,0" VerticalAlignment="Center"
+                        <TextBlock Text="Files" Margin="11,0" VerticalAlignment="Center"
                                    Style="{StaticResource BodyStrongTextBlockStyle}" />
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnNewFile"
@@ -201,7 +201,7 @@
                               ContextRequested="OnFileContextRequested" KeyDown="OnFilesKeyDown">
                         <TreeView.ItemTemplate>
                             <DataTemplate x:DataType="local:FileItem">
-                                <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
+                                <TreeViewItem Style="{StaticResource CompactTreeViewItemStyle}" ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
                                               AutomationProperties.Name="{x:Bind AccessibleName}">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <FontIcon Glyph="{x:Bind Glyph}" FontSize="16" />
@@ -215,7 +215,7 @@
                         </TreeView.ItemTemplate>
                     </TreeView>
                     <Button x:Name="OutlineToggle" Grid.Row="2" Style="{StaticResource SubtleButtonStyle}" MinHeight="32"
-                            Padding="12,0,8,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Padding="10,0,8,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                             Click="OnToggleOutline" AutomationProperties.Name="Outline">
                         <Grid>
                             <TextBlock Text="Outline" VerticalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}" />
