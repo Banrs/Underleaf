@@ -184,9 +184,13 @@ function renderNode(node, level) {
       onclick: () => {
         if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
         persistOpenDirs();
-        renderTree();
-        // renderTree replaced the rows, so keyboard focus needs a new home.
-        nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(node.path)}"]`)?.focus();
+        // Rebuild only this folder's subtree. Toggling one folder used to
+        // recreate every row in the project.
+        const fresh = renderNode(node, level);
+        group.replaceWith(fresh);
+        syncRovingFocus();
+        // The row was replaced, so keyboard focus needs a new home.
+        fresh.firstChild.focus();
       },
       onkeydown: treeKeys,
     },
@@ -194,9 +198,10 @@ function renderNode(node, level) {
       el('span', { class: 'row-icon' }, icon(isOpen ? 'folder-open' : 'folder')),
       el('span', { class: 'row-label' }, node.name),
     );
-    return el('div', { class: 'tree-group' }, row,
+    const group = el('div', { class: 'tree-group' }, row,
       el('div', { class: 'tree-children', role: 'group' },
         isOpen ? node.children.map((c) => renderNode(c, level + 1)) : []));
+    return group;
   }
 
   const isMain = node.path === state.settings?.mainFile;
@@ -499,7 +504,13 @@ async function runSearch() {
     for (const h of fileHits) {
       out.push(el('button', {
         class: 'search-hit',
-        onclick: async () => { await host.openFile(h.file); host.gotoLine(h.line); },
+        // openFile resolves without throwing when the read fails or a later
+        // open supersedes it; jumping then would move the cursor in whatever
+        // file is still open.
+        onclick: async () => {
+          await host.openFile(h.file);
+          if (state.openPath === h.file) host.gotoLine(h.line);
+        },
       },
         el('span', { class: 'search-line' }, String(h.line)),
         el('span', { class: 'search-preview' }, h.before, el('mark', {}, h.match), h.after),
