@@ -4,6 +4,7 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var promptText = ""
+    @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         @Bindable var app = app
@@ -17,6 +18,7 @@ struct WorkspaceView: View {
             HSplitView {
                 EditorView(bridge: app.editor)
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottomTrailing) { wordCount }
                 if project.showPDF || project.showLogs {
                     Group {
                         if project.showLogs {
@@ -30,7 +32,7 @@ struct WorkspaceView: View {
             }
         }
         .navigationTitle(project.id)
-        .navigationSubtitle(project.openPath.map { "\($0) — \(project.status)" } ?? project.status)
+        .navigationSubtitle(subtitle)
         .toolbar { toolbar }
         .alert(promptTitle, isPresented: Binding(
             get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
@@ -42,6 +44,30 @@ struct WorkspaceView: View {
         .onChange(of: app.prompt?.id) { _, _ in promptText = promptDefault }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
             Task { await project.flush() }
+        }
+    }
+
+    /// The breadcrumb, then the save state.
+    private var subtitle: String {
+        let crumbs = project.breadcrumb.joined(separator: " › ")
+        return crumbs.isEmpty ? project.status : "\(crumbs) — \(project.status)"
+    }
+
+    /// Words and lines in the open .tex file, in the editor's corner like the
+    /// web's pill (workspace.js `updateDocMeta`).
+    @ViewBuilder
+    private var wordCount: some View {
+        if showWordCount, let counts = project.counts {
+            Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .glassEffect()
+                .padding(.trailing, 16)
+                .padding(.bottom, 12)
+                .allowsHitTesting(false)
         }
     }
 

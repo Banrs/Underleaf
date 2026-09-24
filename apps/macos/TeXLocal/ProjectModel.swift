@@ -11,6 +11,8 @@ final class ProjectModel {
     var tree: [TreeNode] = []
     var openPath: String?
     var outline: [OutlineItem] = []
+    /// Words and lines in the open .tex file, for the word-count pill.
+    var counts: (words: Int, lines: Int)?
     var cursorLine = 1
 
     var dirty = false
@@ -118,8 +120,9 @@ final class ProjectModel {
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
                 openPath = path
-                outline = Outline.parse(file.text)
+                analyze(file.text)
                 await editor.open(path: "\(id)/\(path)", text: file.text)
+                cursorLine = await editor.currentLine()
             } catch {
                 report(error)
                 return
@@ -150,7 +153,7 @@ final class ProjectModel {
             // dirty again, and its own save follows.
             dirty = false
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
-            outline = Outline.parse(text)
+            analyze(text)
             await refreshSymbols()
             return true
         } catch {
@@ -158,6 +161,26 @@ final class ProjectModel {
             report(error)
             return false
         }
+    }
+
+    /// The outline, breadcrumb and word count read the open document; as in
+    /// the web, only a .tex file has them.
+    private func analyze(_ text: String) {
+        guard openPath?.hasSuffix(".tex") == true else {
+            outline = []
+            counts = nil
+            return
+        }
+        let doc = Outline.analyze(text)
+        outline = doc.outline
+        counts = (doc.words, doc.lines)
+    }
+
+    /// File › section › subsection at the cursor (web/src/workspace.js
+    /// `renderCrumbs`).
+    var breadcrumb: [String] {
+        guard let path = openPath else { return [] }
+        return [(path as NSString).lastPathComponent] + Outline.chain(outline, at: cursorLine).map(\.title)
     }
 
     /// Save now, cancelling the pending autosave — before a file switch, a

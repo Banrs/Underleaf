@@ -49,6 +49,54 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(items.map(\.level), [2, 3, 2])
         XCTAssertEqual(items.map(\.line), [2, 4, 5])
     }
+
+    func testWordsCountAsTheWebCountsThem() {
+        // Each count is what web/src/state.js lineWords gives, run in Node.
+        let cases: [(Substring, Int)] = [
+            ("Hello world", 2),
+            ("\\section{Introduction} text here", 3),
+            ("A \\textbf{bold} and \\emph{it} word", 5),
+            ("Cost is 50\\% of total % a comment here", 4),
+            ("\\begin{itemize}[leftmargin=*] item", 3),
+            ("\\cite[p.~4]{knuth} says so", 3),
+            ("\\foo*[x bar", 2),
+            ("$x^2 + y_1$ is math", 4),
+            ("Ünïcödé naïve café", 3),
+            ("e\u{301}t\u{E9}", 1),
+            ("x=1 2 3 ---", 1),
+            ("tab\tseparated\u{A0}words", 3),
+            ("don't stop", 2),
+            ("a\\\\%b c", 3),
+            ("50% off", 0),
+            ("a % b\u{2028}c d", 4),
+            ("a % b\u{2028}c % d", 3),
+            ("", 0),
+        ]
+        for (line, words) in cases {
+            XCTAssertEqual(Outline.lineWords(line), words, String(line))
+        }
+    }
+
+    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() {
+        let doc = Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
+        XCTAssertEqual(doc.lines, 4)
+        XCTAssertEqual(doc.words, 4)
+        XCTAssertEqual(doc.outline.map(\.title), ["One"])
+        XCTAssertEqual(Outline.analyze("").lines, 1)
+    }
+
+    func testTheBreadcrumbIsTheChainOfEnclosingHeadings() {
+        let outline = Outline.parse("""
+        \\chapter{A}
+        \\section{B}
+        \\subsection{C}
+        \\section{D}
+        text
+        """)
+        XCTAssertEqual(Outline.chain(outline, at: 3).map(\.title), ["A", "B", "C"])
+        XCTAssertEqual(Outline.chain(outline, at: 5).map(\.title), ["A", "D"])
+        XCTAssertEqual(Outline.chain(outline, at: 0).map(\.title), [])
+    }
 }
 
 final class CommandTests: XCTestCase {
