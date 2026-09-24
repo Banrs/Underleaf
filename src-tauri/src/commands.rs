@@ -158,9 +158,10 @@ pub async fn read_file(
 ) -> CmdResult<FileText> {
     let abs = paths::safe_path(&root(&state, &id)?, &path)?;
     let bytes = std::fs::read(abs)?;
-    Ok(FileText {
-        text: String::from_utf8_lossy(&bytes).into_owned(),
-    })
+    // Valid UTF-8, the usual case, becomes the String without a second copy.
+    let text = String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
+    Ok(FileText { text })
 }
 
 #[tauri::command]
