@@ -7,6 +7,7 @@ struct SidebarView: View {
     @State private var selection: String?
     @State private var deleting: String?
     @FocusState private var searchFocused: Bool
+    @AppStorage("outlineOpen") private var outlineOpen = true
 
     var body: some View {
         List(selection: $selection) {
@@ -17,7 +18,7 @@ struct SidebarView: View {
                     }
                 }
                 if !project.outline.isEmpty {
-                    Section("Outline") {
+                    Section("Outline", isExpanded: $outlineOpen) {
                         ForEach(project.outline) { item in
                             Button {
                                 project.reveal(line: item.line)

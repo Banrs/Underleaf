@@ -19,6 +19,7 @@ struct TeXLocalApp: App {
 
         Settings {
             SettingsView()
+                .environment(app)
         }
     }
 }

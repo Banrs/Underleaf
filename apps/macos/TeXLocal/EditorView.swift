@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 /// Hosts the app's one editor web view, and keeps its appearance in step with
 /// the system and Settings.
@@ -8,6 +9,7 @@ struct EditorView: NSViewRepresentable {
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
     @AppStorage("editorFontSize") private var fontSize = 14
+    @AppStorage("uiScale") private var uiScale = 100
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -17,6 +19,11 @@ struct EditorView: NSViewRepresentable {
 
     func updateNSView(_ container: NSView, context: Context) {
         attach(to: container)
+        // The interface size scales the page — gutter, panels, completions —
+        // as the web's scales its whole window. Native chrome keeps the
+        // system's own text size.
+        let zoom = CGFloat(uiScale) / 100
+        if bridge.webView.pageZoom != zoom { bridge.webView.pageZoom = zoom }
         let (theme, palette, font, fontSize) = (colorScheme == .dark ? "dark" : "light", palette, font, fontSize)
         Task { await bridge.setAppearance(theme: theme, palette: palette, font: font, fontSize: fontSize) }
     }

@@ -16,6 +16,8 @@ enum MenuCommand: String, CaseIterable {
     case fileUpload = "file.upload"
     case fileSave = "file.save"
     case pdfSave = "pdf.save"
+    case editUndo = "edit.undo"
+    case editRedo = "edit.redo"
     case editFind = "edit.find"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
@@ -23,12 +25,15 @@ enum MenuCommand: String, CaseIterable {
     case editComment = "edit.comment"
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
+    case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
     case viewToggleLogs = "view.toggleLogs"
     case viewZoomIn = "view.zoomIn"
     case viewZoomOut = "view.zoomOut"
     case viewFitWidth = "view.fitWidth"
     case viewFitHeight = "view.fitHeight"
+    case viewUIScaleUp = "view.uiScaleUp"
+    case viewUIScaleDown = "view.uiScaleDown"
     case compileRun = "compile.run"
     case compileToggleAuto = "compile.toggleAuto"
     case syncForward = "sync.forward"
@@ -45,6 +50,8 @@ enum MenuCommand: String, CaseIterable {
         case .fileUpload: "Add Files…"
         case .fileSave: "Save"
         case .pdfSave: "Save PDF As…"
+        case .editUndo: "Undo"
+        case .editRedo: "Redo"
         case .editFind: "Find & Replace"
         case .editBold: "Bold"
         case .editItalic: "Italic"
@@ -52,12 +59,15 @@ enum MenuCommand: String, CaseIterable {
         case .editComment: "Toggle Comment"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
-        case .viewTogglePdf: "Toggle PDF"
+        case .viewToggleSidebar: "Hide Sidebar"
+        case .viewTogglePdf: "Hide PDF"
         case .viewToggleLogs: "Compile Log"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
         case .viewFitWidth: "Fit Width"
         case .viewFitHeight: "Fit Height"
+        case .viewUIScaleUp: "Increase Interface Size"
+        case .viewUIScaleDown: "Decrease Interface Size"
         case .compileRun: "Compile"
         case .compileToggleAuto: "Compile Automatically"
         case .syncForward: "Go to PDF Position"
@@ -73,6 +83,8 @@ enum MenuCommand: String, CaseIterable {
         case .fileNewFolder: "CmdOrCtrl+Shift+Alt+N"
         case .fileSave: "CmdOrCtrl+S"
         case .pdfSave: "CmdOrCtrl+Shift+S"
+        case .editUndo: "CmdOrCtrl+Z"
+        case .editRedo: "CmdOrCtrl+Shift+Z"
         case .editFind: "CmdOrCtrl+F"
         case .editBold: "CmdOrCtrl+B"
         case .editItalic: "CmdOrCtrl+I"
@@ -80,12 +92,15 @@ enum MenuCommand: String, CaseIterable {
         case .editComment: "CmdOrCtrl+/"
         case .editGotoLine: "CmdOrCtrl+L"
         case .pdfFind: "CmdOrCtrl+Alt+F"
+        case .viewToggleSidebar: "CmdOrCtrl+\\"
         case .viewTogglePdf: "CmdOrCtrl+Shift+\\"
         case .viewToggleLogs: "CmdOrCtrl+Shift+L"
         case .viewZoomIn: "CmdOrCtrl+Plus"
         case .viewZoomOut: "CmdOrCtrl+Minus"
         case .viewFitWidth: "CmdOrCtrl+0"
         case .viewFitHeight: "CmdOrCtrl+Alt+0"
+        case .viewUIScaleUp: "CmdOrCtrl+Alt+Plus"
+        case .viewUIScaleDown: "CmdOrCtrl+Alt+Minus"
         case .compileRun: "CmdOrCtrl+Return"
         case .syncForward: "Ctrl+Return"
         case .syncInverse: "Ctrl+Shift+Return"
@@ -126,7 +141,7 @@ enum MenuCommand: String, CaseIterable {
     /// Chords the editor page gives back to the menu. Undo, redo, find and
     /// comment stay with the editor, which implements them itself.
     static var editorHostKeys: [(id: String, accel: String)] {
-        let editorOwned: Set<MenuCommand> = [.editFind, .editComment]
+        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editComment]
         return allCases.compactMap { c in
             guard !editorOwned.contains(c), let accel = c.accel else { return nil }
             return (c.rawValue, accel)
@@ -155,9 +170,15 @@ enum PDFAction {
 }
 
 extension AppModel {
+    /// web/src/prefs.js `UI_SCALES`, stepped by the interface-size commands.
+    static let uiScales = [80, 90, 100, 110, 120, 130]
+
     func isEnabled(_ command: MenuCommand) -> Bool {
         switch command {
-        case .projectNew: true
+        // Undo and redo also serve text fields outside the editor.
+        case .projectNew, .editUndo, .editRedo, .viewUIScaleUp, .viewUIScaleDown, .compileToggleAuto: true
+        case .fileSave, .editFind, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+            project?.openPath != nil
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
             project?.pdfVersion ?? 0 > 0
@@ -166,15 +187,39 @@ extension AppModel {
         }
     }
 
+    /// Titles flip like native View-menu items, as the web's do.
+    func title(_ command: MenuCommand) -> String {
+        switch command {
+        case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+        case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
+        default: command.title
+        }
+    }
+
+    /// On the home screen, with no files to make, ⌘N makes a project, as the
+    /// web's home screen does (home.js).
+    func shortcut(_ command: MenuCommand) -> KeyboardShortcut? {
+        switch (command, project) {
+        case (.projectNew, nil): MenuCommand.shortcut(for: "CmdOrCtrl+N")
+        case (.fileNew, nil): nil
+        default: command.shortcut
+        }
+    }
+
     func perform(_ command: MenuCommand) {
         guard isEnabled(command) else { return }
-        if command == .projectNew {
-            showNewProject = true
-            return
+        switch command {
+        case .projectNew: showNewProject = true; return
+        case .editUndo: undo(redo: false); return
+        case .editRedo: undo(redo: true); return
+        case .viewUIScaleUp: stepUIScale(1); return
+        case .viewUIScaleDown: stepUIScale(-1); return
+        case .compileToggleAuto: autoCompile.toggle(); return
+        default: break
         }
         guard let project else { return }
         switch command {
-        case .projectNew: break
+        case .projectNew, .editUndo, .editRedo, .viewUIScaleUp, .viewUIScaleDown, .compileToggleAuto: break
         case .projectClose: Task { await close() }
         case .projectExport:
             savePanel(name: "\(project.id).zip", type: .zip) { url in await project.exportZip(to: url) }
@@ -194,6 +239,7 @@ extension AppModel {
         case .editComment: project.format("comment")
         case .editGotoLine: prompt = .gotoLine
         case .pdfFind: project.showPDF = true; project.showLogs = false; requestPDF(.find)
+        case .viewToggleSidebar: sidebarVisible.toggle()
         case .viewTogglePdf: project.showPDF.toggle()
         case .viewToggleLogs: project.showLogs.toggle()
         case .viewZoomIn: requestPDF(.zoomIn)
@@ -201,10 +247,28 @@ extension AppModel {
         case .viewFitWidth: requestPDF(.fitWidth)
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project.compile() }
-        case .compileToggleAuto: project.autoCompile.toggle()
         case .syncForward: Task { await project.forwardSync() }
         case .syncInverse: project.showPDF = true; requestPDF(.inverseFromView)
         }
+    }
+
+    /// Undo and redo go to CodeMirror's own history while the editor has
+    /// focus, and down the responder chain — to a text field's — otherwise.
+    /// The standard items would ask WebKit's undo manager, which never sees
+    /// the changes CodeMirror makes itself (formatting, completions).
+    private func undo(redo: Bool) {
+        if let view = NSApp.keyWindow?.firstResponder as? NSView, view.isDescendant(of: editor.webView) {
+            Task { await editor.command(redo ? "redo" : "undo") }
+        } else {
+            _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
+        }
+    }
+
+    /// One step along `uiScales`, stopping at either end.
+    private func stepUIScale(_ delta: Int) {
+        let current = UserDefaults.standard.object(forKey: "uiScale") as? Int ?? 100
+        guard let i = Self.uiScales.firstIndex(of: current), Self.uiScales.indices.contains(i + delta) else { return }
+        UserDefaults.standard.set(Self.uiScales[i + delta], forKey: "uiScale")
     }
 
     private func savePanel(name: String, type: UTType, _ write: @escaping @MainActor (URL) async -> Void) {
@@ -237,12 +301,16 @@ struct AppCommands: Commands {
     let app: AppModel
 
     private func item(_ command: MenuCommand) -> some View {
-        Button(command.title) { app.perform(command) }
-            .keyboardShortcut(command.shortcut)
+        Button(app.title(command)) { app.perform(command) }
+            .keyboardShortcut(app.shortcut(command))
             .disabled(!app.isEnabled(command))
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .undoRedo) {
+            item(.editUndo)
+            item(.editRedo)
+        }
         CommandGroup(replacing: .newItem) {
             item(.projectNew)
             Divider()
@@ -270,6 +338,7 @@ struct AppCommands: Commands {
             item(.editComment)
         }
         CommandGroup(after: .sidebar) {
+            item(.viewToggleSidebar)
             item(.viewTogglePdf)
             Toggle(MenuCommand.viewToggleLogs.title, isOn: Binding(
                 get: { app.project?.showLogs ?? false },
@@ -283,14 +352,16 @@ struct AppCommands: Commands {
             item(.viewFitWidth)
             item(.viewFitHeight)
             Divider()
+            item(.viewUIScaleUp)
+            item(.viewUIScaleDown)
+            Divider()
         }
         CommandMenu("Compile") {
             item(.compileRun)
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Binding(
-                get: { app.project?.autoCompile ?? true },
-                set: { app.project?.autoCompile = $0 }
+                get: { app.autoCompile },
+                set: { app.autoCompile = $0 }
             ))
-            .disabled(app.project == nil)
             Divider()
             item(.syncForward)
             item(.syncInverse)

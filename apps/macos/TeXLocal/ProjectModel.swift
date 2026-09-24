@@ -26,7 +26,10 @@ final class ProjectModel {
     /// be flashed twice.
     var highlight: (loc: ForwardLoc, token: Int)?
     var showLogs = false
-    var showPDF = true
+    /// Remembered across projects and launches, like the web's.
+    var showPDF = UserDefaults.standard.object(forKey: "showPDF") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showPDF, forKey: "showPDF") }
+    }
 
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
@@ -38,11 +41,6 @@ final class ProjectModel {
     private var searchTask: Task<Void, Never>?
     private var highlightToken = 0
 
-    /// App-wide, remembered across launches; held here so views observe it.
-    var autoCompile = UserDefaults.standard.object(forKey: "autoCompile") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
-    }
-
     init(id: String, editor: EditorBridge, app: AppModel) {
         self.id = id
         self.editor = editor
@@ -52,6 +50,7 @@ final class ProjectModel {
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
     var texAvailable: Bool { app?.tex?.available ?? false }
+    var autoCompile: Bool { app?.autoCompile ?? false }
 
     var status: String {
         if compiling { return "Compiling…" }
@@ -232,7 +231,9 @@ final class ProjectModel {
     func setEngine(_ engine: String) async {
         do {
             settings = try await core.call("set_settings", ["id": id, "patch": ["engine": engine]], as: ProjectSettings.self)
-            if autoCompile { await compile() }
+            // A new engine only means something once a build uses it, so it
+            // compiles whatever the auto-compile setting, as the web does.
+            await compile()
         } catch {
             report(error)
         }

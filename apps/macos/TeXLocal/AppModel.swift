@@ -14,8 +14,17 @@ final class AppModel {
     var prompt: Prompt?
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
-    var sidebarVisible = true
     private var pdfToken = 0
+
+    // Settings the menus and models read, remembered across launches; held
+    // here so they are observed. Settings the views alone read are
+    // @AppStorage where they are used.
+    var sidebarVisible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
+    }
+    var autoCompile = UserDefaults.standard.object(forKey: "autoCompile") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
+    }
 
     func requestPDF(_ action: PDFAction) {
         pdfToken += 1

@@ -133,8 +133,43 @@ final class CommandTests: XCTestCase {
         let ids = Set(MenuCommand.editorHostKeys.map(\.id))
         XCTAssertTrue(ids.contains("compile.run"))
         XCTAssertTrue(ids.contains("edit.gotoLine"))
+        XCTAssertTrue(ids.contains("view.uiScaleUp"))
         XCTAssertFalse(ids.contains("edit.find"))
         XCTAssertFalse(ids.contains("edit.comment"))
+        XCTAssertFalse(ids.contains("edit.undo"))
+        XCTAssertFalse(ids.contains("edit.redo"))
+    }
+
+    /// A file of the repository this test was built from.
+    private func repo(_ path: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(path)
+    }
+
+    /// The menu has every command the web declares, with the same chord —
+    /// except Settings…, which the Settings scene adds with ⌘, itself.
+    func testTheMenuHasEveryWebCommand() throws {
+        let source = try String(contentsOf: repo("web/src/workspace.js"), encoding: .utf8)
+        var ids: Set<String> = []
+        for line in source.split(separator: "\n") {
+            guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
+            let id = String(match.1)
+            ids.insert(id)
+            guard id != "app.settings" else { continue }
+            let accel = line.firstMatch(of: /accel: '([^']+)'/)
+                .map { String($0.1).replacingOccurrences(of: "\\\\", with: "\\") }
+            XCTAssertEqual(MenuCommand(rawValue: id)?.accel, accel, id)
+        }
+        XCTAssertEqual(Set(MenuCommand.allCases.map(\.rawValue)), ids.subtracting(["app.settings"]))
+    }
+
+    @MainActor
+    func testInterfaceSizesAreTheWebs() throws {
+        let source = try String(contentsOf: repo("web/src/prefs.js"), encoding: .utf8)
+        let list = try XCTUnwrap(source.firstMatch(of: /UI_SCALES = \[([^\]]*)\]/)?.1)
+        XCTAssertEqual(list.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }, AppModel.uiScales)
     }
 }
 

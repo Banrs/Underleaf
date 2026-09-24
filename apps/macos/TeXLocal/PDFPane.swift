@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import PDFKit
 import SwiftUI
 
@@ -10,13 +11,19 @@ struct PDFPane: View {
     @State private var finding = false
     /// Bumped to put the cursor in the find field, its text selected.
     @State private var findFocus = 0
+    @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
             bar
             Divider()
             if project.pdfVersion > 0 {
-                PDFRepresentable(project: project, controller: controller)
+                PDFRepresentable(
+                    project: project, controller: controller,
+                    // "auto" follows the app's appearance (web/src/prefs.js).
+                    darkPaper: pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark)
+                )
             } else {
                 ContentUnavailableView(
                     project.texAvailable ? "No PDF Yet" : "TeX Isn’t Installed",
@@ -266,6 +273,23 @@ final class PDFController {
 final class SyncPDFView: PDFView {
     var onInverse: (Int, CGPoint) -> Void = { _, _ in }
 
+    /// Dark paper, drawn as the web draws it (`.pdf-dark`): the rendered PDF
+    /// inverted, then turned half way round the colour wheel so figures keep
+    /// their hues. Under the filter the view keeps the light appearance,
+    /// whose background and scrollers the inversion turns dark.
+    var darkPaper = false {
+        didSet {
+            guard darkPaper != oldValue else { return }
+            wantsLayer = true
+            layerUsesCoreImageFilters = true
+            appearance = darkPaper ? NSAppearance(named: .aqua) : nil
+            pageShadowsEnabled = !darkPaper
+            let hue = CIFilter.hueAdjust()
+            hue.angle = .pi
+            contentFilters = darkPaper ? [CIFilter.colorInvert(), hue] : []
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 2, let document else {
             super.mouseDown(with: event)
@@ -282,6 +306,7 @@ final class SyncPDFView: PDFView {
 private struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
     let controller: PDFController
+    let darkPaper: Bool
 
     final class Coordinator {
         var version = 0
@@ -314,6 +339,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ view: SyncPDFView, context: Context) {
+        view.darkPaper = darkPaper
         let coordinator = context.coordinator
         if project.pdfVersion != coordinator.version, let url = project.pdfURL {
             coordinator.version = project.pdfVersion

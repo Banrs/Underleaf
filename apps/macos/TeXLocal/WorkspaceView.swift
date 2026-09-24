@@ -124,12 +124,10 @@ struct WorkspaceView: View {
                 get: { project.settings?.engine ?? "pdflatex" },
                 set: { engine in Task { await project.setEngine(engine) } }
             )) {
-                Text("pdfLaTeX").tag("pdflatex")
-                Text("XeLaTeX").tag("xelatex")
-                Text("LuaLaTeX").tag("lualatex")
+                ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
             }
             .pickerStyle(.inline)
-            Toggle(MenuCommand.compileToggleAuto.title, isOn: $project.autoCompile)
+            Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
         } label: {
             if project.compiling {
                 ProgressView().controlSize(.small)
@@ -203,6 +201,9 @@ struct WorkspaceView: View {
         }
     }
 }
+
+/// The engines a project can compile with, for the compile menu and Settings.
+let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
 /// web/src/workspace.js `INSERT_TEMPLATES`; "$0" marks where the cursor lands.
 let insertTemplates: [(String, String)] = [
