@@ -31,7 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let project = app?.project, project.dirty else { return .terminateNow }
+        // A save in flight counts: it has cleared `dirty` before its write
+        // is on disk.
+        guard let project = app?.project, project.dirty || project.saving else { return .terminateNow }
         Task { @MainActor in
             sender.reply(toApplicationShouldTerminate: await project.flush())
         }

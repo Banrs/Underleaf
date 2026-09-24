@@ -42,7 +42,9 @@ struct WorkspaceView: View {
             Button(promptAction(prompt)) { submit(prompt) }
         }
         .onChange(of: app.prompt?.id) { _, _ in promptText = promptDefault }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            // This window's only: closing Settings is no reason to save.
+            guard (note.object as? NSWindow) === app.editor.webView.window else { return }
             Task { await project.flush() }
         }
     }

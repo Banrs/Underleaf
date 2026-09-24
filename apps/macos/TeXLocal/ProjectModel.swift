@@ -38,6 +38,8 @@ final class ProjectModel {
     private weak var app: AppModel?
     private let core = Core.shared
     private var saveTask: Task<Void, Never>?
+    /// The latest save; each save waits for the one before it.
+    private var lastSave: Task<Bool, Never>?
     private var searchTask: Task<Void, Never>?
     private var highlightToken = 0
     /// A build was asked for while one ran; it follows when that one ends.
@@ -143,8 +145,20 @@ final class ProjectModel {
     }
 
     /// Write the editor's text to disk. False when it could not be saved.
+    /// Saves run one at a time, in order (workspace.js `saveQueue`): one that
+    /// returns true has reached the disk, and two writes never interleave.
     @discardableResult
     func save() async -> Bool {
+        let previous = lastSave
+        let task = Task {
+            _ = await previous?.value
+            return await self.write()
+        }
+        lastSave = task
+        return await task.value
+    }
+
+    private func write() async -> Bool {
         guard dirty, let path = openPath else { return true }
         guard let text = await editor.text() else { return false }
         saving = true
@@ -188,7 +202,12 @@ final class ProjectModel {
     /// project close, or quit.
     func flush() async -> Bool {
         saveTask?.cancel()
-        return await save()
+        // Again while an edit arrived during the write (savequeue.js
+        // flushUntilStable), so what a quit or a switch leaves is on disk.
+        repeat {
+            guard await save() else { return false }
+        } while dirty && openPath != nil
+        return true
     }
 
     /// Save now, and build what that saved when auto-compile is on: ⌘S, a
