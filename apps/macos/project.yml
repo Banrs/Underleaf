@@ -24,6 +24,9 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        # Deleting moves to the Trash through Finder (the trash crate's default),
+        # which keeps Put Back working and needs the Automation permission.
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: TeXLocal asks Finder to move deleted files to the Trash, so you can put them back.
         MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_IDENTITY: "-"

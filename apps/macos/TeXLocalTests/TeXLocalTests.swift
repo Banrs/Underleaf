@@ -99,6 +99,10 @@ final class CoreTests: XCTestCase {
             XCTAssertEqual(error.status, 400)
         }
 
-        try await core.perform("delete_project", ["id": info.id])
+        // Not delete_project: it moves the folder to the Trash through Finder,
+        // which a headless test host cannot drive. The core's own tests cover
+        // that path; here the scratch project is simply removed.
+        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: data).appendingPathComponent(info.id))
     }
 }
