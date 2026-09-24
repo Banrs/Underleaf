@@ -32,11 +32,6 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          key: macos-app
-      - run: npm ci
       # The app targets macOS 27, so it needs the newest Xcode on the image,
       # which is not always the default one.
       - name: Select the newest Xcode
@@ -59,6 +54,14 @@ jobs:
             echo "::warning::Runner has macOS $HOST and SDK $SDK; building for $TARGET instead of 27.0"
             echo "TARGET_OVERRIDE=MACOSX_DEPLOYMENT_TARGET=$TARGET" >> "$GITHUB_ENV"
           fi
+      # Keyed on the deployment target: cargo does not rebuild dependencies
+      # when it changes, and objects cached for a newer macOS than the app
+      # links for draw a linker warning each.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: macos-app-${{ env.TARGET_OVERRIDE }}
+      - run: npm ci
       - name: Build
         working-directory: apps/macos
         run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE build-for-testing
