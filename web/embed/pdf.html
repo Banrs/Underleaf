@@ -9,7 +9,9 @@
   <link rel="stylesheet" href="/pdf-find.css" />
   <style>
     html, body { height: 100%; margin: 0; }
-    #pdf { height: 100%; overflow: auto; }
+    /* .pdf-scroll leaves room above the pages for the browser version's
+       floating toolbar; here the host's toolbar sits outside the page. */
+    #pdf { height: 100%; overflow: auto; padding-top: var(--sp-3); }
   </style>
 </head>
 <body>
