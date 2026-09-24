@@ -37,12 +37,14 @@ targets:
         # The build scripts run cargo and npm in the repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
-        OTHER_LDFLAGS: -ltexlocal_ffi -liconv
+      # The core's archive by path rather than -ltexlocal_ffi: the crate's
+      # cdylib sits beside it, ld64 prefers a dylib, and the app would then
+      # load the core from target/ on the machine that built it.
       configs:
         Debug:
-          LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/debug
+          OTHER_LDFLAGS: $(SRCROOT)/../../target/debug/libtexlocal_ffi.a -liconv
         Release:
-          LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/release
+          OTHER_LDFLAGS: $(SRCROOT)/../../target/release/libtexlocal_ffi.a -liconv
     preBuildScripts:
       - name: Build Rust core
         path: scripts/build-core.sh
