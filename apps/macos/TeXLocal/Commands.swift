@@ -229,7 +229,7 @@ extension AppModel {
         case .fileNew: prompt = .newFile
         case .fileNewFolder: prompt = .newFolder
         case .fileUpload: importPanel(into: project)
-        case .fileSave: Task { await project.flush() }
+        case .fileSave: Task { await project.saveEdits() }
         case .pdfSave:
             savePanel(name: "\(project.id).pdf", type: .pdf) { url in await project.savePDF(to: url) }
         case .editFind: project.format("find")

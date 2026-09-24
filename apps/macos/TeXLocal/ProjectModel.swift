@@ -40,6 +40,8 @@ final class ProjectModel {
     private var saveTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var highlightToken = 0
+    /// A build was asked for while one ran; it follows when that one ends.
+    private var compileQueued = false
 
     init(id: String, editor: EditorBridge, app: AppModel) {
         self.id = id
@@ -81,8 +83,8 @@ final class ProjectModel {
         pdfURL = try? await pdfPath()
         if let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) {
             pdfVersion += 1
-        } else if autoCompile && texAvailable {
-            await compile()
+        } else if autoCompile {
+            await compile(auto: true)
         }
     }
 
@@ -115,7 +117,7 @@ final class ProjectModel {
             return
         }
         if path != openPath {
-            guard await flush() else { return }
+            guard await saveEdits() else { return }
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
                 openPath = path
@@ -136,7 +138,7 @@ final class ProjectModel {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled, let self else { return }
-            if await self.save(), self.autoCompile, self.texAvailable { await self.compile() }
+            if await self.save(), self.autoCompile { await self.compile(auto: true) }
         }
     }
 
@@ -189,26 +191,53 @@ final class ProjectModel {
         return await save()
     }
 
+    /// Save now, and build what that saved when auto-compile is on: ⌘S, a
+    /// file switch, a rename or a forward search cancel the autosave, and its
+    /// build must not go with it (workspace.js `doSave`). Leaving the project
+    /// flushes instead, which only saves.
+    @discardableResult
+    func saveEdits() async -> Bool {
+        let edited = dirty
+        guard await flush() else { return false }
+        if edited, autoCompile { Task { await compile(auto: true) } }
+        return true
+    }
+
     // ---------- compile ----------
 
-    func compile() async {
-        guard !compiling, texAvailable else { return }
-        guard await flush() else { return }
-        compiling = true
-        defer { compiling = false }
-        do {
-            let result = try await core.call("compile", ["id": id], as: CompileResult.self)
-            self.result = result
-            if result.ok {
-                pdfURL = try await pdfPath()
-                pdfVersion += 1
-            } else if !result.errors.isEmpty {
-                showLogs = true
-            }
-            notify(result)
-        } catch {
-            report(error)
+    /// Build the PDF. Asked while a build runs, it queues one to follow, so
+    /// edits saved meanwhile are built too (workspace.js `pendingCompile`).
+    /// An automatic build keeps its failures to the log, rather than putting
+    /// up an alert after every pause in typing.
+    func compile(auto: Bool = false) async {
+        guard texAvailable else { return }
+        if compiling {
+            compileQueued = true
+            return
         }
+        // Before the save, so a second request queues instead of racing this one.
+        compiling = true
+        let saved = await flush()
+        if saved {
+            do {
+                let result = try await core.call("compile", ["id": id], as: CompileResult.self)
+                self.result = result
+                if result.ok {
+                    pdfURL = try await pdfPath()
+                    pdfVersion += 1
+                } else if !result.errors.isEmpty {
+                    showLogs = true
+                }
+                notify(result)
+            } catch {
+                if !auto { report(error) }
+            }
+        }
+        compiling = false
+        // After a failed save the queued build would only build stale text.
+        let again = saved && compileQueued
+        compileQueued = false
+        if again { await compile(auto: true) }
     }
 
     private func notify(_ result: CompileResult) {
@@ -243,7 +272,7 @@ final class ProjectModel {
 
     func forwardSync() async {
         guard let path = openPath else { return }
-        guard await flush() else { return }
+        guard await saveEdits() else { return }
         let line = await editor.currentLine()
         do {
             let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line], as: ForwardLoc.self)
@@ -280,7 +309,7 @@ final class ProjectModel {
 
     func renameEntry(_ from: String, to: String) async {
         guard to != from else { return }
-        guard await flush() else { return }
+        guard await saveEdits() else { return }
         do {
             let result = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResult.self)
             await editor.forget(path: "\(id)/\(result.from)")
