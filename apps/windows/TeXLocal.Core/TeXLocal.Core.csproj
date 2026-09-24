@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The app's logic without its UI: the Rust core through its C ABI, the
+       core's JSON shapes, the command table and the outline parser. No WinUI
+       here, so the tests load it without a window. -->
+  <PropertyGroup>
+    <RootNamespace>TeXLocal</RootNamespace>
+    <!-- [LibraryImport] generates its marshalling code with pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- The Rust core, built by cargo: a Debug build takes target\debug, a
+       Release build target\release. It travels to the output of every project
+       that references this one, so the app and the tests both load it. -->
+  <PropertyGroup>
+    <CoreProfile Condition="'$(Configuration)' == 'Release'">release</CoreProfile>
+    <CoreProfile Condition="'$(Configuration)' != 'Release'">debug</CoreProfile>
+    <CoreLibrary>$(MSBuildThisFileDirectory)..\..\..\target\$(CoreProfile)\texlocal_ffi.dll</CoreLibrary>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(CoreLibrary)" Link="texlocal_ffi.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireCore" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(CoreLibrary)')"
+           Text="The Rust core is missing: $(CoreLibrary). Build it first with cargo build -p texlocal-ffi (with --release for a Release build)." />
+  </Target>
+</Project>

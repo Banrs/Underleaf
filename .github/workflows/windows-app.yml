@@ -1,0 +1,50 @@
+name: Windows app
+
+# The WinUI 3 app in apps/windows, built with the .NET SDK. It runs on push as
+# well as on pull requests so a branch changing the app gets a compile without
+# opening a PR first; only paths the app builds from trigger it.
+on:
+  pull_request:
+    paths: &paths
+      - apps/windows/**
+      - crates/**
+      - web/**
+      - package*.json
+      - build.mjs
+      - .github/workflows/windows-app.yml
+  push:
+    paths: *paths
+
+# A newer push to a pull request supersedes the older run. Pushes are grouped
+# by commit instead, so parallel work on one branch never cancels another's run.
+concurrency:
+  group: windows-app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The embedded editor and PDF pages the app copies next to its exe.
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: windows-app
+      # texlocal_ffi.dll, from target\debug for the Debug build below.
+      - run: cargo build -p texlocal-ffi
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64
+      - name: Test
+        run: dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj -c Debug

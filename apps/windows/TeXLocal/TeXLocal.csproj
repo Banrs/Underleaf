@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The WinUI 3 app. Unpackaged, and self-contained for both .NET and the
+       Windows App SDK, so the build output runs without installing either. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>TeXLocal</RootNamespace>
+    <AssemblyName>TeXLocal</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\TeXLocal.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TeXLocal.Core\TeXLocal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\TeXLocal.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The two web surfaces — the editor and the PDF viewer — and everything
+       their pages load (web/embed/*.html), copied to web\ next to the exe,
+       where WebView2 serves them. `npm run build` makes web/dist. -->
+  <PropertyGroup>
+    <WebRoot>$(MSBuildThisFileDirectory)..\..\..\web\</WebRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(WebRoot)embed\editor.html;$(WebRoot)embed\pdf.html" Link="web\embed\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WebRoot)styles.css;$(WebRoot)pdf-find.css" Link="web\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WebRoot)dist\embed-editor.js;$(WebRoot)dist\embed-pdf.js;$(WebRoot)dist\pdf.worker.min.mjs;$(WebRoot)dist\katex.min.css" Link="web\dist\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WebRoot)dist\fonts\*.woff2" Link="web\dist\fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WebRoot)dist\fonts-jbm\*.woff2" Link="web\dist\fonts-jbm\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireWeb" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(WebRoot)dist\embed-editor.js')"
+           Text="The web pages are not built. Run npm ci and npm run build in the repository root first." />
+  </Target>
+</Project>
