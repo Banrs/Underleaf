@@ -1,11 +1,11 @@
-//! The desktop command surface. Filesystem operations delegate path validation
-//! to texlocal-core and invalidate project caches after successful mutations.
+//! The desktop command surface: thin wrappers over `texlocal_core::service`,
+//! which owns every command's path checks and cache invalidation. Only what
+//! needs the shell — dialogs, notifications, menus, the quit handshake — is
+//! implemented here.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, State};
@@ -13,19 +13,14 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use texlocal_core::compile::{CompileOverrides, CompileResult, TexStatus};
-use texlocal_core::projects::{self, ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
-use texlocal_core::settings::{self, Settings};
-use texlocal_core::synctex::{self, ForwardLoc, InverseLoc};
-use texlocal_core::{compile as core_compile, paths, zipexport};
+use texlocal_core::projects::{ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
+use texlocal_core::service::UploadSpec;
+use texlocal_core::settings::Settings;
+use texlocal_core::synctex::{ForwardLoc, InverseLoc};
+use texlocal_core::zipexport;
 
 use crate::error::{CmdError, CmdResult};
 use crate::state::{AppState, FlushOutcome};
-
-const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
-
-fn root(state: &AppState, id: &str) -> CmdResult<PathBuf> {
-    Ok(paths::project_root(&state.data_dir, id)?)
-}
 
 #[derive(Serialize)]
 pub struct FileText {
@@ -38,39 +33,18 @@ pub struct Saved {
     pub saved: Vec<String>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UploadSpec {
-    pub path: String,
-    pub size: usize,
-}
-
-fn upload_rel(dir: &str, name: &str) -> String {
-    let name = name.replace('\\', "/");
-    if dir.is_empty() {
-        name
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
-
 // ---------- status ----------
 
 #[tauri::command]
 pub async fn status(state: State<'_, AppState>) -> CmdResult<TexStatus> {
-    if let Some(cached) = state.cached_status() {
-        return Ok(cached);
-    }
-    let found = core_compile::tex_available(None).await;
-    state.store_status(found.clone(), Instant::now());
-    Ok(found)
+    Ok(state.service.status().await)
 }
 
 // ---------- projects ----------
 
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<ProjectInfo>> {
-    Ok(projects::list_projects(&state.data_dir)?)
+    Ok(state.service.list_projects()?)
 }
 
 #[tauri::command]
@@ -79,11 +53,7 @@ pub async fn create_project(
     name: String,
     template: Option<String>,
 ) -> CmdResult<ProjectInfo> {
-    Ok(projects::create_project(
-        &state.data_dir,
-        &name,
-        template.as_deref().unwrap_or("article"),
-    )?)
+    Ok(state.service.create_project(&name, template.as_deref())?)
 }
 
 #[tauri::command]
@@ -92,25 +62,19 @@ pub async fn rename_project(
     id: String,
     name: String,
 ) -> CmdResult<ProjectInfo> {
-    let old = root(&state, &id)?;
-    let info = projects::rename_project(&state.data_dir, &id, &name)?;
-    state.forget_project(&old);
-    Ok(info)
+    Ok(state.service.rename_project(&id, &name)?)
 }
 
 #[tauri::command]
 pub async fn delete_project(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let old = root(&state, &id)?;
-    projects::delete_project(&state.data_dir, &id)?;
-    state.forget_project(&old);
-    Ok(())
+    Ok(state.service.delete_project(&id)?)
 }
 
 // ---------- settings ----------
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>, id: String) -> CmdResult<Settings> {
-    Ok(settings::read_settings(&root(&state, &id)?))
+    Ok(state.service.get_settings(&id)?)
 }
 
 #[tauri::command]
@@ -119,26 +83,19 @@ pub async fn set_settings(
     id: String,
     patch: Value,
 ) -> CmdResult<Settings> {
-    Ok(settings::write_settings(&root(&state, &id)?, &patch)?)
+    Ok(state.service.set_settings(&id, &patch)?)
 }
 
 // ---------- files ----------
 
 #[tauri::command]
 pub async fn file_tree(state: State<'_, AppState>, id: String) -> CmdResult<Vec<TreeNode>> {
-    Ok(projects::file_tree(&root(&state, &id)?)?)
+    Ok(state.service.file_tree(&id)?)
 }
 
 #[tauri::command]
 pub async fn scan_symbols(state: State<'_, AppState>, id: String) -> CmdResult<Symbols> {
-    let root = root(&state, &id)?;
-    let stamps = projects::symbols_fingerprint(&root)?;
-    if let Some(cached) = state.cached_symbols(&root, &stamps) {
-        return Ok(cached);
-    }
-    let symbols = projects::scan_symbols(&root)?;
-    state.store_symbols(&root, stamps, symbols.clone());
-    Ok(symbols)
+    Ok(state.service.scan_symbols(&id)?)
 }
 
 #[tauri::command]
@@ -147,7 +104,7 @@ pub async fn search_project(
     id: String,
     query: String,
 ) -> CmdResult<Vec<SearchHit>> {
-    Ok(projects::search_project(&root(&state, &id)?, &query, 100)?)
+    Ok(state.service.search_project(&id, &query)?)
 }
 
 #[tauri::command]
@@ -156,12 +113,9 @@ pub async fn read_file(
     id: String,
     path: String,
 ) -> CmdResult<FileText> {
-    let abs = paths::safe_path(&root(&state, &id)?, &path)?;
-    let bytes = std::fs::read(abs)?;
-    // Valid UTF-8, the usual case, becomes the String without a second copy.
-    let text = String::from_utf8(bytes)
-        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
-    Ok(FileText { text })
+    Ok(FileText {
+        text: state.service.read_file(&id, &path)?,
+    })
 }
 
 #[tauri::command]
@@ -171,14 +125,9 @@ pub async fn write_file(
     path: String,
     text: Option<String>,
 ) -> CmdResult<()> {
-    let root = root(&state, &id)?;
-    let abs = paths::safe_path(&root, &path)?;
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(abs, text.unwrap_or_default())?;
-    state.forget_project(&root);
-    Ok(())
+    Ok(state
+        .service
+        .write_file(&id, &path, text.as_deref().unwrap_or_default())?)
 }
 
 #[tauri::command]
@@ -188,10 +137,9 @@ pub async fn create_entry(
     path: String,
     dir: Option<bool>,
 ) -> CmdResult<()> {
-    let root = root(&state, &id)?;
-    projects::create_file(&root, &path, dir.unwrap_or(false))?;
-    state.forget_project(&root);
-    Ok(())
+    Ok(state
+        .service
+        .create_entry(&id, &path, dir.unwrap_or(false))?)
 }
 
 #[tauri::command]
@@ -201,22 +149,14 @@ pub async fn rename_entry(
     from: String,
     to: String,
 ) -> CmdResult<RenameResult> {
-    let root = root(&state, &id)?;
-    let result = projects::rename_entry(&root, &from, &to)?;
-    state.forget_project(&root);
-    Ok(result)
+    Ok(state.service.rename_entry(&id, &from, &to)?)
 }
 
 #[tauri::command]
 pub async fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
-    let root = root(&state, &id)?;
-    projects::delete_entry(&root, &path)?;
-    state.forget_project(&root);
-    Ok(())
+    Ok(state.service.delete_entry(&id, &path)?)
 }
 
-/// Validate the complete desktop upload before the first write. This prevents a
-/// late unsafe path or oversize file from producing a predictable half-import.
 #[tauri::command]
 pub async fn validate_uploads(
     state: State<'_, AppState>,
@@ -224,28 +164,9 @@ pub async fn validate_uploads(
     dir: Option<String>,
     files: Vec<UploadSpec>,
 ) -> CmdResult<()> {
-    let root = root(&state, &id)?;
-    let dir = dir.unwrap_or_default();
-    let mut seen = HashSet::new();
-    for file in files {
-        if file.size > UPLOAD_MAX_BYTES {
-            return Err(CmdError(format!(
-                "File exceeds the {} MB upload limit",
-                UPLOAD_MAX_BYTES / 1024 / 1024
-            )));
-        }
-        let rel = upload_rel(&dir, &file.path);
-        let abs = paths::safe_path(&root, &rel)?;
-        let key = if cfg!(any(windows, target_os = "macos")) {
-            abs.to_string_lossy().to_ascii_lowercase()
-        } else {
-            abs.to_string_lossy().into_owned()
-        };
-        if !seen.insert(key) {
-            return Err(CmdError("The upload contains duplicate paths".into()));
-        }
-    }
-    Ok(())
+    Ok(state
+        .service
+        .validate_uploads(&id, dir.as_deref().unwrap_or_default(), &files)?)
 }
 
 /// One file per invoke, body sent raw. The renderer first calls
@@ -268,21 +189,12 @@ pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> Cm
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err(CmdError("Upload body must be raw bytes".into()));
     };
-    if bytes.len() > UPLOAD_MAX_BYTES {
-        return Err(CmdError(format!(
-            "File exceeds the {} MB upload limit",
-            UPLOAD_MAX_BYTES / 1024 / 1024
-        )));
-    }
-
-    let root = root(&state, &header("x-project")?)?;
-    let rel = upload_rel(&header("x-dir")?, &header("x-path")?);
-    let abs = paths::safe_path(&root, &rel)?;
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(abs, bytes)?;
-    state.forget_project(&root);
+    let rel = state.service.upload_file(
+        &header("x-project")?,
+        &header("x-dir")?,
+        &header("x-path")?,
+        bytes,
+    )?;
     Ok(Saved { saved: vec![rel] })
 }
 
@@ -295,10 +207,9 @@ pub async fn compile(
     id: String,
     options: Option<CompileOverrides>,
 ) -> CmdResult<CompileResult> {
-    let root = root(&state, &id)?;
     let result = state
-        .compile
-        .compile(&root, &options.unwrap_or_default())
+        .service
+        .compile(&id, &options.unwrap_or_default())
         .await?;
     announce(&app, &result);
     Ok(result)
@@ -338,8 +249,7 @@ pub async fn synctex_forward(
     file: String,
     line: u32,
 ) -> CmdResult<ForwardLoc> {
-    let root = root(&state, &id)?;
-    Ok(synctex::synctex_forward(&root, &file, line, core_compile::tex_path()).await?)
+    Ok(state.service.synctex_forward(&id, &file, line).await?)
 }
 
 #[tauri::command]
@@ -350,8 +260,7 @@ pub async fn synctex_inverse(
     x: f64,
     y: f64,
 ) -> CmdResult<InverseLoc> {
-    let root = root(&state, &id)?;
-    Ok(synctex::synctex_inverse(&root, page, x, y, core_compile::tex_path()).await?)
+    Ok(state.service.synctex_inverse(&id, page, x, y).await?)
 }
 
 // ---------- export / save-as ----------
@@ -380,7 +289,8 @@ pub async fn export_project(
     state: State<'_, AppState>,
     id: String,
 ) -> CmdResult<()> {
-    let root = root(&state, &id)?;
+    // Resolve before the dialog, so a bad id fails without asking for a path.
+    let root = state.service.project_root(&id)?;
     let Some(dest) = ask_save_path(&app, &format!("{id}.zip"), ("ZIP archive", "zip")).await else {
         return Ok(());
     };
@@ -391,8 +301,7 @@ pub async fn export_project(
 
 #[tauri::command]
 pub async fn save_pdf_as(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let root = root(&state, &id)?;
-    let src = settings::compiled_pdf_path(&root)?;
+    let src = state.service.pdf_path(&id)?;
     if !src.exists() {
         return Err(CmdError("No compiled PDF yet".into()));
     }

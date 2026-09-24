@@ -12,6 +12,8 @@ pub mod error;
 pub mod logparse;
 pub mod paths;
 pub mod projects;
+pub mod serve;
+pub mod service;
 pub mod settings;
 pub mod synctex;
 pub mod templates;

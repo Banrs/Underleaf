@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use tauri::{Manager, RunEvent};
 
 use state::AppState;
+use texlocal_core::service::Service;
 
 /// Projects live in ~/TeXLocal — visible in the file manager, syncable, and
 /// (unlike ~/Documents on macOS) not behind a privacy gate, so the app never
@@ -70,7 +71,7 @@ pub fn run() {
             let handle = app.handle();
             let dir = data_dir(handle);
             std::fs::create_dir_all(&dir)?;
-            app.manage(AppState::new(dir));
+            app.manage(AppState::new(Service::new(dir)));
             menu::install_fallback(handle)?;
             window::create(handle)?;
             Ok(())
@@ -93,7 +94,7 @@ pub fn run() {
             // Compiles run in their own process groups so a kill reaches the
             // whole latexmk tree, which also means nothing signals them when
             // this process exits unless we do it here.
-            RunEvent::Exit => app.state::<AppState>().compile.kill_all(),
+            RunEvent::Exit => app.state::<AppState>().service.compile.kill_all(),
             _ => {}
         });
 }
