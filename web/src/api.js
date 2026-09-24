@@ -10,6 +10,9 @@ const enc = encodeURIComponent;
 
 const commandApi = ipc && {
   status: () => ipc.invoke('status'),
+  // null goes back to finding TeX automatically.
+  setTexDir: (dir) => ipc.invoke('set_tex_dir', { dir }),
+  listDirs: (path) => ipc.invoke('list_dirs', { path }),
 
   listProjects: () => ipc.invoke('list_projects'),
   createProject: (name, template) => ipc.invoke('create_project', { name, template }),

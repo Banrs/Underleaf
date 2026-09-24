@@ -10,6 +10,7 @@ import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from '
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
+import { chooseTexFolder } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
   buildSidebar, renderTree, updateTreeSelection, renderOutline, focusSearch,
@@ -425,6 +426,7 @@ function openProjectSettings() {
       refreshSidebarChrome();
       if (state.tex.available) compile();
     },
+    onTexChange: texChanged,
   });
 }
 
@@ -803,6 +805,20 @@ function watchForTex() {
   }, 10_000);
 }
 
+// A TeX folder chosen here shows at once, not at the next install poll.
+function texChanged() {
+  refreshSidebarChrome();
+  refreshCommands();
+  if (!state.pdf?.doc) showPdfEmpty();
+}
+
+async function chooseTex() {
+  const status = await chooseTexFolder();
+  if (!status) return;
+  state.tex = status;
+  texChanged();
+}
+
 // ---------- PDF ----------
 
 async function loadPdf() {
@@ -828,6 +844,7 @@ function showPdfEmpty() {
     el('p', {}, state.tex.available
       ? 'No PDF yet. Compile to preview your document.'
       : 'Install TeX Live to enable compilation.'),
+    state.tex.available ? null : el('button', { class: 'btn small', onclick: chooseTex }, 'Choose TeX folder…'),
   ));
 }
 

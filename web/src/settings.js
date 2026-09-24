@@ -8,6 +8,7 @@ import { $, el, toast, showModal, nextId } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
+import { chooseTexFolder } from './texfolder.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
 // its accessible name from the title, so icon-only segments still read properly.
@@ -107,9 +108,52 @@ function stepper(values, get, set, format) {
   return el('div', { class: 'stepper', role: 'group' }, dec, label, inc);
 }
 
+// The TeX installation in use, and the way to choose another. Only one dialog
+// is open at a time, so the folder chooser replaces Settings, which reopens
+// once it closes; a change reopens it too, so the footer status agrees.
+function texGroup(options, close) {
+  const tex = state.tex;
+  let hint;
+  if (tex.texDir) hint = tex.available ? `Using ${tex.texDir}` : `latexmk in ${tex.texDir} didn’t run`;
+  else if (tex.available) hint = tex.found ? `Found automatically in ${tex.found}` : 'Found automatically';
+  else hint = 'Install TeX Live or MiKTeX, or choose the folder it’s in';
+
+  const changed = (status) => {
+    state.tex = status;
+    options.onTexChange?.();
+  };
+  const browse = el('button', {
+    class: 'btn small',
+    onclick: async () => {
+      const status = await chooseTexFolder();
+      if (status) changed(status);
+      openSettings(options);
+    },
+  }, 'Browse…');
+  const automatic = tex.texDir ? el('button', {
+    class: 'btn small',
+    onclick: async () => {
+      automatic.disabled = true;
+      try {
+        changed(await api.setTexDir(null));
+        close(null);
+        openSettings(options);
+      } catch (err) {
+        toast(err.message, 'error');
+        automatic.disabled = false;
+      }
+    },
+  }, 'Use automatic') : null;
+  return group('TeX installation',
+    row(tex.available ? (tex.version ?? 'TeX found') : 'TeX not found', hint,
+      el('div', { class: 'settings-control', role: 'group' }, automatic, browse)));
+}
+
 // `onEngineChange` lets the open workspace react (relabel, recompile) once a new
-// engine has been saved; the home screen has no project and passes nothing.
-export function openSettings({ onEngineChange } = {}) {
+// engine has been saved, and `onTexChange` once a TeX folder has; the home
+// screen has no project and passes only the latter.
+export function openSettings(options = {}) {
+  const { onEngineChange } = options;
   if ($('#modal-root .settings-dialog')) return Promise.resolve(null); // already open
 
   return showModal((close) => {
@@ -146,6 +190,7 @@ export function openSettings({ onEngineChange } = {}) {
         row('Interface scale', null,
           stepper(UI_SCALES, () => prefs.uiScale, (v) => { prefs.uiScale = v; }, (v) => `${v}%`)),
       ),
+      texGroup(options, close),
     ];
 
     if (state.projectId) {

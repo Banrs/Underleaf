@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
+import { chooseTexFolder } from './texfolder.js';
 
 let dispose = null;
 
@@ -125,10 +126,12 @@ export function destroyHome() {
 
 export async function renderHome() {
   dispose?.();
+  // A TeX folder chosen in Settings re-renders, so the notice below agrees.
+  const settings = () => openSettings({ onTexChange: renderHome });
   // registerCommands publishes the menu state itself.
   dispose = registerCommands([
     { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+N', run: newProjectFlow },
-    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openSettings },
+    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: settings },
   ]);
 
   const app = $('#app');
@@ -148,7 +151,7 @@ export async function renderHome() {
         menuBar(menuUnder),
         el('span', { class: 'spacer' }),
         el('button', {
-          class: 'icon-btn', title: tooltip('app.settings'), 'aria-label': 'Settings', onclick: openSettings,
+          class: 'icon-btn', title: tooltip('app.settings'), 'aria-label': 'Settings', onclick: settings,
         }, icon('gear')),
       ),
       el('div', { class: 'home-body' },
@@ -159,7 +162,7 @@ export async function renderHome() {
           banner,
           el('div', { class: 'brand-actions' },
             el('button', { class: 'btn primary', onclick: newProjectFlow }, icon('plus'), 'New Project'),
-            el('button', { class: 'btn', onclick: openSettings }, icon('gear'), 'Settings'),
+            el('button', { class: 'btn', onclick: settings }, icon('gear'), 'Settings'),
           ),
         ),
         el('div', { class: 'home-recents' },
@@ -201,7 +204,11 @@ export async function renderHome() {
       el('span', { class: 'notice-icon' }, icon('warning')),
       el('span', {},
         el('strong', {}, 'No TeX distribution found. '),
-        ...texInstallHint()),
+        ...texInstallHint(), ' ',
+        el('button', {
+          class: 'notice-link',
+          onclick: async () => { if (await chooseTexFolder()) reload(); },
+        }, 'Choose TeX folder…')),
     );
   }).catch(() => {});
 
