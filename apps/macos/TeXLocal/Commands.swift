@@ -238,7 +238,7 @@ extension AppModel {
         case .editMath: project.format("math")
         case .editComment: project.format("comment")
         case .editGotoLine: prompt = .gotoLine
-        case .pdfFind: project.showPDF = true; project.showLogs = false; requestPDF(.find)
+        case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
         case .viewTogglePdf: project.showPDF.toggle()
         case .viewToggleLogs: project.showLogs.toggle()
@@ -248,7 +248,7 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project.compile() }
         case .syncForward: Task { await project.forwardSync() }
-        case .syncInverse: project.showPDF = true; project.showLogs = false; requestPDF(.inverseFromView)
+        case .syncInverse: requestPDF(.inverseFromView)
         }
     }
 
@@ -258,10 +258,18 @@ extension AppModel {
     /// the changes CodeMirror makes itself (formatting, completions).
     private func undo(redo: Bool) {
         if let view = NSApp.keyWindow?.firstResponder as? NSView, view.isDescendant(of: editor.webView) {
-            Task { await editor.command(redo ? "redo" : "undo") }
+            // The page declines while one of its own fields, such as the
+            // find panel's, has focus; that field's native undo takes it.
+            Task {
+                if !(await editor.command(redo ? "redo" : "undo")) { sendUndo(redo: redo) }
+            }
         } else {
-            _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
+            sendUndo(redo: redo)
         }
+    }
+
+    private func sendUndo(redo: Bool) {
+        _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
 
     /// One step along `uiScales`, stopping at either end.

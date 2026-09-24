@@ -44,6 +44,12 @@ final class ProjectModel {
     private var highlightToken = 0
     /// A build was asked for while one ran; it follows when that one ends.
     private var compileQueued = false
+    /// The project was closed; a build still running reports nothing.
+    private var closed = false
+    /// A save is waiting for the editor's text.
+    private var readingText = false
+    /// The editor's web process died holding edits not yet on disk.
+    private var lostEdits = false
 
     init(id: String, editor: EditorBridge, app: AppModel) {
         self.id = id
@@ -73,6 +79,10 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onCommand = { [weak self] id in self?.run(id) }
+        editor.onCrash = { [weak self] in
+            guard let self else { return }
+            if self.dirty || self.readingText { self.lostEdits = true }
+        }
         editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
         do {
@@ -161,16 +171,24 @@ final class ProjectModel {
 
     private func write() async -> Bool {
         guard dirty, let path = openPath else { return true }
-        guard let text = await editor.text() else {
+        saving = true
+        defer { saving = false }
+        // Before the text is read: an edit that arrives while it is read or
+        // written marks the document dirty again, and its own save follows.
+        dirty = false
+        let crashes = editor.crashes
+        readingText = true
+        let text = await editor.text()
+        readingText = false
+        guard let text else {
+            // The web process died: these edits died with it, and the
+            // restart says so. Nothing is left to save.
+            if lostEdits || editor.crashes != crashes { return true }
+            dirty = true
             app?.alert = "The editor’s text could not be read, so \(path) was not saved."
             return false
         }
-        saving = true
-        defer { saving = false }
         do {
-            // An edit made while this write is in flight marks the document
-            // dirty again, and its own save follows.
-            dirty = false
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
             analyze(text)
             await refreshSymbols()
@@ -185,8 +203,9 @@ final class ProjectModel {
     /// The editor's web process died and its page came back empty: show the
     /// open file again as it is on disk. Edits not yet saved died with it.
     private func editorRestarted() async {
+        let lost = lostEdits
+        lostEdits = false
         guard let path = openPath else { return }
-        let lost = dirty
         saveTask?.cancel()
         dirty = false
         openPath = nil
@@ -247,7 +266,7 @@ final class ProjectModel {
     /// An automatic build keeps its failures to the log, rather than putting
     /// up an alert after every pause in typing.
     func compile(auto: Bool = false) async {
-        guard texAvailable else { return }
+        guard texAvailable, !closed else { return }
         if compiling {
             compileQueued = true
             return
@@ -258,6 +277,10 @@ final class ProjectModel {
         if saved {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
+                if closed {
+                    compiling = false
+                    return
+                }
                 self.result = result
                 if result.ok {
                     pdfURL = try await pdfPath()
@@ -267,12 +290,12 @@ final class ProjectModel {
                 }
                 notify(result)
             } catch {
-                if !auto { report(error) }
+                if !auto, !closed { report(error) }
             }
         }
         compiling = false
         // After a failed save the queued build would only build stale text.
-        let again = saved && compileQueued
+        let again = saved && compileQueued && !closed
         compileQueued = false
         if again { await compile(auto: true) }
     }
@@ -292,6 +315,13 @@ final class ProjectModel {
             _ = try? await center.requestAuthorization(options: [.alert])
             try? await center.add(UNNotificationRequest(identifier: "compile", content: content, trigger: nil))
         }
+    }
+
+    /// The project is being left: a build still running reports nothing and
+    /// queues nothing, so it cannot supersede the next project's.
+    func close() {
+        closed = true
+        compileQueued = false
     }
 
     func setEngine(_ engine: String) async {
@@ -349,7 +379,7 @@ final class ProjectModel {
         guard await saveEdits() else { return }
         do {
             let result = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResult.self)
-            await editor.forget(path: "\(id)/\(result.from)")
+            await editor.rename(from: "\(id)/\(result.from)", to: "\(id)/\(result.to)")
             // The open file moves with its folder too. The editor keeps its
             // text; only where it is saved changes, so the next save cannot
             // bring the old path back.
@@ -367,7 +397,7 @@ final class ProjectModel {
         // Saved first, as the web saves before any path change (sidebar.js
         // `beforePathMutation`): the Trash gets the latest text, and no
         // pending autosave writes the file back after it.
-        guard await flush() else { return }
+        guard await saveEdits() else { return }
         do {
             try await core.perform("delete_entry", ["id": id, "path": path])
             await editor.forget(path: "\(id)/\(path)")
@@ -398,7 +428,10 @@ final class ProjectModel {
     /// (sidebar.js `onMainFileChange`). The old one stays on screen until the
     /// build replaces it.
     private func mainFileChanged() async {
-        pdfURL = try? await pdfPath()
+        if let url = try? await pdfPath(), FileManager.default.fileExists(atPath: url.path) {
+            pdfURL = url
+            pdfVersion += 1
+        }
         await compile(auto: true)
     }
 
@@ -424,7 +457,10 @@ final class ProjectModel {
     }
 
     func savePDF(to url: URL) async {
-        guard let pdfURL else { return }
+        guard let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) else {
+            app?.alert = "Compile first to produce a PDF."
+            return
+        }
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)

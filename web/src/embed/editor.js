@@ -50,6 +50,16 @@ window.texlocal = {
   },
   // Forget a file's cached state after the host renames or deletes it.
   forget(oldPath) { cached.delete(oldPath); },
+  // Follow a rename: the file, or everything under a renamed folder, keeps
+  // its cached state (undo history included) under the new path.
+  rename(from, to) {
+    const moved = (p) => (p === from || p.startsWith(`${from}/`) ? to + p.slice(from.length) : p);
+    for (const [key, state] of [...cached]) {
+      cached.delete(key);
+      cached.set(moved(key), state);
+    }
+    if (path) path = moved(path);
+  },
   getText: () => editor?.getContent() ?? null,
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line) { editor?.gotoLine(line); },
@@ -71,8 +81,12 @@ window.texlocal = {
   command(name, arg) {
     if (!editor) return false;
     if (WRAPS[name]) editor.wrapSelection(...WRAPS[name]);
-    else if (name === 'undo') editor.undo();
-    else if (name === 'redo') editor.redo();
+    else if (name === 'undo' || name === 'redo') {
+      // The document's history only while the document has focus. In the
+      // find panel's fields this returns false, and the host undoes there.
+      if (!document.activeElement?.closest('.cm-content')) return false;
+      editor[name]();
+    }
     else if (name === 'comment') editor.toggleComment();
     else if (name === 'find') editor.openSearch();
     else if (name === 'insert') editor.insertTemplate(arg);

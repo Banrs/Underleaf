@@ -13,8 +13,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     var onCommand: (String) -> Void = { _ in }
+    /// The page's web process died, taking the editor's text with it.
+    var onCrash: () -> Void = {}
     /// The page is back, empty, after its web process died.
     var onRestart: () -> Void = {}
+    /// How many times the web process has died.
+    private(set) var crashes = 0
 
     private var ready = false
     private var restarting = false
@@ -66,12 +70,18 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
         await js("texlocal.reveal(line)", ["line": line])
     }
 
-    func command(_ name: String, _ arg: String? = nil) async {
-        await js("return texlocal.command(name, arg)", ["name": name, "arg": arg as Any? ?? NSNull()])
+    /// False when the page did not run the command.
+    @discardableResult
+    func command(_ name: String, _ arg: String? = nil) async -> Bool {
+        (await js("return texlocal.command(name, arg)", ["name": name, "arg": arg as Any? ?? NSNull()]) as? Bool) ?? false
     }
 
     func forget(path: String) async {
         await js("texlocal.forget(path)", ["path": path])
+    }
+
+    func rename(from: String, to: String) async {
+        await js("texlocal.rename(from, to)", ["from": from, "to": to])
     }
 
     /// A call whose effect the page holds on to, kept to be made again.
@@ -131,6 +141,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         ready = false
         restarting = true
+        crashes += 1
+        onCrash()
         _ = webView.reload()
     }
 

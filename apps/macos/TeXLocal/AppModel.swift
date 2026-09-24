@@ -26,7 +26,11 @@ final class AppModel {
         didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
     }
 
+    /// Ask the PDF pane for something, showing the pane so it is done now
+    /// rather than whenever the pane next appears.
     func requestPDF(_ action: PDFAction) {
+        project?.showPDF = true
+        project?.showLogs = false
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
@@ -96,7 +100,9 @@ final class AppModel {
     func close() async -> Bool {
         guard let project else { return true }
         guard await project.flush() else { return false }
+        project.close()
         self.project = nil
+        pdfRequest = nil
         await refresh()
         return true
     }

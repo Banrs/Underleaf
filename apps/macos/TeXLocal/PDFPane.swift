@@ -349,9 +349,9 @@ private struct PDFRepresentable: NSViewRepresentable {
     func updateNSView(_ view: SyncPDFView, context: Context) {
         view.darkPaper = darkPaper
         let coordinator = context.coordinator
-        if project.pdfVersion != coordinator.version, let url = project.pdfURL {
+        // Taken as loaded only once it is: a new view tries again until then.
+        if project.pdfVersion != coordinator.version, let url = project.pdfURL, reload(view, from: url) {
             coordinator.version = project.pdfVersion
-            reload(view, from: url)
         }
         if let highlight = project.highlight, highlight.token != coordinator.highlightToken {
             coordinator.highlightToken = highlight.token
@@ -368,8 +368,8 @@ private struct PDFRepresentable: NSViewRepresentable {
     /// Load a rebuilt PDF where the reader was: same spot on the same page,
     /// same zoom. It is read whole: PDFKit reads a document from its file as
     /// it goes, and the next compile rewrites that file in place.
-    private func reload(_ view: SyncPDFView, from url: URL) {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return }
+    private func reload(_ view: SyncPDFView, from url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return false }
         let spot = view.currentDestination
         let pageIndex = spot?.page.flatMap { view.document?.index(for: $0) }
         let autoScales = view.autoScales
@@ -381,6 +381,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         }
         controller.pageCount = document.pageCount
         controller.page = (pageIndex ?? 0) + 1
+        return true
     }
 
     /// Scroll to a forward-search result and flash it.
