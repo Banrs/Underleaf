@@ -321,20 +321,24 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     let available = out.code == 0;
     TexStatus {
         available,
-        version: available.then(|| {
-            out.stdout
-                .split('\n')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        }),
+        version: available.then(|| version_line(&out.stdout)),
         tex_dir: None,
         found: available
             .then(|| latexmk_dir(path_env))
             .flatten()
             .map(|dir| dir.to_string_lossy().into_owned()),
     }
+}
+
+/// latexmk's own version line. TeX Live's latexmk on Windows first reports
+/// the console code pages it changed, so the first line is not it.
+fn version_line(stdout: &str) -> String {
+    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.clone().next().unwrap_or("");
+    lines
+        .find(|l| l.starts_with("Latexmk"))
+        .unwrap_or(first)
+        .to_string()
 }
 
 // ---------- compile ----------
@@ -613,4 +617,25 @@ fn tail(s: &str, max: usize) -> &str {
         start += 1;
     }
     &s[start..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_line;
+
+    #[test]
+    fn the_version_skips_windows_code_page_notices() {
+        let windows = "Initial Win CP for (console input, console output, system): (CP437, CP437, CP1252)\r\n\
+                       I changed them all to CP1252\r\n\
+                       Latexmk, John Collins, 9 March 2026. Version 4.88\r\n";
+        assert_eq!(
+            version_line(windows),
+            "Latexmk, John Collins, 9 March 2026. Version 4.88"
+        );
+        assert_eq!(
+            version_line("Latexmk, John Collins, 1 Jan 2025. Version 4.86\n"),
+            "Latexmk, John Collins, 1 Jan 2025. Version 4.86"
+        );
+        assert_eq!(version_line("something else\n"), "something else");
+    }
 }
