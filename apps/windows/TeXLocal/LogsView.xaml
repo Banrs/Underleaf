@@ -60,6 +60,7 @@
                 </ListView.ItemTemplate>
             </ListView>
             <TextBlock x:Name="NoIssues" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextWrapping="Wrap" TextAlignment="Center" MaxWidth="320" Margin="24,0"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ScrollViewer x:Name="Raw" Visibility="Collapsed" Padding="12,8"
                           HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto">

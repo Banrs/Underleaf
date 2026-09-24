@@ -22,7 +22,12 @@ public sealed partial class LogsView : UserControl
         var result = Project?.Result;
         List<LogRow> rows = result is null ? [] : result.Errors.Concat(result.Warnings).Select(i => new LogRow(i)).ToList();
         Issues.ItemsSource = rows;
-        NoIssues.Text = result is null ? "Not compiled yet" : rows.Count == 0 ? "No issues" : "";
+        NoIssues.Text = result is null ? "Not compiled yet"
+            : rows.Count > 0 ? ""
+            : result.Ok ? "No issues"
+            // TeX stopped without an error the log parser recognises (a
+            // missing format, a crash): the raw log is the only explanation.
+            : "The compile failed without a recognisable error. See the raw log for TeX’s own output.";
         RawText.Text = result?.Log ?? "";
         SuccessIcon.Visibility = result is { Ok: true } ? Visibility.Visible : Visibility.Collapsed;
         FailureIcon.Visibility = result is { Ok: false } ? Visibility.Visible : Visibility.Collapsed;
