@@ -184,6 +184,42 @@ final class CommandTests: XCTestCase {
     }
 }
 
+/// The menu bar the running app built, as AppKit sees it.
+@MainActor
+final class MenuBarTests: XCTestCase {
+    private func items() -> [NSMenuItem] {
+        func all(_ menu: NSMenu) -> [NSMenuItem] {
+            // As AppKit asks before it shows a menu, for any filled in lazily.
+            menu.delegate?.menuNeedsUpdate?(menu)
+            return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
+        }
+        return NSApp.mainMenu.map(all) ?? []
+    }
+
+    private func item(_ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem? {
+        items().first { item in
+            var mask = item.keyEquivalentModifierMask
+            // AppKit also spells Shift as an upper-case key.
+            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
+            return item.keyEquivalent.lowercased() == key && mask == modifiers
+        }
+    }
+
+    func testTheSettingsSceneGivesCommandComma() {
+        XCTAssertNotNil(item(","), "Settings… ⌘,")
+    }
+
+    func testUndoAndRedoAreTheAppsOwn() throws {
+        // Not the standard undo:/redo: items, which ask WebKit's undo manager.
+        XCTAssertNotEqual(try XCTUnwrap(item("z")).action, Selector(("undo:")))
+        XCTAssertNotEqual(try XCTUnwrap(item("z", [.command, .shift])).action, Selector(("redo:")))
+    }
+
+    func testTheSidebarToggleIsCommandBackslash() throws {
+        XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    }
+}
+
 @MainActor
 final class CoreTests: XCTestCase {
     func testCommandsRoundTripThroughTheRustCore() async throws {
