@@ -248,7 +248,7 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project.compile() }
         case .syncForward: Task { await project.forwardSync() }
-        case .syncInverse: project.showPDF = true; requestPDF(.inverseFromView)
+        case .syncInverse: project.showPDF = true; project.showLogs = false; requestPDF(.inverseFromView)
         }
     }
 

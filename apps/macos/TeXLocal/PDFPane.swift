@@ -38,18 +38,26 @@ struct PDFPane: View {
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
         }
-        .onChange(of: app.pdfRequest?.token) { _, _ in
+        // A request made while the pane was off screen waits for it to appear,
+        // and each is taken once.
+        .onChange(of: app.pdfRequest?.token, initial: true) { _, _ in
             guard let action = app.pdfRequest?.action else { return }
-            switch action {
-            case .zoomIn: controller.zoom(in: true)
-            case .zoomOut: controller.zoom(in: false)
-            case .fitWidth: controller.fitWidth()
-            case .fitHeight: controller.fitHeight()
-            case .find: finding = true; findFocus += 1
-            case .inverseFromView:
-                if case let (page, point)? = controller.sourcePoint() {
-                    Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
-                }
+            app.pdfRequest = nil
+            // After this update, so a PDF view that has just appeared has its document.
+            Task { perform(action) }
+        }
+    }
+
+    private func perform(_ action: PDFAction) {
+        switch action {
+        case .zoomIn: controller.zoom(in: true)
+        case .zoomOut: controller.zoom(in: false)
+        case .fitWidth: controller.fitWidth()
+        case .fitHeight: controller.fitHeight()
+        case .find: finding = true; findFocus += 1
+        case .inverseFromView:
+            if case let (page, point)? = controller.sourcePoint() {
+                Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
     }
