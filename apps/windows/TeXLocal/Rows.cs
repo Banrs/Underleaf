@@ -78,4 +78,9 @@ public sealed class ProjectRow(ProjectInfo info)
                 : $"Edited {info.Modified.LocalDateTime:d}";
         }
     }
+
+    /// <summary>The card's second line: when it was edited, and its main file.</summary>
+    public string Details => $"{Modified} · {info.MainFile}";
+
+    public string AccessibleName => $"{info.Name}, {Details}";
 }

@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace TeXLocal;
 
@@ -13,7 +12,6 @@ public sealed partial class HomeView : UserControl
     public HomeView()
     {
         InitializeComponent();
-        Logo.Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
     }
 
     internal void Render()
@@ -42,13 +40,26 @@ public sealed partial class HomeView : UserControl
         {
             return;
         }
-        var project = row.Info;
+        ContextMenus.Show(ProjectMenu(row.Info), item, e);
+    }
+
+    /// <summary>The card's More button offers what right-click does.</summary>
+    private void OnProjectMore(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: ProjectRow row } button)
+        {
+            ProjectMenu(row.Info).ShowAt(button);
+        }
+    }
+
+    private MenuFlyout ProjectMenu(ProjectInfo project)
+    {
         var menu = new MenuFlyout();
         menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = Main.OpenAsync(project.Id)));
         menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(project), "F2"));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(project), "Delete"));
-        ContextMenus.Show(menu, item, e);
+        return menu;
     }
 
     /// <summary>F2 renames and Delete deletes the focused project, as in File Explorer.</summary>
