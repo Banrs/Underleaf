@@ -53,14 +53,20 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([di
 // `build(close)` returns the dialog element. Resolves with whatever `close` was
 // called with (null when dismissed). Focus is trapped inside while open and
 // returned to the invoking control afterwards.
+let openModal = null;
 export function showModal(build) {
   return new Promise((resolve) => {
     // Menus share #modal-root; replacing its children without dismissing would
     // orphan the menu's window-level listeners.
     openMenu?.dismiss({ restore: false });
+    // So would replacing a dialog a native-menu shortcut opened this one over:
+    // its Escape handler would stay live, its caller would never resume, and
+    // focus would return to the detached dialog. Dismiss it first.
+    openModal?.(null);
     const root = $('#modal-root');
     const restoreTo = document.activeElement;
     const close = (value) => {
+      if (openModal === close) openModal = null;
       openMenu?.dismiss({ restore: false });
       root.replaceChildren();
       removeEventListener('keydown', onKey, true);
@@ -97,6 +103,7 @@ export function showModal(build) {
 
     root.replaceChildren(backdrop);
     addEventListener('keydown', onKey, true);
+    openModal = close;
     (dialog.querySelector('[autofocus]') ?? dialog.querySelector('input, select') ?? dialog.querySelector(FOCUSABLE))?.focus();
   });
 }

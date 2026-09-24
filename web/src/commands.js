@@ -125,7 +125,10 @@ export function runCommand(id) {
 }
 
 // Push the current menu spec + enabled state to the shell, which owns the
-// actual native menu.
+// actual native menu. Most refreshes (every appearance change, a compile
+// finishing the same way it started) leave the spec as it was; those skip the
+// IPC round trip and the shell's per-item native setters entirely.
+let lastSpec = '';
 function publish() {
   const spec = MENU.map((m) => ({
     label: m.label,
@@ -143,7 +146,11 @@ function publish() {
       };
     }),
   }));
-  ipc?.setMenu?.(spec);
+  const json = JSON.stringify(spec);
+  if (json !== lastSpec) {
+    lastSpec = json;
+    ipc?.setMenu?.(spec);
+  }
   notifyHost();
 }
 
