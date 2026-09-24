@@ -41,8 +41,10 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        // Tall, as the guidance asks of a title bar with a back button.
-        AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        // The caption buttons take the title bar's height, so they line up
+        // with its icon, title and back button however tall it lays out.
+        AppTitleBar.SizeChanged += (_, e) => AppWindow.TitleBar.PreferredHeightOption =
+            e.NewSize.Height >= 48 ? TitleBarHeightOption.Tall : TitleBarHeightOption.Standard;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.ico"));
         TitleIcon.ImageSource = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
         // Most of the screen, centred: an editor and a PDF side by side want room.
