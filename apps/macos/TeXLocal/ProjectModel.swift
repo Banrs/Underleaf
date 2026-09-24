@@ -279,11 +279,15 @@ final class ProjectModel {
     }
 
     func renameEntry(_ from: String, to: String) async {
+        guard to != from else { return }
         guard await flush() else { return }
         do {
-            _ = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResultShape.self)
-            await editor.forget(path: "\(id)/\(from)")
-            if openPath == from { openPath = nil; await open(to) }
+            let result = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResult.self)
+            await editor.forget(path: "\(id)/\(result.from)")
+            // The open file moves with its folder too. The editor keeps its
+            // text; only where it is saved changes, so the next save cannot
+            // bring the old path back.
+            openPath = openPath.map { remapPath($0, from: result.from, to: result.to) }
             settings = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
         } catch {
@@ -379,9 +383,4 @@ final class ProjectModel {
         guard let command = MenuCommand(rawValue: commandID) else { return }
         app?.perform(command)
     }
-}
-
-/// `rename_entry`'s result; only its success matters here.
-private struct RenameResultShape: Decodable {
-    let ok: Bool
 }

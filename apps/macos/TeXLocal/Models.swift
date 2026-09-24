@@ -91,6 +91,22 @@ struct Saved: Decodable {
     let saved: [String]
 }
 
+/// `rename_entry`'s result: both paths normalised, and the main file, which
+/// moves when it or its folder does.
+struct RenameResult: Decodable {
+    let from: String
+    let to: String
+    let mainFile: String
+}
+
+/// Where a path is after `from` moved to `to`: the entry itself, or anything
+/// inside it when it is a folder (web/src/sidebar.js `remapPath`).
+func remapPath(_ path: String, from: String, to: String) -> String {
+    if path == from { return to }
+    if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }
+    return path
+}
+
 /// The extensions the core treats as text (projects.rs `TEXT_EXT`); anything
 /// else opens in its own app rather than the editor.
 let textExtensions: Set<String> = [

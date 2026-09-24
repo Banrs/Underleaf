@@ -99,6 +99,17 @@ final class OutlineTests: XCTestCase {
     }
 }
 
+final class RenameTests: XCTestCase {
+    func testTheOpenFileMovesWithItsFolder() {
+        XCTAssertEqual(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex"), "ch/start.tex")
+        XCTAssertEqual(remapPath("ch/intro.tex", from: "ch", to: "chapters"), "chapters/intro.tex")
+        XCTAssertEqual(remapPath("ch/a/b.tex", from: "ch/a", to: "x"), "x/b.tex")
+        // A sibling that shares the prefix is not inside the folder.
+        XCTAssertEqual(remapPath("chapter.tex", from: "ch", to: "chapters"), "chapter.tex")
+        XCTAssertEqual(remapPath("main.tex", from: "ch", to: "chapters"), "main.tex")
+    }
+}
+
 final class PDFFindTests: XCTestCase {
     func testTheCountReadsAsTheWebsDoes() {
         XCTAssertEqual(PDFFind.countLabel(query: "", total: 0, index: 1, limited: false), "")
