@@ -33,7 +33,10 @@ public sealed record CompileResult(
 
 public sealed record Symbols(IReadOnlyList<string> Citations, IReadOnlyList<string> Labels);
 
-public sealed record SearchHit(string File, int Line, string Before, string Match, string After);
+public sealed record SearchHit(string File, int Line, string Before, string Match, string After)
+{
+    public string Location => $"{File}:{Line}";
+}
 
 public sealed record FileText(string Text);
 
@@ -47,6 +50,9 @@ public sealed record ForwardLoc(double Page, double? H, double? V, double? Width
 public sealed record InverseLoc(string File, int Line);
 
 public sealed record ImportResult(IReadOnlyList<string> Saved);
+
+/// <summary>rename_entry's result: both paths as the core normalised them.</summary>
+public sealed record RenameResult(string From, string To, string MainFile);
 
 public static class TextFiles
 {

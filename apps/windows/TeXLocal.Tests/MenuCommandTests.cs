@@ -93,5 +93,13 @@ public sealed partial class MenuCommandTests
         Assert.DoesNotContain("project.close", ids);
         Assert.False(MenuCommand.EditRedo.ClaimsChord());
         Assert.True(MenuCommand.EditFind.ClaimsChord());
+
+        // The PDF page implements none of them, so it hands back every chord
+        // the menus claim — but never the text-editing ones.
+        var claimed = MenuCommands.ClaimedChords.Select(k => k.Id).ToHashSet();
+        Assert.Contains("edit.find", claimed);
+        Assert.Contains("app.settings", claimed);
+        Assert.DoesNotContain("edit.undo", claimed);
+        Assert.Superset(claimed, ids);
     }
 }

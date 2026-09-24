@@ -3,19 +3,40 @@
     x:Class="TeXLocal.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:TeXLocal"
     Title="TeXLocal">
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
+    <!-- The menu chords live here, on the root, so they work on every screen
+         and whichever native control has focus. -->
+    <Grid x:Name="Root" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.RowDefinitions>
             <RowDefinition Height="32" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <Grid x:Name="AppTitleBar">
-            <TextBlock x:Name="TitleText" Margin="16,0" VerticalAlignment="Center"
+
+        <Grid x:Name="AppTitleBar" ColumnSpacing="12" Padding="16,0,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Image x:Name="TitleIcon" Width="16" Height="16" VerticalAlignment="Center" />
+            <TextBlock x:Name="TitleText" Grid.Column="1" VerticalAlignment="Center"
                        Style="{StaticResource CaptionTextBlockStyle}" Text="TeXLocal" />
+            <TextBlock x:Name="StatusText" Grid.Column="2" VerticalAlignment="Center"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Grid>
+
+        <InfoBar x:Name="MessageBar" Grid.Row="1" Margin="12,0,12,8" Severity="Error" IsOpen="False" />
+
+        <Grid Grid.Row="2">
+            <local:HomeView x:Name="Home" />
+            <local:WorkspaceView x:Name="Workspace" Visibility="Collapsed" />
         </Grid>
     </Grid>
 </Window>

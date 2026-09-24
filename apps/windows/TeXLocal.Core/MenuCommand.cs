@@ -166,14 +166,21 @@ public static class MenuCommands
         command.Accel() is not null && command is not (MenuCommand.EditUndo or MenuCommand.EditRedo);
 
     /// <summary>
-    /// Chords the embedded pages give back to the host. Find and comment stay
-    /// with the editor, which implements them itself, as do undo and redo.
+    /// Every chord the menus claim. A page with focus sees a chord before the
+    /// window does, so the embedded pages hand these back to the host.
     /// </summary>
-    public static IReadOnlyList<(string Id, string Accel)> HostKeys { get; } =
+    public static IReadOnlyList<(string Id, string Accel)> ClaimedChords { get; } =
         Enum.GetValues<MenuCommand>()
-            .Where(c => c.ClaimsChord() && c is not (MenuCommand.EditFind or MenuCommand.EditComment))
+            .Where(c => c.ClaimsChord())
             .Select(c => (c.Id(), c.Accel()!))
             .ToList();
+
+    /// <summary>
+    /// The chords the editor page hands back: all but find and comment, which
+    /// the editor implements itself (as it does undo and redo).
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Accel)> HostKeys { get; } =
+        ClaimedChords.Where(k => k.Id is not ("edit.find" or "edit.comment")).ToList();
 }
 
 /// <summary>An accelerator string, as Windows reads it.</summary>

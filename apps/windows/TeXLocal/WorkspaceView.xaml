@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="TeXLocal.WorkspaceView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:TeXLocal">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Menus on the left, the document's actions on the right. -->
+        <Grid Padding="4,0,8,0" ColumnSpacing="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button Style="{StaticResource NavigationBackButtonNormalStyle}" Click="OnBack"
+                    ToolTipService.ToolTip="Close Project" VerticalAlignment="Center" />
+            <MenuBar x:Name="Menu" Grid.Column="1" VerticalAlignment="Center" />
+            <CommandBar Grid.Column="2" HorizontalAlignment="Right" DefaultLabelPosition="Right"
+                        Background="Transparent" VerticalContentAlignment="Center">
+                <AppBarButton Label="Insert" Icon="Add" ToolTipService.ToolTip="Insert an environment">
+                    <AppBarButton.Flyout>
+                        <MenuFlyout x:Name="InsertMenu" Placement="BottomEdgeAlignedLeft" />
+                    </AppBarButton.Flyout>
+                </AppBarButton>
+                <AppBarButton Label="Bold" LabelPosition="Collapsed" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)">
+                    <AppBarButton.Icon>
+                        <FontIcon Glyph="&#xE8DD;" />
+                    </AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Italic" LabelPosition="Collapsed" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)">
+                    <AppBarButton.Icon>
+                        <FontIcon Glyph="&#xE8DB;" />
+                    </AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarButton Label="Inline Math" LabelPosition="Collapsed" Click="OnMath" ToolTipService.ToolTip="Inline Math (Ctrl+Shift+M)">
+                    <AppBarButton.Icon>
+                        <FontIcon Glyph="&#xE8EF;" />
+                    </AppBarButton.Icon>
+                </AppBarButton>
+                <AppBarSeparator />
+                <!-- Compile is the primary action; the engine and auto-compile
+                     live in its menu, the way a split button carries a default
+                     and its options. -->
+                <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
+                    <SplitButton x:Name="CompileButton" Click="OnCompile" ToolTipService.ToolTip="Compile (Ctrl+Enter)">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="CompileIcon" Glyph="&#xE768;" FontSize="14" />
+                            <ProgressRing x:Name="CompileProgress" Width="16" Height="16" IsActive="False" />
+                            <TextBlock Grid.Column="1" Text="Compile" />
+                        </Grid>
+                        <SplitButton.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <RadioMenuFlyoutItem x:Name="EnginePdf" Text="pdfLaTeX" GroupName="Engine" Tag="pdflatex" Click="OnEngine" />
+                                <RadioMenuFlyoutItem x:Name="EngineXe" Text="XeLaTeX" GroupName="Engine" Tag="xelatex" Click="OnEngine" />
+                                <RadioMenuFlyoutItem x:Name="EngineLua" Text="LuaLaTeX" GroupName="Engine" Tag="lualatex" Click="OnEngine" />
+                                <MenuFlyoutSeparator />
+                                <ToggleMenuFlyoutItem x:Name="AutoCompileItem" Text="Compile Automatically" Click="OnAutoCompile" />
+                            </MenuFlyout>
+                        </SplitButton.Flyout>
+                    </SplitButton>
+                </AppBarElementContainer>
+                <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
+                    <ToggleButton x:Name="LogButton" Click="OnToggleLogs">
+                        <Grid>
+                            <FontIcon Glyph="&#xE8FD;" FontSize="14" />
+                            <InfoBadge x:Name="ErrorBadge" Style="{StaticResource CriticalValueInfoBadgeStyle}"
+                                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-8,-14,0"
+                                       Visibility="Collapsed" />
+                        </Grid>
+                    </ToggleButton>
+                </AppBarElementContainer>
+                <AppBarToggleButton x:Name="PdfToggle" Label="PDF" LabelPosition="Collapsed" Click="OnTogglePdf"
+                                    ToolTipService.ToolTip="Show or hide the PDF (Ctrl+Shift+\)">
+                    <AppBarToggleButton.Icon>
+                        <FontIcon Glyph="&#xE90D;" />
+                    </AppBarToggleButton.Icon>
+                </AppBarToggleButton>
+                <AppBarButton Label="Export" Icon="Share">
+                    <AppBarButton.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuFlyoutItem x:Name="SavePdfItem" Text="Save PDF As…" Click="OnSavePdf" />
+                            <MenuFlyoutItem Text="Export Project as ZIP…" Click="OnExportZip" />
+                        </MenuFlyout>
+                    </AppBarButton.Flyout>
+                </AppBarButton>
+            </CommandBar>
+        </Grid>
+
+        <Grid x:Name="Panes" Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="260" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="240" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="PreviewColumn" Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Files, project search and the outline. Files dropped here are
+                 added to the project. -->
+            <Grid x:Name="Sidebar" Padding="8,4,2,8" RowSpacing="8" AllowDrop="True"
+                  DragOver="OnDragOver" Drop="OnDrop">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Search project" QueryIcon="Find"
+                                TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown" />
+
+                <Grid x:Name="Browse" Grid.Row="1" RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <TextBlock Text="Files" Margin="8,0" VerticalAlignment="Center"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <DropDownButton HorizontalAlignment="Right" ToolTipService.ToolTip="Add files or folders">
+                            <FontIcon Glyph="&#xE710;" FontSize="12" />
+                            <DropDownButton.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Text="New File…" Click="OnNewFile" />
+                                    <MenuFlyoutItem Text="New Folder…" Click="OnNewFolder" />
+                                    <MenuFlyoutItem Text="Add Files…" Click="OnAddFiles" />
+                                </MenuFlyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </Grid>
+                    <TreeView x:Name="Files" Grid.Row="1" SelectionMode="Single" CanDragItems="False"
+                              CanReorderItems="False" ItemInvoked="OnFileInvoked"
+                              ContextRequested="OnFileContextRequested">
+                        <TreeView.ItemTemplate>
+                            <DataTemplate x:DataType="local:FileItem">
+                                <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" />
+                                        <TextBlock Text="{x:Bind Name}" />
+                                        <FontIcon Glyph="&#xE735;" FontSize="10" Visibility="{x:Bind MainVisibility}"
+                                                  Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                  ToolTipService.ToolTip="Main file" />
+                                    </StackPanel>
+                                </TreeViewItem>
+                            </DataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                    <TextBlock x:Name="OutlineHeader" Grid.Row="2" Text="Outline" Margin="8,8,8,0"
+                               Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <ListView x:Name="OutlineList" Grid.Row="3" SelectionMode="None" IsItemClickEnabled="True"
+                              ItemClick="OnOutlineClick">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:OutlineRow">
+                                <TextBlock Text="{x:Bind Title}" Margin="{x:Bind Indent}" TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+
+                <ListView x:Name="Results" Grid.Row="1" Visibility="Collapsed" SelectionMode="None"
+                          IsItemClickEnabled="True" ItemClick="OnResultClick">
+                    <ListView.Header>
+                        <TextBlock x:Name="ResultsHeader" Margin="12,0,0,4" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    </ListView.Header>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:SearchHit">
+                            <StackPanel Padding="0,4">
+                                <TextBlock Text="{x:Bind Location}" Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock TextTrimming="CharacterEllipsis">
+                                    <Run Text="{x:Bind Before}" /><Run Text="{x:Bind Match}" FontWeight="SemiBold"
+                                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /><Run Text="{x:Bind After}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <TextBlock x:Name="EngineLabel" Grid.Row="2" Margin="8,0" Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Grid>
+
+            <!-- The editor's WebView2 goes in first, beneath the placeholder. -->
+            <Grid x:Name="EditorHost" Grid.Column="2">
+                <Grid x:Name="EditorPlaceholder" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+                    <TextBlock Text="Select a file to edit" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+            </Grid>
+
+            <Grid x:Name="Preview" Grid.Column="4">
+                <local:PdfPane x:Name="Pdf" x:FieldModifier="internal" />
+                <local:LogsView x:Name="Logs" Visibility="Collapsed" />
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>
