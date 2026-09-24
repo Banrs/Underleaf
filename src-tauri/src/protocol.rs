@@ -85,28 +85,21 @@ fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, ()> {
     Ok(Some((start, end)))
 }
 
-async fn read_file_range(
-    path: &Path,
-    range: Option<(u64, u64)>,
-) -> std::io::Result<(Vec<u8>, u64)> {
+async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
+    let Some((start, end)) = range else {
+        // One trip to the blocking pool, into a buffer sized from the file's
+        // length. File::read_to_end grows its Vec from 32 bytes and makes a
+        // trip per read, so a multi-MB PDF took ~20 of them and several copies.
+        return tokio::fs::read(path).await;
+    };
     let mut file = tokio::fs::File::open(path).await?;
-    let len = file.metadata().await?.len();
-    match range {
-        Some((start, end)) => {
-            file.seek(SeekFrom::Start(start)).await?;
-            let count = end - start + 1;
-            let size = usize::try_from(count)
-                .map_err(|_| std::io::Error::other("requested range is too large"))?;
-            let mut bytes = vec![0; size];
-            file.read_exact(&mut bytes).await?;
-            Ok((bytes, len))
-        }
-        None => {
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes).await?;
-            Ok((bytes, len))
-        }
-    }
+    file.seek(SeekFrom::Start(start)).await?;
+    let count = end - start + 1;
+    let size = usize::try_from(count)
+        .map_err(|_| std::io::Error::other("requested range is too large"))?;
+    let mut bytes = vec![0; size];
+    file.read_exact(&mut bytes).await?;
+    Ok(bytes)
 }
 
 pub fn handle<R: Runtime>(
@@ -184,7 +177,7 @@ pub fn handle<R: Runtime>(
             None => None,
         };
 
-        let (bytes, _) = match read_file_range(&abs, range).await {
+        let bytes = match read_file_range(&abs, range).await {
             Ok(value) => value,
             Err(_) => {
                 responder.respond(error(404, "Not found"));
@@ -220,7 +213,7 @@ pub fn handle<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_range;
+    use super::{parse_range, read_file_range};
 
     #[test]
     fn parses_closed_open_and_suffix_ranges() {
@@ -237,5 +230,21 @@ mod tests {
         assert!(parse_range("bytes=20-10", 100).is_err());
         assert!(parse_range("bytes=0-1,4-5", 100).is_err());
         assert!(parse_range("bytes=-0", 100).is_err());
+    }
+
+    #[test]
+    fn reads_whole_files_and_ranges() {
+        let path = std::env::temp_dir().join(format!("texlocal-range-{}", std::process::id()));
+        let data: Vec<u8> = (0..=255).cycle().take(100_000).collect();
+        std::fs::write(&path, &data).unwrap();
+        let (whole, part) = tauri::async_runtime::block_on(async {
+            (
+                read_file_range(&path, None).await.unwrap(),
+                read_file_range(&path, Some((10, 19))).await.unwrap(),
+            )
+        });
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(whole, data);
+        assert_eq!(part, data[10..20]);
     }
 }
