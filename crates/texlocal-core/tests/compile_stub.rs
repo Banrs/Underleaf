@@ -148,7 +148,10 @@ async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    mgr.timeout = Some(Duration::from_millis(300));
+    // Long enough for the stub itself to exit on a loaded machine (at 300ms it
+    // occasionally didn't, failing `ok`), yet well short of the sleep: the
+    // drain is bounded by the same deadline, so this returns after ~2s.
+    mgr.timeout = Some(Duration::from_secs(2));
     let started = std::time::Instant::now();
     let result = mgr
         .compile(&root, &CompileOverrides::default())
