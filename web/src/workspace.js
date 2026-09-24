@@ -233,7 +233,7 @@ function buildChrome(id) {
     onJump: async (file, line) => {
       if (line == null) return;
       await openFile(file);
-      state.editor?.gotoLine(line);
+      if (state.openPath === file) state.editor?.gotoLine(line);
     },
   });
 
@@ -331,7 +331,7 @@ function buildChrome(id) {
       try {
         const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
         await openFile(r.file);
-        state.editor?.gotoLine(r.line);
+        if (state.openPath === r.file) state.editor?.gotoLine(r.line);
       } catch { toast('No source location found here'); }
     },
   });
@@ -849,7 +849,9 @@ async function inverseSync() {
   try {
     const r = await api.syncInverse(state.projectId, loc.page, loc.x, loc.y);
     await openFile(r.file);
-    state.editor?.gotoLine(r.line);
+    // openFile resolves quietly when the read fails or a newer open wins; the
+    // line belongs to r.file, not to whatever is still in the editor.
+    if (state.openPath === r.file) state.editor?.gotoLine(r.line);
   } catch { toast('No source location found for this view'); }
 }
 
