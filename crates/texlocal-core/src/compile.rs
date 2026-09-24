@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -100,25 +100,22 @@ fn tex_dirs() -> Vec<PathBuf> {
 }
 
 /// PATH for spawned TeX tools: the user's PATH first (it always wins), then
-/// the discovered TeX dirs. Frozen on first use, as the JS module-load freeze
-/// was — a TeX install performed while the app runs needs a restart.
-pub fn tex_path() -> &'static str {
-    static TEX_PATH: OnceLock<String> = OnceLock::new();
-    TEX_PATH.get_or_init(|| {
-        let delim = if cfg!(windows) { ";" } else { ":" };
-        let mut parts: Vec<String> = Vec::new();
-        if let Ok(cur) = std::env::var("PATH") {
-            if !cur.is_empty() {
-                parts.push(cur);
-            }
+/// the discovered TeX dirs. Built per use — a couple of read_dirs — so a TeX
+/// install performed while the app runs is found without a restart.
+pub fn tex_path() -> String {
+    let delim = if cfg!(windows) { ";" } else { ":" };
+    let mut parts: Vec<String> = Vec::new();
+    if let Ok(cur) = std::env::var("PATH") {
+        if !cur.is_empty() {
+            parts.push(cur);
         }
-        parts.extend(
-            tex_dirs()
-                .into_iter()
-                .map(|p| p.to_string_lossy().into_owned()),
-        );
-        parts.join(delim)
-    })
+    }
+    parts.extend(
+        tex_dirs()
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned()),
+    );
+    parts.join(delim)
 }
 
 // ---------- process plumbing ----------
@@ -283,8 +280,8 @@ pub struct TexStatus {
 }
 
 pub async fn tex_available(path_env: Option<&str>) -> TexStatus {
-    let path = path_env.unwrap_or_else(|| tex_path());
-    let out = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path).await;
+    let path = path_env.map_or_else(tex_path, str::to_string);
+    let out = run("latexmk", &["-version"], None, PROBE_TIMEOUT, &path).await;
     TexStatus {
         available: out.code == 0,
         version: (out.code == 0).then(|| {
@@ -360,8 +357,8 @@ impl CompileManager {
         Self::default()
     }
 
-    fn path(&self) -> &str {
-        self.path_env.as_deref().unwrap_or_else(|| tex_path())
+    fn path(&self) -> String {
+        self.path_env.clone().unwrap_or_else(tex_path)
     }
 
     pub fn kill_all(&self) {
@@ -482,7 +479,7 @@ impl CompileManager {
             request_started,
         };
 
-        let mut cmd = base_command("latexmk", Some(root), self.path());
+        let mut cmd = base_command("latexmk", Some(root), &self.path());
         cmd.args(&args);
         let spawn_result = {
             // Hold the registry lock across synchronous spawn + PID publication.

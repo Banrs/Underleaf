@@ -281,7 +281,7 @@ impl Service {
         file: &str,
         line: u32,
     ) -> Result<ForwardLoc, CoreError> {
-        synctex::synctex_forward(&self.project_root(id)?, file, line, compile::tex_path()).await
+        synctex::synctex_forward(&self.project_root(id)?, file, line, &compile::tex_path()).await
     }
 
     pub async fn synctex_inverse(
@@ -291,7 +291,7 @@ impl Service {
         x: f64,
         y: f64,
     ) -> Result<InverseLoc, CoreError> {
-        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, compile::tex_path()).await
+        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, &compile::tex_path()).await
     }
 
     // ---------- dispatch ----------
