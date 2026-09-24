@@ -6,7 +6,6 @@ import { prefs, migratePrefs, applyAppearance, applyAccent, setAppearanceHandler
 import { onCommandsChanged, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
-import { renderWorkspace, destroyWorkspace, flushCurrent, saveCurrent, syncToolbarState } from './workspace.js';
 
 // ---------- platform ----------
 
@@ -41,8 +40,20 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
 
 // ---------- commands ----------
 
-onCommandsChanged(syncToolbarState);
 installMenuBridge();
+
+// ---------- workspace ----------
+
+// The workspace carries CodeMirror, KaTeX and pdf.js — most of the code — so it
+// loads on the first project open instead of in front of the home screen.
+let workspace = null;
+
+async function loadWorkspace() {
+  if (!workspace) {
+    workspace = await import('./workspace.js');
+    onCommandsChanged(workspace.syncToolbarState);
+  }
+}
 
 // ---------- routing ----------
 
@@ -63,20 +74,21 @@ async function navigate() {
   // view, rather than destroying the only copy of the user's buffer.
   if (route?.view === 'project') {
     try {
-      if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+      if (!(await workspace.flushCurrent())) throw new Error('The active document changed while saving');
     } catch {
       if (generation === navigationGeneration) history.replaceState(null, '', routeHash(route));
       return;
     }
     if (generation !== navigationGeneration) return;
-    destroyWorkspace();
+    workspace.destroyWorkspace();
   } else if (route?.view === 'home') {
     destroyHome();
   }
 
+  if (next.view === 'project') await loadWorkspace();
   if (generation !== navigationGeneration) return;
   route = next;
-  if (next.view === 'project') await renderWorkspace(next.id);
+  if (next.view === 'project') await workspace.renderWorkspace(next.id);
   else await renderHome();
 }
 
@@ -84,12 +96,13 @@ async function navigate() {
 // autosave time; consume its rejection because doSave already reports it.
 addEventListener('beforeunload', (e) => {
   if (!state.dirty) return;
-  saveCurrent({ triggerCompile: false }).catch(() => {});
+  workspace.saveCurrent({ triggerCompile: false }).catch(() => {});
   e.preventDefault();
   e.returnValue = '';
 });
+// No workspace loaded means no project was ever opened, so nothing to flush.
 bridge?.onBeforeQuit?.(async () => {
-  if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+  if (workspace && !(await workspace.flushCurrent())) throw new Error('The active document changed while saving');
 });
 
 addEventListener('hashchange', navigate);

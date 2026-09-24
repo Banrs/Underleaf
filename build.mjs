@@ -40,9 +40,18 @@ const common = {
   logLevel: 'info',
 };
 // One bundle, shared by the desktop shell and browser mode; which backend it
-// talks to is decided at runtime in web/src/bridge.js.
+// talks to is decided at runtime in web/src/bridge.js. Splitting puts the
+// dynamically imported workspace (CodeMirror, KaTeX, pdf.js) in chunks/, so the
+// home screen never parses it. Hashed names: clear the previous build's.
+fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });
 const builds = [
-  { ...common, entryPoints: [at('web/src/main.js')], outfile: at('web/dist/bundle.js') },
+  {
+    ...common,
+    entryPoints: { bundle: at('web/src/main.js') },
+    outdir: at('web/dist'),
+    splitting: true,
+    chunkNames: 'chunks/[name]-[hash]',
+  },
 ];
 
 if (watch) {
