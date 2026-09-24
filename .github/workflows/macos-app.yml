@@ -1,0 +1,60 @@
+name: macOS app
+
+# The SwiftUI app in apps/macos, built with the committed Xcode project. It
+# runs on push as well as on pull requests so a branch changing the app gets a
+# compile without opening a PR first; only paths the app builds from trigger it.
+on:
+  pull_request:
+    paths: &paths
+      - apps/macos/**
+      - crates/**
+      - web/**
+      - package*.json
+      - build.mjs
+      - .github/workflows/macos-app.yml
+  push:
+    paths: *paths
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: macos-app
+      - run: npm ci
+      # The app targets macOS 27, so it needs the newest Xcode on the image,
+      # which is not always the default one.
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i macos
+          sw_vers
+      - name: Build
+        working-directory: apps/macos
+        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' build-for-testing
+      # A macOS 27 app cannot launch on an older host, so the tests run only
+      # once the runner itself is on 27.
+      - name: Test
+        working-directory: apps/macos
+        run: |
+          if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]; then
+            echo "::warning::Host is macOS $(sw_vers -productVersion); built but not tested"
+            exit 0
+          fi
+          xcodebuild -scheme TeXLocal -destination 'platform=macOS' test-without-building
