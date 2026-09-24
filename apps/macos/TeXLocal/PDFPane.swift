@@ -8,7 +8,8 @@ struct PDFPane: View {
     @State private var controller = PDFController()
     @State private var findQuery = ""
     @State private var finding = false
-    @FocusState private var findFocused: Bool
+    /// Bumped to put the cursor in the find field, its text selected.
+    @State private var findFocus = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,10 @@ struct PDFPane: View {
                 )
             }
         }
+        // A new PDF leaves every match behind; the web closes the bar too.
+        .onChange(of: project.pdfVersion) { _, _ in
+            if finding { closeFind() }
+        }
         .onChange(of: app.pdfRequest?.token) { _, _ in
             guard let action = app.pdfRequest?.action else { return }
             switch action {
@@ -33,7 +38,7 @@ struct PDFPane: View {
             case .zoomOut: controller.zoom(in: false)
             case .fitWidth: controller.fitWidth()
             case .fitHeight: controller.fitHeight()
-            case .find: finding = true; findFocused = true
+            case .find: finding = true; findFocus += 1
             case .inverseFromView:
                 if case let (page, point)? = controller.sourcePoint() {
                     Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
@@ -45,27 +50,30 @@ struct PDFPane: View {
     private var bar: some View {
         HStack(spacing: 8) {
             if finding {
-                TextField("Find in PDF", text: $findQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($findFocused)
+                PDFFindField(text: $findQuery, focus: findFocus, step: controller.step, close: closeFind)
                     .frame(maxWidth: 220)
-                    .onSubmit { controller.find(findQuery) }
-                    .onChange(of: findQuery) { _, q in controller.find(q) }
-                Text(controller.matches.isEmpty ? (findQuery.isEmpty ? "" : "No matches")
-                     : "\(controller.matchIndex + 1) of \(controller.matches.count)")
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                    .task(id: findQuery) {
+                        // Debounced like the web's, so typing doesn't search every prefix.
+                        try? await Task.sleep(for: .milliseconds(200))
+                        if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
+                            controller.find(findQuery)
+                        }
+                    }
+                Text(PDFFind.countLabel(
+                    query: controller.query, total: controller.matches.count,
+                    index: controller.matchIndex + 1, limited: controller.limited
+                ))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
                 ControlGroup {
                     Button("Previous", systemImage: "chevron.up") { controller.step(-1) }
+                        .help("Previous Match (⇧↩)")
                     Button("Next", systemImage: "chevron.down") { controller.step(1) }
+                        .help("Next Match (↩)")
                 }
                 .fixedSize()
                 .disabled(controller.matches.isEmpty)
-                Button("Done") {
-                    finding = false
-                    findQuery = ""
-                    controller.find("")
-                }
+                Button("Done") { closeFind() }
             } else if controller.pageCount > 0 {
                 Text("Page \(controller.page) of \(controller.pageCount)")
                     .foregroundStyle(.secondary)
@@ -84,6 +92,95 @@ struct PDFPane: View {
         .padding(.horizontal, 8)
         .frame(height: 36)
     }
+
+    /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
+    /// highlights with it.
+    private func closeFind() {
+        finding = false
+        findQuery = ""
+        controller.find("")
+    }
+}
+
+/// The find bar's rules, from the web's (web/src/findsession.js and
+/// workspace.js `showCount`).
+enum PDFFind {
+    static let maxQuery = 256
+    static let maxMatches = 5000
+
+    static func normalize(_ query: String) -> String {
+        String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
+    }
+
+    /// "3 of 12", "1 of 5000+" past the cap, "Not found", or nothing before a
+    /// search. `index` counts from 1.
+    static func countLabel(query: String, total: Int, index: Int, limited: Bool) -> String {
+        if query.isEmpty { return "" }
+        if total == 0 { return "Not found" }
+        return "\(index) of \(total)\(limited ? "+" : "")"
+    }
+}
+
+/// The find field: a search field in which Return steps to the next match,
+/// Shift-Return to the previous one, and Escape closes the bar — keys a
+/// SwiftUI text field keeps to itself.
+private struct PDFFindField: NSViewRepresentable {
+    @Binding var text: String
+    let focus: Int
+    let step: @MainActor (Int) -> Void
+    let close: @MainActor () -> Void
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var field: PDFFindField
+        var focus = 0
+
+        init(_ field: PDFFindField) {
+            self.field = field
+        }
+
+        // Typing, and the field's clear button, both send the action.
+        @objc func search(_ sender: NSSearchField) {
+            field.text = sender.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                field.step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                field.close()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let view = NSSearchField()
+        view.placeholderString = "Find in PDF"
+        view.controlSize = .small
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
+        view.sendsSearchStringImmediately = true
+        view.delegate = context.coordinator
+        view.target = context.coordinator
+        view.action = #selector(Coordinator.search(_:))
+        return view
+    }
+
+    func updateNSView(_ view: NSSearchField, context: Context) {
+        context.coordinator.field = self
+        if view.stringValue != text { view.stringValue = text }
+        if context.coordinator.focus != focus {
+            context.coordinator.focus = focus
+            // Once the field is in its window. Taking focus selects the text.
+            Task { @MainActor in view.window?.makeFirstResponder(view) }
+        }
+    }
 }
 
 /// What the pane's controls and the menus ask of the PDF view.
@@ -92,8 +189,12 @@ final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView?
     var page = 0
     var pageCount = 0
+    /// The query the matches are for, normalised.
+    private(set) var query = ""
     var matches: [PDFSelection] = []
     var matchIndex = 0
+    /// More matches exist than are kept.
+    var limited = false
 
     func zoom(in zoomIn: Bool) {
         guard let view else { return }
@@ -112,12 +213,16 @@ final class PDFController {
         view.scaleFactor = view.bounds.height / page.bounds(for: view.displayBox).height
     }
 
-    func find(_ query: String) {
+    func find(_ value: String) {
         guard let view, let document = view.document else { return }
-        matches = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
+        query = PDFFind.normalize(value)
+        let all = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
+        matches = Array(all.prefix(PDFFind.maxMatches))
+        limited = all.count > matches.count
         matchIndex = 0
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
+        view.clearSelection()
         show()
     }
 

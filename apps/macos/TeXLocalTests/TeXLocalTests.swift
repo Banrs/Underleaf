@@ -99,6 +99,21 @@ final class OutlineTests: XCTestCase {
     }
 }
 
+final class PDFFindTests: XCTestCase {
+    func testTheCountReadsAsTheWebsDoes() {
+        XCTAssertEqual(PDFFind.countLabel(query: "", total: 0, index: 1, limited: false), "")
+        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 0, index: 1, limited: false), "Not found")
+        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 12, index: 3, limited: false), "3 of 12")
+        XCTAssertEqual(PDFFind.countLabel(query: "e", total: 5000, index: 1, limited: true), "1 of 5000+")
+    }
+
+    func testQueriesAreTrimmedAndCapped() {
+        XCTAssertEqual(PDFFind.normalize("  theorem \n"), "theorem")
+        XCTAssertEqual(PDFFind.normalize(" \t "), "")
+        XCTAssertEqual(PDFFind.normalize(String(repeating: "a", count: 300)).count, 256)
+    }
+}
+
 final class CommandTests: XCTestCase {
     func testAcceleratorsBecomeMenuShortcuts() {
         XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Return"), KeyboardShortcut(.return, modifiers: .command))
