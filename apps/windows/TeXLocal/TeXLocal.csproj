@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Assets\TeXLocal.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\TeXLocal.ico;Assets\TeXLocal.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The two web surfaces — the editor and the PDF viewer — and everything
