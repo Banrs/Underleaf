@@ -16,7 +16,7 @@ public sealed class Preferences
     public string EditorPalette { get; set; } = "onedark";
 
     /// <summary>"system" or "jetbrains".</summary>
-    public string EditorFont { get; set; } = "system";
+    public string EditorFont { get; set; } = "jetbrains";
 
     public int EditorFontSize { get; set; } = 14;
 
