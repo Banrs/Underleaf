@@ -1,0 +1,5 @@
+module TeXLocalCore {
+    header "texlocal.h"
+    link "texlocal_ffi"
+    export *
+}

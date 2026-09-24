@@ -23,3 +23,16 @@ pub use error::CoreError;
 
 pub const BUILD_DIR: &str = "build";
 pub const SETTINGS_FILE: &str = ".texlocal.json";
+
+/// Where projects live: `TEXLOCAL_DATA` when set, else ~/TeXLocal — visible in
+/// the file manager, syncable, and (unlike ~/Documents on macOS) not behind a
+/// privacy gate, so no host hangs waiting on a folder-permission prompt. Every
+/// host uses this, so the desktop app and the browser server see one library.
+pub fn default_data_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("TEXLOCAL_DATA").filter(|v| !v.is_empty()) {
+        return dir.into();
+    }
+    std::env::home_dir()
+        .map(|home| home.join("TeXLocal"))
+        .unwrap_or_else(|| "TeXLocal".into())
+}

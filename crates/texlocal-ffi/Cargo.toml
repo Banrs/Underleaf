@@ -1,0 +1,19 @@
+[package]
+name = "texlocal-ffi"
+description = "C ABI over texlocal-core's command service, for the native macOS and Windows apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "texlocal_ffi"
+# staticlib links into the Swift app, cdylib loads into .NET, rlib is for tests.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+serde_json = "1"
+texlocal-core = { path = "../texlocal-core" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+tempfile = "3"

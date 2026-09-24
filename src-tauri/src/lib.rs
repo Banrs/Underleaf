@@ -10,25 +10,10 @@ mod protocol;
 mod state;
 mod window;
 
-use std::path::PathBuf;
-
 use tauri::{Manager, RunEvent};
 
 use state::AppState;
 use texlocal_core::service::Service;
-
-/// Projects live in ~/TeXLocal — visible in the file manager, syncable, and
-/// (unlike ~/Documents on macOS) not behind a privacy gate, so the app never
-/// hangs waiting on a folder-permission prompt.
-fn data_dir(app: &tauri::AppHandle) -> PathBuf {
-    if let Some(dir) = std::env::var_os("TEXLOCAL_DATA").filter(|v| !v.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    app.path()
-        .home_dir()
-        .map(|home| home.join("TeXLocal"))
-        .unwrap_or_else(|_| PathBuf::from("TeXLocal"))
-}
 
 pub fn run() {
     tauri::Builder::default()
@@ -69,7 +54,7 @@ pub fn run() {
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle();
-            let dir = data_dir(handle);
+            let dir = texlocal_core::default_data_dir();
             std::fs::create_dir_all(&dir)?;
             app.manage(AppState::new(Service::new(dir)));
             menu::install_fallback(handle)?;
