@@ -120,7 +120,9 @@ export class PdfViewer {
     this.ro = new ResizeObserver(() => {
       if (this.scale !== null || !this.doc || this.rendering || this._resizing || this._pinch) return;
       const w = this.scrollEl.clientWidth;
-      if (Math.abs(w - this.lastFitW) < 16) return;
+      // Zero is the pane being hidden, not narrowed: there is nothing to fit, and
+      // keeping lastFitW means showing it again at the same width costs nothing.
+      if (!w || Math.abs(w - this.lastFitW) < 16) return;
       this.lastFitW = w;
       clearTimeout(this._roTimer);
       this._roTimer = setTimeout(() => { if (!this.rendering) this.render(); }, 200);

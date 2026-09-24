@@ -869,8 +869,8 @@ function toggleSidebar() {
 function togglePdf() {
   prefs.pdfCollapsed = !prefs.pdfCollapsed;
   ui.workspace?.classList.toggle('pdf-collapsed', prefs.pdfCollapsed);
-  // Refit to the reclaimed width once the layout settles.
-  if (!prefs.pdfCollapsed) setTimeout(() => state.pdf?.fitWidth?.(), 60);
+  // No refit here: the viewer's resize observer refits a fit mode if the width
+  // changed while hidden, and an explicit zoom is the reader's to keep.
   refreshCommands();
 }
 
