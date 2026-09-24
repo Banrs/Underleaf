@@ -108,6 +108,8 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The find field's Return, Shift-Return and Escape.
   - Killing the WebContent process in Activity Monitor recovers the editor.
   - Quit during a save.
+  - ⌘Z in the editor's Find & Replace fields undoes the field.
+  - Renaming a file or folder keeps its undo history.
   - Rename a folder that contains the open file, then delete the open file.
   - Forward and inverse SyncTeX.
   - Drag-and-drop import.
@@ -128,36 +130,62 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Web surfaces:** the editor and PDF pages each run in a WebView2.
   - The bundled `web\` is served at `app.texlocal`, and the project's build folder at `project.texlocal`.
   - Window-level keyboard shortcuts stand down while a page has focus. The page posts the chord back instead: the editor page already did this, and `web/src/embed/pdf.js` now does too.
-- **Parity:** at the macOS app's level before its parity pass.
-  - Done: menus, toolbar, sidebar (tree, search, outline), autosave, compile and log, PDF find and zoom, SyncTeX, import and export, settings, the close-flushes-first handshake with `kill_all`, and renderer crash recovery.
-  - The macOS review fixes were applied here from the start.
-  - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF Position is on the Compile menu only.
+- **Parity:** every command in `commandDefs`, and every setting the macOS app has.
+  - Done: menus, toolbar, sidebar (tree, search, outline), autosave and the compile queue, compile and log, PDF find and zoom, SyncTeX, import and export.
+  - Also done: word count and the breadcrumb in a status bar, interface size, PDF paper, numpad shortcuts, and dropping files onto a tree folder to import into it.
+  - Closing flushes first and then calls `kill_all`. A crashed editor page recovers.
+  - Both macOS reviews' bug fixes are applied here too. The app uses `texlocal.rename` and the undo fallback from `web/src/embed/editor.js`.
+  - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
+- **Windows design pass (Fluent 2):**
+  - The Windows App SDK `TitleBar` control, over Mica, with back and pane buttons.
+  - A card layer for the document area. Spacing on the 4 px grid, and theme resources only (no hard-coded colours).
+  - The type ramp, and sentence-case labels throughout.
+  - Segoe Fluent Icons.
+  - Access keys on every menu and on the main toolbar buttons. Context menus in the standard order, with F2 and Delete.
+  - `InfoBar`, `ProgressRing` and `InfoBadge` for feedback.
+  - A Settings page in the Windows 11 style, with cards and an expander.
+  - Accessibility:
+    - accessible names on icon-only buttons and on tree, log and project rows;
+    - the dividers take focus and resize with the arrow keys;
+    - the editor's zoom follows the Windows text-size setting.
+- **Deliberate deviations:**
+  - The settings cards and the divider are hand-written, rather than taken from the Community Toolkit, to avoid adding NuGet packages.
+  - Interface size scales only the editor page. Native controls follow Windows text size.
 - **Not done yet:**
-  - word count and the breadcrumb;
-  - the interface size and PDF paper settings;
-  - numpad shortcut variants;
-  - dropping files onto a folder to import into it;
   - recovery when the whole WebView2 browser process dies;
-  - trimming the output size;
+  - trimming the output size (the Windows App SDK brings its AI/ML parts);
   - an installer.
 - **Check by hand on Windows:**
-  - Both pages load.
   - The PDF actually loads. This is the riskiest item: the page at `app.texlocal` fetches from `project.texlocal`.
   - Every shortcut fires exactly once whether focus is in the editor, the PDF or the sidebar.
-  - Autosave and the compile queue.
+  - The title bar:
+    - back and pane buttons, and dragging;
+    - the caption buttons with a forced light or dark theme and with high contrast;
+    - Snap Layouts.
+  - The Alt access keys don't collide.
+  - Tab reaches the dividers, and the arrow keys resize them.
+  - Settings apply straight away and survive a restart.
+  - Editor size and Windows text size scale the editor, and CodeMirror still measures correctly.
+  - Dark paper.
+  - The status bar.
+  - Drag-and-drop onto a folder.
+  - Saving and closing:
+    - typing while a save is in progress loses nothing;
+    - after a main-file change, the old PDF stays until the new one builds;
+    - closing a project during a compile doesn't recompile the next project.
+  - Ending the editor's renderer process in Task Manager gives one lost-edits message, and closing still works.
+  - Undo and Redo in the editor body and in its find field.
+  - Narrator.
   - SyncTeX in both directions.
-  - Drag-and-drop from Explorer.
-  - Closing with unsaved edits, including when the save fails.
   - No `latexmk` is left running after quitting during a compile.
   - The file pickers.
-  - Theme switching.
-  - Dragging the dividers over the web views.
   - The compile notification.
+  - Nothing is written beside the exe.
 
 ## Remaining plan
 
 1. **Run both apps by hand** using the checklists above, and fix what they turn up.
-2. **Windows parity:** the items under "Not done yet" above.
+2. **Windows:** the items under "Not done yet" above.
 3. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.
 
 ## Gotchas
