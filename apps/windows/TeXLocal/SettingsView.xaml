@@ -24,7 +24,7 @@
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
         <Style x:Key="SectionHeader" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
-            <Setter Property="Margin" Value="4,28,0,8" />
+            <Setter Property="Margin" Value="1,28,0,8" />
         </Style>
     </UserControl.Resources>
 
@@ -100,7 +100,7 @@
                         </StackPanel>
                     </Grid>
                 </Expander.Header>
-                <StackPanel Spacing="12" Padding="40,0,0,0">
+                <StackPanel Spacing="12" Padding="36,0,0,0">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
