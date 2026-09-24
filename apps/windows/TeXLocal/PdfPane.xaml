@@ -33,15 +33,15 @@
                     </StackPanel>
                 </Grid>
             </CommandBar.Content>
-            <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Click="OnZoomOut"
+            <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Width="40" Click="OnZoomOut"
                           ToolTipService.ToolTip="Zoom out (Ctrl+Minus)" />
-            <AppBarButton x:Name="FitWidthButton" Label="Fit width" Click="OnFitWidth"
+            <AppBarButton x:Name="FitWidthButton" Label="Fit width" Width="40" Click="OnFitWidth"
                           ToolTipService.ToolTip="Fit width (Ctrl+0)">
                 <AppBarButton.Icon>
                     <FontIcon Glyph="&#xE9A6;" />
                 </AppBarButton.Icon>
             </AppBarButton>
-            <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Click="OnZoomIn"
+            <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Width="40" Click="OnZoomIn"
                           ToolTipService.ToolTip="Zoom in (Ctrl+Plus)" />
         </CommandBar>
 
