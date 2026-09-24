@@ -3,7 +3,7 @@
 // region, and no floating decoration.
 
 import { api } from './api.js';
-import { platform } from './bridge.js';
+import { platform, trashName, deleteLabel } from './bridge.js';
 import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
@@ -47,7 +47,7 @@ function projectRow(p, reload) {
         menuUnder(e.currentTarget, [
           { label: 'Rename…', action: () => renameProject(p, reload) },
           '-',
-          { label: 'Delete…', danger: true, action: () => deleteProject(p, reload) },
+          { label: `${deleteLabel}…`, danger: true, action: () => deleteProject(p, reload) },
         ]);
       },
     }, icon('ellipsis')),
@@ -81,7 +81,9 @@ async function renameProject(p, reload) {
 async function deleteProject(p, reload) {
   const ok = await confirmModal({
     title: `Delete “${p.name}”?`,
-    body: 'The project folder and all of its files will be permanently deleted. This cannot be undone.',
+    // The core moves it to the bin rather than unlinking it, so say so.
+    body: `The project folder and all of its files will be moved to the ${trashName}.`,
+    confirm: deleteLabel,
   });
   if (!ok) return;
   try { await api.deleteProject(p.id); reload(); }

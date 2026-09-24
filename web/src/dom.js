@@ -97,7 +97,7 @@ export function showModal(build) {
 
     root.replaceChildren(backdrop);
     addEventListener('keydown', onKey, true);
-    (dialog.querySelector('input, select') ?? dialog.querySelector(FOCUSABLE))?.focus();
+    (dialog.querySelector('[autofocus]') ?? dialog.querySelector('input, select') ?? dialog.querySelector(FOCUSABLE))?.focus();
   });
 }
 

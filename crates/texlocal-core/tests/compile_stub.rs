@@ -136,6 +136,34 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
 }
 
 #[tokio::test]
+async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
+    // latexmk has exited, but something it started in the background (a
+    // shell-escape `&`, a latexmkrc previewer) still holds stdout open.
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\nsleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n",
+    );
+
+    let mut mgr = CompileManager::new();
+    mgr.path_env = Some(path);
+    mgr.timeout = Some(Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let result = mgr
+        .compile(&root, &CompileOverrides::default())
+        .await
+        .unwrap();
+
+    assert!(result.ok);
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "compile waited {:?} on a leftover process",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn a_new_compile_supersedes_the_in_flight_one() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());

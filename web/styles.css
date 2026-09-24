@@ -177,7 +177,16 @@ html, body {
 
 h1, h2, h3, p { margin: 0; }
 
-button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+/* Native controls keep the arrow cursor; the pointing hand is for links. */
+button { font: inherit; color: inherit; background: none; border: none; cursor: default; }
+
+/* Interface text isn't selectable in a native window — only content is: the
+   source, fields, the PDF's text layer, and the log. */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
+  -webkit-user-select: text;
+  user-select: text;
+}
 
 /* Thin native scrollbars: `scrollbar-width: thin` gives the slim macOS bar
    rather than Chromium's chunky fallback, and with no ::-webkit rules it still
@@ -302,9 +311,11 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
 .btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 78%, black); }
 .btn.primary:disabled { background: var(--fill-2); color: var(--label-3); }
+/* Busy is not disabled: the button keeps its fill while its spinner runs. */
+.btn.primary.busy:disabled { background: var(--accent); color: var(--on-accent); }
 
 .btn.destructive { background: var(--red); color: #fff; }
-.btn.destructive:hover { background: color-mix(in srgb, var(--red) 88%, black); }
+.btn.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 88%, black); }
 
 /* In-pane toolbar button: 28px with the 13pt control label, like Preview's. */
 .btn.small {
@@ -368,7 +379,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Switch: the kit's regular size is 54 × 24 with a 20px knob. */
 .switch {
   width: 54px;
-  height: var(--h-menu-row);
+  height: 24px;
   flex: none;
   border-radius: var(--r-pill);
   background: var(--fill-1);
@@ -394,8 +405,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .spinner {
   width: 13px; height: 13px;
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff;
+  flex: none;
+  /* currentColor, so it reads on the accent button, a plain button, or a label. */
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -580,7 +593,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
+.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }
+.section-header.disclosure .twisty { margin-left: auto; justify-content: center; }   /* section-to-section gap */
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
 /* Square 20px targets so the header keeps its 20px band; the kit's own trailing
@@ -698,6 +712,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .engine-status:hover { background: var(--fill-3); color: var(--label); }
 .engine-status.warn { color: var(--orange); }
 .engine-status svg { width: 13px; height: 13px; }
+.engine-status .spinner { width: 11px; height: 11px; }
 
 /* Project search results */
 .search-file {
@@ -786,6 +801,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: color-mix(in srgb, var(--bg-content) 72%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
 }
+/* Nothing to count before a PDF loads: no placeholder dash (it read as a second
+   zoom-out button), and no separator left dangling in front of it. */
+.page-indicator:empty { display: none; }
+.pdf-pane .toolbar-separator:has(+ .pdf-freshness[hidden] + .page-indicator:empty) { display: none; }
 .page-indicator { padding: 0 var(--sp-2); font-size: var(--fs-control); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .zoom-btn { min-width: 68px; }
 .zoom-value { font-variant-numeric: tabular-nums; }
@@ -918,7 +937,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border: 0;
   border-radius: var(--r-control);
   background: var(--fill-3);
-  color: var(--label-1);
+  color: var(--label);
   font: inherit;
 }
 .pdf-find input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -1043,6 +1062,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
 .settings-foot { justify-content: space-between; }
+.settings-control { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; color: var(--label-2); }
 .settings-status { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Menus use the vibrant material and the kit's 24px rows with radius 8. */
@@ -1118,6 +1138,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  /* A progress indicator is state, not decoration: macOS keeps spinners turning
+     under Reduce Motion, so this one does too. */
+  .spinner { animation-duration: 0.7s !important; animation-iteration-count: infinite !important; }
 }
 
 /* macOS "Increase contrast" and the Windows contrast setting both surface here,
@@ -1140,4 +1163,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 @media (max-width: 900px) {
   .crumbs, .title-separator { display: none; }
+}
+
+/* Narrow panes shed toolbar items the menu bar already carries (with the same
+   shortcuts), rather than scrolling the bar and hiding controls off its end. */
+.editor-pane { container: editor-pane / inline-size; }
+.pdf-pane { container: pdf-pane / inline-size; }
+@container editor-pane (max-width: 360px) {
+  .toolbar [data-command="edit.undo"],
+  .toolbar [data-command="edit.redo"],
+  .toolbar [data-command="edit.redo"] + .toolbar-separator { display: none; }
+}
+@container pdf-pane (max-width: 400px) {
+  .toolbar [data-command="view.zoomOut"],
+  .toolbar [data-command="view.zoomIn"],
+  .toolbar [data-command="pdf.save"] { display: none; }
 }

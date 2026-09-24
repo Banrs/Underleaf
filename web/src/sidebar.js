@@ -8,6 +8,7 @@ import { icon } from './icons.js';
 import { state, IMAGE_FILE } from './state.js';
 import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
+import { trashName, deleteLabel } from './bridge.js';
 
 let host = {};          // { openFile, gotoLine, onMainFileChange }
 let nodes = {};         // cached elements for the mounted sidebar
@@ -77,11 +78,19 @@ export function buildSidebar(callbacks, titlebarTrailing) {
       outlineToggle.setAttribute('aria-expanded', String(prefs.outlineOpen));
       renderOutline();
     },
-  }, el('span', { class: 'twisty' }, icon('chevron')), 'Outline');
+  }, el('span', {}, 'Outline'), el('span', { class: 'twisty' }, icon('chevron')));
 
   const engineLabel = el('span', {}, state.tex.available ? (state.settings?.engine ?? 'pdflatex') : 'No LaTeX');
+  const engineSpinner = el('span', { class: 'spinner', hidden: '', 'aria-hidden': 'true' });
 
-  nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel };
+  nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel, engineSpinner };
+
+  const engineStatus = el('button', {
+    class: `engine-status ${state.tex.available ? '' : 'warn'}`,
+    title: state.tex.available ? 'TeX engine — open Settings to change' : 'No LaTeX distribution found — open Settings',
+    onclick: () => host.openSettings?.(),
+  }, state.tex.available ? null : icon('warning'), engineSpinner, engineLabel);
+  nodes.engineStatus = engineStatus;
 
   const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
     el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
@@ -105,11 +114,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
         class: 'icon-btn small', title: `Settings (${accelLabel('CmdOrCtrl+,')})`, 'aria-label': 'Settings',
         onclick: () => host.openSettings?.(),
       }, icon('gear')),
-      el('button', {
-        class: `engine-status ${state.tex.available ? '' : 'warn'}`,
-        title: state.tex.available ? 'TeX engine — open Settings to change' : 'No LaTeX distribution found — open Settings',
-        onclick: () => host.openSettings?.(),
-      }, state.tex.available ? null : icon('warning'), engineLabel),
+      engineStatus,
     ),
     fileInput,
   );
@@ -117,10 +122,17 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   return element;
 }
 
+// Engine name plus a spinner while a compile runs, so the engine that is
+// building is visible where it is chosen — including right after switching it.
 export function refreshSidebarChrome() {
-  if (nodes.engineLabel && state.tex.available) {
-    nodes.engineLabel.textContent = state.settings?.engine ?? 'pdflatex';
-  }
+  const { engineLabel, engineSpinner, engineStatus } = nodes;
+  if (!engineLabel || !state.tex.available) return;
+  engineLabel.textContent = state.settings?.engine ?? 'pdflatex';
+  engineStatus.classList.remove('warn');
+  engineStatus.querySelector('.icon')?.remove();
+  engineStatus.title = 'TeX engine — open Settings to change';
+  engineSpinner.hidden = !state.compiling;
+  engineStatus.setAttribute('aria-busy', String(!!state.compiling));
 }
 
 export function focusSearch() { nodes.search?.focus(); }
@@ -270,20 +282,22 @@ function rowMenu(e, node) {
     },
     '-',
     {
-      label: 'Delete…',
+      label: `${deleteLabel}…`,
       danger: true,
       action: async () => {
-        const ok = await confirmModal({
-          title: `Delete “${node.name}”?`,
-          body: node.type === 'dir'
-            ? 'Delete this folder and everything inside it?'
-            : 'Delete this file?',
-        });
-        if (!ok) return;
+        // Refuse before asking, not after the user has already confirmed.
         if (containsPath(node.path, state.settings?.mainFile)) {
           toast('Choose a different main file before deleting this entry', 'error');
           return;
         }
+        const ok = await confirmModal({
+          title: `Delete “${node.name}”?`,
+          body: node.type === 'dir'
+            ? `This folder and everything inside it will be moved to the ${trashName}.`
+            : `This file will be moved to the ${trashName}.`,
+          confirm: deleteLabel,
+        });
+        if (!ok) return;
         try {
           await host.beforePathMutation?.();
           const closesOpenFile = containsPath(node.path, state.openPath);
