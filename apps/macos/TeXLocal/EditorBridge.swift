@@ -13,9 +13,15 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     var onCommand: (String) -> Void = { _ in }
+    /// The page is back, empty, after its web process died.
+    var onRestart: () -> Void = {}
 
     private var ready = false
+    private var restarting = false
     private var whenReady: [CheckedContinuation<Void, Never>] = []
+    /// The latest host keys, symbols and appearance, sent again to a page
+    /// reloaded after its web process died.
+    private var kept: [String: (body: String, args: [String: Any])] = [:]
     private let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
 
     override init() {
@@ -68,18 +74,24 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
         await js("texlocal.forget(path)", ["path": path])
     }
 
+    /// A call whose effect the page holds on to, kept to be made again.
+    private func keep(_ key: String, _ body: String, _ args: [String: Any]) async {
+        kept[key] = (body, args)
+        await js(body, args)
+    }
+
     func setSymbols(_ symbols: Symbols) async {
-        await js("texlocal.setSymbols(labels, citations)", ["labels": symbols.labels, "citations": symbols.citations])
+        await keep("symbols", "texlocal.setSymbols(labels, citations)", ["labels": symbols.labels, "citations": symbols.citations])
     }
 
     func setHostKeys(_ keys: [(id: String, accel: String)]) async {
         let list = keys.map { ["id": $0.id, "accel": $0.accel] }
-        await js("texlocal.setHostKeys(list)", ["list": list])
+        await keep("hostKeys", "texlocal.setHostKeys(list)", ["list": list])
     }
 
     func setAppearance(theme: String, palette: String, font: String, fontSize: Int) async {
         let appearance: [String: Any] = ["theme": theme, "palette": palette, "font": font, "fontSize": fontSize]
-        await js("texlocal.setAppearance(a)", ["a": appearance])
+        await keep("appearance", "texlocal.setAppearance(a)", ["a": appearance])
     }
 
     func focus() {
@@ -92,6 +104,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
         switch type {
         case "ready":
+            if restarting {
+                restarting = false
+                // Submitted before any waiting call resumes, so they run first.
+                for (script, args) in kept.values {
+                    webView.callAsyncJavaScript(script, arguments: args, in: nil, in: .page, completionHandler: nil)
+                }
+                onRestart()
+            }
             ready = true
             whenReady.forEach { $0.resume() }
             whenReady.removeAll()
@@ -104,6 +124,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
         default:
             break
         }
+    }
+
+    // The page's web process died: load the page again, and let `ready`
+    // restore what it held.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        ready = false
+        restarting = true
+        _ = webView.reload()
     }
 
     // Links in the editor never navigate the editor page itself.

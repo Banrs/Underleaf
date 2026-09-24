@@ -73,6 +73,7 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onCommand = { [weak self] id in self?.run(id) }
+        editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
@@ -160,7 +161,10 @@ final class ProjectModel {
 
     private func write() async -> Bool {
         guard dirty, let path = openPath else { return true }
-        guard let text = await editor.text() else { return false }
+        guard let text = await editor.text() else {
+            app?.alert = "The editor’s text could not be read, so \(path) was not saved."
+            return false
+        }
         saving = true
         defer { saving = false }
         do {
@@ -175,6 +179,20 @@ final class ProjectModel {
             dirty = true
             report(error)
             return false
+        }
+    }
+
+    /// The editor's web process died and its page came back empty: show the
+    /// open file again as it is on disk. Edits not yet saved died with it.
+    private func editorRestarted() async {
+        guard let path = openPath else { return }
+        let lost = dirty
+        saveTask?.cancel()
+        dirty = false
+        openPath = nil
+        await open(path)
+        if lost {
+            app?.alert = "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost."
         }
     }
 
