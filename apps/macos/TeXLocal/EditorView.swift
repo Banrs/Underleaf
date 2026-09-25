@@ -185,22 +185,20 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's actions: the second row under the window toolbar. The macOS 27
-/// UI kit's standard (Unified) toolbar spacing — 8 pt insets, 8 pt between
-/// groups — with controls at the size of that toolbar's group buttons
-/// (28 pt, Large), so the row is roomier than the kit's compact toolbar yet
-/// still under the window toolbar's 36 pt.
+/// A pane's actions: the second row under the window toolbar, exactly the
+/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, 8 pt insets,
+/// 12 pt between groups, Medium (24 pt) controls.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) { content }
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) { content }
         }
-        .controlSize(.large)
+        .controlSize(.regular)
         .lineLimit(1)
         .padding(.horizontal, 8)
-        .frame(height: 44)
+        .frame(height: 40)
         .frame(maxWidth: .infinity)
         .background(.bar)
         // A shape, not Divider(): inside the HStack's layout context an
@@ -225,16 +223,16 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// A group's capsule, 28 pt tall (Large). The kit draws toolbar button
-/// groups at two sizes — 24 pt (2 pt inside, 20 pt buttons, 4 pt between,
-/// 16 pt separators) and 36 pt (4, 28, 9, 22) — and doesn't scale them
-/// linearly, so 28 pt takes the point a third of the way between: 3, 22, 6
-/// and 18. A two-button group is then 56 pt wide, the kit's 48 → 73 at 28.
-let glassHeight: CGFloat = 28
-let glassItem: CGFloat = 22
-let glassPadding: CGFloat = 3
-let glassGap: CGFloat = 6
-let glassSeparator: CGFloat = 18
+/// The kit's Medium toolbar button group ("Titlebars and Toolbars / Medium /
+/// Buttons"): a 24 pt capsule, 2 pt inside, 20 x 20 buttons 4 pt apart. Its
+/// Medium segmented control separates segments with a 3 pt slot holding a
+/// 1 x 16 pt line, and 24 pt wide segments.
+let glassHeight: CGFloat = 24
+let glassItem: CGFloat = 20
+let glassPadding: CGFloat = 2
+let glassGap: CGFloat = 4
+let glassSeparator: CGFloat = 16
+let glassSegment: CGFloat = 24
 
 /// One action in a glass group.
 struct Segment: Identifiable {
@@ -282,7 +280,7 @@ struct GlassGroup: View {
                     Rectangle()
                         .fill(.separator)
                         .frame(width: 1, height: glassSeparator)
-                        .padding(.horizontal, glassGap / 2)
+                        .padding(.horizontal, 1)
                 }
                 HStack(spacing: glassGap) {
                     ForEach(groups[index]) { cell($0) }
@@ -444,7 +442,7 @@ private struct SourceBar: View {
     /// 0: everything; 1: references join Insert; 2: all but history in one
     /// Format menu.
     private func tools(folded: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             GlassGroup(items: [
                 Segment(.editUndo, "arrow.uturn.backward", app: app),
                 Segment(.editRedo, "arrow.uturn.forward", app: app),

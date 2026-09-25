@@ -76,9 +76,9 @@ struct PDFPane: View {
                     findControls
                 } else {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); share }
+                        HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
                     }
                 }
             }
@@ -95,7 +95,7 @@ struct PDFPane: View {
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 ProgressView().controlSize(.small)
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
@@ -188,12 +188,13 @@ struct PDFPane: View {
 
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
     /// control (workspace.js `zoomButton`).
-    /// Out, the level (a menu), in: one glass capsule with the kit's
-    /// separators, which set the menu apart from the two buttons.
+    /// Out, the level (a menu), in: the kit's Medium segmented control in
+    /// glass — 24 pt segments, 3 pt separator slots, 2 pt inside — whose
+    /// separators set the menu apart from the two buttons.
     private var zoomControls: some View {
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .frame(width: glassItem + glassGap, height: glassHeight)
+                .frame(width: glassSegment, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
             zoomSeparator
@@ -217,7 +218,7 @@ struct PDFPane: View {
             .help("Zoom")
             zoomSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .frame(width: glassItem + glassGap, height: glassHeight)
+                .frame(width: glassSegment, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom In (⌘+)")
         }
@@ -230,9 +231,9 @@ struct PDFPane: View {
         .disabled(project.pdfVersion == 0)
     }
 
-    /// The groups' separator (EditorView's `glassSeparator`).
+    /// The kit's Medium segmented separator: a 1 x 16 pt line in a 3 pt slot.
     private var zoomSeparator: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator)
+        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator).padding(.horizontal, 1)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
