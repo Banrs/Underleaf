@@ -185,20 +185,22 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's actions: the second row under the window toolbar, exactly the
-/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, 8 pt insets,
-/// 12 pt between groups, Medium (24 pt) controls.
+/// A pane's actions: the second row under the window toolbar. Controls are
+/// the macOS 27 UI kit's Large (28 pt) Over-glass controls — the pane bar is
+/// content, not the window toolbar, whose controls are XL (36 pt) — spaced as
+/// the kit's standard toolbar spaces its items: 8 pt insets, 8 pt between
+/// groups, so 44 pt tall.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 12) { content }
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) { content }
         }
-        .controlSize(.regular)
+        .controlSize(.large)
         .lineLimit(1)
         .padding(.horizontal, 8)
-        .frame(height: 40)
+        .frame(height: 44)
         .frame(maxWidth: .infinity)
         .background(.bar)
         // A shape, not Divider(): inside the HStack's layout context an
@@ -223,16 +225,14 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// The kit's Medium toolbar button group ("Titlebars and Toolbars / Medium /
-/// Buttons"): a 24 pt capsule, 2 pt inside, 20 x 20 buttons 4 pt apart. Its
-/// Medium segmented control separates segments with a 3 pt slot holding a
-/// 1 x 16 pt line, and 24 pt wide segments.
-let glassHeight: CGFloat = 24
-let glassItem: CGFloat = 20
-let glassPadding: CGFloat = 2
-let glassGap: CGFloat = 4
-let glassSeparator: CGFloat = 16
-let glassSegment: CGFloat = 24
+/// The kit's Large Over-glass segmented control ("Segmented Controls /
+/// Over-glass / Duo, 4 Lg", 68 x 28): 34 pt segments edge to edge, a 1 x 18 pt
+/// separator on the boundary between two, and a label at least 12 pt from
+/// its segment's edges.
+let glassHeight: CGFloat = 28
+let glassSegment: CGFloat = 34
+let glassSeparator: CGFloat = 18
+let glassMargin: CGFloat = 12
 
 /// One action in a glass group.
 struct Segment: Identifiable {
@@ -254,9 +254,9 @@ extension Segment {
     }
 }
 
-/// A toolbar button group in Liquid Glass, as the kit draws one: one glass
-/// capsule; a hairline only where the group mixes kinds (bold and italic |
-/// math), as the kit's segmented control separates its segments. Press,
+/// A group of actions in Liquid Glass, laid out as the kit's Large Over-glass
+/// segmented control: 34 pt segments in one capsule, with a separator only
+/// where the group mixes kinds (bold and italic | math). Press,
 /// slide to another button — the highlight follows — and release to choose
 /// it; release outside to cancel. The tracking is AppKit's
 /// (`SegmentTracker`), so a slide reaches every button whatever SwiftUI's
@@ -275,19 +275,20 @@ struct GlassGroup: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(groups.indices, id: \.self) { index in
-                if index > 0 {
-                    Rectangle()
-                        .fill(.separator)
-                        .frame(width: 1, height: glassSeparator)
-                        .padding(.horizontal, 1)
-                }
-                HStack(spacing: glassGap) {
-                    ForEach(groups[index]) { cell($0) }
-                }
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                cell(item)
+                    // A hairline on the boundary where one kind ends, as the
+                    // kit's segmented control draws its separators.
+                    .overlay(alignment: .leading) {
+                        if starts.contains(index) {
+                            Rectangle()
+                                .fill(.separator)
+                                .frame(width: 1, height: glassSeparator)
+                                .offset(x: -0.5)
+                        }
+                    }
             }
         }
-        .padding(.horizontal, glassPadding)
         .overlay {
             SegmentTracker(
                 count: items.count,
@@ -310,14 +311,25 @@ struct GlassGroup: View {
         .fixedSize()
     }
 
+    /// Where each group after the first begins, by item index.
+    private var starts: Set<Int> {
+        var result: Set<Int> = []
+        var index = 0
+        for group in groups.dropLast() {
+            index += group.count
+            result.insert(index)
+        }
+        return result
+    }
+
     private func cell(_ item: Segment) -> some View {
         Label(item.title, systemImage: item.systemImage)
             .labelStyle(.iconOnly)
             .foregroundStyle(item.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-            .frame(width: glassItem, height: glassItem)
+            .frame(width: glassSegment, height: glassHeight)
             .background {
                 if highlighted == item.id {
-                    Circle()
+                    Capsule()
                         .fill(.primary.opacity(pressing ? 0.16 : 0.08))
                         .matchedGeometryEffect(id: "lens", in: lens)
                 }
@@ -442,7 +454,7 @@ private struct SourceBar: View {
     /// 0: everything; 1: references join Insert; 2: all but history in one
     /// Format menu.
     private func tools(folded: Int) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             GlassGroup(items: [
                 Segment(.editUndo, "arrow.uturn.backward", app: app),
                 Segment(.editRedo, "arrow.uturn.forward", app: app),

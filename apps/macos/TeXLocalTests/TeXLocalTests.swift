@@ -149,10 +149,10 @@ final class PaneBarLayoutTests: XCTestCase {
              Segment(id: "i", title: "Italic", systemImage: "italic", action: action)],
             [Segment(id: "m", title: "Math", systemImage: "x.squareroot", action: action)],
         ])
-        // The kit's Medium group "Buttons / 2" is 48 x 24: 2 + 20 + 4 + 20 + 2.
-        // A separator is the Medium segmented control's 3 pt slot, no gap.
-        XCTAssertEqual(size(of: two), CGSize(width: 48, height: 24))
-        XCTAssertEqual(size(of: split), CGSize(width: 2 + 20 + 4 + 20 + 3 + 20 + 2, height: 24))
+        // The kit's Large Over-glass segmented control: Duo 68 x 28, Trio
+        // 102 x 28 — 34 pt segments, separators on the boundaries.
+        XCTAssertEqual(size(of: two), CGSize(width: 68, height: 28))
+        XCTAssertEqual(size(of: split), CGSize(width: 102, height: 28))
     }
 
     private func size(of view: some View) -> CGSize {

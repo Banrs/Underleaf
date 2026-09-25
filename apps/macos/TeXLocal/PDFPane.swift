@@ -76,9 +76,9 @@ struct PDFPane: View {
                     findControls
                 } else {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
+                        HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); share }
                     }
                 }
             }
@@ -95,7 +95,7 @@ struct PDFPane: View {
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
@@ -188,8 +188,8 @@ struct PDFPane: View {
 
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
     /// control (workspace.js `zoomButton`).
-    /// Out, the level (a menu), in: the kit's Medium segmented control in
-    /// glass — 24 pt segments, 3 pt separator slots, 2 pt inside — whose
+    /// Out, the level (a menu), in: the kit's Large Over-glass segmented
+    /// control — 34 pt segments, separators on the boundaries — whose
     /// separators set the menu apart from the two buttons.
     private var zoomControls: some View {
         HStack(spacing: 0) {
@@ -198,12 +198,12 @@ struct PDFPane: View {
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
             zoomSeparator
-            // The segment is as wide as the widest level plus the kit's 10 pt
-            // minimum margin on either side, so the pill doesn't resize as it
+            // The segment is as wide as the widest level plus the kit's 12 pt
+            // Large minimum margin on either side, so the pill doesn't resize as it
             // zooms. The margin sits outside the menu: AppKit draws a menu's
             // label itself and drops padding given to it.
             ZStack {
-                Text("Fit Width").hidden().padding(.horizontal, 10)
+                Text("Fit Width").hidden().padding(.horizontal, glassMargin)
                 Menu {
                     Button("Fit Width") { controller.fitWidth() }
                     Button("Fit Height") { controller.fitHeight() }
@@ -228,16 +228,15 @@ struct PDFPane: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .padding(.horizontal, glassPadding)
         .frame(height: glassHeight)
         .glassEffect(.regular.interactive(), in: .capsule)
         .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
 
-    /// The kit's Medium segmented separator: a 1 x 16 pt line in a 3 pt slot.
+    /// The kit's Large segmented separator: 1 x 18 pt, on the boundary.
     private var zoomSeparator: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator).padding(.horizontal, 1)
+        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator).padding(.horizontal, -0.5)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
