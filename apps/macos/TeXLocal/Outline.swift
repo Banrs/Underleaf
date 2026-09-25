@@ -1,5 +1,13 @@
 import Foundation
 
+/// A heading and the headings under it.
+struct OutlineNode: Identifiable, Hashable {
+    let item: OutlineItem
+    let children: [OutlineNode]?
+
+    var id: Int { item.id }
+}
+
 struct OutlineItem: Identifiable, Hashable {
     let id: Int
     let level: Int
@@ -51,6 +59,24 @@ enum Outline {
             stack.append(item.level)
             return stack.count - 1
         }
+    }
+
+    /// The outline as a tree by how the headings nest, for a sidebar with
+    /// disclosure triangles.
+    static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
+        let depths = depths(outline)
+        var index = 0
+        func children(at depth: Int) -> [OutlineNode] {
+            var nodes: [OutlineNode] = []
+            while index < outline.count, depths[index] == depth {
+                let item = outline[index]
+                index += 1
+                let kids = children(at: depth + 1)
+                nodes.append(OutlineNode(item: item, children: kids.isEmpty ? nil : kids))
+            }
+            return nodes
+        }
+        return children(at: 0)
     }
 
     /// An empty heading by its kind — "Untitled Subsection" — where the web

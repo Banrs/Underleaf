@@ -114,6 +114,21 @@ final class OutlineDisplayTests: XCTestCase {
         XCTAssertEqual(Outline.depths(outline), [0, 0, 1, 2, 0])
     }
 
+    func testTheTreeNestsAsTheHeadingsDo() {
+        let outline = Outline.parse("""
+        \\subsection{}
+        \\section{A}
+        \\subsection{A1}
+        \\subsection{A2}
+        \\section{B}
+        """)
+        let tree = Outline.tree(outline)
+        XCTAssertEqual(tree.map(\.item.title), ["(untitled)", "A", "B"])
+        XCTAssertNil(tree[0].children)
+        XCTAssertEqual(tree[1].children?.map(\.item.title), ["A1", "A2"])
+        XCTAssertNil(tree[2].children)
+    }
+
     func testEmptyHeadingsAreNamedByKind() {
         let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
@@ -134,9 +149,10 @@ final class PaneBarLayoutTests: XCTestCase {
              Segment(id: "i", title: "Italic", systemImage: "italic", action: action)],
             [Segment(id: "m", title: "Math", systemImage: "x.squareroot", action: action)],
         ])
-        // 3 inside, 22 per button, 7 between; a hairline group adds 1 + 7.
-        XCTAssertEqual(size(of: two), CGSize(width: 3 + 22 + 7 + 22 + 3, height: 28))
-        XCTAssertEqual(size(of: split), CGSize(width: 3 + 22 + 7 + 22 + 7 + 1 + 22 + 3, height: 28))
+        // 3 inside, 22 per button, 6 between: 56, the kit's 48 → 73 at 28 pt.
+        // A hairline between groups takes the gap and its own point.
+        XCTAssertEqual(size(of: two), CGSize(width: 56, height: 28))
+        XCTAssertEqual(size(of: split), CGSize(width: 3 + 22 + 6 + 22 + 6 + 1 + 22 + 3, height: 28))
     }
 
     private func size(of view: some View) -> CGSize {

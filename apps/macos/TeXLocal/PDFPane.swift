@@ -196,7 +196,7 @@ struct PDFPane: View {
                 .frame(width: glassItem + glassGap, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
-            glassSeparator
+            zoomSeparator
             Menu {
                 Button("Fit Width") { controller.fitWidth() }
                 Button("Fit Height") { controller.fitHeight() }
@@ -215,7 +215,7 @@ struct PDFPane: View {
             .menuStyle(.button)
             .menuIndicator(.hidden)
             .help("Zoom")
-            glassSeparator
+            zoomSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
                 .frame(width: glassItem + glassGap, height: glassHeight)
                 .contentShape(.rect)
@@ -230,9 +230,9 @@ struct PDFPane: View {
         .disabled(project.pdfVersion == 0)
     }
 
-    /// The kit's toolbar separator: 1 x 16 pt.
-    private var glassSeparator: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: 16)
+    /// The groups' separator (EditorView's `glassSeparator`).
+    private var zoomSeparator: some View {
+        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and

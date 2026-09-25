@@ -10,6 +10,9 @@ struct NavigatorView: View {
     @State private var deleting: String?
     @FocusState private var searchFocused: Bool
     @AppStorage("outlineOpen") private var outlineOpen = true
+    /// Sections folded in the outline, by level and title, so a fold
+    /// survives edits that renumber the headings.
+    @State private var collapsedSections: Set<String> = []
 
     var body: some View {
         List(selection: $selection) {
@@ -21,21 +24,8 @@ struct NavigatorView: View {
                 }
                 if !project.outline.isEmpty, let path = project.openPath {
                     Section("Outline", isExpanded: $outlineOpen) {
-                        let depths = Outline.depths(project.outline)
-                        ForEach(project.outline) { item in
-                            Button {
-                                Task { await project.open(path, line: item.line) }
-                            } label: {
-                                Text(Outline.displayTitle(item))
-                                    .lineLimit(1)
-                                    .foregroundStyle(item.title == "(untitled)" ? .secondary : .primary)
-                                    .padding(.leading, CGFloat(depths[item.id]) * 14)
-                                    .fontWeight(item.id == current ? .semibold : .regular)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        OutlineRows(nodes: Outline.tree(project.outline), path: path,
+                                    project: project, current: current, collapsed: $collapsedSections)
                     }
                 }
             } else {
@@ -202,5 +192,56 @@ struct IssueRow: View {
 
     private var file: String? {
         item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
+    }
+}
+
+/// The outline's headings with native disclosure triangles, as Finder,
+/// Mail and Xcode's navigators show a hierarchy: the system indents each
+/// level and draws no guide lines. Headings start expanded.
+private struct OutlineRows: View {
+    let nodes: [OutlineNode]
+    let path: String
+    let project: ProjectModel
+    let current: Int?
+    @Binding var collapsed: Set<String>
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: expansion(node)) {
+                    AnyView(OutlineRows(nodes: children, path: path, project: project,
+                                        current: current, collapsed: $collapsed))
+                } label: {
+                    row(node.item)
+                }
+            } else {
+                row(node.item)
+            }
+        }
+    }
+
+    private func key(_ node: OutlineNode) -> String { "\(node.item.level):\(node.item.title)" }
+
+    private func expansion(_ node: OutlineNode) -> Binding<Bool> {
+        Binding(
+            get: { !collapsed.contains(key(node)) },
+            set: { open in
+                if open { collapsed.remove(key(node)) } else { collapsed.insert(key(node)) }
+            }
+        )
+    }
+
+    private func row(_ item: OutlineItem) -> some View {
+        Button {
+            Task { await project.open(path, line: item.line) }
+        } label: {
+            Text(Outline.displayTitle(item))
+                .lineLimit(1)
+                .foregroundStyle(item.title == "(untitled)" ? .secondary : .primary)
+                .fontWeight(item.id == current ? .semibold : .regular)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
     }
 }

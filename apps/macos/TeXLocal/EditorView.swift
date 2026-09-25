@@ -225,13 +225,16 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// A group's capsule, 28 pt tall (Large), laid out as the kit lays out a
-/// toolbar button group, scaled from its 36 pt: 3 pt inside the capsule,
-/// 22 pt buttons, 7 pt between them (the kit: 4, 28 and 9).
+/// A group's capsule, 28 pt tall (Large). The kit draws toolbar button
+/// groups at two sizes — 24 pt (2 pt inside, 20 pt buttons, 4 pt between,
+/// 16 pt separators) and 36 pt (4, 28, 9, 22) — and doesn't scale them
+/// linearly, so 28 pt takes the point a third of the way between: 3, 22, 6
+/// and 18. A two-button group is then 56 pt wide, the kit's 48 → 73 at 28.
 let glassHeight: CGFloat = 28
 let glassItem: CGFloat = 22
 let glassPadding: CGFloat = 3
-let glassGap: CGFloat = 7
+let glassGap: CGFloat = 6
+let glassSeparator: CGFloat = 18
 
 /// One action in a glass group.
 struct Segment: Identifiable {
@@ -278,7 +281,7 @@ struct GlassGroup: View {
                 if index > 0 {
                     Rectangle()
                         .fill(.separator)
-                        .frame(width: 1, height: 16)
+                        .frame(width: 1, height: glassSeparator)
                         .padding(.horizontal, glassGap / 2)
                 }
                 HStack(spacing: glassGap) {
