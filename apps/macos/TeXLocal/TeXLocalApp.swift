@@ -73,7 +73,15 @@ struct RootView: View {
         // opened — landed mid-layout on the split view, whose constraint
         // passes then looped until AppKit threw.
         .frame(minWidth: 960, minHeight: 600)
-        .task { await app.refresh() }
+        .task {
+            await app.refresh()
+            // `open TeXLocal.app --args -openProject <id>` opens a project at
+            // launch; launch arguments land in UserDefaults' argument domain
+            // for this run only.
+            if let id = UserDefaults.standard.string(forKey: "openProject"), app.project == nil {
+                await app.open(id)
+            }
+        }
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
         .alert("TeXLocal", isPresented: Binding(
             get: { app.alert != nil },

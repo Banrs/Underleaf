@@ -76,9 +76,9 @@ struct PDFPane: View {
                     findControls
                 } else {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
+                        HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); share }
                     }
                 }
             }
@@ -193,7 +193,7 @@ struct PDFPane: View {
     private var zoomControls: some View {
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .frame(width: glassItem + 4, height: glassHeight)
+                .frame(width: glassItem, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
             glassSeparator
@@ -209,7 +209,7 @@ struct PDFPane: View {
                 // zooms (pinching steps through dozens).
                 Text(controller.zoomLabel)
                     .monospacedDigit()
-                    .frame(width: 64, height: glassHeight)
+                    .frame(width: 72, height: glassHeight)
                     .contentShape(.rect)
             }
             .menuStyle(.button)
@@ -217,7 +217,7 @@ struct PDFPane: View {
             .help("Zoom")
             glassSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .frame(width: glassItem + 4, height: glassHeight)
+                .frame(width: glassItem, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom In (⌘+)")
         }

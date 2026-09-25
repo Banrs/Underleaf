@@ -185,20 +185,22 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's actions: the second row under the window toolbar, drawn to the
-/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, 24 pt Liquid Glass
-/// controls, 8 pt insets, 12 pt between groups.
+/// A pane's actions: the second row under the window toolbar. The macOS 27
+/// UI kit's standard (Unified) toolbar spacing — 8 pt insets, 8 pt between
+/// groups — with controls at the size of that toolbar's group buttons
+/// (28 pt, Large), so the row is roomier than the kit's compact toolbar yet
+/// still under the window toolbar's 36 pt.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 12) { content }
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) { content }
         }
-        .controlSize(.regular)
+        .controlSize(.large)
         .lineLimit(1)
         .padding(.horizontal, 8)
-        .frame(height: 40)
+        .frame(height: 44)
         .frame(maxWidth: .infinity)
         .background(.bar)
         // A shape, not Divider(): inside the HStack's layout context an
@@ -223,10 +225,10 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// The kit's Medium toolbar sizes: a group's capsule is 24 pt tall, 24 pt
-/// per item, with a 20 pt highlight inside.
-let glassHeight: CGFloat = 24
-let glassItem: CGFloat = 24
+/// A group's capsule: 28 pt tall (Large), 32 pt per button — the kit's
+/// toolbar group button — with a highlight inset 2 pt inside.
+let glassHeight: CGFloat = 28
+let glassItem: CGFloat = 32
 
 /// One action in a glass group.
 struct Segment: Identifiable {
@@ -293,9 +295,9 @@ struct GlassGroup: View {
             .frame(width: glassItem, height: glassHeight)
             .background {
                 if highlighted == item.id {
-                    Circle()
+                    Capsule()
                         .fill(.primary.opacity(pressing ? 0.16 : 0.08))
-                        .frame(width: glassItem - 4, height: glassItem - 4)
+                        .frame(width: glassItem - 4, height: glassHeight - 4)
                         .matchedGeometryEffect(id: "lens", in: lens)
                 }
             }
@@ -419,7 +421,7 @@ private struct SourceBar: View {
     /// 0: everything; 1: references join Insert; 2: all but history in one
     /// Format menu.
     private func tools(folded: Int) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             GlassGroup(items: [
                 Segment(.editUndo, "arrow.uturn.backward", app: app),
                 Segment(.editRedo, "arrow.uturn.forward", app: app),
