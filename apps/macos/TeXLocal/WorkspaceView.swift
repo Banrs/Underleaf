@@ -57,13 +57,21 @@ struct WorkspaceView: View {
 
     // ---------- toolbar ----------
 
-    /// The file as the window's title at the leading edge, and the panes'
+    /// Back and the file as the window's title at the leading edge, and the panes'
     /// toggles at the trailing. What acts on a pane sits over it instead:
     /// editing over the source (EditorView's `SourceBar`), compiling and
     /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
     /// too.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // Back to the projects, as the web's and Windows' title bars lead
+        // with it; otherwise only File › Close Project left a project.
+        ToolbarItem(placement: .navigation) {
+            Button { app.perform(.projectClose) } label: {
+                Label("Projects", systemImage: "chevron.backward")
+            }
+            .help("Back to Projects")
+        }
 
         ToolbarItemGroup(placement: .primaryAction) {
             Toggle(isOn: $project.showPDF) {
