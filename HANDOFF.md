@@ -1,6 +1,6 @@
 # Handoff: native apps and browser version
 
-Status as of 2026-09-25, on `main` (all earlier branches are merged and deleted).
+Status as of 2026-09-26, on `main` (all earlier branches are merged and deleted).
 
 ## Goal
 
@@ -90,11 +90,12 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Window:** one `NavigationSplitView`, sized to the macOS 27 UI kit (`~/Downloads/Apple macOS 27 UI Kit.sketch` on the owner's Mac).
   - Sidebar: the files, then the open document's outline as a real hierarchy with disclosure triangles (`Outline.tree`), and project search.
   - Detail: the source beside the PDF, a build panel below (Issues | Build Log, the log an `NSTextView`), a status bar, and a trailing inspector.
-  - The window toolbar holds only the PDF and inspector toggles. What acts on a pane sits over it.
+  - The window toolbar holds a back button (Close Project, as the web's and Windows' title bars have) and the PDF and inspector toggles. What acts on a pane sits over it.
   - Over the source: undo and redo, Heading, bold / italic | math, reference and citation, Insert. A LaTeX writer's tools, after Overleaf's; commenting out is only in the Format menu. Under that, a location row: project › folders › file › section.
   - Over the PDF: Compile (prominent), zoom (out | level | in), Share. Under that, the page and whether the preview is current.
-  - Pane bars use the kit's Large (28 pt) Over-glass controls: groups laid out as its Large segmented control (34 pt segments, 1 × 18 separators only where a group mixes kinds). Bars are 44 pt with the kit's standard toolbar spacing (8 pt insets and gaps); the location row is 28 pt.
-  - A group's click-and-slide is tracked by an AppKit view over it (`SegmentTracker`), as `NSSegmentedControl` tracks.
+  - Pane bar controls are native only; the owner asked for native over hand-built. Each group is native `.glass` buttons whose glass `glassEffectUnion` merges into one capsule with no separators, as Notes' toolbar groups look. `ControlGroup` was tried and dropped: AppKit's segmented control puts a separator between every button. The zoom level is a borderless menu on its own glass in the same union: as a `.glass` menu, its label drew blurred.
+  - Glass buttons draw their icons dimmed while the window is inactive; that is the system's, not disabled.
+  - Settings › General › Toolbar Size: Compact uses Large controls (26 pt glass buttons, 44 pt bars); Large uses Extra Large controls (34 pt, 52 pt bars), the window toolbar's size. Both keep the standard toolbar spacing (8 pt insets and gaps). The location row is 28 pt.
   - The start window: template cards, then recent projects as a sortable table.
 - **Layout rules learnt the hard way:**
   - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
@@ -104,8 +105,21 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - An overlaid `Divider()` inside an `HStack` turns vertical. Use `Hairline`.
   - PDFKit re-anchors page one's top to the view on every resize while fitting the width, so the gap above page one is a scroll-view content inset.
 - **Parity and review fixes:** every command in `commandDefs`, and the settings with a native meaning. Saves run one at a time; quit waits for a save in flight; compiles queue; a WebContent crash recovers the editor; overlapping file opens can no longer save one file's text into another; undo and redo always reach CodeMirror's history.
-- **Tests:** 22 XCTests, including the outline tree and the pane bar groups' sizes against the kit. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
-- **Still to check by hand on a Mac:** click-and-slide across a group; the earlier list (undo/redo once each, dark paper, find field keys, WebContent crash recovery, quit during a save, rename with undo history, SyncTeX both ways, drag-and-drop import, the first delete's Automation prompt, a copied `TeXLocal.app` launching).
+- **Tests:** 22 XCTests, including the outline tree and the pane bar groups' height at each toolbar size. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
+- **PDF links:** PDFKit draws hyperref's coloured link boxes, which pdf.js (browser, Windows) leaves out, so `hideLinkBorders` zeroes each link's border on load. The links still work.
+- **Checked by hand on a Mac (2026-09-26), against a scratch `TEXLOCAL_DATA`:**
+  - click-and-slide from Bold to Italic applied only Italic (with the hand-built groups since replaced by `ControlGroup`);
+  - undo and redo move exactly one step, from the pane bar and from the Edit menu;
+  - dark paper inverts the preview;
+  - SyncTeX forward (highlights the line) and Go to Source Position;
+  - killing the editor's WebContent recovers the editor. With an unsaved edit it shows one lost-edits alert, and the file is untouched;
+  - quitting straight after an edit saves the edit first and leaves no `latexmk`;
+  - a copied `TeXLocal.app`, with the build moved away, opens and compiles a project.
+- **Found while checking:**
+  - After the lost-edits alert, the PDF still says "Preview Out of Date", though the file matches the PDF.
+  - One injected double-click on the "Method" heading went to line 28 (`\label`), where `synctex edit` gives line 24. Go to Source Position is correct, so this may be the injected events. Try a real double-click.
+- **Still to check by hand on a Mac:** a real double-click for inverse SyncTeX, find field keys, rename with undo history, drag-and-drop import, the first delete's Automation prompt.
+- **Driving the app without taking focus:** Accessibility actions work while TeXLocal is in the background: AXPress on the pane-bar buttons, menu items through System Events, and alert buttons. Synthetic key and mouse events posted to its process are dropped unless it is the active app. Setting AX text in the CodeMirror editor is ignored.
 
 ## The Windows app (`apps/windows`): run by hand on Windows 11, partly verified
 
