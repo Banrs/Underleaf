@@ -194,6 +194,12 @@ fn path_traversal_is_rejected_at_every_boundary() {
         .unwrap_err()
         .message
         .contains("Bad project id"));
+    // A folder inside a project is not a project of its own.
+    create_file(&root, "chapters/intro.tex", false).unwrap();
+    for id in ["paths-test/chapters", r"paths-test\chapters"] {
+        assert_eq!(project_root(data.path(), id).unwrap_err().status, 400);
+    }
+    assert_eq!(project_root(data.path(), "./paths-test/").unwrap(), root);
     for path in ["../x", "a/../../b", ".", r"..\x", r"C:\x"] {
         assert!(safe_path(&root, path)
             .unwrap_err()
