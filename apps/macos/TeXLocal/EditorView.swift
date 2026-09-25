@@ -59,6 +59,15 @@ struct EditorArea: View {
     @AppStorage("panelSplit") private var panelSplit = 0.7
 
     var body: some View {
+        VStack(spacing: 0) {
+            editors
+            // Stacked, not overlaid: an opaque bar over the editors only hid
+            // their last lines.
+            StatusBar(project: project)
+        }
+    }
+
+    private var editors: some View {
         SplitPair(axis: .vertical, fraction: $panelSplit, minFirst: 120, minSecond: 80,
                   showsSecond: project.showLogs) {
             SplitPair(axis: .horizontal, fraction: $pdfSplit, minFirst: 140, minSecond: 140,
@@ -70,12 +79,14 @@ struct EditorArea: View {
         } second: {
             PanelView(project: project)
         }
-        .safeAreaBar(edge: .bottom) { StatusBar(project: project) }
     }
 
-    @ViewBuilder
+    /// The source's bars stacked over it, not overlaid: they are opaque, so
+    /// text scrolled beneath them was only hidden.
     private var source: some View {
-        Group {
+        VStack(spacing: 0) {
+            SourceBar(project: project)
+            SourceLocation(project: project)
             if project.openPath != nil {
                 EditorView(bridge: app.editor)
             } else {
@@ -84,12 +95,6 @@ struct EditorArea: View {
                 ContentUnavailableView("No File Open", systemImage: "doc.text",
                                        description: Text("Choose a file in the sidebar."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .safeAreaBar(edge: .top) {
-            VStack(spacing: 0) {
-                SourceBar(project: project)
-                SourceLocation(project: project)
             }
         }
     }

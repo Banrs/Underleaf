@@ -15,6 +15,29 @@ struct PDFPane: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        // The pane's own bars over it, stacked rather than overlaid: they are
+        // opaque, so a page scrolled beneath them was only hidden — its top
+        // and top margin sat behind them.
+        VStack(spacing: 0) {
+            bar
+            pages
+        }
+        // A new PDF leaves every match behind; the web closes the bar too.
+        .onChange(of: project.pdfVersion) { _, _ in
+            if finding { closeFind() }
+        }
+        // A request made while the pane was off screen waits for it to appear,
+        // and each is taken once.
+        .onChange(of: app.pdfRequest?.token, initial: true) { _, _ in
+            guard let action = app.pdfRequest?.action else { return }
+            app.pdfRequest = nil
+            // After this update, so a PDF view that has just appeared has its document.
+            Task { perform(action) }
+        }
+    }
+
+    @ViewBuilder
+    private var pages: some View {
         Group {
             if project.pdfVersion > 0 {
                 PDFRepresentable(
@@ -32,23 +55,6 @@ struct PDFPane: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        // The pane's own bar, as Xcode's canvas has one: what is scoped to
-        // the PDF — its page, whether it is current, its zoom, finding in it —
-        // rather than to the document the window toolbar acts on. A system
-        // bar, so the pages scroll beneath it with the edge effect.
-        .safeAreaBar(edge: .top) { bar }
-        // A new PDF leaves every match behind; the web closes the bar too.
-        .onChange(of: project.pdfVersion) { _, _ in
-            if finding { closeFind() }
-        }
-        // A request made while the pane was off screen waits for it to appear,
-        // and each is taken once.
-        .onChange(of: app.pdfRequest?.token, initial: true) { _, _ in
-            guard let action = app.pdfRequest?.action else { return }
-            app.pdfRequest = nil
-            // After this update, so a PDF view that has just appeared has its document.
-            Task { perform(action) }
         }
     }
 
@@ -475,6 +481,18 @@ private struct PDFRepresentable: NSViewRepresentable {
         let view = SyncPDFView()
         view.displayMode = .singlePageContinuous
         view.displaysPageBreaks = true
+        // An even margin of backdrop around every page, as Preview shows
+        // one: the bars' 8 pt inset, so a page's edge lines up with the
+        // controls over it. PDFKit's default left a sliver on one side only,
+        // which beside the pane divider read as a thick, broken line.
+        view.pageBreakMargins = NSEdgeInsets(top: 0, left: 8, bottom: 8, right: 8)
+        // The gap above page one is the scroll view's, not a page margin:
+        // fitting the width, PDFKit re-anchors page one's top edge to the top
+        // of the view on every resize, scrolling a page margin out of sight.
+        if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+        }
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
         view.onInverse = { [project] page, point in
