@@ -166,3 +166,42 @@ fn dropped_files_and_folders_import_into_the_project() {
 
     unsafe { tl_close(handle) };
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = CString::new(dir.path().join("data").to_str().unwrap()).unwrap();
+    let handle = unsafe { tl_open(path.as_ptr()) };
+    call(
+        handle,
+        "create_project",
+        Some(json!({ "name": "P", "template": "blank" })),
+    );
+
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("plot.png"), b"p").unwrap();
+    let drop = dir.path().join("drop");
+    std::fs::create_dir_all(drop.join("figs")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("plot.png"), drop.join("plot-link.png")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("plot.png"), drop.join("figs/inner.png")).unwrap();
+    std::fs::write(drop.join("figs/real.png"), b"r").unwrap();
+    let paths =
+        [drop.join("plot-link.png"), drop.join("figs")].map(|p| p.to_str().unwrap().to_owned());
+
+    let out = call(
+        handle,
+        "import_files",
+        Some(json!({ "id": "P", "dir": "", "paths": paths })),
+    );
+    let mut saved: Vec<String> = serde_json::from_value(out["ok"]["saved"].clone()).unwrap();
+    saved.sort();
+    assert_eq!(saved, ["figs/real.png", "plot-link.png"]);
+    assert_eq!(
+        std::fs::read(dir.path().join("data/P/plot-link.png")).unwrap(),
+        b"p"
+    );
+
+    unsafe { tl_close(handle) };
+}

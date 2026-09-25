@@ -57,7 +57,10 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
             {
                 let abs = PathBuf::from(p.as_str().unwrap_or_default());
                 let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
-                collect(&abs, name.unwrap_or_default(), &mut files)?;
+                // A dropped link is followed: dropping it names the file or
+                // folder it points at.
+                let meta = std::fs::metadata(&abs)?;
+                collect(&abs, name.unwrap_or_default(), meta, &mut files)?;
             }
             // The same validate-then-write rule as a browser upload: a bad
             // path or oversize file fails the drop before anything lands.
@@ -80,21 +83,28 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
 }
 
 /// Files under a dropped path, with project-relative names that keep a
-/// dropped folder's own name. Symlinks are skipped, not followed: a drop
-/// imports what was dropped, never what a link inside it points at.
+/// dropped folder's own name. Symlinks inside a dropped folder are skipped,
+/// not followed: a drop imports what was dropped, never what a link inside it
+/// points at.
 fn collect(
     abs: &std::path::Path,
     rel: String,
+    meta: std::fs::Metadata,
     out: &mut Vec<(String, PathBuf, usize)>,
 ) -> Result<(), CoreError> {
-    let meta = std::fs::symlink_metadata(abs)?;
     if meta.is_file() {
         out.push((rel, abs.to_path_buf(), meta.len() as usize));
     } else if meta.is_dir() {
         for entry in std::fs::read_dir(abs)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            collect(&entry.path(), format!("{rel}/{name}"), out)?;
+            // DirEntry::metadata does not follow links.
+            collect(
+                &entry.path(),
+                format!("{rel}/{name}"),
+                entry.metadata()?,
+                out,
+            )?;
         }
     }
     Ok(())
