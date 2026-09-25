@@ -131,20 +131,23 @@ struct WorkspaceView: View {
     }
 }
 
-/// What LaTeX's Insert menu offers, in the toolbar and the Format menu: the
-/// web editor bar's heading, reference, list and insert menus
-/// (workspace.js `editorToolbar`) as submenus of one.
+/// What LaTeX's Insert menu offers, in the source bar and the Format menu:
+/// the web editor bar's heading, reference, list and insert menus
+/// (workspace.js `editorToolbar`). The source bar leaves out headings and
+/// references while it shows them as controls of their own.
 struct InsertMenuItems: View {
     let project: ProjectModel?
+    var headings = true
+    var references = true
 
     var body: some View {
-        submenu("Heading", headingTemplates)
-        submenu("Reference", referenceTemplates)
-        submenu("List", listTemplates)
-        Divider()
+        if headings { submenu("Heading", headingTemplates) }
+        if references { submenu("Reference", referenceTemplates) }
+        if headings || references { Divider() }
         ForEach(insertTemplates.filter { !$0.0.hasSuffix("List") }, id: \.0) { label, template in
             Button(label) { project?.format("insert", template) }
         }
+        submenu("List", listTemplates)
     }
 
     private func submenu(_ title: String, _ templates: [(String, String)]) -> some View {

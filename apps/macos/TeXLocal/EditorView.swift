@@ -47,11 +47,10 @@ struct EditorView: NSViewRepresentable {
 ///
 /// Split in SwiftUI rather than with HSplitView/VSplitView: those host each
 /// pane in its own AppKit view whose size feeds Auto Layout, and inside the
-/// sidebar's and inspector's split views that looped — the window grew when
-/// the inspector opened, stalled, and at worst threw "more Update
-/// Constraints passes than views". Here the area asks only for a small
-/// minimum, so revealing either sidebar takes its width from the editors,
-/// as Xcode's does, and the window grows only once they are at their minimum.
+/// window's split view their minimums re-measured each other until AppKit
+/// threw ("more Update Constraints passes than views"). The area has no
+/// minimum of its own; the detail column's (WorkspaceView) is fixed, and
+/// panes short of room share it by their split's proportion.
 struct EditorArea: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -222,7 +221,7 @@ struct LocationBar<Content: View>: View {
     var body: some View {
         HStack(spacing: 4) { content }
             .lineLimit(1)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .frame(height: 28)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
@@ -509,28 +508,9 @@ private struct SourceBar: View {
                     Button(command.title) { app.perform(command) }
                 }
                 Divider()
-                Menu("Heading") {
-                    ForEach(headingTemplates, id: \.0) { label, template in
-                        Button(label) { project.format("insert", template) }
-                    }
-                }
             }
-            if folded >= 1 {
-                Menu("Reference") {
-                    ForEach(referenceTemplates, id: \.0) { label, template in
-                        Button(label) { project.format("insert", template) }
-                    }
-                }
-            }
-            Divider()
-            ForEach(insertTemplates.filter { !$0.0.hasSuffix("List") }, id: \.0) { label, template in
-                Button(label) { project.format("insert", template) }
-            }
-            Menu("List") {
-                ForEach(listTemplates, id: \.0) { label, template in
-                    Button(label) { project.format("insert", template) }
-                }
-            }
+            // What the bar isn't showing as controls of its own.
+            InsertMenuItems(project: project, headings: folded == 2, references: folded >= 1)
         }
         .menuStyle(.button)
         .buttonStyle(.glass)

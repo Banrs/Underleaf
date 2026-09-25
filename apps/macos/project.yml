@@ -78,5 +78,12 @@ schemes:
       targets: [TeXLocalTests]
       environmentVariables:
         TEXLOCAL_DATA: /tmp/texlocal-xctest
+      # The tests run inside TeXLocal.app, which would need Documents access
+      # to read the repository; the one web file they check is copied out.
+      preActions:
+        - name: Copy workspace.js for the tests
+          settingsTarget: TeXLocal
+          script: |
+            mkdir -p /tmp/texlocal-xctest && cp "$SRCROOT/../../web/src/workspace.js" /tmp/texlocal-xctest/workspace.js
     run:
       config: Debug

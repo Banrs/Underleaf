@@ -11,7 +11,7 @@ final class ProjectModel {
     var tree: [TreeNode] = []
     var openPath: String?
     var outline: [OutlineItem] = []
-    /// Words and lines in the open .tex file, for the word-count pill.
+    /// Words and lines in the open .tex file, for the status bar.
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
 
@@ -234,7 +234,7 @@ final class ProjectModel {
         }
     }
 
-    /// The outline, breadcrumb and word count read the open document; as in
+    /// The outline, location row and word count read the open document; as in
     /// the web, only a .tex file has them.
     private func analyze(_ text: String) {
         guard openPath?.hasSuffix(".tex") == true else {
@@ -245,14 +245,6 @@ final class ProjectModel {
         let doc = Outline.analyze(text)
         outline = doc.outline
         counts = (doc.words, doc.lines)
-    }
-
-    /// File › section › subsection at the cursor (web/src/workspace.js
-    /// `renderCrumbs`). The file by its path in the project, so two
-    /// `intro.tex` in different folders read apart.
-    var breadcrumb: [String] {
-        guard let path = openPath else { return [] }
-        return [path] + Outline.chain(outline, at: cursorLine).map(\.title)
     }
 
     /// Save now, cancelling the pending autosave — before a file switch, a

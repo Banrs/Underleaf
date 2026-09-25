@@ -213,12 +213,14 @@ final class CommandTests: XCTestCase {
         XCTAssertFalse(ids.contains("edit.redo"))
     }
 
-    /// A file of the repository this test was built from.
-    private func repo(_ path: String) -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(path)
+    /// web/src/workspace.js as the test scheme's pre-action copies it into
+    /// the scratch folder. The tests run inside TeXLocal.app, and reading the
+    /// repository in ~/Documents from there asks macOS for Documents access
+    /// again after every re-signing build, blocking the read until someone
+    /// answers the prompt or it times out.
+    private func webWorkspace() throws -> URL {
+        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        return URL(fileURLWithPath: data).appendingPathComponent("workspace.js")
     }
 
     /// The web's commands with no place in the Mac menus: Settings…, which the
@@ -228,7 +230,7 @@ final class CommandTests: XCTestCase {
 
     /// The menu has every other command the web declares, with the same chord.
     func testTheMenuHasEveryWebCommand() throws {
-        let source = try String(contentsOf: repo("web/src/workspace.js"), encoding: .utf8)
+        let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
         var ids: Set<String> = []
         for line in source.split(separator: "\n") {
             guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
