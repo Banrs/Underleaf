@@ -218,15 +218,21 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::pro
     cmd
 }
 
-/// Drain a child stream to EOF, keeping at most `cap` bytes. Draining past the
-/// cap matters: stopping reads would block the child on a full pipe.
-async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize) -> String {
-    let mut kept: Vec<u8> = Vec::new();
+/// Drain a child stream to EOF into `kept`, keeping at most `cap` bytes.
+/// Draining past the cap matters: stopping reads would block the child on a
+/// full pipe. The buffer is shared so that what was read survives the task
+/// being cancelled (see `drive`).
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+    kept: Arc<Mutex<Vec<u8>>>,
+) {
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
+                let mut kept = kept.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 if kept.len() < cap {
                     let take = n.min(cap - kept.len());
                     kept.extend_from_slice(&chunk[..take]);
@@ -234,7 +240,13 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize)
             }
         }
     }
-    String::from_utf8_lossy(&kept).into_owned()
+}
+
+fn text_of(buffer: &Mutex<Vec<u8>>) -> String {
+    let bytes = buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 pub(crate) struct RunOutput {
@@ -272,13 +284,17 @@ pub(crate) async fn run(
 async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, String, String) {
     let pid = child.id();
     let deadline = tokio::time::Instant::now() + timeout;
+    let out_buf = Arc::new(Mutex::new(Vec::new()));
+    let err_buf = Arc::new(Mutex::new(Vec::new()));
     let mut out_task = tokio::spawn(read_capped(
         child.stdout.take().expect("stdout piped"),
         MAX_OUTPUT,
+        out_buf.clone(),
     ));
     let mut err_task = tokio::spawn(read_capped(
         child.stderr.take().expect("stderr piped"),
         MAX_OUTPUT,
+        err_buf.clone(),
     ));
 
     let status = tokio::select! {
@@ -290,24 +306,28 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
         }
     };
     // Once the child is gone, everything it wrote is already in the pipes, so
-    // a short grace reads it all. Waiting longer only waits on a descendant
-    // that outlived it (a shell-escape `&`, a latexmkrc previewer) and
-    // inherited the pipes, which may never close them. If even the grace runs
-    // out, what was read is lost; the log file is the primary record.
+    // a short grace reads it all. Waiting longer only waits on a process that
+    // holds the pipes open without writing: a descendant that outlived it (a
+    // shell-escape `&`, a latexmkrc previewer), or — where pipes can't be
+    // created close-on-exec atomically, as on macOS — a process spawned
+    // elsewhere at that instant that inherited them. When the grace runs out
+    // the readers stop, and what they read by then is kept.
     let drain_until = tokio::time::Instant::now() + DRAIN_GRACE;
-    let (stdout, stderr) = match tokio::time::timeout_at(drain_until, async {
-        ((&mut out_task).await, (&mut err_task).await)
+    if tokio::time::timeout_at(drain_until, async {
+        let _ = (&mut out_task).await;
+        let _ = (&mut err_task).await;
     })
     .await
+    .is_err()
     {
-        Ok((out, err)) => (out.unwrap_or_default(), err.unwrap_or_default()),
-        Err(_) => {
-            out_task.abort();
-            err_task.abort();
-            (String::new(), String::new())
-        }
-    };
-    (status.and_then(|s| s.code()).unwrap_or(-1), stdout, stderr)
+        out_task.abort();
+        err_task.abort();
+    }
+    (
+        status.and_then(|s| s.code()).unwrap_or(-1),
+        text_of(&out_buf),
+        text_of(&err_buf),
+    )
 }
 
 // ---------- availability ----------
