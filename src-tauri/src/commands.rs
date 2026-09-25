@@ -133,11 +133,9 @@ pub async fn write_file(
     state: State<'_, AppState>,
     id: String,
     path: String,
-    text: Option<String>,
+    text: String,
 ) -> CmdResult<()> {
-    Ok(state
-        .service
-        .write_file(&id, &path, text.as_deref().unwrap_or_default())?)
+    Ok(state.service.write_file(&id, &path, &text)?)
 }
 
 #[tauri::command]

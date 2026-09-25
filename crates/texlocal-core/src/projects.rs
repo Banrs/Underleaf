@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::error::CoreError;
-use crate::paths::{project_root, safe_path, sanitize_name};
+use crate::paths::{project_root, rel_key, safe_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
 use crate::BUILD_DIR;
@@ -111,6 +111,33 @@ fn classify_entry(root_canonical: &Path, entry: &fs::DirEntry) -> Result<EntryKi
     })
 }
 
+/// The result of reading one entry during a scan, or None when it vanished or
+/// may not be read: a folder of root-owned output, a file deleted mid-walk.
+/// One such entry must not fail the whole tree, search or library listing.
+fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// A folder's entries during a walk. The project root itself must be
+/// readable; a subfolder that is not is skipped.
+fn read_subdir(dir: &Path, prefix: &str) -> Result<Option<fs::ReadDir>, CoreError> {
+    if prefix.is_empty() {
+        return Ok(Some(fs::read_dir(dir)?));
+    }
+    skip_unreadable(fs::read_dir(dir))
+}
+
 /// Every content file in the project, depth-first, with its project-relative
 /// path. Search, symbol scanning and fingerprinting all walk through here, so
 /// they cannot disagree about what a project contains: dotfiles are hidden,
@@ -129,7 +156,10 @@ fn visit_files(
         prefix: &str,
         visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in fs::read_dir(dir)? {
+        let Some(entries) = read_subdir(dir, prefix)? else {
+            return Ok(true);
+        };
+        for entry in entries {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
@@ -184,7 +214,9 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             continue;
         }
         let root = data_dir.join(&name);
-        let meta = fs::metadata(&root)?;
+        let Some(meta) = skip_unreadable(fs::metadata(&root))? else {
+            continue;
+        };
         let settings = read_settings(&root);
         projects.push(ProjectInfo {
             id: name.clone(),
@@ -233,7 +265,7 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    if dest.exists() {
+    if occupied(&root, &dest) {
         return Err(CoreError::conflict(
             "A project with that name already exists",
         ));
@@ -247,6 +279,30 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
         mtime: mtime_ms(&meta),
         main_file: settings.main_file,
     })
+}
+
+/// Whether a rename from `src` to `dest` would land on another entry. On a
+/// case-insensitive volume, the default on macOS and Windows, a case-only
+/// rename's destination already "exists" because it is `src` itself.
+fn occupied(src: &Path, dest: &Path) -> bool {
+    fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
+}
+
+#[cfg(unix)]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+// std has no file identity on Windows, so there it is two spellings that
+// differ only in case and resolve to one final path.
+#[cfg(not(unix))]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        && matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 fn discard_using<E, F>(path: &Path, move_to_trash: F) -> Result<(), CoreError>
@@ -283,7 +339,10 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         rel_prefix: &str,
     ) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
-        for entry in fs::read_dir(dir)? {
+        let Some(entries) = read_subdir(dir, rel_prefix)? else {
+            return Ok(nodes);
+        };
+        for entry in entries {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
@@ -367,18 +426,25 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
     let dest = safe_path(root, to)?;
-    if !src.exists() {
+    // Only compared with the main file, never passed to a tool, so a name
+    // starting with "-" is as renameable here as create_entry made it.
+    let from_rel = rel_key(from)?;
+    let to_rel = rel_key(to)?;
+    if fs::symlink_metadata(&src).is_err() {
         return Err(CoreError::not_found("Not found"));
     }
-    if dest.exists() {
+    if occupied(&src, &dest) {
         return Err(CoreError::conflict("Destination already exists"));
+    }
+    if to_rel.starts_with(&format!("{from_rel}/")) {
+        return Err(CoreError::bad_request(
+            "A folder can't be moved into itself",
+        ));
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let from_rel = crate::paths::safe_rel_file(root, from)?;
-    let to_rel = crate::paths::safe_rel_file(root, to)?;
     let settings = read_settings(root);
     let mut main_file = settings.main_file.replace('\\', "/");
     let prefix = format!("{from_rel}/");
@@ -410,7 +476,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
-    let target = crate::paths::safe_rel_file(root, rel)?;
+    let target = rel_key(rel)?;
     let main_file = read_settings(root).main_file.replace('\\', "/");
     if main_file == target || main_file.starts_with(&format!("{target}/")) {
         return Err(CoreError::conflict(
@@ -462,7 +528,9 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         if !is_text_file(&rel) {
             return Ok(true);
         }
-        let bytes = fs::read(abs)?;
+        let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+            return Ok(true);
+        };
         // One case-insensitive pass over the raw bytes rules a file out without
         // splitting a single line. Sound only when both sides are ASCII: there
         // the byte fold and `lower_into`'s char fold agree by definition, while
@@ -558,7 +626,9 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
             "tex" => (label_re, &mut labels),
             _ => return Ok(true),
         };
-        let bytes = fs::read(abs)?;
+        let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+            return Ok(true);
+        };
         for m in re.captures_iter(&String::from_utf8_lossy(&bytes)) {
             out.push(m[1].to_string());
         }
@@ -584,7 +654,9 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
         }
         // fs::metadata follows the link, so a symlinked source is stamped by
         // the bytes scan_symbols actually reads rather than by the link itself.
-        let meta = fs::metadata(abs)?;
+        let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
+            return Ok(true);
+        };
         out.push((rel, mtime_ns(&meta), meta.len()));
         Ok(true)
     })?;

@@ -15,6 +15,7 @@ use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides};
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::settings::write_settings;
+use texlocal_core::synctex::synctex_inverse;
 
 fn stub_env(bin: &Path, script: &str) -> String {
     fs::create_dir_all(bin).unwrap();
@@ -132,6 +133,27 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 }
 
 #[tokio::test]
+async fn a_timed_out_compile_keeps_the_output_it_wrote() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n",
+    );
+
+    let mut mgr = CompileManager::new();
+    mgr.path_env = Some(path);
+    mgr.timeout = Some(Duration::from_millis(500));
+    let result = mgr
+        .compile(&root, &CompileOverrides::default(), None)
+        .await
+        .unwrap();
+
+    assert!(!result.ok);
+    assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
+}
+
+#[tokio::test]
 async fn a_timed_out_compile_is_killed_and_reported_failed() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
@@ -155,9 +177,10 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
 }
 
 #[tokio::test]
-async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
+async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     // latexmk has exited, but something it started in the background (a
-    // shell-escape `&`, a latexmkrc previewer) still holds stdout open.
+    // shell-escape `&`, a latexmkrc previewer) still holds stdout open. The
+    // compile answers after a short drain grace, not at its timeout.
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
     let path = stub_env(
@@ -167,10 +190,6 @@ async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    // Long enough for the stub itself to exit on a loaded machine (at 300ms it
-    // occasionally didn't, failing `ok`), yet well short of the sleep: the
-    // drain is bounded by the same deadline, so this returns after ~2s.
-    mgr.timeout = Some(Duration::from_secs(2));
     let started = std::time::Instant::now();
     let result = mgr
         .compile(&root, &CompileOverrides::default(), None)
@@ -304,4 +323,35 @@ fn set_mtime(path: &Path, to: std::time::SystemTime) {
     let file = fs::File::options().append(true).open(path).unwrap();
     file.set_times(fs::FileTimes::new().set_modified(to))
         .unwrap();
+}
+
+#[tokio::test]
+async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
+    // TeX names inputs by the physical working directory, so a library
+    // reached through a symlink comes back under its real path.
+    let tmp = TempDir::new().unwrap();
+    let real = tmp.path().join("real");
+    fs::create_dir_all(&real).unwrap();
+    let linked = tmp.path().join("linked");
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let root = project(&linked);
+    fs::write(root.join("chapter.tex"), "text\n").unwrap();
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.pdf"), "fake").unwrap();
+
+    let bin = tmp.path().join("bin");
+    let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
+    let synctex = bin.join("synctex");
+    fs::write(
+        &synctex,
+        "#!/bin/sh\nprintf 'SyncTeX result begin\\nInput:%s/./chapter.tex\\nLine:7\\n' \"$(pwd -P)\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, &path)
+        .await
+        .unwrap();
+    assert_eq!(loc.file, "chapter.tex");
+    assert_eq!(loc.line, 7);
 }

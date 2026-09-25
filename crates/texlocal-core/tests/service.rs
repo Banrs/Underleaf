@@ -92,6 +92,20 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
         .await,
         400
     );
+    // A write without its text is refused, never taken as an empty file.
+    for args in [
+        json!({ "id": "P", "path": "main.tex" }),
+        json!({ "id": "P", "path": "main.tex", "text": null }),
+    ] {
+        assert_eq!(status_of(&service, "write_file", args).await, 400);
+    }
+    let main = call(
+        &service,
+        "read_file",
+        json!({ "id": "P", "path": "main.tex" }),
+    )
+    .await;
+    assert!(!main["text"].as_str().unwrap().is_empty());
     // Path checks apply through the dispatch exactly as through the methods.
     assert_eq!(
         status_of(

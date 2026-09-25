@@ -8,6 +8,7 @@
 pub mod http;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
@@ -21,7 +22,7 @@ const COOKIE: &str = "texlocal_token";
 pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
 pub struct App {
-    pub service: Service,
+    pub service: Arc<Service>,
     web_dir: PathBuf,
     token: String,
     hosts: [String; 2],
@@ -62,7 +63,7 @@ impl App {
     /// `port` is the one actually bound: Host and Origin are checked against it.
     pub fn new(service: Service, web_dir: PathBuf, port: u16, token: String) -> Self {
         Self {
-            service,
+            service: Arc::new(service),
             web_dir,
             token,
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
@@ -80,15 +81,15 @@ impl App {
         let path = req.path().to_string();
         let read = matches!(req.method.as_str(), "GET" | "HEAD");
         let response = if req.method == "POST" && path == "/api/upload_file" {
-            self.upload(&req)
+            self.upload(req).await
         } else if let Some(command) = path.strip_prefix("/api/").filter(|_| req.method == "POST") {
-            self.api(&decode(command), &req.body).await
+            self.api(decode(command), &req.body).await
         } else if read && (path.starts_with("/__pdf/") || path.starts_with("/__raw/")) {
             self.file(&path, req.header("range")).await
         } else if let Some(id) = path.strip_prefix("/__download/pdf/").filter(|_| read) {
-            self.download_pdf(&decode(id))
+            self.download_pdf(decode(id)).await
         } else if let Some(id) = path.strip_prefix("/__download/zip/").filter(|_| read) {
-            self.download_zip(&decode(id))
+            self.download_zip(decode(id)).await
         } else if read {
             self.asset(&path).await
         } else {
@@ -145,7 +146,21 @@ impl App {
 
     // ---------- commands ----------
 
-    async fn api(&self, command: &str, body: &[u8]) -> Response {
+    /// Run file-system work (tree walks, searches, whole-file reads and writes,
+    /// ZIP builds) on the blocking pool, so a large project cannot stall the
+    /// async workers every other request, pdf.js's range fetches included,
+    /// waits on.
+    async fn blocking<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Service) -> Result<T, CoreError> + Send + 'static,
+    ) -> Result<T, CoreError> {
+        let service = Arc::clone(&self.service);
+        tokio::task::spawn_blocking(move || work(&service))
+            .await
+            .unwrap_or_else(|_| Err(CoreError::internal("The request panicked")))
+    }
+
+    async fn api(&self, command: String, body: &[u8]) -> Response {
         let args: Value = if body.is_empty() {
             json!({})
         } else {
@@ -154,7 +169,13 @@ impl App {
                 Err(e) => return error(CoreError::bad_request(format!("Invalid JSON: {e}"))),
             }
         };
-        match self.service.call(command, &args).await {
+        // A command may mix blocking file work with async process work, so
+        // the blocking thread drives it to completion on the runtime's handle.
+        let runtime = tokio::runtime::Handle::current();
+        let called = self
+            .blocking(move |service| runtime.block_on(service.call(&command, &args)))
+            .await;
+        match called {
             Ok(value) => Response::json(200, &value),
             Err(e) => error(e),
         }
@@ -162,20 +183,21 @@ impl App {
 
     /// One file per request, body raw, metadata percent-encoded in headers —
     /// the same shape as the desktop's `upload_file` invoke.
-    fn upload(&self, req: &Request) -> Response {
+    async fn upload(&self, req: Request) -> Response {
         let header = |name: &str| {
             req.header(name)
                 .map(decode)
                 .ok_or_else(|| CoreError::bad_request(format!("Missing {name} header")))
         };
-        let saved = (|| {
-            self.service.upload_file(
-                &header("x-project")?,
-                &header("x-dir")?,
-                &header("x-path")?,
-                &req.body,
-            )
-        })();
+        let names = (|| Ok((header("x-project")?, header("x-dir")?, header("x-path")?)))();
+        let saved = match names {
+            Ok((id, dir, path)) => {
+                let body = req.body;
+                self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
+                    .await
+            }
+            Err(e) => Err(e),
+        };
         match saved {
             Ok(rel) => Response::json(200, &json!({ "saved": [rel] })),
             Err(e) => error(e),
@@ -214,24 +236,34 @@ impl App {
         }
     }
 
-    fn download_pdf(&self, id: &str) -> Response {
-        let bytes = self.service.pdf_path(id).and_then(|pdf| {
-            std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
-        });
+    async fn download_pdf(&self, id: String) -> Response {
+        let bytes = {
+            let id = id.clone();
+            self.blocking(move |service| {
+                let pdf = service.pdf_path(&id)?;
+                std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
+            })
+            .await
+        };
         match bytes {
             Ok(bytes) => attachment(bytes, &format!("{id}.pdf"), "application/pdf"),
             Err(e) => error(e),
         }
     }
 
-    fn download_zip(&self, id: &str) -> Response {
-        let build = |root: &Path| -> Result<Vec<u8>, CoreError> {
-            let dir = tempfile::tempdir()?;
-            let dest = dir.path().join("export.zip");
-            zipexport::export_zip(root, &dest)?;
-            Ok(std::fs::read(dest)?)
+    async fn download_zip(&self, id: String) -> Response {
+        let bytes = {
+            let id = id.clone();
+            self.blocking(move |service| {
+                let root = service.project_root(&id)?;
+                let dir = tempfile::tempdir()?;
+                let dest = dir.path().join("export.zip");
+                zipexport::export_zip(&root, &dest)?;
+                Ok(std::fs::read(dest)?)
+            })
+            .await
         };
-        match self.service.project_root(id).and_then(|root| build(&root)) {
+        match bytes {
             Ok(bytes) => attachment(bytes, &format!("{id}.zip"), "application/zip"),
             Err(e) => error(e),
         }

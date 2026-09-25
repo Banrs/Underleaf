@@ -125,10 +125,13 @@ fn ensure_existing_ancestor_within(
 }
 
 /// Resolve a project id to its directory under `data_dir`, rejecting escapes,
-/// symlink aliases outside the data directory, and missing projects.
+/// symlink aliases outside the data directory, and missing projects. A project
+/// is one folder directly under `data_dir`, as list_projects reports it: a
+/// nested id would let the project commands rename, trash or compile a folder
+/// inside another project, past delete_entry's main-file guard.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
     let segments = normalize_segments(id, "Bad project id")?;
-    if segments.is_empty() {
+    if segments.len() != 1 {
         return Err(CoreError::bad_request("Bad project id"));
     }
     let mut root = data_dir.to_path_buf();
@@ -164,6 +167,14 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     abs.extend(safe_segments(rel)?);
     ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
     Ok(abs)
+}
+
+/// The normalized forward-slash spelling of a user-supplied project path, for
+/// comparing it with a stored one such as the main file. It checks nothing on
+/// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
+/// reaches a command line.
+pub fn rel_key(rel: &str) -> Result<String, CoreError> {
+    Ok(safe_segments(rel)?.join("/"))
 }
 
 /// A path inside the project in a form safe to hand to a command line:
