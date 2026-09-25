@@ -198,24 +198,28 @@ struct PDFPane: View {
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
             zoomSeparator
-            Menu {
-                Button("Fit Width") { controller.fitWidth() }
-                Button("Fit Height") { controller.fitHeight() }
-                Divider()
-                ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-                    Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
+            // The segment is as wide as the widest level plus the kit's 10 pt
+            // minimum margin on either side, so the pill doesn't resize as it
+            // zooms. The margin sits outside the menu: AppKit draws a menu's
+            // label itself and drops padding given to it.
+            ZStack {
+                Text("Fit Width").hidden().padding(.horizontal, 10)
+                Menu {
+                    Button("Fit Width") { controller.fitWidth() }
+                    Button("Fit Height") { controller.fitHeight() }
+                    Divider()
+                    ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
+                        Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
+                    }
+                } label: {
+                    Text(controller.zoomLabel).monospacedDigit()
                 }
-            } label: {
-                // One width for every level, so the pill doesn't resize as it
-                // zooms (pinching steps through dozens).
-                Text(controller.zoomLabel)
-                    .monospacedDigit()
-                    .frame(width: 72, height: glassHeight)
-                    .contentShape(.rect)
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Zoom")
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .help("Zoom")
+            .frame(height: glassHeight)
             zoomSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
                 .frame(width: glassSegment, height: glassHeight)
