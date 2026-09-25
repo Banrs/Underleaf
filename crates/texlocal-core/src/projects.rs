@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::error::CoreError;
-use crate::paths::{project_root, safe_path, sanitize_name};
+use crate::paths::{project_root, rel_key, safe_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
 use crate::BUILD_DIR;
@@ -377,8 +377,10 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         fs::create_dir_all(parent)?;
     }
 
-    let from_rel = crate::paths::safe_rel_file(root, from)?;
-    let to_rel = crate::paths::safe_rel_file(root, to)?;
+    // Only compared with the main file, never passed to a tool, so a name
+    // starting with "-" is as renameable here as create_entry made it.
+    let from_rel = rel_key(from)?;
+    let to_rel = rel_key(to)?;
     let settings = read_settings(root);
     let mut main_file = settings.main_file.replace('\\', "/");
     let prefix = format!("{from_rel}/");
@@ -410,7 +412,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
-    let target = crate::paths::safe_rel_file(root, rel)?;
+    let target = rel_key(rel)?;
     let main_file = read_settings(root).main_file.replace('\\', "/");
     if main_file == target || main_file.starts_with(&format!("{target}/")) {
         return Err(CoreError::conflict(

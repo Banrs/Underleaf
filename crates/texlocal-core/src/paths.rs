@@ -166,6 +166,14 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     Ok(abs)
 }
 
+/// The normalized forward-slash spelling of a user-supplied project path, for
+/// comparing it with a stored one such as the main file. It checks nothing on
+/// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
+/// reaches a command line.
+pub fn rel_key(rel: &str) -> Result<String, CoreError> {
+    Ok(safe_segments(rel)?.join("/"))
+}
+
 /// A path inside the project in a form safe to hand to a command line:
 /// relative, no escape, forward slashes, no symlink escape, and no segment a
 /// tool could read as an option.

@@ -128,6 +128,22 @@ fn the_active_main_file_and_its_parent_cannot_be_deleted() {
 }
 
 #[test]
+fn an_entry_named_with_a_leading_dash_can_be_renamed_and_deleted() {
+    // create_entry and uploads accept such a name; only the main file, which
+    // reaches latexmk's command line, may not start with "-".
+    let data = data_dir();
+    let root = project(data.path(), "dash-test");
+    create_file(&root, "-draft.tex", false).unwrap();
+    let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
+    assert_eq!(result.to, "-notes/-draft.tex");
+    assert!(root.join("-notes/-draft.tex").is_file());
+    if let Err(err) = delete_entry(&root, "-notes") {
+        // The trash may be unavailable here; the name must not be the reason.
+        assert!(!err.message.contains("cannot start"), "{}", err.message);
+    }
+}
+
+#[test]
 fn path_traversal_is_rejected_at_every_boundary() {
     let data = data_dir();
     let root = project(data.path(), "paths-test");
