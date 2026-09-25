@@ -111,6 +111,33 @@ fn classify_entry(root_canonical: &Path, entry: &fs::DirEntry) -> Result<EntryKi
     })
 }
 
+/// The result of reading one entry during a scan, or None when it vanished or
+/// may not be read: a folder of root-owned output, a file deleted mid-walk.
+/// One such entry must not fail the whole tree, search or library listing.
+fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// A folder's entries during a walk. The project root itself must be
+/// readable; a subfolder that is not is skipped.
+fn read_subdir(dir: &Path, prefix: &str) -> Result<Option<fs::ReadDir>, CoreError> {
+    if prefix.is_empty() {
+        return Ok(Some(fs::read_dir(dir)?));
+    }
+    skip_unreadable(fs::read_dir(dir))
+}
+
 /// Every content file in the project, depth-first, with its project-relative
 /// path. Search, symbol scanning and fingerprinting all walk through here, so
 /// they cannot disagree about what a project contains: dotfiles are hidden,
@@ -129,7 +156,10 @@ fn visit_files(
         prefix: &str,
         visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in fs::read_dir(dir)? {
+        let Some(entries) = read_subdir(dir, prefix)? else {
+            return Ok(true);
+        };
+        for entry in entries {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
@@ -184,7 +214,9 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             continue;
         }
         let root = data_dir.join(&name);
-        let meta = fs::metadata(&root)?;
+        let Some(meta) = skip_unreadable(fs::metadata(&root))? else {
+            continue;
+        };
         let settings = read_settings(&root);
         projects.push(ProjectInfo {
             id: name.clone(),
@@ -307,7 +339,10 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         rel_prefix: &str,
     ) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
-        for entry in fs::read_dir(dir)? {
+        let Some(entries) = read_subdir(dir, rel_prefix)? else {
+            return Ok(nodes);
+        };
+        for entry in entries {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
@@ -493,7 +528,9 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         if !is_text_file(&rel) {
             return Ok(true);
         }
-        let bytes = fs::read(abs)?;
+        let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+            return Ok(true);
+        };
         // One case-insensitive pass over the raw bytes rules a file out without
         // splitting a single line. Sound only when both sides are ASCII: there
         // the byte fold and `lower_into`'s char fold agree by definition, while
@@ -589,7 +626,9 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
             "tex" => (label_re, &mut labels),
             _ => return Ok(true),
         };
-        let bytes = fs::read(abs)?;
+        let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+            return Ok(true);
+        };
         for m in re.captures_iter(&String::from_utf8_lossy(&bytes)) {
             out.push(m[1].to_string());
         }
@@ -615,7 +654,9 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
         }
         // fs::metadata follows the link, so a symlinked source is stamped by
         // the bytes scan_symbols actually reads rather than by the link itself.
-        let meta = fs::metadata(abs)?;
+        let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
+            return Ok(true);
+        };
         out.push((rel, mtime_ns(&meta), meta.len()));
         Ok(true)
     })?;
