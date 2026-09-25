@@ -10,8 +10,8 @@ use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, rename_entry, scan_symbols, search_project,
-    symbols_fingerprint,
+    create_file, create_project, delete_entry, rename_entry, rename_project, scan_symbols,
+    search_project, symbols_fingerprint,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
 use texlocal_core::zipexport::export_zip;
@@ -141,6 +141,49 @@ fn an_entry_named_with_a_leading_dash_can_be_renamed_and_deleted() {
         // The trash may be unavailable here; the name must not be the reason.
         assert!(!err.message.contains("cannot start"), "{}", err.message);
     }
+}
+
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_case_only_rename_works_on_case_insensitive_volumes_too() {
+    let data = data_dir();
+    let root = project(data.path(), "case-test");
+    create_file(&root, "Figures/plot.tex", false).unwrap();
+
+    let result = rename_entry(&root, "main.tex", "Main.tex").unwrap();
+    assert_eq!(result.main_file, "Main.tex");
+    assert_eq!(read_settings(&root).main_file, "Main.tex");
+    rename_entry(&root, "Figures", "figures").unwrap();
+    assert_eq!(names_in(&root), [".texlocal.json", "Main.tex", "figures"]);
+
+    // A different entry in the way is still a conflict.
+    create_file(&root, "other.tex", false).unwrap();
+    let err = rename_entry(&root, "other.tex", "Main.tex").unwrap_err();
+    assert_eq!(err.status, 409);
+
+    rename_project(data.path(), "case-test", "Case-Test").unwrap();
+    assert_eq!(names_in(data.path()), ["Case-Test"]);
+    create_project(data.path(), "second", "blank").unwrap();
+    let err = rename_project(data.path(), "second", "Case-Test").unwrap_err();
+    assert_eq!(err.status, 409);
+}
+
+#[test]
+fn a_folder_cannot_be_moved_into_itself() {
+    let data = data_dir();
+    let root = project(data.path(), "into-itself");
+    create_file(&root, "chapters/one.tex", false).unwrap();
+    let err = rename_entry(&root, "chapters", "chapters/old/chapters").unwrap_err();
+    assert_eq!(err.status, 400, "{}", err.message);
+    assert_eq!(names_in(&root.join("chapters")), ["one.tex"]);
 }
 
 #[test]

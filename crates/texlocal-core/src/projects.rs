@@ -233,7 +233,7 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
-    if dest.exists() {
+    if occupied(&root, &dest) {
         return Err(CoreError::conflict(
             "A project with that name already exists",
         ));
@@ -247,6 +247,30 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
         mtime: mtime_ms(&meta),
         main_file: settings.main_file,
     })
+}
+
+/// Whether a rename from `src` to `dest` would land on another entry. On a
+/// case-insensitive volume, the default on macOS and Windows, a case-only
+/// rename's destination already "exists" because it is `src` itself.
+fn occupied(src: &Path, dest: &Path) -> bool {
+    fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
+}
+
+#[cfg(unix)]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+// std has no file identity on Windows, so there it is two spellings that
+// differ only in case and resolve to one final path.
+#[cfg(not(unix))]
+fn same_entry(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        && matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 fn discard_using<E, F>(path: &Path, move_to_trash: F) -> Result<(), CoreError>
@@ -367,20 +391,25 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
     let dest = safe_path(root, to)?;
-    if !src.exists() {
+    // Only compared with the main file, never passed to a tool, so a name
+    // starting with "-" is as renameable here as create_entry made it.
+    let from_rel = rel_key(from)?;
+    let to_rel = rel_key(to)?;
+    if fs::symlink_metadata(&src).is_err() {
         return Err(CoreError::not_found("Not found"));
     }
-    if dest.exists() {
+    if occupied(&src, &dest) {
         return Err(CoreError::conflict("Destination already exists"));
+    }
+    if to_rel.starts_with(&format!("{from_rel}/")) {
+        return Err(CoreError::bad_request(
+            "A folder can't be moved into itself",
+        ));
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Only compared with the main file, never passed to a tool, so a name
-    // starting with "-" is as renameable here as create_entry made it.
-    let from_rel = rel_key(from)?;
-    let to_rel = rel_key(to)?;
     let settings = read_settings(root);
     let mut main_file = settings.main_file.replace('\\', "/");
     let prefix = format!("{from_rel}/");
