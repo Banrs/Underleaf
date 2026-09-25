@@ -189,22 +189,31 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's actions: the second row under the window toolbar. Controls are
-/// the macOS 27 UI kit's Large (28 pt) Over-glass controls — the pane bar is
-/// content, not the window toolbar, whose controls are XL (36 pt) — spaced as
-/// the kit's standard toolbar spaces its items: 8 pt insets, 8 pt between
-/// groups, so 44 pt tall.
+/// The pane bars' two sizes (Settings › General › Toolbar Size): AppKit's
+/// Large controls, or its Extra Large ones, the window toolbar's size.
+enum PaneSize: String {
+    case compact, large
+
+    var controlSize: ControlSize { self == .large ? .extraLarge : .large }
+    /// A control, with the standard toolbar's 8 pt above and below.
+    var barHeight: CGFloat { self == .large ? 52 : 44 }
+}
+
+/// A pane's actions: the second row under the window toolbar, in native
+/// controls of the size Settings chooses (`PaneSize`), spaced as the
+/// standard toolbar spaces its items: 8 pt insets, 8 pt between groups.
 struct PaneBar<Content: View>: View {
+    @AppStorage("paneBarSize") private var size = PaneSize.compact
     @ViewBuilder var content: Content
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 8) { content }
         }
-        .controlSize(.large)
+        .controlSize(size.controlSize)
         .lineLimit(1)
         .padding(.horizontal, 8)
-        .frame(height: 44)
+        .frame(height: size.barHeight)
         .frame(maxWidth: .infinity)
         .background(.bar)
         // A shape, not Divider(): inside the HStack's layout context an
@@ -229,15 +238,6 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// The kit's Large Over-glass segmented control ("Segmented Controls /
-/// Over-glass / Duo, 4 Lg", 68 x 28): 34 pt segments edge to edge, a 1 x 18 pt
-/// separator on the boundary between two, and a label at least 12 pt from
-/// its segment's edges.
-let glassHeight: CGFloat = 28
-let glassSegment: CGFloat = 34
-let glassSeparator: CGFloat = 18
-let glassMargin: CGFloat = 12
-
 /// One action in a glass group.
 struct Segment: Identifiable {
     let id: String
@@ -258,171 +258,27 @@ extension Segment {
     }
 }
 
-/// A group of actions in Liquid Glass, laid out as the kit's Large Over-glass
-/// segmented control: 34 pt segments in one capsule, with a separator only
-/// where the group mixes kinds (bold and italic | math). Press,
-/// slide to another button — the highlight follows — and release to choose
-/// it; release outside to cancel. The tracking is AppKit's
-/// (`SegmentTracker`), so a slide reaches every button whatever SwiftUI's
-/// gestures and the glass are doing.
+/// A group of actions as one Liquid Glass capsule, as a window toolbar
+/// groups its items: native glass buttons whose glass is merged into one
+/// shape (`glassEffectUnion`), with no separators. The pane bar's
+/// GlassEffectContainer does the merging.
 struct GlassGroup: View {
-    let groups: [[Segment]]
-    @State private var pressed: String?
-    @State private var hovered: String?
-    @State private var pressing = false
-    @Namespace private var lens
-
-    init(items: [Segment]) { groups = [items] }
-    init(groups: [[Segment]]) { self.groups = groups }
-
-    private var items: [Segment] { Array(groups.joined()) }
+    let items: [Segment]
+    @Namespace private var group
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                cell(item)
-                    // A hairline on the boundary where one kind ends, as the
-                    // kit's segmented control draws its separators.
-                    .overlay(alignment: .leading) {
-                        if starts.contains(index) {
-                            Rectangle()
-                                .fill(.separator)
-                                .frame(width: 1, height: glassSeparator)
-                                .offset(x: -0.5)
-                        }
-                    }
+            ForEach(items) { item in
+                Button(item.title, systemImage: item.systemImage, action: item.action)
+                    .disabled(!item.enabled)
+                    .help(item.help ?? item.title)
+                    .glassEffectUnion(id: "group", namespace: group)
             }
         }
-        .overlay {
-            SegmentTracker(
-                count: items.count,
-                enabled: items.map(\.enabled),
-                help: items.map { $0.help ?? $0.title },
-                onHover: { hovered = $0.map { items[$0].id } },
-                onTrack: { index in pressing = true; pressed = index.map { items[$0].id } },
-                onRelease: { index in
-                    pressing = false
-                    pressed = nil
-                    if let index { items[index].action() }
-                }
-            )
-            .accessibilityHidden(true)
-        }
-        .frame(height: glassHeight)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .animation(.snappy(duration: 0.18), value: highlighted)
-        .animation(.snappy(duration: 0.12), value: pressing)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
+        .labelStyle(.iconOnly)
         .fixedSize()
-    }
-
-    /// Where each group after the first begins, by item index.
-    private var starts: Set<Int> {
-        var result: Set<Int> = []
-        var index = 0
-        for group in groups.dropLast() {
-            index += group.count
-            result.insert(index)
-        }
-        return result
-    }
-
-    private func cell(_ item: Segment) -> some View {
-        Label(item.title, systemImage: item.systemImage)
-            .labelStyle(.iconOnly)
-            .foregroundStyle(item.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-            .frame(width: glassSegment, height: glassHeight)
-            .background {
-                if highlighted == item.id {
-                    Capsule()
-                        .fill(.primary.opacity(pressing ? 0.16 : 0.08))
-                        .matchedGeometryEffect(id: "lens", in: lens)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(item.title)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { if item.enabled { item.action() } }
-    }
-
-    /// Under the pointer while pressed; under it on hover otherwise.
-    private var highlighted: String? {
-        let id = pressing ? pressed : hovered
-        return items.first { $0.id == id && $0.enabled }?.id
-    }
-}
-
-/// The mouse for a GlassGroup: an AppKit view over it that maps the pointer
-/// to a button (equal widths) on hover, through a press, and at release.
-/// The view that takes the mouse-down gets every drag and the mouse-up, as
-/// NSSegmentedControl tracks.
-private struct SegmentTracker: NSViewRepresentable {
-    let count: Int
-    let enabled: [Bool]
-    let help: [String]
-    let onHover: (Int?) -> Void
-    let onTrack: (Int?) -> Void
-    let onRelease: (Int?) -> Void
-
-    func makeNSView(context: Context) -> TrackerView { TrackerView() }
-
-    func updateNSView(_ view: TrackerView, context: Context) {
-        view.count = count
-        view.enabled = enabled
-        view.help = help
-        view.onHover = onHover
-        view.onTrack = onTrack
-        view.onRelease = onRelease
-    }
-
-    final class TrackerView: NSView {
-        var count = 0
-        var enabled: [Bool] = []
-        var help: [String] = []
-        var onHover: (Int?) -> Void = { _ in }
-        var onTrack: (Int?) -> Void = { _ in }
-        var onRelease: (Int?) -> Void = { _ in }
-        private var hovered: Int?
-
-        // A toolbar's controls answer the first click in an inactive window.
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
-                owner: self
-            ))
-        }
-
-        /// The enabled button under an event, with slack above and below as
-        /// a control keeps tracking just past its edge.
-        private func index(_ event: NSEvent) -> Int? {
-            let point = convert(event.locationInWindow, from: nil)
-            guard count > 0, bounds.width > 0, point.x >= 0, point.x < bounds.width,
-                  point.y > -12, point.y < bounds.height + 12 else { return nil }
-            let index = min(count - 1, Int(point.x / (bounds.width / CGFloat(count))))
-            return enabled.indices.contains(index) && enabled[index] ? index : nil
-        }
-
-        private func hover(_ index: Int?) {
-            guard index != hovered else { return }
-            hovered = index
-            toolTip = index.map { help[$0] }
-            onHover(index)
-        }
-
-        override func mouseMoved(with event: NSEvent) { hover(index(event)) }
-        override func mouseEntered(with event: NSEvent) { hover(index(event)) }
-        override func mouseExited(with event: NSEvent) { hover(nil) }
-        override func mouseDown(with event: NSEvent) { onTrack(index(event)) }
-        override func mouseDragged(with event: NSEvent) { onTrack(index(event)) }
-        override func mouseUp(with event: NSEvent) {
-            let index = index(event)
-            onRelease(index)
-            hover(index)
-        }
     }
 }
 
@@ -467,9 +323,10 @@ private struct SourceBar: View {
                 if folded < 2 {
                     templateMenu("Heading", headingTemplates)
                         .help("Insert a part, chapter, section or subsection")
-                    GlassGroup(groups: [
-                        [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)],
-                        [Segment(.editMath, "x.squareroot", app: app)],
+                    GlassGroup(items: [
+                        Segment(.editBold, "bold", app: app),
+                        Segment(.editItalic, "italic", app: app),
+                        Segment(.editMath, "x.squareroot", app: app),
                     ])
                 }
                 if folded == 0 {

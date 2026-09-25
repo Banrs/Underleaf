@@ -135,24 +135,18 @@ final class OutlineDisplayTests: XCTestCase {
     }
 }
 
-/// The pane bar's glass groups measured off screen, with no window shown.
+/// The pane bar's groups measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
-    func testAGroupIsLaidOutAsTheKitsToolbarGroup() {
-        let action = {}
+    func testAGroupIsAsTallAsTheBarsControlSize() {
         let two = GlassGroup(items: [
-            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: action),
-            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: action),
+            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
+            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
-        let split = GlassGroup(groups: [
-            [Segment(id: "b", title: "Bold", systemImage: "bold", action: action),
-             Segment(id: "i", title: "Italic", systemImage: "italic", action: action)],
-            [Segment(id: "m", title: "Math", systemImage: "x.squareroot", action: action)],
-        ])
-        // The kit's Large Over-glass segmented control: Duo 68 x 28, Trio
-        // 102 x 28 — 34 pt segments, separators on the boundaries.
-        XCTAssertEqual(size(of: two), CGSize(width: 68, height: 28))
-        XCTAssertEqual(size(of: split), CGSize(width: 102, height: 28))
+        // Glass buttons: Large 26 pt, Extra Large 34 pt, as tall as the
+        // bar's glass menus beside them.
+        XCTAssertEqual(size(of: two.controlSize(PaneSize.compact.controlSize)).height, 26)
+        XCTAssertEqual(size(of: two.controlSize(PaneSize.large.controlSize)).height, 34)
     }
 
     private func size(of view: some View) -> CGSize {

@@ -18,6 +18,7 @@ private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @AppStorage("paneBarSize") private var paneBarSize = PaneSize.compact
 
     var body: some View {
         @Bindable var app = app
@@ -35,6 +36,13 @@ private struct GeneralSettings: View {
                 } label: {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading")
+                }
+                Picker(selection: $paneBarSize) {
+                    Text("Compact").tag(PaneSize.compact)
+                    Text("Large").tag(PaneSize.large)
+                } label: {
+                    Text("Toolbar Size")
+                    Text("The controls over the source and the PDF")
                 }
             }
             Section("Compiling") {

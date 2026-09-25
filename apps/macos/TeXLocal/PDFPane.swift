@@ -12,6 +12,7 @@ struct PDFPane: View {
     /// Bumped to put the cursor in the find field, its text selected.
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @Namespace private var zoomGroup
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -193,23 +194,18 @@ struct PDFPane: View {
     }
 
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
-    /// control (workspace.js `zoomButton`).
-    /// Out, the level (a menu), in: the kit's Large Over-glass segmented
-    /// control — 34 pt segments, separators on the boundaries — whose
-    /// separators set the menu apart from the two buttons.
+    /// control (workspace.js `zoomButton`), as one glass capsule the way
+    /// GlassGroup makes one.
     private var zoomControls: some View {
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .frame(width: glassSegment, height: glassHeight)
-                .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
-            zoomSeparator
-            // The segment is as wide as the widest level plus the kit's 12 pt
-            // Large minimum margin on either side, so the pill doesn't resize as it
-            // zooms. The margin sits outside the menu: AppKit draws a menu's
-            // label itself and drops padding given to it.
+                .glassEffectUnion(id: "zoom", namespace: zoomGroup)
+            // A borderless menu on glass of its own: as a glass button its
+            // label drew blurred under the merged glass. As wide as the
+            // widest level, so the capsule doesn't resize as it zooms.
             ZStack {
-                Text("Fit Width").hidden().padding(.horizontal, glassMargin)
+                Text("Fit Width").hidden()
                 Menu {
                     Button("Fit Width") { controller.fitWidth() }
                     Button("Fit Height") { controller.fitHeight() }
@@ -220,29 +216,24 @@ struct PDFPane: View {
                 } label: {
                     Text(controller.zoomLabel).monospacedDigit()
                 }
-                .menuStyle(.button)
+                .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Zoom")
             }
-            .frame(height: glassHeight)
-            zoomSeparator
+            .padding(.horizontal, 8)
+            .frame(maxHeight: .infinity)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .help("Zoom")
+            .glassEffectUnion(id: "zoom", namespace: zoomGroup)
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .frame(width: glassSegment, height: glassHeight)
-                .contentShape(.rect)
                 .help("Zoom In (⌘+)")
+                .glassEffectUnion(id: "zoom", namespace: zoomGroup)
         }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
         .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .frame(height: glassHeight)
-        .glassEffect(.regular.interactive(), in: .capsule)
         .fixedSize()
         .disabled(project.pdfVersion == 0)
-    }
-
-    /// The kit's Large segmented separator: 1 x 18 pt, on the boundary.
-    private var zoomSeparator: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: glassSeparator).padding(.horizontal, -0.5)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
