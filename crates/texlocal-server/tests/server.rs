@@ -380,6 +380,31 @@ async fn one_connection_carries_several_requests_with_bodies() {
 }
 
 #[tokio::test]
+async fn a_request_pipelined_behind_a_body_is_kept() {
+    let (_f, port) = start().await;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let head = format!("Host: 127.0.0.1:{port}\r\nCookie: texlocal_token={TOKEN}");
+    let body = r#"{"id":"P","path":"main.tex"}"#;
+    let both = format!(
+        "POST /api/read_file HTTP/1.1\r\n{head}\r\nContent-Length: {}\r\n\r\n{body}\
+         GET /__raw/P/img/a.svg HTTP/1.1\r\n{head}\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(both.as_bytes()).await.unwrap();
+    let mut text = String::new();
+    while !text.ends_with("0123456789") {
+        let mut chunk = [0u8; 4096];
+        let n = stream.read(&mut chunk).await.unwrap();
+        assert!(n > 0, "connection closed after: {text}");
+        text.push_str(&String::from_utf8_lossy(&chunk[..n]));
+    }
+    assert_eq!(text.matches("HTTP/1.1 200 OK").count(), 2, "{text}");
+    assert!(text.contains("documentclass"), "{text}");
+}
+
+#[tokio::test]
 async fn oversized_and_chunked_bodies_are_refused_before_reading() {
     let (_f, port) = start().await;
     for extra in ["Content-Length: 5000", "Transfer-Encoding: chunked"] {

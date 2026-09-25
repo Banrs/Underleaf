@@ -191,7 +191,11 @@ async fn read_request(stream: &mut TcpStream, buf: &mut Vec<u8>, max_body: usize
             return Read::Closed;
         }
     }
-    request.body = buf.drain(..body_len).collect();
+    // Hand the buffer itself over as the body and keep only what follows it
+    // (a pipelined request, usually nothing), rather than copying out an
+    // upload of up to 100 MB.
+    let rest = buf.split_off(body_len);
+    request.body = std::mem::replace(buf, rest);
     Read::Request(request, keep_alive)
 }
 
