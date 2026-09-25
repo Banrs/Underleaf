@@ -1,6 +1,6 @@
 # Handoff: native apps and browser version
 
-Status as of 2026-09-25, branch `claude/handoff-continuation-e94xnl` (continues `feat/browser-server`).
+Status as of 2026-09-25, on `main` (all earlier branches are merged and deleted).
 
 ## Goal
 
@@ -79,43 +79,33 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - It builds with `dotnet build` (.NET 10), treating warnings as errors.
   - It runs the xUnit tests with `dotnet test`.
 
-## The macOS app (`apps/macos`): builds and tests green, not yet run by hand
+## The macOS app (`apps/macos`): redesigned, run by hand in part
 
 - **Project:** `project.yml` is the XcodeGen source, and the generated `TeXLocal.xcodeproj` is committed. Edit both by hand in step, or regenerate.
   - The pre-build script runs `cargo build -p texlocal-ffi`.
   - A post-compile script runs `npm run build` and copies the editor embed files into `Resources/web`.
   - The app links `target/{debug,release}/libtexlocal_ffi.a` by path, plus `-liconv`. `-ltexlocal_ffi` would pick the cdylib that sits beside it, and the app would then load it from `target/`.
   - The bundle ID is `com.texlocal.mac`. There is no sandbox and signing is ad hoc. `NSAppleEventsUsageDescription` is declared because `trash::delete` moves files to the Trash through Finder.
-- **Parity:** every command in `commandDefs` and every setting with a native meaning.
-  - The web's remaining settings are in: PDF paper (white, dark or auto), interface size (the editor's `pageZoom`), word count and auto-compile.
-  - Also done: word count, the breadcrumb in the window subtitle, the web's PDF find behaviour (`NSSearchField`), and Undo and Redo routed to CodeMirror.
-  - Not ported on purpose:
-    - floating panels (macOS already floats the sidebar);
-    - remembered split widths;
-    - the sync pill (sync is in the Compile menu);
-    - remembered expanded folders (`OutlineGroup` can't report them).
-- **Review fixes (bugs found by reading the code):**
-  - Renaming a folder moves the open file's path with it.
-  - Saves run one at a time, and quit waits for one in flight.
-  - Compiles requested during a compile are queued, and an early ⌘S still compiles.
-  - The editor recovers from a WebContent crash.
-  - The PDF is read into memory, so a rewrite can't corrupt the view, and reloading keeps the scroll position.
-  - A new main file rebuilds the PDF.
-- **Tests:** 19 XCTests. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`. One test checks the command and shortcut table against `web/src/workspace.js`.
-- **Check by hand on a Mac:**
-  - Undo and Redo from the menu and from ⌘Z / ⇧⌘Z, each undoing exactly once.
-  - ⌘, and ⌘\ and ⌥⌘= / ⌥⌘-.
-  - Dark paper.
-  - The find field's Return, Shift-Return and Escape.
-  - Killing the WebContent process in Activity Monitor recovers the editor.
-  - Quit during a save.
-  - ⌘Z in the editor's Find & Replace fields undoes the field.
-  - Renaming a file or folder keeps its undo history.
-  - Rename a folder that contains the open file, then delete the open file.
-  - Forward and inverse SyncTeX.
-  - Drag-and-drop import.
-  - The first delete shows the Finder Automation prompt.
-  - A built `TeXLocal.app` launches after being copied to another location.
+  - `open TeXLocal.app --args -openProject <id>` opens a project at launch.
+- **Window:** one `NavigationSplitView`, sized to the macOS 27 UI kit (`~/Downloads/Apple macOS 27 UI Kit.sketch` on the owner's Mac).
+  - Sidebar: the files, then the open document's outline as a real hierarchy with disclosure triangles (`Outline.tree`), and project search.
+  - Detail: the source beside the PDF, a build panel below (Issues | Build Log, the log an `NSTextView`), a status bar, and a trailing inspector.
+  - The window toolbar holds only the PDF and inspector toggles. What acts on a pane sits over it.
+  - Over the source: undo and redo, Heading, bold / italic | math, reference and citation, Insert. A LaTeX writer's tools, after Overleaf's; commenting out is only in the Format menu. Under that, a location row: project › folders › file › section.
+  - Over the PDF: Compile (prominent), zoom (out | level | in), Share. Under that, the page and whether the preview is current.
+  - Pane bars use the kit's Large (28 pt) Over-glass controls: groups laid out as its Large segmented control (34 pt segments, 1 × 18 separators only where a group mixes kinds). Bars are 44 pt with the kit's standard toolbar spacing (8 pt insets and gaps); the location row is 28 pt.
+  - A group's click-and-slide is tracked by an AppKit view over it (`SegmentTracker`), as `NSSegmentedControl` tracks.
+  - The start window: template cards, then recent projects as a sortable table.
+- **Layout rules learnt the hard way:**
+  - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
+  - The inspector is a SwiftUI pane of the detail, not `.inspector`: that made a third AppKit split column whose minimums looped the same way.
+  - The editor/PDF and panel splits are SwiftUI (`SplitPair`), not `HSplitView`/`VSplitView`, for the same reason.
+  - Bars are stacked above their content, not attached with `safeAreaBar`: they are opaque, so content under them was only hidden.
+  - An overlaid `Divider()` inside an `HStack` turns vertical. Use `Hairline`.
+  - PDFKit re-anchors page one's top to the view on every resize while fitting the width, so the gap above page one is a scroll-view content inset.
+- **Parity and review fixes:** every command in `commandDefs`, and the settings with a native meaning. Saves run one at a time; quit waits for a save in flight; compiles queue; a WebContent crash recovers the editor; overlapping file opens can no longer save one file's text into another; undo and redo always reach CodeMirror's history.
+- **Tests:** 22 XCTests, including the outline tree and the pane bar groups' sizes against the kit. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
+- **Still to check by hand on a Mac:** click-and-slide across a group; the earlier list (undo/redo once each, dark paper, find field keys, WebContent crash recovery, quit during a save, rename with undo history, SyncTeX both ways, drag-and-drop import, the first delete's Automation prompt, a copied `TeXLocal.app` launching).
 
 ## The Windows app (`apps/windows`): run by hand on Windows 11, partly verified
 
@@ -207,6 +197,8 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 3. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.
 
 ## Gotchas
+
+- An unfinished Word-style safe save (write a temporary file, then replace) is kept, uncommitted, at `.claude/wip/safesave.rs`. It is not wired in.
 
 - On the owner's Mac, `static.crates.io` is blocked by network policy, while GitHub works. Before adding a Rust dependency, check `~/.cargo/registry/cache`, or pin a dependency-free crate to its GitHub tag. That is why the server doesn't use axum.
 - `CLAUDE.md` was deleted by the owner on purpose. That deletion is left unstaged and is not part of these commits.
