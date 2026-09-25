@@ -32,8 +32,6 @@ enum MenuCommand: String, CaseIterable {
     case viewZoomOut = "view.zoomOut"
     case viewFitWidth = "view.fitWidth"
     case viewFitHeight = "view.fitHeight"
-    case viewUIScaleUp = "view.uiScaleUp"
-    case viewUIScaleDown = "view.uiScaleDown"
     case compileRun = "compile.run"
     case compileToggleAuto = "compile.toggleAuto"
     case syncForward = "sync.forward"
@@ -61,13 +59,11 @@ enum MenuCommand: String, CaseIterable {
         case .pdfFind: "Find in PDF…"
         case .viewToggleSidebar: "Hide Sidebar"
         case .viewTogglePdf: "Hide PDF"
-        case .viewToggleLogs: "Compile Log"
+        case .viewToggleLogs: "Build Log"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
         case .viewFitWidth: "Fit Width"
         case .viewFitHeight: "Fit Height"
-        case .viewUIScaleUp: "Increase Interface Size"
-        case .viewUIScaleDown: "Decrease Interface Size"
         case .compileRun: "Compile"
         case .compileToggleAuto: "Compile Automatically"
         case .syncForward: "Go to PDF Position"
@@ -99,8 +95,6 @@ enum MenuCommand: String, CaseIterable {
         case .viewZoomOut: "CmdOrCtrl+Minus"
         case .viewFitWidth: "CmdOrCtrl+0"
         case .viewFitHeight: "CmdOrCtrl+Alt+0"
-        case .viewUIScaleUp: "CmdOrCtrl+Alt+Plus"
-        case .viewUIScaleDown: "CmdOrCtrl+Alt+Minus"
         case .compileRun: "CmdOrCtrl+Return"
         case .syncForward: "Ctrl+Return"
         case .syncInverse: "Ctrl+Shift+Return"
@@ -170,13 +164,10 @@ enum PDFAction {
 }
 
 extension AppModel {
-    /// web/src/prefs.js `UI_SCALES`, stepped by the interface-size commands.
-    static let uiScales = [80, 90, 100, 110, 120, 130]
-
     func isEnabled(_ command: MenuCommand) -> Bool {
         switch command {
         // Undo and redo also serve text fields outside the editor.
-        case .projectNew, .editUndo, .editRedo, .viewUIScaleUp, .viewUIScaleDown, .compileToggleAuto: true
+        case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
         case .fileSave, .editFind, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.openPath != nil
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
@@ -212,14 +203,12 @@ extension AppModel {
         case .projectNew: showNewProject = true; return
         case .editUndo: undo(redo: false); return
         case .editRedo: undo(redo: true); return
-        case .viewUIScaleUp: stepUIScale(1); return
-        case .viewUIScaleDown: stepUIScale(-1); return
         case .compileToggleAuto: autoCompile.toggle(); return
         default: break
         }
         guard let project else { return }
         switch command {
-        case .projectNew, .editUndo, .editRedo, .viewUIScaleUp, .viewUIScaleDown, .compileToggleAuto: break
+        case .projectNew, .editUndo, .editRedo, .compileToggleAuto: break
         case .projectClose: Task { await close() }
         case .projectExport:
             savePanel(name: "\(project.id).zip", type: .zip) { url in await project.exportZip(to: url) }
@@ -270,13 +259,6 @@ extension AppModel {
 
     private func sendUndo(redo: Bool) {
         _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
-    }
-
-    /// One step along `uiScales`, stopping at either end.
-    private func stepUIScale(_ delta: Int) {
-        let current = UserDefaults.standard.object(forKey: "uiScale") as? Int ?? 100
-        guard let i = Self.uiScales.firstIndex(of: current), Self.uiScales.indices.contains(i + delta) else { return }
-        UserDefaults.standard.set(Self.uiScales[i + delta], forKey: "uiScale")
     }
 
     private func savePanel(name: String, type: UTType, _ write: @escaping @MainActor (URL) async -> Void) {
@@ -346,6 +328,10 @@ struct AppCommands: Commands {
             item(.editComment)
         }
         CommandGroup(after: .sidebar) {
+            Toggle("Inspector", isOn: Binding(get: { app.showInspector }, set: { app.showInspector = $0 }))
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(app.project == nil)
+            Divider()
             item(.viewToggleSidebar)
             item(.viewTogglePdf)
             Toggle(MenuCommand.viewToggleLogs.title, isOn: Binding(
@@ -360,16 +346,25 @@ struct AppCommands: Commands {
             item(.viewFitWidth)
             item(.viewFitHeight)
             Divider()
-            item(.viewUIScaleUp)
-            item(.viewUIScaleDown)
-            Divider()
         }
         CommandMenu("Compile") {
             item(.compileRun)
+            Button("Stop") { app.project?.stopCompile() }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(app.project?.compiling != true)
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Binding(
                 get: { app.autoCompile },
                 set: { app.autoCompile = $0 }
             ))
+            Picker("Engine", selection: Binding(
+                get: { app.project?.settings?.engine ?? "pdflatex" },
+                set: { engine in
+                    if let project = app.project { Task { await project.setEngine(engine) } }
+                }
+            )) {
+                ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .disabled(app.project == nil)
             Divider()
             item(.syncForward)
             item(.syncInverse)

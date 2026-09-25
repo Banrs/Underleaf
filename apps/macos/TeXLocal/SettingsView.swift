@@ -1,17 +1,23 @@
 import SwiftUI
 
-/// The web's Settings dialog (web/src/settings.js) in the system's Settings
-/// window. Its "Floating panels" has no counterpart: macOS draws its own
-/// sidebar and toolbar.
+/// The web's Settings dialog (web/src/settings.js) as a standard macOS
+/// Settings window: a tab per area, each a grouped form. Its "Floating
+/// panels" and "Interface size" have no counterpart: macOS draws its own
+/// sidebar and toolbar, and sizes its own text.
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            Tab("General", systemImage: "gearshape") { GeneralSettings() }
+            Tab("Editor", systemImage: "character.cursor.ibeam") { EditorSettings() }
+        }
+        .frame(width: 480)
+    }
+}
+
+private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("pdfPaper") private var pdfPaper = "white"
-    @AppStorage("showWordCount") private var showWordCount = true
-    @AppStorage("editorPalette") private var palette = "onedark"
-    @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 14
-    @AppStorage("uiScale") private var uiScale = 100
 
     var body: some View {
         @Bindable var app = app
@@ -25,44 +31,16 @@ struct SettingsView: View {
                 Picker(selection: $pdfPaper) {
                     Text("White").tag("white")
                     Text("Dark").tag("dark")
-                    Text("Auto").tag("auto")
+                    Text("Match Theme").tag("auto")
                 } label: {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading")
                 }
             }
-            Section("Editor") {
+            Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing")
-                }
-                Toggle(isOn: $showWordCount) {
-                    Text("Word Count")
-                    Text("Show words and lines over the editor")
-                }
-                Picker("Syntax Colors", selection: $palette) {
-                    Text("One Dark").tag("onedark")
-                    Text("Xcode").tag("xcode")
-                }
-                Picker("Font", selection: $font) {
-                    Text("System Monospaced").tag("system")
-                    Text("JetBrains Mono").tag("jetbrains")
-                }
-                Stepper("Font Size: \(fontSize) pt", value: $fontSize, in: 10...28)
-                Stepper {
-                    Text("Interface Size: \(Double(uiScale) / 100, format: .percent)")
-                    Text("Scales the editor; the sidebar and toolbar follow the system’s text size")
-                } onIncrement: {
-                    app.perform(.viewUIScaleUp)
-                } onDecrement: {
-                    app.perform(.viewUIScaleDown)
-                }
-            }
-            Section("TeX") {
-                LabeledContent("Distribution") {
-                    Text(app.tex?.available == true
-                         ? app.tex?.version ?? "TeX Live"
-                         : "Not found — compilation disabled")
                 }
                 if let project = app.project {
                     Picker(selection: Binding(
@@ -72,14 +50,58 @@ struct SettingsView: View {
                         ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
                     } label: {
                         Text("Engine")
-                        Text(project.id)
+                        Text("For \u{201C}\(project.id)\u{201D}")
                     }
+                }
+                LabeledContent("TeX Distribution") {
+                    Text(app.tex?.available == true ? texVersion : "Not found — compiling is off")
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440)
         .onChange(of: appearance) { _, value in applyAppearance(value) }
+    }
+}
+
+extension GeneralSettings {
+    /// latexmk's banner ("Latexmk, John Collins, 9 March 2026. Version 4.88")
+    /// as "latexmk 4.88"; anything else as the core reported it.
+    fileprivate var texVersion: String {
+        guard let version = app.tex?.version else { return "Found" }
+        if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
+        return version
+    }
+}
+
+private struct EditorSettings: View {
+    @AppStorage("editorPalette") private var palette = "onedark"
+    @AppStorage("editorFont") private var font = "system"
+    @AppStorage("editorFontSize") private var fontSize = 14
+    @AppStorage("showWordCount") private var showWordCount = true
+
+    var body: some View {
+        Form {
+            Section("Text") {
+                Picker("Font", selection: $font) {
+                    Text("System Monospaced").tag("system")
+                    Text("JetBrains Mono").tag("jetbrains")
+                }
+                Stepper(value: $fontSize, in: 10...28) {
+                    LabeledContent("Font Size", value: "\(fontSize) pt")
+                }
+                Picker("Syntax Colors", selection: $palette) {
+                    Text("One Dark").tag("onedark")
+                    Text("Xcode").tag("xcode")
+                }
+            }
+            Section("Status") {
+                Toggle(isOn: $showWordCount) {
+                    Text("Word Count")
+                    Text("Show words and lines over the editor")
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

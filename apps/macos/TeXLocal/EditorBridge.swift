@@ -6,7 +6,7 @@ import WebKit
 /// in native chrome. Host → page calls go through `window.texlocal`; the page
 /// posts `changed` / `cursor` / `command` messages back.
 @MainActor
-final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, WKNavigationDelegate {
+final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let scheme = "texlocal-app"
 
     let webView: WKWebView
@@ -26,15 +26,18 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
     /// The latest host keys, symbols and appearance, sent again to a page
     /// reloaded after its web process died.
     private var kept: [String: (body: String, args: [String: Any])] = [:]
-    private let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
 
     override init() {
         let config = WKWebViewConfiguration()
         let controller = WKUserContentController()
         config.userContentController = controller
-        webView = WKWebView(frame: .zero, configuration: config)
+        // Before the web view exists: it copies its configuration, so a
+        // handler set afterwards never serves the page.
+        config.setURLSchemeHandler(WebFiles(), forURLScheme: Self.scheme)
+        // A real size from the start: the page lays itself out while it loads,
+        // before any window holds it.
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
         super.init()
-        config.setURLSchemeHandler(self, forURLScheme: Self.scheme)
         controller.add(self, name: "texlocal")
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
@@ -154,8 +157,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, 
         }
         return .cancel
     }
+}
 
-    // ---------- the texlocal-app: scheme, serving the bundled web/ ----------
+/// The texlocal-app: scheme, serving the bundled web/.
+@MainActor
+private final class WebFiles: NSObject, WKURLSchemeHandler {
+    private let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         let path = task.request.url?.path ?? ""

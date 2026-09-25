@@ -8,18 +8,17 @@ struct HomeView: View {
     @State private var deleting: ProjectInfo?
 
     var body: some View {
-        HStack(spacing: 0) {
-            brand
-                .frame(width: 320)
-                .padding(32)
-            Divider()
-            projectList
-        }
-        .navigationTitle("TeXLocal")
+        projectList
+        // Named for what the window shows, not the app (HIG, Toolbars).
+        .navigationTitle("Projects")
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .primaryAction) {
                 Button("New Project", systemImage: "plus") { app.showNewProject = true }
+                    .help("New Project (⌘N)")
             }
+        }
+        .safeAreaBar(edge: .top) {
+            if app.tex?.available == false { texMissing }
         }
         .task(id: app.tex?.available) { await app.watchForTeX() }
         .alert("Rename Project", isPresented: Binding(
@@ -44,52 +43,36 @@ struct HomeView: View {
         }
     }
 
-    private var brand: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 48))
-                .foregroundStyle(.tint)
-            Text("TeXLocal").font(.largeTitle.bold())
-            Text("Offline LaTeX editing and compilation.\nYour files never leave this machine.")
-                .foregroundStyle(.secondary)
-            if app.tex?.available == false {
-                Label {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("TeX isn’t installed").bold()
-                        Text("Install MacTeX to compile documents. TeXLocal notices it once installed.")
-                        Link("Get MacTeX", destination: URL(string: "https://tug.org/mactex/")!)
-                    }
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                }
-                .padding(12)
-                .background(.orange.opacity(0.1), in: .rect(cornerRadius: 8))
+    private var texMissing: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label {
+                Text("TeX isn’t installed. Install MacTeX to compile; TeXLocal notices it once it’s there.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
-            Button {
-                app.showNewProject = true
-            } label: {
-                Label("New Project", systemImage: "plus").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.top, 8)
             Spacer()
+            Link("Get MacTeX", destination: URL(string: "https://tug.org/mactex/")!)
         }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
     }
 
     private var projectList: some View {
         List(app.projects, selection: $selection) { project in
-            HStack {
-                Image(systemName: "doc.text").foregroundStyle(.tint)
+            Label {
                 VStack(alignment: .leading) {
                     Text(project.name)
                     Text(project.modified, format: .relative(presentation: .named))
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+            } icon: {
+                Image(systemName: "doc.text")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
             }
-            .padding(.vertical, 4)
         }
+        .listStyle(.inset)
         .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
             if let project = app.projects.first(where: { ids.contains($0.id) }) {
                 Button("Open") { Task { await app.open(project.id) } }
@@ -102,11 +85,14 @@ struct HomeView: View {
         }
         .overlay {
             if app.projects.isEmpty {
-                ContentUnavailableView(
-                    "No Projects",
-                    systemImage: "doc.text",
-                    description: Text("Create a project to start writing.")
-                )
+                ContentUnavailableView {
+                    Label("No Projects", systemImage: "doc.text")
+                } description: {
+                    Text("Create a project to start writing. Your files never leave this Mac.")
+                } actions: {
+                    Button("New Project") { app.showNewProject = true }
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
     }

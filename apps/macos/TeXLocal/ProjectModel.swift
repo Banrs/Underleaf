@@ -22,14 +22,22 @@ final class ProjectModel {
     /// Bumped whenever a new PDF is on disk, so the viewer reloads.
     var pdfVersion = 0
     var pdfURL: URL?
+    /// Why the PDF on screen may not show the source as it is now
+    /// (workspace.js `setPdfFreshness`); nil when it does.
+    var pdfFreshness: PDFFreshness?
     /// The latest forward-search target, with a counter so the same spot can
     /// be flashed twice.
     var highlight: (loc: ForwardLoc, token: Int)?
     var showLogs = false
+    /// Which of the panel's tabs is showing.
+    var panelTab: PanelTab = .issues
     /// Remembered across projects and launches, like the web's.
     var showPDF = UserDefaults.standard.object(forKey: "showPDF") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showPDF, forKey: "showPDF") }
     }
+
+    /// The open file on disk, for the window's document icon.
+    var openURL: URL?
 
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
@@ -42,6 +50,8 @@ final class ProjectModel {
     private var lastSave: Task<Bool, Never>?
     private var searchTask: Task<Void, Never>?
     private var highlightToken = 0
+    /// Bumped by each `open`, so an earlier one still in flight stands down.
+    private var openGeneration = 0
     /// A build was asked for while one ran; it follows when that one ends.
     private var compileQueued = false
     /// The project was closed; a build still running reports nothing.
@@ -129,11 +139,19 @@ final class ProjectModel {
             }
             return
         }
+        // Clicking one file and then another before the first has opened:
+        // only the latest carries on, so the editor can't end up showing one
+        // file while `openPath` — where autosave writes — names the other.
+        openGeneration += 1
+        let generation = openGeneration
         if path != openPath {
-            guard await saveEdits() else { return }
+            guard await saveEdits(), generation == openGeneration else { return }
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
+                guard generation == openGeneration else { return }
                 openPath = path
+                openURL = (try? await core.call("raw_path", ["id": id, "path": path], as: String.self))
+                    .map { URL(fileURLWithPath: $0) }
                 analyze(file.text)
                 await editor.open(path: "\(id)/\(path)", text: file.text)
                 cursorLine = await editor.currentLine()
@@ -142,11 +160,12 @@ final class ProjectModel {
                 return
             }
         }
-        if let line { await editor.reveal(line: line) }
+        if let line, generation == openGeneration { await editor.reveal(line: line) }
     }
 
     private func edited() {
         dirty = true
+        if pdfVersion > 0, pdfFreshness == nil { pdfFreshness = .edited }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
@@ -229,10 +248,11 @@ final class ProjectModel {
     }
 
     /// File › section › subsection at the cursor (web/src/workspace.js
-    /// `renderCrumbs`).
+    /// `renderCrumbs`). The file by its path in the project, so two
+    /// `intro.tex` in different folders read apart.
     var breadcrumb: [String] {
         guard let path = openPath else { return [] }
-        return [(path as NSString).lastPathComponent] + Outline.chain(outline, at: cursorLine).map(\.title)
+        return [path] + Outline.chain(outline, at: cursorLine).map(\.title)
     }
 
     /// Save now, cancelling the pending autosave — before a file switch, a
@@ -285,8 +305,11 @@ final class ProjectModel {
                 if result.ok {
                     pdfURL = try await pdfPath()
                     pdfVersion += 1
-                } else if !result.errors.isEmpty {
-                    showLogs = true
+                    // Edits made while it built still aren't in it.
+                    pdfFreshness = dirty ? .edited : nil
+                } else {
+                    if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
+                    if !result.errors.isEmpty { panelTab = .issues; showLogs = true }
                 }
                 notify(result)
             } catch {
@@ -489,6 +512,24 @@ final class ProjectModel {
         }
     }
 
+    // ---------- compiling, continued ----------
+
+    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
+    /// killed and the compile returns failed.
+    func stopCompile() {
+        guard compiling else { return }
+        compileQueued = false
+        Core.shared.killAll()
+    }
+
+    func setShellEscape(_ on: Bool) async {
+        do {
+            settings = try await core.call("set_settings", ["id": id, "patch": ["shellEscape": on]], as: ProjectSettings.self)
+        } catch {
+            report(error)
+        }
+    }
+
     // ---------- editor commands ----------
 
     func format(_ name: String, _ arg: String? = nil) {
@@ -504,5 +545,27 @@ final class ProjectModel {
     func run(_ commandID: String) {
         guard let command = MenuCommand(rawValue: commandID) else { return }
         app?.perform(command)
+    }
+}
+
+/// How the PDF on screen differs from the source.
+enum PDFFreshness {
+    /// The source has changed since it was built.
+    case edited
+    /// The latest build failed; this is the one before it.
+    case lastSuccessful
+
+    var title: String {
+        switch self {
+        case .edited: "Preview Out of Date"
+        case .lastSuccessful: "Last Successful Build"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .edited: "clock.arrow.circlepath"
+        case .lastSuccessful: "exclamationmark.triangle"
+        }
     }
 }

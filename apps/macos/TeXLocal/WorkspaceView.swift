@@ -1,10 +1,12 @@
 import SwiftUI
 
+/// An open project: files and outline in the sidebar; the source beside its
+/// PDF, with a panel for the build below; and an inspector on the trailing
+/// edge.
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var promptText = ""
-    @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         @Bindable var app = app
@@ -12,35 +14,28 @@ struct WorkspaceView: View {
             get: { app.sidebarVisible ? .all : .detailOnly },
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
-            SidebarView(project: project)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 400)
+            NavigatorView(project: project)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            HSplitView {
-                Group {
-                    if project.openPath != nil {
-                        EditorView(bridge: app.editor)
-                            .overlay(alignment: .bottomTrailing) { wordCount }
-                    } else {
-                        // No file open, or it was deleted: nothing to type
-                        // into (workspace.js `showEditorPlaceholder`).
-                        ContentUnavailableView("Select a File to Edit", systemImage: "doc.text")
-                    }
-                }
-                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                if project.showPDF || project.showLogs {
-                    Group {
-                        if project.showLogs {
-                            LogsView(project: project)
-                        } else {
-                            PDFPane(project: project)
-                        }
-                    }
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            // The inspector is a pane of the detail, drawn by SwiftUI, not
+            // `.inspector`: that makes a third column of the AppKit split
+            // view, and on opening a project with it shown the columns'
+            // minimum sizes re-measured each other until AppKit threw
+            // ("more Update Constraints passes than views"). The detail's
+            // minimum stays the same whether it shows or not.
+            HStack(spacing: 0) {
+                EditorArea(project: project)
+                if app.showInspector {
+                    InspectorPane(project: project)
+                        .transition(.move(edge: .trailing))
                 }
             }
+            .frame(minWidth: 441, minHeight: 280)
+            .animation(.snappy(duration: 0.25), value: app.showInspector)
         }
-        .navigationTitle(project.id)
-        .navigationSubtitle(subtitle)
+        .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
+        .navigationSubtitle(project.openPath == nil ? "" : project.id)
+        .navigationDocument(project.openURL ?? URL(fileURLWithPath: "/"))
         .toolbar { toolbar }
         .alert(promptTitle, isPresented: Binding(
             get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
@@ -57,104 +52,41 @@ struct WorkspaceView: View {
         }
     }
 
-    /// The breadcrumb, then the save state.
-    private var subtitle: String {
-        let crumbs = project.breadcrumb.joined(separator: " › ")
-        return crumbs.isEmpty ? project.status : "\(crumbs) — \(project.status)"
-    }
-
-    /// Words and lines in the open .tex file, in the editor's corner like the
-    /// web's pill (workspace.js `updateDocMeta`).
-    @ViewBuilder
-    private var wordCount: some View {
-        if showWordCount, let counts = project.counts {
-            Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 3)
-                .glassEffect()
-                .padding(.trailing, 16)
-                .padding(.bottom, 12)
-                .allowsHitTesting(false)
-        }
-    }
-
     // ---------- toolbar ----------
 
+    /// History leading, the file as the window's title, and on the trailing
+    /// edge building, sharing, then the panes.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button("Projects", systemImage: "chevron.backward") { app.perform(.projectClose) }
-                .help("Close Project")
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button("Compile", systemImage: "play.fill") { app.perform(.compileRun) }
+                .disabled(!app.isEnabled(.compileRun))
+                .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
+            Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
+                .disabled(!project.compiling)
+                .help("Stop (⌘.)")
         }
-        ToolbarItemGroup {
-            Menu("Insert", systemImage: "plus") {
-                ForEach(insertTemplates, id: \.0) { label, template in
-                    Button(label) { project.format("insert", template) }
-                }
-            }
-            .help("Insert an environment")
-            ControlGroup {
-                Button("Bold", systemImage: "bold") { app.perform(.editBold) }
-                Button("Italic", systemImage: "italic") { app.perform(.editItalic) }
-                Button("Inline Math", systemImage: "function") { app.perform(.editMath) }
-            }
-        }
-        ToolbarItem {
-            Spacer()
-        }
-        ToolbarItemGroup {
-            compileButton
-            Button {
-                app.perform(.viewToggleLogs)
-            } label: {
-                Label("Compile Log", systemImage: "list.bullet.rectangle")
-            }
-            .badge(project.errorCount)
-            .help(logHelp)
-            Toggle(isOn: $project.showPDF) {
-                Label("PDF", systemImage: "sidebar.right")
-            }
-            .help("Show or hide the PDF")
-            Menu("Export", systemImage: "square.and.arrow.up") {
-                Button(MenuCommand.pdfSave.title) { app.perform(.pdfSave) }
-                    .disabled(!app.isEnabled(.pdfSave))
-                Button(MenuCommand.projectExport.title) { app.perform(.projectExport) }
-            }
-        }
-    }
-
-    /// Compile is the primary action; the engine and auto-compile live in its
-    /// menu, the way a split button carries a default and its options.
-    private var compileButton: some View {
-        Menu {
-            Picker("Engine", selection: Binding(
-                get: { project.settings?.engine ?? "pdflatex" },
-                set: { engine in Task { await project.setEngine(engine) } }
-            )) {
-                ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-            }
-            .pickerStyle(.inline)
-            Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
-        } label: {
-            if project.compiling {
-                ProgressView().controlSize(.small)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            if let url = project.pdfURL, project.pdfVersion > 0 {
+                ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
+                    .help("Share PDF")
             } else {
-                Label("Compile", systemImage: "play.fill")
+                Button("Share PDF", systemImage: "square.and.arrow.up") {}
+                    .disabled(true)
+                    .help("Compile to share the PDF")
             }
-        } primaryAction: {
-            app.perform(.compileRun)
         }
-        .disabled(!project.texAvailable)
-        .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
-    }
-
-    private var logHelp: String {
-        switch (project.errorCount, project.warningCount) {
-        case (0, 0): "Compile Log"
-        case (let e, let w): "Compile Log — \(e) errors, \(w) warnings"
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItemGroup(placement: .primaryAction) {
+            Toggle(isOn: $project.showPDF) {
+                Label("PDF", systemImage: "doc.richtext")
+            }
+            .help(project.showPDF ? "Hide PDF (⇧⌘\\)" : "Show PDF (⇧⌘\\)")
+            Toggle(isOn: Bindable(app).showInspector) {
+                Label("Inspector", systemImage: "sidebar.right")
+            }
+            .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
         }
     }
 
@@ -225,3 +157,126 @@ let insertTemplates: [(String, String)] = [
     ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
     ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
 ]
+
+/// The inspector column: a hairline to drag on its leading edge, then the
+/// inspector at a width remembered across launches (Xcode's 220–320 pt).
+struct InspectorPane: View {
+    let project: ProjectModel
+    @AppStorage("inspectorWidth") private var width = 260.0
+    @State private var dragStart: Double?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(.separator)
+                .frame(width: 1)
+                .overlay {
+                    Color.clear
+                        .frame(width: 8)
+                        .contentShape(.rect)
+                        .pointerStyle(.columnResize)
+                        .gesture(
+                            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                                .onChanged { drag in
+                                    let start = dragStart ?? width
+                                    dragStart = start
+                                    width = min(max(start - drag.translation.width, 220), 320)
+                                }
+                                .onEnded { _ in dragStart = nil }
+                        )
+                        .accessibilityHidden(true)
+                }
+                .zIndex(1)
+            InspectorView(project: project)
+                .frame(width: min(max(width, 220), 320))
+                .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+/// The trailing inspector: the project's build settings, then facts about
+/// the open file and the PDF — what the web kept in its settings popover and
+/// status line, gathered where a Mac app keeps them.
+struct InspectorView: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var project: ProjectModel
+
+    var body: some View {
+        @Bindable var app = app
+        Form {
+            Section("Project") {
+                Picker("Main File", selection: Binding(
+                    get: { project.settings?.mainFile ?? "" },
+                    set: { path in Task { await project.setMainFile(path) } }
+                )) {
+                    ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Engine", selection: Binding(
+                    get: { project.settings?.engine ?? "pdflatex" },
+                    set: { engine in Task { await project.setEngine(engine) } }
+                )) {
+                    ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+                }
+                Toggle(isOn: Binding(
+                    get: { project.settings?.shellEscape ?? false },
+                    set: { on in Task { await project.setShellEscape(on) } }
+                )) {
+                    Text("Shell Escape")
+                    Text("Lets packages such as minted run programs. Turn on only for projects you trust.")
+                }
+                Toggle("Compile Automatically", isOn: $app.autoCompile)
+            }
+            .disabled(project.settings == nil)
+
+            if let path = project.openPath {
+                Section("Document") {
+                    LabeledContent("Name", value: (path as NSString).lastPathComponent)
+                    LabeledContent("Folder", value: folder(of: path))
+                    if let counts = project.counts {
+                        LabeledContent("Words", value: counts.words.formatted())
+                        LabeledContent("Lines", value: counts.lines.formatted())
+                    }
+                    if !project.outline.isEmpty {
+                        LabeledContent("Sections", value: project.outline.count.formatted())
+                    }
+                    LabeledContent("Saved", value: project.dirty ? "Edited" : "Saved")
+                    Button("Set as Main File") { Task { await project.setMainFile(path) } }
+                        .disabled(!path.hasSuffix(".tex") || path == project.settings?.mainFile)
+                    Button("Show in Finder") { reveal(path, in: project) }
+                }
+            }
+
+            Section("PDF") {
+                if let result = project.result {
+                    LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
+                    LabeledContent("Duration") {
+                        Text("\(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s")
+                            .monospacedDigit()
+                    }
+                    LabeledContent("Errors", value: project.errorCount.formatted())
+                    LabeledContent("Warnings", value: project.warningCount.formatted())
+                } else {
+                    LabeledContent("Last Build", value: "Not compiled")
+                }
+                if let freshness = project.pdfFreshness {
+                    Label(freshness.title, systemImage: freshness.systemImage)
+                        .foregroundStyle(.secondary)
+                }
+                Button(MenuCommand.pdfSave.title) { app.perform(.pdfSave) }
+                    .disabled(project.pdfVersion == 0)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func folder(of path: String) -> String {
+        let dir = (path as NSString).deletingLastPathComponent
+        return dir.isEmpty ? project.id : dir
+    }
+
+    private func texFiles(_ nodes: [TreeNode]) -> [String] {
+        nodes.flatMap { node in
+            node.isDirectory ? texFiles(node.children ?? []) : (node.path.hasSuffix(".tex") ? [node.path] : [])
+        }
+    }
+}

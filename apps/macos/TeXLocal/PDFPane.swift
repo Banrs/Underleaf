@@ -15,9 +15,7 @@ struct PDFPane: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 0) {
-            bar
-            Divider()
+        Group {
             if project.pdfVersion > 0 {
                 PDFRepresentable(
                     project: project, controller: controller,
@@ -32,7 +30,15 @@ struct PDFPane: View {
                         ? "Compile to preview your document."
                         : "Install MacTeX to enable compilation.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        // The pane's own bar, as Xcode's canvas has one: what is scoped to
+        // the PDF — its page, whether it is current, its zoom, finding in it —
+        // rather than to the document the window toolbar acts on. A system
+        // bar, so the pages scroll beneath it with the edge effect.
+        .safeAreaBar(edge: .top) {
+            if project.pdfVersion > 0 || finding { bar }
         }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
@@ -63,49 +69,83 @@ struct PDFPane: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 8) {
-            if finding {
-                PDFFindField(text: $findQuery, focus: findFocus, step: controller.step, close: closeFind)
-                    .frame(maxWidth: 220)
-                    .task(id: findQuery) {
-                        // Debounced like the web's, so typing doesn't search every prefix.
-                        try? await Task.sleep(for: .milliseconds(200))
-                        if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
-                            controller.find(findQuery)
-                        }
-                    }
-                Text(PDFFind.countLabel(
-                    query: controller.query, total: controller.matches.count,
-                    index: controller.matchIndex + 1, limited: controller.limited
-                ))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                ControlGroup {
-                    Button("Previous", systemImage: "chevron.up") { controller.step(-1) }
-                        .help("Previous Match (⇧↩)")
-                    Button("Next", systemImage: "chevron.down") { controller.step(1) }
-                        .help("Next Match (↩)")
-                }
-                .fixedSize()
-                .disabled(controller.matches.isEmpty)
-                Button("Done") { closeFind() }
-            } else if controller.pageCount > 0 {
+        HStack {
+            if finding { findControls } else { status }
+            Spacer(minLength: 12)
+            zoomControls
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    /// The page, and whether the PDF still matches the source.
+    private var status: some View {
+        HStack(spacing: 12) {
+            if let freshness = project.pdfFreshness {
+                Label(freshness.title, systemImage: freshness.systemImage)
+                    .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .help(freshness == .lastSuccessful
+                          ? "The latest build failed; this is the last one that succeeded"
+                          : "The preview doesn’t reflect the current source")
+            }
+            if controller.pageCount > 0 {
                 Text("Page \(controller.page) of \(controller.pageCount)")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Spacer()
-            ControlGroup {
-                Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                Button("Fit Width", systemImage: "arrow.left.and.right") { controller.fitWidth() }
-                Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-            }
-            .fixedSize()
-            .disabled(project.pdfVersion == 0)
         }
-        .controlSize(.small)
-        .padding(.horizontal, 8)
-        .frame(height: 36)
+        .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var findControls: some View {
+        PDFFindField(text: $findQuery, focus: findFocus, step: controller.step, close: closeFind)
+            .frame(minWidth: 120, maxWidth: 240)
+            .task(id: findQuery) {
+                // Debounced like the web's, so typing doesn't search every prefix.
+                try? await Task.sleep(for: .milliseconds(200))
+                if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
+                    controller.find(findQuery)
+                }
+            }
+        Text(PDFFind.countLabel(
+            query: controller.query, total: controller.matches.count,
+            index: controller.matchIndex + 1, limited: controller.limited
+        ))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .lineLimit(1)
+        ControlGroup {
+            Button("Previous Match", systemImage: "chevron.up") { controller.step(-1) }
+                .help("Previous Match (⇧↩)")
+            Button("Next Match", systemImage: "chevron.down") { controller.step(1) }
+                .help("Next Match (↩)")
+        }
+        .fixedSize()
+        .disabled(controller.matches.isEmpty)
+        Button("Done") { closeFind() }
+    }
+
+    /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
+    /// control (workspace.js `zoomButton`).
+    private var zoomControls: some View {
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
+                .help("Zoom Out (⌘−)")
+            Menu(controller.zoomLabel) {
+                Button("Fit Width") { controller.fitWidth() }
+                Button("Fit Height") { controller.fitHeight() }
+                Divider()
+                ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
+                    Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
+                }
+            }
+            .help("Zoom")
+            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
+                .help("Zoom In (⌘+)")
+        }
+        .fixedSize()
+        .disabled(project.pdfVersion == 0)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
@@ -178,8 +218,6 @@ private struct PDFFindField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSSearchField {
         let view = NSSearchField()
         view.placeholderString = "Find in PDF"
-        view.controlSize = .small
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -210,6 +248,19 @@ final class PDFController {
     var matchIndex = 0
     /// More matches exist than are kept.
     var limited = false
+    /// "Fit Width" while the view fits the page to its width, else the scale.
+    var zoomLabel = "Fit Width"
+
+    func scaleChanged() {
+        guard let view else { return }
+        zoomLabel = view.autoScales ? "Fit Width" : "\(Int((view.scaleFactor * 100).rounded()))%"
+    }
+
+    func setScale(_ scale: CGFloat) {
+        guard let view else { return }
+        view.autoScales = false
+        view.scaleFactor = scale
+    }
 
     func zoom(in zoomIn: Bool) {
         guard let view else { return }
@@ -220,6 +271,7 @@ final class PDFController {
     /// In a continuous single-page layout, auto-scaling fits the page width.
     func fitWidth() {
         view?.autoScales = true
+        scaleChanged()
     }
 
     func fitHeight() {
@@ -291,6 +343,9 @@ final class SyncPDFView: PDFView {
             wantsLayer = true
             layerUsesCoreImageFilters = true
             appearance = darkPaper ? NSAppearance(named: .aqua) : nil
+            // A neutral light grey, which the inversion turns neutral dark;
+            // the tinted under-page colour would come out olive.
+            backgroundColor = darkPaper ? NSColor(white: 0.84, alpha: 1) : .underPageBackgroundColor
             pageShadowsEnabled = !darkPaper
             let hue = CIFilter.hueAdjust()
             hue.angle = .pi
@@ -320,6 +375,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         var version = 0
         var highlightToken = 0
         var pageObserver: NSObjectProtocol?
+        var scaleObserver: NSObjectProtocol?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -343,6 +399,11 @@ private struct PDFRepresentable: NSViewRepresentable {
                 controller.pageCount = document.pageCount
             }
         }
+        context.coordinator.scaleObserver = NotificationCenter.default.addObserver(
+            forName: .PDFViewScaleChanged, object: view, queue: .main
+        ) { [controller] _ in
+            MainActor.assumeIsolated { controller.scaleChanged() }
+        }
         return view
     }
 
@@ -360,7 +421,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
-        if let observer = coordinator.pageObserver {
+        for observer in [coordinator.pageObserver, coordinator.scaleObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
     }

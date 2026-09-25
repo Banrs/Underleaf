@@ -144,7 +144,7 @@ final class CommandTests: XCTestCase {
         let ids = Set(MenuCommand.editorHostKeys.map(\.id))
         XCTAssertTrue(ids.contains("compile.run"))
         XCTAssertTrue(ids.contains("edit.gotoLine"))
-        XCTAssertTrue(ids.contains("view.uiScaleUp"))
+        XCTAssertTrue(ids.contains("view.zoomIn"))
         XCTAssertFalse(ids.contains("edit.find"))
         XCTAssertFalse(ids.contains("edit.comment"))
         XCTAssertFalse(ids.contains("edit.undo"))
@@ -159,8 +159,12 @@ final class CommandTests: XCTestCase {
             .appendingPathComponent(path)
     }
 
-    /// The menu has every command the web declares, with the same chord —
-    /// except Settings…, which the Settings scene adds with ⌘, itself.
+    /// The web's commands with no place in the Mac menus: Settings…, which the
+    /// Settings scene adds with ⌘, itself, and the interface size, which on
+    /// the Mac is the system's to set.
+    private let webOnly: Set<String> = ["app.settings", "view.uiScaleUp", "view.uiScaleDown"]
+
+    /// The menu has every other command the web declares, with the same chord.
     func testTheMenuHasEveryWebCommand() throws {
         let source = try String(contentsOf: repo("web/src/workspace.js"), encoding: .utf8)
         var ids: Set<String> = []
@@ -168,19 +172,12 @@ final class CommandTests: XCTestCase {
             guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
             let id = String(match.1)
             ids.insert(id)
-            guard id != "app.settings" else { continue }
+            guard !webOnly.contains(id) else { continue }
             let accel = line.firstMatch(of: /accel: '([^']+)'/)
                 .map { String($0.1).replacingOccurrences(of: "\\\\", with: "\\") }
             XCTAssertEqual(MenuCommand(rawValue: id)?.accel, accel, id)
         }
-        XCTAssertEqual(Set(MenuCommand.allCases.map(\.rawValue)), ids.subtracting(["app.settings"]))
-    }
-
-    @MainActor
-    func testInterfaceSizesAreTheWebs() throws {
-        let source = try String(contentsOf: repo("web/src/prefs.js"), encoding: .utf8)
-        let list = try XCTUnwrap(source.firstMatch(of: /UI_SCALES = \[([^\]]*)\]/)?.1)
-        XCTAssertEqual(list.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }, AppModel.uiScales)
+        XCTAssertEqual(Set(MenuCommand.allCases.map(\.rawValue)), ids.subtracting(webOnly))
     }
 }
 

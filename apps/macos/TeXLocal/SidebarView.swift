@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Files, project search and the document outline, in the source-list style.
-struct SidebarView: View {
+/// The sidebar, as a writer's rather than a programmer's: the project's
+/// files with the open document's outline beneath (as Overleaf pairs them),
+/// project search at the top, and adding files at the foot.
+struct NavigatorView: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var selection: String?
@@ -17,35 +19,23 @@ struct SidebarView: View {
                         row(node).tag(node.path)
                     }
                 }
-                if !project.outline.isEmpty {
+                if !project.outline.isEmpty, let path = project.openPath {
                     Section("Outline", isExpanded: $outlineOpen) {
                         ForEach(project.outline) { item in
                             Button {
-                                project.reveal(line: item.line)
+                                Task { await project.open( path, line: item.line) }
                             } label: {
                                 Text(item.title)
                                     .lineLimit(1)
-                                    .padding(.leading, CGFloat(max(0, item.level - 2)) * 12)
+                                    .padding(.leading, CGFloat(max(0, item.level - 2)) * 14)
+                                    .fontWeight(item.id == current ? .semibold : .regular)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                 }
             } else {
-                Section("\(project.searchHits.count) Results") {
-                    ForEach(project.searchHits) { hit in
-                        Button {
-                            Task { await project.open(hit.file, line: hit.line) }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("\(hit.file):\(hit.line)").font(.caption).foregroundStyle(.secondary)
-                                Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
-                                    .lineLimit(1)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                searchResults
             }
         }
         .listStyle(.sidebar)
@@ -53,29 +43,36 @@ struct SidebarView: View {
         .searchFocused($searchFocused)
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
         .onChange(of: selection) { _, path in
-            if let path, isTextFile(path) { Task { await project.open(path) } }
+            if let path, path != project.openPath, isTextFile(path) { Task { await project.open( path) } }
         }
-        .onChange(of: project.openPath) { _, path in selection = path }
-        .dropDestination(for: URL.self) { urls, _ in
-            Task { await project.importFiles(urls) }
-            return true
+        .onChange(of: project.openPath, initial: true) { _, path in selection = path }
+        .overlay {
+            if !project.searchQuery.isEmpty, project.searchHits.isEmpty {
+                ContentUnavailableView.search(text: project.searchQuery)
+            }
         }
-        .toolbar {
-            ToolbarItem {
+        .safeAreaBar(edge: .bottom) {
+            HStack {
                 Menu("Add", systemImage: "plus") {
                     Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
                     Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                    Divider()
                     Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
                 }
+                .menuIndicator(.hidden)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .help("Add Files")
+                Spacer()
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
-        .safeAreaInset(edge: .bottom) {
-            Text(project.settings?.engine ?? "")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+        .dropDestination(for: URL.self) { urls, _ in
+            Task { await project.importFiles(urls) }
+            return true
         }
         .confirmationDialog(
             "Move “\(deleting ?? "")” to the Trash?",
@@ -84,6 +81,30 @@ struct SidebarView: View {
         ) {
             Button("Move to Trash", role: .destructive) {
                 if let path = deleting { Task { await project.deleteEntry(path) } }
+            }
+        }
+    }
+
+    /// The section the cursor is in.
+    private var current: Int? {
+        Outline.chain(project.outline, at: project.cursorLine).last?.id
+    }
+
+    /// Hits grouped by file, each line with its match picked out.
+    @ViewBuilder
+    private var searchResults: some View {
+        let groups = Dictionary(grouping: project.searchHits, by: \.file).sorted { $0.key < $1.key }
+        ForEach(groups, id: \.key) { file, hits in
+            Section("\(file) — \(hits.count)") {
+                ForEach(hits) { hit in
+                    Button {
+                        Task { await project.open( hit.file, line: hit.line) }
+                    } label: {
+                        Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
+                            .lineLimit(2)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
@@ -97,19 +118,21 @@ struct SidebarView: View {
                     Image(systemName: "star.fill")
                         .foregroundStyle(.yellow)
                         .imageScale(.small)
-                        .help("Main file")
+                        .help("Main File")
+                        .accessibilityLabel("Main File")
                 }
             }
         } icon: {
             Image(systemName: icon(for: node))
         }
+        .accessibilityLabel(node.name)
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                 Divider()
             }
             Button("Rename…") { app.prompt = .renameEntry(node.path) }
-            Button("Show in Finder") { reveal(node) }
+            Button("Show in Finder") { reveal(node.path, in: project) }
             Divider()
             Button("Move to Trash", role: .destructive) { deleting = node.path }
         }
@@ -125,12 +148,47 @@ struct SidebarView: View {
         default: return "doc"
         }
     }
+}
 
-    private func reveal(_ node: TreeNode) {
-        Task {
-            if let abs = try? await Core.shared.call("raw_path", ["id": project.id, "path": node.path], as: String.self) {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: abs)])
+/// Select a project entry in Finder.
+@MainActor
+func reveal(_ path: String, in project: ProjectModel) {
+    Task {
+        if let abs = try? await Core.shared.call("raw_path", ["id": project.id, "path": path], as: String.self) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: abs)])
+        }
+    }
+}
+
+/// An error or warning; choosing it opens its line — in the main file when
+/// the log names none, as the web's does.
+struct IssueRow: View {
+    let item: LogItem
+    let project: ProjectModel
+
+    var body: some View {
+        Button {
+            if let file { Task { await project.open( file, line: item.line) } }
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.message).lineLimit(3).textSelection(.enabled)
+                    if let file = item.file {
+                        Text(item.line.map { "\(file):\($0)" } ?? file)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } icon: {
+                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(item.isError ? .red : .orange)
             }
         }
+        .buttonStyle(.plain)
+        .disabled(file == nil)
+    }
+
+    private var file: String? {
+        item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
     }
 }

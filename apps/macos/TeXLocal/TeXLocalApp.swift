@@ -14,8 +14,12 @@ struct TeXLocalApp: App {
                     applyAppearance(UserDefaults.standard.string(forKey: "appearance") ?? "system")
                 }
         }
-        .defaultSize(width: 1440, height: 900)
-        .commands { AppCommands(app: app) }
+        .defaultSize(width: 1200, height: 760)
+        .commands {
+            AppCommands(app: app)
+            // Show/Hide Toolbar and Customize Toolbar… in the View menu.
+            ToolbarCommands()
+        }
 
         Settings {
             SettingsView()
@@ -63,6 +67,12 @@ struct RootView: View {
                 HomeView()
             }
         }
+        // One minimum for the window whatever it shows, with room for every
+        // column at its own: navigator 180, source and PDF 441, inspector
+        // 220. A minimum that changed with the content — raised as a project
+        // opened — landed mid-layout on the split view, whose constraint
+        // passes then looped until AppKit threw.
+        .frame(minWidth: 960, minHeight: 600)
         .task { await app.refresh() }
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
         .alert("TeXLocal", isPresented: Binding(

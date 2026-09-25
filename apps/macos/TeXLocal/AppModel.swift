@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Observation
 
 /// The library: projects on disk, TeX availability, and the open project.
@@ -24,6 +25,9 @@ final class AppModel {
     }
     var autoCompile = UserDefaults.standard.object(forKey: "autoCompile") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
+    }
+    var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
+        didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
@@ -107,3 +111,4 @@ final class AppModel {
         return true
     }
 }
+
