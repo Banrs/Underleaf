@@ -86,7 +86,12 @@ struct EditorArea: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .safeAreaBar(edge: .top) { SourceBar(project: project) }
+        .safeAreaBar(edge: .top) {
+            VStack(spacing: 0) {
+                SourceBar(project: project)
+                SourceLocation(project: project)
+            }
+        }
     }
 }
 
@@ -180,24 +185,205 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's header: the second row under the window toolbar, drawn to the
-/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, Regular (24 pt)
-/// controls, 8 pt insets, 12 pt between groups — with native controls
-/// throughout, so heights, fonts and click-and-slide tracking are AppKit's.
+/// A pane's actions: the second row under the window toolbar, drawn to the
+/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, 24 pt Liquid Glass
+/// controls, 8 pt insets, 12 pt between groups.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: 12) { content }
-            .controlSize(.regular)
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) { content }
+        }
+        .controlSize(.regular)
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .frame(height: 40)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        // A shape, not Divider(): inside the HStack's layout context an
+        // overlaid Divider turned vertical, a stray line down the middle.
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+}
+
+/// A pane's location: the row under its actions, as Xcode's jump bar sits
+/// under its tab bar, directly over the content.
+struct LocationBar<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(spacing: 4) { content }
             .lineLimit(1)
-            .padding(.horizontal, 8)
-            .frame(height: 40)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
-            // A shape, not Divider(): inside the HStack's layout context an
-            // overlaid Divider turned vertical, a stray line down the middle.
             .overlay(alignment: .bottom) { Hairline() }
+    }
+}
+
+/// The kit's Medium toolbar sizes: a group's capsule is 24 pt tall, 24 pt
+/// per item, with a 20 pt highlight inside.
+let glassHeight: CGFloat = 24
+let glassItem: CGFloat = 24
+
+/// One action in a glass group.
+struct Segment: Identifiable {
+    let id: String
+    let title: String
+    let systemImage: String
+    var help: String?
+    var enabled = true
+    let action: () -> Void
+}
+
+extension Segment {
+    /// A menu command, with its shortcut in the tooltip.
+    @MainActor
+    init(_ command: MenuCommand, _ systemImage: String, app: AppModel) {
+        self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
+                  help: command.accel.map { "\(command.title) (\(chord($0)))" },
+                  enabled: app.isEnabled(command)) { app.perform(command) }
+    }
+}
+
+/// A toolbar button group in Liquid Glass, as the kit draws one: one glass
+/// capsule, its buttons without separators. Press, slide to another button —
+/// the highlight follows — and release to choose it; release outside to
+/// cancel. The tracking is AppKit's (`SegmentTracker`), so a slide reaches
+/// every button whatever SwiftUI's gestures and the glass are doing.
+struct GlassGroup: View {
+    let items: [Segment]
+    @State private var pressed: String?
+    @State private var hovered: String?
+    @State private var pressing = false
+    @Namespace private var lens
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(items) { cell($0) }
+        }
+        .overlay {
+            SegmentTracker(
+                count: items.count,
+                enabled: items.map(\.enabled),
+                help: items.map { $0.help ?? $0.title },
+                onHover: { hovered = $0.map { items[$0].id } },
+                onTrack: { index in pressing = true; pressed = index.map { items[$0].id } },
+                onRelease: { index in
+                    pressing = false
+                    pressed = nil
+                    if let index { items[index].action() }
+                }
+            )
+            .accessibilityHidden(true)
+        }
+        .frame(height: glassHeight)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .animation(.snappy(duration: 0.18), value: highlighted)
+        .animation(.snappy(duration: 0.12), value: pressing)
+        .fixedSize()
+    }
+
+    private func cell(_ item: Segment) -> some View {
+        Label(item.title, systemImage: item.systemImage)
+            .labelStyle(.iconOnly)
+            .foregroundStyle(item.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+            .frame(width: glassItem, height: glassHeight)
+            .background {
+                if highlighted == item.id {
+                    Circle()
+                        .fill(.primary.opacity(pressing ? 0.16 : 0.08))
+                        .frame(width: glassItem - 4, height: glassItem - 4)
+                        .matchedGeometryEffect(id: "lens", in: lens)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(item.title)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { if item.enabled { item.action() } }
+    }
+
+    /// Under the pointer while pressed; under it on hover otherwise.
+    private var highlighted: String? {
+        let id = pressing ? pressed : hovered
+        return items.first { $0.id == id && $0.enabled }?.id
+    }
+}
+
+/// The mouse for a GlassGroup: an AppKit view over it that maps the pointer
+/// to a button (equal widths) on hover, through a press, and at release.
+/// The view that takes the mouse-down gets every drag and the mouse-up, as
+/// NSSegmentedControl tracks.
+private struct SegmentTracker: NSViewRepresentable {
+    let count: Int
+    let enabled: [Bool]
+    let help: [String]
+    let onHover: (Int?) -> Void
+    let onTrack: (Int?) -> Void
+    let onRelease: (Int?) -> Void
+
+    func makeNSView(context: Context) -> TrackerView { TrackerView() }
+
+    func updateNSView(_ view: TrackerView, context: Context) {
+        view.count = count
+        view.enabled = enabled
+        view.help = help
+        view.onHover = onHover
+        view.onTrack = onTrack
+        view.onRelease = onRelease
+    }
+
+    final class TrackerView: NSView {
+        var count = 0
+        var enabled: [Bool] = []
+        var help: [String] = []
+        var onHover: (Int?) -> Void = { _ in }
+        var onTrack: (Int?) -> Void = { _ in }
+        var onRelease: (Int?) -> Void = { _ in }
+        private var hovered: Int?
+
+        // A toolbar's controls answer the first click in an inactive window.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+                owner: self
+            ))
+        }
+
+        /// The enabled button under an event, with slack above and below as
+        /// a control keeps tracking just past its edge.
+        private func index(_ event: NSEvent) -> Int? {
+            let point = convert(event.locationInWindow, from: nil)
+            guard count > 0, bounds.width > 0, point.x >= 0, point.x < bounds.width,
+                  point.y > -12, point.y < bounds.height + 12 else { return nil }
+            let index = min(count - 1, Int(point.x / (bounds.width / CGFloat(count))))
+            return enabled.indices.contains(index) && enabled[index] ? index : nil
+        }
+
+        private func hover(_ index: Int?) {
+            guard index != hovered else { return }
+            hovered = index
+            toolTip = index.map { help[$0] }
+            onHover(index)
+        }
+
+        override func mouseMoved(with event: NSEvent) { hover(index(event)) }
+        override func mouseEntered(with event: NSEvent) { hover(index(event)) }
+        override func mouseExited(with event: NSEvent) { hover(nil) }
+        override func mouseDown(with event: NSEvent) { onTrack(index(event)) }
+        override func mouseDragged(with event: NSEvent) { onTrack(index(event)) }
+        override func mouseUp(with event: NSEvent) {
+            let index = index(event)
+            onRelease(index)
+            hover(index)
+        }
     }
 }
 
@@ -213,10 +399,7 @@ struct Hairline: View {
 /// offer, at the leading edge as Xcode places its editor's controls:
 /// history; the heading style; bold, italic and math; references and
 /// citations; then inserting figures, tables and lists. Commenting out is a
-/// code editor's tool; it stays in the Format menu (⌘/). Where the cursor is
-/// shows in the window's title and the sidebar's outline, so there is no
-/// breadcrumb. Button groups are native control groups (AppKit's segmented
-/// control: press, slide to another, release to choose).
+/// code editor's tool; it stays in the Format menu (⌘/).
 private struct SourceBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -237,39 +420,34 @@ private struct SourceBar: View {
     /// Format menu.
     private func tools(folded: Int) -> some View {
         HStack(spacing: 12) {
-            ControlGroup {
-                command(.editUndo, "arrow.uturn.backward")
-                command(.editRedo, "arrow.uturn.forward")
-            }
+            GlassGroup(items: [
+                Segment(.editUndo, "arrow.uturn.backward", app: app),
+                Segment(.editRedo, "arrow.uturn.forward", app: app),
+            ])
             if isLaTeX {
                 if folded < 2 {
                     templateMenu("Heading", headingTemplates)
                         .help("Insert a part, chapter, section or subsection")
-                    ControlGroup {
-                        command(.editBold, "bold")
-                        command(.editItalic, "italic")
-                        command(.editMath, "x.squareroot")
-                    }
+                    GlassGroup(items: [
+                        Segment(.editBold, "bold", app: app),
+                        Segment(.editItalic, "italic", app: app),
+                        Segment(.editMath, "x.squareroot", app: app),
+                    ])
                 }
                 if folded == 0 {
-                    ControlGroup {
-                        Button("Reference", systemImage: "number") { project.format("insert", "\\ref{$0}") }
-                            .help("Reference (\\ref)")
-                        Button("Citation", systemImage: "text.quote") { project.format("insert", "\\cite{$0}") }
-                            .help("Citation (\\cite)")
-                    }
+                    GlassGroup(items: [
+                        Segment(id: "ref", title: "Reference", systemImage: "number", help: "Reference (\\ref)") {
+                            project.format("insert", "\\ref{$0}")
+                        },
+                        Segment(id: "cite", title: "Citation", systemImage: "text.quote", help: "Citation (\\cite)") {
+                            project.format("insert", "\\cite{$0}")
+                        },
+                    ])
                 }
                 insertMenu(folded: folded)
             }
         }
-        .labelStyle(.iconOnly)
         .fixedSize()
-    }
-
-    private func command(_ command: MenuCommand, _ systemImage: String) -> some View {
-        Button(command.title, systemImage: systemImage) { app.perform(command) }
-            .disabled(!app.isEnabled(command))
-            .help(command.accel.map { "\(command.title) (\(chord($0)))" } ?? command.title)
     }
 
     private func templateMenu(_ title: String, _ templates: [(String, String)]) -> some View {
@@ -278,6 +456,9 @@ private struct SourceBar: View {
                 Button(label) { project.format("insert", template) }
             }
         }
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
         .fixedSize()
     }
 
@@ -312,11 +493,109 @@ private struct SourceBar: View {
                 }
             }
         }
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
         .fixedSize()
         .help(folded == 2 ? "Format and insert" : "Insert a figure, table, equation or list")
     }
 
     private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
+}
+
+/// Where the cursor is, as Xcode's jump bar shows it: the project, its
+/// folders, the file — a menu of the files beside it — and the section
+/// around the cursor, a menu of the file's sections. Narrow panes drop the
+/// project and folders first, then the section.
+private struct SourceLocation: View {
+    @Bindable var project: ProjectModel
+
+    var body: some View {
+        LocationBar {
+            if let path = project.openPath {
+                ViewThatFits(in: .horizontal) {
+                    crumbs(path, folders: true, section: true)
+                    crumbs(path, folders: false, section: true)
+                    crumbs(path, folders: false, section: false)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func crumbs(_ path: String, folders: Bool, section: Bool) -> some View {
+        let parts = path.split(separator: "/").map(String.init)
+        return HStack(spacing: 4) {
+            if folders {
+                crumb(project.id, "folder")
+                ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { _, folder in
+                    chevron
+                    crumb(folder, "folder")
+                }
+                chevron
+            }
+            fileMenu(path, name: parts.last ?? path)
+            if section, !project.outline.isEmpty {
+                chevron
+                sectionMenu
+            }
+        }
+        .fixedSize()
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+    }
+
+    private func crumb(_ title: String, _ systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(.secondary)
+    }
+
+    /// The file, a menu of the text files in its folder.
+    private func fileMenu(_ path: String, name: String) -> some View {
+        let folder = (path as NSString).deletingLastPathComponent
+        let siblings = textFiles(project.tree).filter { ($0 as NSString).deletingLastPathComponent == folder }
+        return Menu {
+            ForEach(siblings, id: \.self) { file in
+                Button((file as NSString).lastPathComponent) { Task { await project.open(file) } }
+            }
+        } label: {
+            Label(name, systemImage: "doc.text").labelStyle(.titleAndIcon)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .help(path)
+    }
+
+    /// The section at the cursor, a menu of the file's sections.
+    private var sectionMenu: some View {
+        let chain = Outline.chain(project.outline, at: project.cursorLine)
+        let top = project.outline.map(\.level).min() ?? 0
+        return Menu {
+            ForEach(project.outline) { item in
+                Button(String(repeating: "    ", count: item.level - top) + item.title) {
+                    if let path = project.openPath { Task { await project.open(path, line: item.line) } }
+                }
+            }
+        } label: {
+            Label(chain.last?.title ?? "Top of File", systemImage: "list.bullet.indent")
+                .labelStyle(.titleAndIcon)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .foregroundStyle(chain.isEmpty ? .secondary : .primary)
+        .help("Go to a Section")
+    }
+
+    private func textFiles(_ nodes: [TreeNode]) -> [String] {
+        nodes.flatMap { node in
+            node.isDirectory ? textFiles(node.children ?? []) : (isTextFile(node.path) ? [node.path] : [])
+        }
+    }
 }
 
 /// "CmdOrCtrl+Shift+Z" as the menu shows it: ⇧⌘Z.

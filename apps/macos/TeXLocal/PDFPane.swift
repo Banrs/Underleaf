@@ -66,26 +66,31 @@ struct PDFPane: View {
         }
     }
 
-    /// The source's jump bar's twin, so the two panes' headers line up.
-    /// Finding takes the whole bar, as Preview's find does, rather than
-    /// squeezing in beside the zoom.
+    /// Two rows lined up with the source's: actions — Compile, zoom, Share —
+    /// then where you are: the page, and whether it is current. Finding takes
+    /// the actions row, as Preview's find does.
     private var bar: some View {
-        PaneBar {
-            if finding {
-                findControls
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { compileControls(compact: false); status; Spacer(minLength: 0); zoomControls; share }
-                    HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
-                    HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
-                    HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
+        VStack(spacing: 0) {
+            PaneBar {
+                if finding {
+                    findControls
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
+                        HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
+                    }
                 }
+            }
+            LocationBar {
+                status
+                Spacer(minLength: 0)
             }
         }
     }
 
     /// Overleaf's Recompile, over the PDF it makes: the pane's one
-    /// prominent control, a native default button; while a build runs, a
+    /// prominent control, in prominent Liquid Glass; while a build runs, a
     /// spinner and Stop in its place.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
@@ -94,6 +99,7 @@ struct PDFPane: View {
                 ProgressView().controlSize(.small)
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
                     .help("Stop (⌘.)")
             }
             .fixedSize()
@@ -105,7 +111,8 @@ struct PDFPane: View {
                     Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun))
             .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
@@ -125,6 +132,8 @@ struct PDFPane: View {
             }
         }
         .labelStyle(.iconOnly)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
         .fixedSize()
     }
 
@@ -179,12 +188,15 @@ struct PDFPane: View {
 
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
     /// control (workspace.js `zoomButton`).
+    /// Out, the level (a menu), in: one glass capsule with the kit's
+    /// separators, which set the menu apart from the two buttons.
     private var zoomControls: some View {
-        // A native control group: out, the level (a menu), in — segments
-        // with the system's separators between them.
-        ControlGroup {
+        HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
+                .frame(width: glassItem + 4, height: glassHeight)
+                .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
+            glassSeparator
             Menu {
                 Button("Fit Width") { controller.fitWidth() }
                 Button("Fit Height") { controller.fitHeight() }
@@ -193,19 +205,34 @@ struct PDFPane: View {
                     Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
                 }
             } label: {
-                // One width for every level, so the group doesn't resize as
-                // it zooms (pinching steps through dozens).
+                // One width for every level, so the pill doesn't resize as it
+                // zooms (pinching steps through dozens).
                 Text(controller.zoomLabel)
                     .monospacedDigit()
-                    .frame(width: 64)
+                    .frame(width: 64, height: glassHeight)
+                    .contentShape(.rect)
             }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
             .help("Zoom")
+            glassSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
+                .frame(width: glassItem + 4, height: glassHeight)
+                .contentShape(.rect)
                 .help("Zoom In (⌘+)")
         }
         .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 2)
+        .frame(height: glassHeight)
+        .glassEffect(.regular.interactive(), in: .capsule)
         .fixedSize()
         .disabled(project.pdfVersion == 0)
+    }
+
+    /// The kit's toolbar separator: 1 x 16 pt.
+    private var glassSeparator: some View {
+        Rectangle().fill(.separator).frame(width: 1, height: 16)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
