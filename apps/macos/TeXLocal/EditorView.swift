@@ -129,6 +129,23 @@ struct SplitPair<First: View, Second: View>: View {
         return min(max(total * fraction, minFirst), room - minSecond).rounded()
     }
 
+    /// NSSplitView's cursor: two-way, or one-way once a pane is at its
+    /// minimum and the divider can only move the other way.
+    private func pointer(total: CGFloat) -> PointerStyle {
+        let lead = length(of: total)
+        let atFirstMin = lead <= minFirst + 0.5
+        let atSecondMin = lead >= total - minSecond - 1.5
+        if axis == .horizontal {
+            let directions: HorizontalDirection.Set =
+                atFirstMin && !atSecondMin ? .trailing : atSecondMin && !atFirstMin ? .leading : [.leading, .trailing]
+            return .columnResize(directions: directions)
+        } else {
+            let directions: VerticalDirection.Set =
+                atFirstMin && !atSecondMin ? .down : atSecondMin && !atFirstMin ? .up : [.up, .down]
+            return .rowResize(directions: directions)
+        }
+    }
+
     /// The fractions the minimums allow, so a drag past one doesn't leave
     /// the divider stuck until the pointer comes back.
     private func clamp(_ value: Double, total: CGFloat) -> Double {
@@ -145,7 +162,7 @@ struct SplitPair<First: View, Second: View>: View {
                 Color.clear
                     .frame(width: axis == .horizontal ? 8 : nil, height: axis == .vertical ? 8 : nil)
                     .contentShape(.rect)
-                    .pointerStyle(axis == .horizontal ? .columnResize : .rowResize)
+                    .pointerStyle(pointer(total: total))
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { drag in
@@ -163,197 +180,24 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's header: the second row of an Apple double toolbar, under the
-/// window's — compact (38 pt, 28 pt pills against the window toolbar's 52 and
-/// 36), the system's own fonts, over the standard bar material.
+/// A pane's header: the second row under the window toolbar, drawn to the
+/// macOS 27 UI kit's Unified Compact Toolbar — 40 pt tall, Regular (24 pt)
+/// controls, 8 pt insets, 12 pt between groups — with native controls
+/// throughout, so heights, fonts and click-and-slide tracking are AppKit's.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 6) {
-            HStack(spacing: 6) { content }
-        }
+        HStack(spacing: 12) { content }
+            .controlSize(.regular)
             .lineLimit(1)
             .padding(.horizontal, 8)
-            .frame(height: 38)
+            .frame(height: 40)
             .frame(maxWidth: .infinity)
             .background(.bar)
             // A shape, not Divider(): inside the HStack's layout context an
             // overlaid Divider turned vertical, a stray line down the middle.
             .overlay(alignment: .bottom) { Hairline() }
-    }
-}
-
-/// Related controls sharing one Liquid Glass capsule, drawn as a toolbar
-/// draws a group: one surface that responds as a whole.
-struct GlassPill<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        HStack(spacing: 0) { content }
-            .buttonStyle(.borderless)
-            .padding(.horizontal, 2)
-            .frame(height: pillHeight)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .fixedSize()
-    }
-}
-
-/// Every pill's height, and each button's size inside one: a compact
-/// secondary toolbar's, so the two rows read as window toolbar and bar.
-let pillHeight: CGFloat = 28
-let pillItem = CGSize(width: 32, height: 24)
-
-/// One action in an editing pill.
-struct Segment: Identifiable {
-    let id: String
-    let title: String
-    let systemImage: String
-    var help: String?
-    var enabled = true
-    let action: () -> Void
-}
-
-extension Segment {
-    /// A menu command, with its shortcut in the tooltip.
-    @MainActor
-    init(_ command: MenuCommand, _ systemImage: String, app: AppModel, enabled: Bool = true) {
-        self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
-                  help: command.accel.map { "\(command.title) (\(chord($0)))" },
-                  enabled: enabled && app.isEnabled(command)) { app.perform(command) }
-    }
-
-    /// Insert a LaTeX template ("$0" marks where the cursor lands).
-    @MainActor
-    init(_ title: String, _ systemImage: String, template: String, project: ProjectModel, enabled: Bool) {
-        self.init(id: title, title: title, systemImage: systemImage, enabled: enabled) {
-            project.format("insert", template)
-        }
-    }
-}
-
-/// A run of actions, in groups split by hairlines, that tracks the pointer
-/// across them as Liquid Glass groups and segmented controls do: press,
-/// slide to any action — the highlight glides under the pointer — and
-/// release to choose it; release outside to cancel. Separate Buttons each
-/// keep their own press, so a slide off one never reached its neighbour.
-/// Drawn inside a GlassCapsule, beside any menus sharing it.
-struct SegmentRun: View {
-    let groups: [[Segment]]
-    @State private var frames: [String: CGRect] = [:]
-    @State private var pressed: String?
-    @State private var hovered: String?
-    @State private var pressing = false
-    @Namespace private var lens
-    private let space = UUID()
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(groups.indices, id: \.self) { index in
-                if index > 0 { PillSeparator() }
-                ForEach(groups[index]) { cell($0) }
-            }
-        }
-        .coordinateSpace(.named(space))
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
-                .onChanged { drag in
-                    pressing = true
-                    pressed = item(at: drag.location)?.id
-                }
-                .onEnded { drag in
-                    let chosen = item(at: drag.location)
-                    pressing = false
-                    pressed = nil
-                    chosen?.action()
-                }
-        )
-        .animation(.snappy(duration: 0.18), value: highlighted)
-        .animation(.snappy(duration: 0.12), value: pressing)
-    }
-
-    private func cell(_ item: Segment) -> some View {
-        Label(item.title, systemImage: item.systemImage)
-            .labelStyle(.iconOnly)
-            .foregroundStyle(item.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-            .frame(width: pillItem.width, height: pillItem.height)
-            .background {
-                if highlighted == item.id {
-                    Capsule()
-                        .fill(.primary.opacity(pressing ? 0.14 : 0.07))
-                        .matchedGeometryEffect(id: "lens", in: lens)
-                }
-            }
-            .contentShape(.rect)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(space)) } action: { frames[item.id] = $0 }
-            .help(item.help ?? item.title)
-            .onHover { inside in
-                if inside { hovered = item.id } else if hovered == item.id { hovered = nil }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(item.title)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { if item.enabled { item.action() } }
-    }
-
-    /// Under the pointer while pressed; under it on hover otherwise.
-    private var highlighted: String? {
-        let id = pressing ? pressed : hovered
-        return groups.joined().first { $0.id == id && $0.enabled }?.id
-    }
-
-    /// The enabled item at a point, with slack above and below, as a control
-    /// keeps tracking just past its edge; a hairline's gap is neither.
-    private func item(at point: CGPoint) -> Segment? {
-        groups.joined().first { item in
-            guard item.enabled, let frame = frames[item.id] else { return false }
-            return frame.insetBy(dx: 0, dy: -12).contains(point)
-        }
-    }
-}
-
-/// One Liquid Glass capsule around runs, menus and hairlines; tinted for
-/// the pane's one prominent action.
-struct GlassCapsule<Content: View>: View {
-    var tint: Color?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        HStack(spacing: 0) { content }
-            .buttonStyle(.borderless)
-            .menuIndicator(.hidden)
-            .padding(.horizontal, 2)
-            .frame(height: pillHeight)
-            .glassEffect(tint.map { .regular.tint($0).interactive() } ?? .regular.interactive(), in: .capsule)
-            .fixedSize()
-    }
-}
-
-/// The hairline between groups in a pill.
-struct PillSeparator: View {
-    var body: some View {
-        Rectangle()
-            .fill(.separator)
-            .frame(width: 1, height: 14)
-            .padding(.horizontal, 2)
-    }
-}
-
-/// An icon button sized for a GlassPill.
-struct PillButton: View {
-    let title: String
-    let systemImage: String
-    var help: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.iconOnly)
-                .frame(width: pillItem.width, height: pillItem.height)
-                .contentShape(.rect)
-        }
-        .help(help ?? title)
     }
 }
 
@@ -366,12 +210,13 @@ struct Hairline: View {
 
 /// The bar over the source: a writer's tools, not a programmer's — what
 /// Overleaf's editor toolbar and the web's (workspace.js `editorToolbar`)
-/// offer, at the leading edge as Xcode places its editor's controls. History; the heading style; bold and italic; math; the two
-/// things a paper points at, references and citations; then inserting
-/// figures, tables and lists. Commenting out is a code editor's tool; it
-/// stays in the Format menu (⌘/). Where the cursor is shows in the window's
-/// title and the sidebar's outline, so the bar carries no breadcrumb.
-/// Groups are separate pills, without hairlines, as Xcode's toolbar has them.
+/// offer, at the leading edge as Xcode places its editor's controls:
+/// history; the heading style; bold, italic and math; references and
+/// citations; then inserting figures, tables and lists. Commenting out is a
+/// code editor's tool; it stays in the Format menu (⌘/). Where the cursor is
+/// shows in the window's title and the sidebar's outline, so there is no
+/// breadcrumb. Button groups are native control groups (AppKit's segmented
+/// control: press, slide to another, release to choose).
 private struct SourceBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -380,71 +225,65 @@ private struct SourceBar: View {
         PaneBar {
             // Narrow panes fold groups into the menus, as a toolbar overflows.
             ViewThatFits(in: .horizontal) {
-                pill(folded: 0)
-                pill(folded: 1)
-                pill(folded: 2)
+                tools(folded: 0)
+                tools(folded: 1)
+                tools(folded: 2)
             }
             Spacer(minLength: 0)
         }
     }
 
     /// 0: everything; 1: references join Insert; 2: all but history in one
-    /// Format menu. Each group is its own pill, as a toolbar groups related
-    /// items: history, the heading style, text (bold, italic, math), what a
-    /// paper points at (references, citations), and inserting.
-    private func pill(folded: Int) -> some View {
-        HStack(spacing: 8) {
-            GlassCapsule {
-                SegmentRun(groups: [[
-                    Segment(.editUndo, "arrow.uturn.backward", app: app),
-                    Segment(.editRedo, "arrow.uturn.forward", app: app),
-                ]])
+    /// Format menu.
+    private func tools(folded: Int) -> some View {
+        HStack(spacing: 12) {
+            ControlGroup {
+                command(.editUndo, "arrow.uturn.backward")
+                command(.editRedo, "arrow.uturn.forward")
             }
             if isLaTeX {
                 if folded < 2 {
-                    GlassCapsule { headingMenu }
-                    GlassCapsule {
-                        SegmentRun(groups: [[
-                            Segment(.editBold, "bold", app: app),
-                            Segment(.editItalic, "italic", app: app),
-                            Segment(.editMath, "x.squareroot", app: app),
-                        ]])
+                    templateMenu("Heading", headingTemplates)
+                        .help("Insert a part, chapter, section or subsection")
+                    ControlGroup {
+                        command(.editBold, "bold")
+                        command(.editItalic, "italic")
+                        command(.editMath, "x.squareroot")
                     }
                 }
                 if folded == 0 {
-                    GlassCapsule {
-                        SegmentRun(groups: [[
-                            Segment("Reference", "number", template: "\\ref{$0}", project: project, enabled: true),
-                            Segment("Citation", "text.quote", template: "\\cite{$0}", project: project, enabled: true),
-                        ]])
+                    ControlGroup {
+                        Button("Reference", systemImage: "number") { project.format("insert", "\\ref{$0}") }
+                            .help("Reference (\\ref)")
+                        Button("Citation", systemImage: "text.quote") { project.format("insert", "\\cite{$0}") }
+                            .help("Citation (\\cite)")
                     }
                 }
-                GlassCapsule { insertMenu(folded: folded) }
+                insertMenu(folded: folded)
+            }
+        }
+        .labelStyle(.iconOnly)
+        .fixedSize()
+    }
+
+    private func command(_ command: MenuCommand, _ systemImage: String) -> some View {
+        Button(command.title, systemImage: systemImage) { app.perform(command) }
+            .disabled(!app.isEnabled(command))
+            .help(command.accel.map { "\(command.title) (\(chord($0)))" } ?? command.title)
+    }
+
+    private func templateMenu(_ title: String, _ templates: [(String, String)]) -> some View {
+        Menu(title) {
+            ForEach(templates, id: \.0) { label, template in
+                Button(label) { project.format("insert", template) }
             }
         }
         .fixedSize()
     }
 
-    /// Pages' paragraph-style menu, for LaTeX's sectioning.
-    private var headingMenu: some View {
-        Menu {
-            ForEach(headingTemplates, id: \.0) { label, template in
-                Button(label) { project.format("insert", template) }
-            }
-        } label: {
-            Text("Heading")
-                .padding(.leading, 8)
-                .frame(height: pillItem.height)
-                .contentShape(.rect)
-        }
-        // The system's indicator, trailing the title as a pop-up's does.
-        .menuIndicator(.visible)
-        .padding(.trailing, 6)
-        .help("Insert a part, chapter, section or subsection")
-    }
-
+    /// Words, like Heading: a "+" here read as the sidebar's add-file button.
     private func insertMenu(folded: Int) -> some View {
-        Menu {
+        Menu(folded == 2 ? "Format" : "Insert") {
             if folded == 2 {
                 ForEach([MenuCommand.editBold, .editItalic, .editMath], id: \.self) { command in
                     Button(command.title) { app.perform(command) }
@@ -472,15 +311,8 @@ private struct SourceBar: View {
                     Button(label) { project.format("insert", template) }
                 }
             }
-        } label: {
-            // Words, like Heading: a "+" here read as the sidebar's add-file.
-            Text(folded == 2 ? "Format" : "Insert")
-                .padding(.leading, 8)
-                .frame(height: pillItem.height)
-                .contentShape(.rect)
         }
-        .menuIndicator(.visible)
-        .padding(.trailing, 6)
+        .fixedSize()
         .help(folded == 2 ? "Format and insert" : "Insert a figure, table, equation or list")
     }
 

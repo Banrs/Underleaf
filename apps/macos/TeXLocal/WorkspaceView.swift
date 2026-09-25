@@ -186,7 +186,9 @@ struct InspectorPane: View {
                     Color.clear
                         .frame(width: 8)
                         .contentShape(.rect)
-                        .pointerStyle(.columnResize)
+                        // One-way at either limit, as NSSplitView shows it.
+                        .pointerStyle(.columnResize(directions:
+                            width <= 220 ? .leading : width >= 320 ? .trailing : [.leading, .trailing]))
                         .gesture(
                             DragGesture(minimumDistance: 1, coordinateSpace: .global)
                                 .onChanged { drag in

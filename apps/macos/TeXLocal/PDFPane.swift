@@ -75,63 +75,57 @@ struct PDFPane: View {
                 findControls
             } else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { compileControls(compact: false); status; Spacer(minLength: 8); zoomControls; share }
-                    HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 8); zoomControls; share }
-                    HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 8); zoomControls; share }
-                    HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 8); share }
+                    HStack(spacing: 12) { compileControls(compact: false); status; Spacer(minLength: 0); zoomControls; share }
+                    HStack(spacing: 12) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
+                    HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
+                    HStack(spacing: 12) { compileControls(compact: true); Spacer(minLength: 0); share }
                 }
             }
         }
     }
 
-    /// Overleaf's Recompile, over the PDF it makes: the one prominent
-    /// control, tinted glass; Stop beside it while a build runs.
+    /// Overleaf's Recompile, over the PDF it makes: the pane's one
+    /// prominent control, a native default button; while a build runs, a
+    /// spinner and Stop in its place.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
-            GlassPill {
-                ProgressView().controlSize(.small).frame(width: pillItem.width)
-                PillButton(title: "Stop", systemImage: "stop.fill", help: "Stop (⌘.)") { project.stopCompile() }
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
+                    .labelStyle(.iconOnly)
+                    .help("Stop (⌘.)")
             }
+            .fixedSize()
         } else {
-            let enabled = app.isEnabled(.compileRun)
-            GlassCapsule(tint: enabled ? .accentColor : nil) {
-                Button { app.perform(.compileRun) } label: {
-                    Group {
-                        if compact {
-                            Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
-                        } else {
-                            Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
-                        }
-                    }
-                        .fontWeight(.medium)
-                        .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
-                        .padding(.horizontal, compact ? 0 : 10)
-                        .frame(minWidth: pillItem.width, minHeight: pillItem.height)
-                        .contentShape(.rect)
+            Button { app.perform(.compileRun) } label: {
+                if compact {
+                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
+                } else {
+                    Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
                 }
-                .disabled(!enabled)
             }
+            .buttonStyle(.borderedProminent)
+            .fixedSize()
+            .disabled(!app.isEnabled(.compileRun))
             .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
         }
     }
 
     @ViewBuilder
     private var share: some View {
-        GlassPill {
+        Group {
             if let url = project.pdfURL, project.pdfVersion > 0 {
-                ShareLink(item: url) {
-                    Label("Share PDF", systemImage: "square.and.arrow.up")
-                        .labelStyle(.iconOnly)
-                        .frame(width: pillItem.width, height: pillItem.height)
-                        .contentShape(.rect)
-                }
-                .help("Share PDF")
+                ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
+                    .help("Share PDF")
             } else {
-                PillButton(title: "Share PDF", systemImage: "square.and.arrow.up", help: "Compile to share the PDF") {}
+                Button("Share PDF", systemImage: "square.and.arrow.up") {}
                     .disabled(true)
+                    .help("Compile to share the PDF")
             }
         }
+        .labelStyle(.iconOnly)
+        .fixedSize()
     }
 
     /// The page, and whether the PDF still matches the source.
@@ -186,10 +180,11 @@ struct PDFPane: View {
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
     /// control (workspace.js `zoomButton`).
     private var zoomControls: some View {
-        GlassPill {
-            PillButton(title: "Zoom Out", systemImage: "minus.magnifyingglass", help: "Zoom Out (⌘−)") { controller.zoom(in: false) }
-            // Hairlines set the level, a menu, apart from the two buttons.
-            PillSeparator()
+        // A native control group: out, the level (a menu), in — segments
+        // with the system's separators between them.
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
+                .help("Zoom Out (⌘−)")
             Menu {
                 Button("Fit Width") { controller.fitWidth() }
                 Button("Fit Height") { controller.fitHeight() }
@@ -198,18 +193,18 @@ struct PDFPane: View {
                     Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
                 }
             } label: {
-                // One width for every level, so the pill doesn't resize as it
-                // zooms (pinching steps through dozens).
+                // One width for every level, so the group doesn't resize as
+                // it zooms (pinching steps through dozens).
                 Text(controller.zoomLabel)
                     .monospacedDigit()
-                    .frame(width: 72, height: pillItem.height)
-                    .contentShape(.rect)
+                    .frame(width: 64)
             }
-            .menuIndicator(.hidden)
             .help("Zoom")
-            PillSeparator()
-            PillButton(title: "Zoom In", systemImage: "plus.magnifyingglass", help: "Zoom In (⌘+)") { controller.zoom(in: true) }
+            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
+                .help("Zoom In (⌘+)")
         }
+        .labelStyle(.iconOnly)
+        .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
 
