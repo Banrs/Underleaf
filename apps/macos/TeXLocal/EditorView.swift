@@ -225,10 +225,13 @@ struct LocationBar<Content: View>: View {
     }
 }
 
-/// A group's capsule: 28 pt tall (Large), 32 pt per button — the kit's
-/// toolbar group button — with a highlight inset 2 pt inside.
+/// A group's capsule, 28 pt tall (Large), laid out as the kit lays out a
+/// toolbar button group, scaled from its 36 pt: 3 pt inside the capsule,
+/// 22 pt buttons, 7 pt between them (the kit: 4, 28 and 9).
 let glassHeight: CGFloat = 28
-let glassItem: CGFloat = 32
+let glassItem: CGFloat = 22
+let glassPadding: CGFloat = 3
+let glassGap: CGFloat = 7
 
 /// One action in a glass group.
 struct Segment: Identifiable {
@@ -251,21 +254,39 @@ extension Segment {
 }
 
 /// A toolbar button group in Liquid Glass, as the kit draws one: one glass
-/// capsule, its buttons without separators. Press, slide to another button —
-/// the highlight follows — and release to choose it; release outside to
-/// cancel. The tracking is AppKit's (`SegmentTracker`), so a slide reaches
-/// every button whatever SwiftUI's gestures and the glass are doing.
+/// capsule; a hairline only where the group mixes kinds (bold and italic |
+/// math), as the kit's segmented control separates its segments. Press,
+/// slide to another button — the highlight follows — and release to choose
+/// it; release outside to cancel. The tracking is AppKit's
+/// (`SegmentTracker`), so a slide reaches every button whatever SwiftUI's
+/// gestures and the glass are doing.
 struct GlassGroup: View {
-    let items: [Segment]
+    let groups: [[Segment]]
     @State private var pressed: String?
     @State private var hovered: String?
     @State private var pressing = false
     @Namespace private var lens
 
+    init(items: [Segment]) { groups = [items] }
+    init(groups: [[Segment]]) { self.groups = groups }
+
+    private var items: [Segment] { Array(groups.joined()) }
+
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(items) { cell($0) }
+            ForEach(groups.indices, id: \.self) { index in
+                if index > 0 {
+                    Rectangle()
+                        .fill(.separator)
+                        .frame(width: 1, height: 16)
+                        .padding(.horizontal, glassGap / 2)
+                }
+                HStack(spacing: glassGap) {
+                    ForEach(groups[index]) { cell($0) }
+                }
+            }
         }
+        .padding(.horizontal, glassPadding)
         .overlay {
             SegmentTracker(
                 count: items.count,
@@ -292,12 +313,11 @@ struct GlassGroup: View {
         Label(item.title, systemImage: item.systemImage)
             .labelStyle(.iconOnly)
             .foregroundStyle(item.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-            .frame(width: glassItem, height: glassHeight)
+            .frame(width: glassItem, height: glassItem)
             .background {
                 if highlighted == item.id {
-                    Capsule()
+                    Circle()
                         .fill(.primary.opacity(pressing ? 0.16 : 0.08))
-                        .frame(width: glassItem - 4, height: glassHeight - 4)
                         .matchedGeometryEffect(id: "lens", in: lens)
                 }
             }
@@ -430,10 +450,9 @@ private struct SourceBar: View {
                 if folded < 2 {
                     templateMenu("Heading", headingTemplates)
                         .help("Insert a part, chapter, section or subsection")
-                    GlassGroup(items: [
-                        Segment(.editBold, "bold", app: app),
-                        Segment(.editItalic, "italic", app: app),
-                        Segment(.editMath, "x.squareroot", app: app),
+                    GlassGroup(groups: [
+                        [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)],
+                        [Segment(.editMath, "x.squareroot", app: app)],
                     ])
                 }
                 if folded == 0 {
@@ -575,15 +594,15 @@ private struct SourceLocation: View {
     /// The section at the cursor, a menu of the file's sections.
     private var sectionMenu: some View {
         let chain = Outline.chain(project.outline, at: project.cursorLine)
-        let top = project.outline.map(\.level).min() ?? 0
+        let depths = Outline.depths(project.outline)
         return Menu {
             ForEach(project.outline) { item in
-                Button(String(repeating: "    ", count: item.level - top) + item.title) {
+                Button(String(repeating: "    ", count: depths[item.id]) + Outline.displayTitle(item)) {
                     if let path = project.openPath { Task { await project.open(path, line: item.line) } }
                 }
             }
         } label: {
-            Label(chain.last?.title ?? "Top of File", systemImage: "list.bullet.indent")
+            Label(chain.last.map(Outline.displayTitle) ?? "Top of File", systemImage: "list.bullet.indent")
                 .labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)

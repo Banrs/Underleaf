@@ -41,6 +41,26 @@ enum Outline {
         return (items, words, lines)
     }
 
+    /// Each heading's depth in the document's actual nesting: how many
+    /// headings enclose it. A subsection before any section sits flush,
+    /// rather than indented under a parent that isn't there.
+    static func depths(_ outline: [OutlineItem]) -> [Int] {
+        var stack: [Int] = []
+        return outline.map { item in
+            while let last = stack.last, last >= item.level { stack.removeLast() }
+            stack.append(item.level)
+            return stack.count - 1
+        }
+    }
+
+    /// An empty heading by its kind — "Untitled Subsection" — where the web
+    /// writes "(untitled)".
+    static func displayTitle(_ item: OutlineItem) -> String {
+        guard item.title == "(untitled)" else { return item.title }
+        let kinds = ["Part", "Chapter", "Section", "Subsection", "Subsubsection", "Paragraph"]
+        return "Untitled " + (kinds.indices.contains(item.level) ? kinds[item.level] : "Section")
+    }
+
     /// The headings that enclose a line, outermost first: the breadcrumb
     /// (web/src/state.js `outlineChain`).
     static func chain(_ outline: [OutlineItem], at line: Int) -> [OutlineItem] {

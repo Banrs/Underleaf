@@ -193,7 +193,7 @@ struct PDFPane: View {
     private var zoomControls: some View {
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .frame(width: glassItem, height: glassHeight)
+                .frame(width: glassItem + glassGap, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom Out (⌘−)")
             glassSeparator
@@ -217,13 +217,13 @@ struct PDFPane: View {
             .help("Zoom")
             glassSeparator
             Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .frame(width: glassItem, height: glassHeight)
+                .frame(width: glassItem + glassGap, height: glassHeight)
                 .contentShape(.rect)
                 .help("Zoom In (⌘+)")
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .padding(.horizontal, 2)
+        .padding(.horizontal, glassPadding)
         .frame(height: glassHeight)
         .glassEffect(.regular.interactive(), in: .capsule)
         .fixedSize()

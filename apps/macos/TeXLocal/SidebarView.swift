@@ -21,13 +21,15 @@ struct NavigatorView: View {
                 }
                 if !project.outline.isEmpty, let path = project.openPath {
                     Section("Outline", isExpanded: $outlineOpen) {
+                        let depths = Outline.depths(project.outline)
                         ForEach(project.outline) { item in
                             Button {
-                                Task { await project.open( path, line: item.line) }
+                                Task { await project.open(path, line: item.line) }
                             } label: {
-                                Text(item.title)
+                                Text(Outline.displayTitle(item))
                                     .lineLimit(1)
-                                    .padding(.leading, CGFloat(item.level - topLevel) * 14)
+                                    .foregroundStyle(item.title == "(untitled)" ? .secondary : .primary)
+                                    .padding(.leading, CGFloat(depths[item.id]) * 14)
                                     .fontWeight(item.id == current ? .semibold : .regular)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .contentShape(.rect)
@@ -45,7 +47,7 @@ struct NavigatorView: View {
         .searchFocused($searchFocused)
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) { Task { await project.open( path) } }
+            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path) } }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         .overlay {
@@ -87,10 +89,6 @@ struct NavigatorView: View {
         }
     }
 
-    /// Parts, chapters or sections, whichever the document starts from, sit
-    /// flush; deeper levels indent from there (the web's sidebar.js).
-    private var topLevel: Int { project.outline.map(\.level).min() ?? 0 }
-
     /// The section the cursor is in.
     private var current: Int? {
         Outline.chain(project.outline, at: project.cursorLine).last?.id
@@ -104,7 +102,7 @@ struct NavigatorView: View {
             Section("\(file) — \(hits.count)") {
                 ForEach(hits) { hit in
                     Button {
-                        Task { await project.open( hit.file, line: hit.line) }
+                        Task { await project.open(hit.file, line: hit.line) }
                     } label: {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
@@ -182,7 +180,7 @@ struct IssueRow: View {
 
     var body: some View {
         Button {
-            if let file { Task { await project.open( file, line: item.line) } }
+            if let file { Task { await project.open(file, line: item.line) } }
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 2) {

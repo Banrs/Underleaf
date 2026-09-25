@@ -99,6 +99,52 @@ final class OutlineTests: XCTestCase {
     }
 }
 
+final class OutlineDisplayTests: XCTestCase {
+    func testDepthFollowsTheNestingNotTheLevel() {
+        // A subsection before any section has no parent: it sits flush, as
+        // does the section after it; the subsection under that section is
+        // one in.
+        let outline = Outline.parse("""
+        \\subsection{}
+        \\section{First Section}
+        \\subsection{Detail}
+        \\subsubsection{Finer}
+        \\section{Second}
+        """)
+        XCTAssertEqual(Outline.depths(outline), [0, 0, 1, 2, 0])
+    }
+
+    func testEmptyHeadingsAreNamedByKind() {
+        let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
+        XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
+    }
+}
+
+/// The pane bar's glass groups measured off screen, with no window shown.
+@MainActor
+final class PaneBarLayoutTests: XCTestCase {
+    func testAGroupIsLaidOutAsTheKitsToolbarGroup() {
+        let action = {}
+        let two = GlassGroup(items: [
+            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: action),
+            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: action),
+        ])
+        let split = GlassGroup(groups: [
+            [Segment(id: "b", title: "Bold", systemImage: "bold", action: action),
+             Segment(id: "i", title: "Italic", systemImage: "italic", action: action)],
+            [Segment(id: "m", title: "Math", systemImage: "x.squareroot", action: action)],
+        ])
+        // 3 inside, 22 per button, 7 between; a hairline group adds 1 + 7.
+        XCTAssertEqual(size(of: two), CGSize(width: 3 + 22 + 7 + 22 + 3, height: 28))
+        XCTAssertEqual(size(of: split), CGSize(width: 3 + 22 + 7 + 22 + 7 + 1 + 22 + 3, height: 28))
+    }
+
+    private func size(of view: some View) -> CGSize {
+        let host = NSHostingView(rootView: view)
+        return host.fittingSize
+    }
+}
+
 final class RenameTests: XCTestCase {
     func testTheOpenFileMovesWithItsFolder() {
         XCTAssertEqual(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex"), "ch/start.tex")
