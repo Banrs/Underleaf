@@ -540,6 +540,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     /// it goes, and the next compile rewrites that file in place.
     private func reload(_ view: SyncPDFView, from url: URL) -> Bool {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return false }
+        hideLinkBorders(document)
         let spot = view.currentDestination
         let pageIndex = spot?.page.flatMap { view.document?.index(for: $0) }
         let autoScales = view.autoScales
@@ -552,6 +553,19 @@ private struct PDFRepresentable: NSViewRepresentable {
         controller.pageCount = document.pageCount
         controller.page = (pageIndex ?? 0) + 1
         return true
+    }
+
+    /// hyperref boxes every \ref and \cite in colour unless told not to.
+    /// pdf.js, which the browser and Windows draw with, leaves the boxes out,
+    /// so PDFKit does too. The links still work.
+    private func hideLinkBorders(_ document: PDFDocument) {
+        for index in 0..<document.pageCount {
+            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
+                let border = PDFBorder()
+                border.lineWidth = 0
+                annotation.border = border
+            }
+        }
     }
 
     /// Scroll to a forward-search result and flash it.
