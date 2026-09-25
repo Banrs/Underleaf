@@ -455,7 +455,9 @@ impl Service {
             "file_tree" => out(self.file_tree(&s("id")?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
             "search_project" => out(self.search_project(&s("id")?, &s("query")?)?),
-            "read_file" => out(json!({ "text": self.read_file(&s("id")?, &s("path")?)? })),
+            // Already a Value: out() would serialize it again, copying the
+            // whole document.
+            "read_file" => Ok(json!({ "text": self.read_file(&s("id")?, &s("path")?)? })),
             // `text` is required: a call that lost it must fail, not empty
             // the file.
             "write_file" => out(self.write_file(&s("id")?, &s("path")?, &s("text")?)?),
