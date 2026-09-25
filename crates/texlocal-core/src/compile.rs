@@ -23,6 +23,9 @@ pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: usize = 1_000_000;
 const LOG_TAIL: usize = 200_000;
+/// How much of the log file is parsed. A real document's log is a few MB at
+/// most; one that loops on `\message` until the timeout can reach gigabytes.
+const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
 
 fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
     match engine {
@@ -582,7 +585,7 @@ impl CompileManager {
             let rewritten = modified != log_before;
             let after_start = modified.map(|mtime| mtime >= started_at).unwrap_or(false);
             if rewritten || after_start {
-                if let Ok(bytes) = std::fs::read(&log_path) {
+                if let Ok(bytes) = read_tail(&log_path, LOG_READ_MAX) {
                     log = String::from_utf8_lossy(&bytes).into_owned();
                 }
             }
@@ -607,6 +610,25 @@ impl CompileManager {
     }
 }
 
+/// A file's last `max` bytes, starting at a line when it had to cut: errors
+/// sit at the end of a log, and a cut line would parse as garbage.
+fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let cut = len > max;
+    if cut {
+        file.seek(SeekFrom::Start(len - max))?;
+    }
+    let mut bytes = Vec::with_capacity(len.min(max) as usize);
+    file.take(max).read_to_end(&mut bytes)?;
+    if cut {
+        let start = bytes.iter().position(|&b| b == b'\n').map_or(0, |i| i + 1);
+        bytes.drain(..start);
+    }
+    Ok(bytes)
+}
+
 /// The last `max` bytes of `s`, moved forward to a char boundary.
 fn tail(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -621,7 +643,22 @@ fn tail(s: &str, max: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::version_line;
+    use super::{read_tail, version_line};
+
+    #[test]
+    fn a_long_log_is_read_from_its_last_whole_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.log");
+        std::fs::write(&path, "first line\nsecond line\n./main.tex:3: Boom.\n").unwrap();
+        assert_eq!(
+            read_tail(&path, 30).unwrap(),
+            b"./main.tex:3: Boom.\n".to_vec()
+        );
+        assert_eq!(
+            read_tail(&path, 1000).unwrap(),
+            std::fs::read(&path).unwrap()
+        );
+    }
 
     #[test]
     fn the_version_skips_windows_code_page_notices() {
