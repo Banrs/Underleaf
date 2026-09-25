@@ -154,7 +154,12 @@ pub async fn synctex_inverse(
     };
     // Generated files (.toc/.aux in the build dir) and anything outside the
     // project aren't real sources — report "no match" so the UI shows a toast.
+    // TeX records the input under the working directory as getcwd reported
+    // it, with symlinks resolved. A data dir reached through a link (/tmp on
+    // macOS, a library moved to another disk and linked back) therefore names
+    // the project by its real path, not the one `root` spells.
     let rel = rel_to_root(root, &abs)
+        .or_else(|| rel_to_root(&std::fs::canonicalize(root).ok()?, &abs))
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
     if rel == BUILD_DIR || rel.starts_with(&format!("{BUILD_DIR}/")) || !root.join(&rel).exists() {
         return Err(CoreError::not_found("No source file at this location"));
