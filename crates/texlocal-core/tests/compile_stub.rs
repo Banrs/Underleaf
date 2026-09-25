@@ -133,6 +133,27 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 }
 
 #[tokio::test]
+async fn a_timed_out_compile_keeps_the_output_it_wrote() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n",
+    );
+
+    let mut mgr = CompileManager::new();
+    mgr.path_env = Some(path);
+    mgr.timeout = Some(Duration::from_millis(500));
+    let result = mgr
+        .compile(&root, &CompileOverrides::default(), None)
+        .await
+        .unwrap();
+
+    assert!(!result.ok);
+    assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
+}
+
+#[tokio::test]
 async fn a_timed_out_compile_is_killed_and_reported_failed() {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
@@ -156,9 +177,10 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
 }
 
 #[tokio::test]
-async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
+async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     // latexmk has exited, but something it started in the background (a
-    // shell-escape `&`, a latexmkrc previewer) still holds stdout open.
+    // shell-escape `&`, a latexmkrc previewer) still holds stdout open. The
+    // compile answers after a short drain grace, not at its timeout.
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
     let path = stub_env(
@@ -168,10 +190,6 @@ async fn a_descendant_holding_the_output_pipe_cannot_outlast_the_timeout() {
 
     let mut mgr = CompileManager::new();
     mgr.path_env = Some(path);
-    // Long enough for the stub itself to exit on a loaded machine (at 300ms it
-    // occasionally didn't, failing `ok`), yet well short of the sleep: the
-    // drain is bounded by the same deadline, so this returns after ~2s.
-    mgr.timeout = Some(Duration::from_secs(2));
     let started = std::time::Instant::now();
     let result = mgr
         .compile(&root, &CompileOverrides::default(), None)

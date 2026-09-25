@@ -22,6 +22,8 @@ use crate::BUILD_DIR;
 pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: usize = 1_000_000;
+/// How long a finished child's pipes are read before giving up on them.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
 const LOG_TAIL: usize = 200_000;
 /// How much of the log file is parsed. A real document's log is a few MB at
 /// most; one that loops on `\message` until the timeout can reach gigabytes.
@@ -287,11 +289,13 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
             child.wait().await.ok()
         }
     };
-    // A descendant that outlives the child (a shell-escape `&`, a latexmkrc
-    // previewer) inherits the pipes and can hold them open indefinitely, so the
-    // deadline bounds the drain too. What was read by then is lost; the log
-    // file is the primary record.
-    let (stdout, stderr) = match tokio::time::timeout_at(deadline, async {
+    // Once the child is gone, everything it wrote is already in the pipes, so
+    // a short grace reads it all. Waiting longer only waits on a descendant
+    // that outlived it (a shell-escape `&`, a latexmkrc previewer) and
+    // inherited the pipes, which may never close them. If even the grace runs
+    // out, what was read is lost; the log file is the primary record.
+    let drain_until = tokio::time::Instant::now() + DRAIN_GRACE;
+    let (stdout, stderr) = match tokio::time::timeout_at(drain_until, async {
         ((&mut out_task).await, (&mut err_task).await)
     })
     .await
