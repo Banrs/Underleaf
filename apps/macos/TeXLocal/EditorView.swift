@@ -8,7 +8,7 @@ struct EditorView: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 14
+    @AppStorage("editorFontSize") private var fontSize = 13
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -163,19 +163,19 @@ struct SplitPair<First: View, Second: View>: View {
     }
 }
 
-/// A pane's header: one line of controls across the top of an editor or
-/// the PDF, Xcode's jump-bar height, over the standard bar material.
+/// A pane's header: the second row of an Apple double toolbar, under the
+/// window's — compact (38 pt, 28 pt pills against the window toolbar's 52 and
+/// 36), the system's own fonts, over the standard bar material.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) { content }
+        GlassEffectContainer(spacing: 6) {
+            HStack(spacing: 6) { content }
         }
-            .font(.callout)
             .lineLimit(1)
             .padding(.horizontal, 8)
-            .frame(height: 44)
+            .frame(height: 38)
             .frame(maxWidth: .infinity)
             .background(.bar)
             // A shape, not Divider(): inside the HStack's layout context an
@@ -184,24 +184,25 @@ struct PaneBar<Content: View>: View {
     }
 }
 
-/// Related controls sharing one wide Liquid Glass capsule, drawn as the
-/// window toolbar draws a group: one surface that responds as a whole, its
-/// buttons at toolbar size (38 x 30 pt) rather than squeezed together.
+/// Related controls sharing one Liquid Glass capsule, drawn as a toolbar
+/// draws a group: one surface that responds as a whole.
 struct GlassPill<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         HStack(spacing: 0) { content }
             .buttonStyle(.borderless)
-            .padding(.horizontal, 3)
-            .frame(height: 34)
+            .padding(.horizontal, 2)
+            .frame(height: pillHeight)
             .glassEffect(.regular.interactive(), in: .capsule)
             .fixedSize()
     }
 }
 
-/// A pill button's size.
-let pillItem = CGSize(width: 38, height: 30)
+/// Every pill's height, and each button's size inside one: a compact
+/// secondary toolbar's, so the two rows read as window toolbar and bar.
+let pillHeight: CGFloat = 28
+let pillItem = CGSize(width: 32, height: 24)
 
 /// One action in an editing pill.
 struct Segment: Identifiable {
@@ -311,17 +312,19 @@ struct SegmentRun: View {
     }
 }
 
-/// One wide Liquid Glass capsule around runs, menus and hairlines.
+/// One Liquid Glass capsule around runs, menus and hairlines; tinted for
+/// the pane's one prominent action.
 struct GlassCapsule<Content: View>: View {
+    var tint: Color?
     @ViewBuilder var content: Content
 
     var body: some View {
         HStack(spacing: 0) { content }
             .buttonStyle(.borderless)
             .menuIndicator(.hidden)
-            .padding(.horizontal, 3)
-            .frame(height: 34)
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .padding(.horizontal, 2)
+            .frame(height: pillHeight)
+            .glassEffect(tint.map { .regular.tint($0).interactive() } ?? .regular.interactive(), in: .capsule)
             .fixedSize()
     }
 }
@@ -331,8 +334,8 @@ struct PillSeparator: View {
     var body: some View {
         Rectangle()
             .fill(.separator)
-            .frame(width: 1, height: 18)
-            .padding(.horizontal, 3)
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 2)
     }
 }
 
@@ -430,13 +433,13 @@ private struct SourceBar: View {
             }
         } label: {
             Text("Heading")
-                .padding(.leading, 10)
+                .padding(.leading, 8)
                 .frame(height: pillItem.height)
                 .contentShape(.rect)
         }
         // The system's indicator, trailing the title as a pop-up's does.
         .menuIndicator(.visible)
-        .padding(.trailing, 8)
+        .padding(.trailing, 6)
         .help("Insert a part, chapter, section or subsection")
     }
 
@@ -470,11 +473,14 @@ private struct SourceBar: View {
                 }
             }
         } label: {
-            Label(folded == 2 ? "Format" : "Insert", systemImage: folded == 2 ? "textformat" : "plus")
-                .labelStyle(.iconOnly)
-                .frame(width: pillItem.width, height: pillItem.height)
+            // Words, like Heading: a "+" here read as the sidebar's add-file.
+            Text(folded == 2 ? "Format" : "Insert")
+                .padding(.leading, 8)
+                .frame(height: pillItem.height)
                 .contentShape(.rect)
         }
+        .menuIndicator(.visible)
+        .padding(.trailing, 6)
         .help(folded == 2 ? "Format and insert" : "Insert a figure, table, equation or list")
     }
 
@@ -550,11 +556,13 @@ private struct StatusBar: View {
             .labelStyle(.iconOnly)
             .help(project.showLogs ? "Hide Panel (⇧⌘L)" : "Show Panel (⇧⌘L)")
         }
-        .font(.callout)
+        // The small system font (11 pt), as Finder's and Xcode's status bars.
+        .font(.subheadline)
+        .controlSize(.small)
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .padding(.horizontal, 12)
-        .frame(height: 30)
+        .frame(height: 26)
         .background(.bar)
         .overlay(alignment: .top) { Hairline() }
     }
@@ -572,7 +580,8 @@ private struct StatusBar: View {
                      ? "Compiled in \(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s"
                      : "Build Failed")
             } else {
-                Text("Not Compiled")
+                // A PDF from an earlier session is on screen but not this build.
+                Text(project.pdfVersion > 0 ? "Ready" : "Not Compiled")
             }
             if project.errorCount > 0 {
                 Label("\(project.errorCount)", systemImage: "xmark.octagon.fill").foregroundStyle(.red)

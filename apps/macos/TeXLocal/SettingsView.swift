@@ -76,7 +76,7 @@ extension GeneralSettings {
 private struct EditorSettings: View {
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 14
+    @AppStorage("editorFontSize") private var fontSize = 13
     @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {

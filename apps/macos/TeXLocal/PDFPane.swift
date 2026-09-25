@@ -90,23 +90,28 @@ struct PDFPane: View {
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
             GlassPill {
-                ProgressView().controlSize(.small).padding(.horizontal, 8)
+                ProgressView().controlSize(.small).frame(width: pillItem.width)
                 PillButton(title: "Stop", systemImage: "stop.fill", help: "Stop (⌘.)") { project.stopCompile() }
             }
         } else {
-            Button { app.perform(.compileRun) } label: {
-                if compact {
-                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
-                } else {
-                    Label("Compile", systemImage: "play.fill")
-                        .labelStyle(.titleAndIcon)
-                        .padding(.horizontal, 4)
+            let enabled = app.isEnabled(.compileRun)
+            GlassCapsule(tint: enabled ? .accentColor : nil) {
+                Button { app.perform(.compileRun) } label: {
+                    Group {
+                        if compact {
+                            Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
+                        } else {
+                            Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
+                        }
+                    }
+                        .fontWeight(.medium)
+                        .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                        .padding(.horizontal, compact ? 0 : 10)
+                        .frame(minWidth: pillItem.width, minHeight: pillItem.height)
+                        .contentShape(.rect)
                 }
+                .disabled(!enabled)
             }
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
-            .fixedSize()
-            .disabled(!app.isEnabled(.compileRun))
             .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
         }
     }
