@@ -167,6 +167,46 @@ async fn commands_dispatch_to_the_service_with_json_errors() {
     assert_eq!(unknown.status, 404);
 }
 
+#[cfg(unix)]
+#[tokio::test] // one runtime thread: a command that blocked it would stall every request
+async fn a_blocked_command_does_not_stall_other_requests() {
+    let f = fixture();
+    // Opening a FIFO blocks until a writer arrives, like a read of a file on
+    // a slow disk or a walk of a huge project.
+    let fifo = f._data.path().join("P/pipe.tex");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let writer = std::thread::spawn(move || {
+        let waited_out = rx.recv_timeout(std::time::Duration::from_secs(5)).is_err();
+        std::fs::write(&fifo, "x").unwrap();
+        waited_out
+    });
+
+    let body = json!({ "id": "P", "path": "pipe.tex" }).to_string();
+    let (read, listed) = tokio::join!(
+        f.app
+            .handle(authed("POST", "/api/read_file", &[], body.as_bytes())),
+        async {
+            let listed = f
+                .app
+                .handle(authed("POST", "/api/list_projects", &[], b""))
+                .await;
+            let _ = tx.send(());
+            listed
+        },
+    );
+    assert_eq!(listed.status, 200);
+    assert_eq!(json_body(&read)["text"], "x");
+    assert!(
+        !writer.join().unwrap(),
+        "list_projects waited for the blocked read"
+    );
+}
+
 #[tokio::test]
 async fn uploads_arrive_raw_with_percent_encoded_metadata() {
     let f = fixture();
