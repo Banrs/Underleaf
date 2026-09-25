@@ -27,8 +27,10 @@ struct NavigatorView: View {
                             } label: {
                                 Text(item.title)
                                     .lineLimit(1)
-                                    .padding(.leading, CGFloat(max(0, item.level - 2)) * 14)
+                                    .padding(.leading, CGFloat(item.level - topLevel) * 14)
                                     .fontWeight(item.id == current ? .semibold : .regular)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(.rect)
                             }
                             .buttonStyle(.plain)
                         }
@@ -85,6 +87,10 @@ struct NavigatorView: View {
         }
     }
 
+    /// Parts, chapters or sections, whichever the document starts from, sit
+    /// flush; deeper levels indent from there (the web's sidebar.js).
+    private var topLevel: Int { project.outline.map(\.level).min() ?? 0 }
+
     /// The section the cursor is in.
     private var current: Int? {
         Outline.chain(project.outline, at: project.cursorLine).last?.id
@@ -100,8 +106,16 @@ struct NavigatorView: View {
                     Button {
                         Task { await project.open( hit.file, line: hit.line) }
                     } label: {
-                        Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
-                            .lineLimit(2)
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
+                                .lineLimit(2)
+                            Spacer(minLength: 4)
+                            Text("\(hit.line)")
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                 }

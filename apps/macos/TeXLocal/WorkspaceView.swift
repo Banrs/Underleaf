@@ -32,11 +32,14 @@ struct WorkspaceView: View {
             }
             .frame(minWidth: 441, minHeight: 280)
             .animation(.snappy(duration: 0.25), value: app.showInspector)
+            // On the detail, as Apple's Landmarks sample has it: on the split
+            // view itself the spacers were dropped and every item ran
+            // together in one pill.
+            .toolbar { toolbar }
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
         .navigationDocument(project.openURL ?? URL(fileURLWithPath: "/"))
-        .toolbar { toolbar }
         .alert(promptTitle, isPresented: Binding(
             get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
         ), presenting: app.prompt) { prompt in
@@ -54,30 +57,14 @@ struct WorkspaceView: View {
 
     // ---------- toolbar ----------
 
-    /// History leading, the file as the window's title, and on the trailing
-    /// edge building, sharing, then the panes.
+    /// The file as the window's title at the leading edge, and the panes'
+    /// toggles at the trailing. What acts on a pane sits over it instead:
+    /// editing over the source (EditorView's `SourceBar`), compiling and
+    /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
+    /// too.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button("Compile", systemImage: "play.fill") { app.perform(.compileRun) }
-                .disabled(!app.isEnabled(.compileRun))
-                .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
-            Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
-                .disabled(!project.compiling)
-                .help("Stop (⌘.)")
-        }
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-        ToolbarItem(placement: .primaryAction) {
-            if let url = project.pdfURL, project.pdfVersion > 0 {
-                ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
-                    .help("Share PDF")
-            } else {
-                Button("Share PDF", systemImage: "square.and.arrow.up") {}
-                    .disabled(true)
-                    .help("Compile to share the PDF")
-            }
-        }
-        ToolbarSpacer(.fixed, placement: .primaryAction)
+
         ToolbarItemGroup(placement: .primaryAction) {
             Toggle(isOn: $project.showPDF) {
                 Label("PDF", systemImage: "doc.richtext")
@@ -139,6 +126,31 @@ struct WorkspaceView: View {
             case .gotoLine: if let line = Int(text) { project.reveal(line: line) }
             case .renameEntry(let from): await project.renameEntry(from, to: text)
             case .renameProject(let p): await app.rename(p, to: text)
+            }
+        }
+    }
+}
+
+/// What LaTeX's Insert menu offers, in the toolbar and the Format menu: the
+/// web editor bar's heading, reference, list and insert menus
+/// (workspace.js `editorToolbar`) as submenus of one.
+struct InsertMenuItems: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        submenu("Heading", headingTemplates)
+        submenu("Reference", referenceTemplates)
+        submenu("List", listTemplates)
+        Divider()
+        ForEach(insertTemplates.filter { !$0.0.hasSuffix("List") }, id: \.0) { label, template in
+            Button(label) { project?.format("insert", template) }
+        }
+    }
+
+    private func submenu(_ title: String, _ templates: [(String, String)]) -> some View {
+        Menu(title) {
+            ForEach(templates, id: \.0) { label, template in
+                Button(label) { project?.format("insert", template) }
             }
         }
     }
@@ -239,10 +251,6 @@ struct InspectorView: View {
                     if !project.outline.isEmpty {
                         LabeledContent("Sections", value: project.outline.count.formatted())
                     }
-                    LabeledContent("Saved", value: project.dirty ? "Edited" : "Saved")
-                    Button("Set as Main File") { Task { await project.setMainFile(path) } }
-                        .disabled(!path.hasSuffix(".tex") || path == project.settings?.mainFile)
-                    Button("Show in Finder") { reveal(path, in: project) }
                 }
             }
 
@@ -262,8 +270,6 @@ struct InspectorView: View {
                     Label(freshness.title, systemImage: freshness.systemImage)
                         .foregroundStyle(.secondary)
                 }
-                Button(MenuCommand.pdfSave.title) { app.perform(.pdfSave) }
-                    .disabled(project.pdfVersion == 0)
             }
         }
         .formStyle(.grouped)

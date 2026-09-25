@@ -12,6 +12,8 @@ final class AppModel {
 
     // Requests from commands to the views that own the matching UI.
     var showNewProject = false
+    /// The template the new-project sheet starts on: the card chosen.
+    var newProjectTemplate = "article"
     var prompt: Prompt?
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
@@ -89,6 +91,18 @@ final class AppModel {
             alert = error.localizedDescription
         }
         await refresh()
+    }
+
+    /// Select the project's folder in Finder: its main file's path, less
+    /// the main file's own components.
+    func revealProject(_ project: ProjectInfo) {
+        Task {
+            guard let abs = try? await core.call("raw_path", ["id": project.id, "path": project.mainFile], as: String.self)
+            else { return }
+            var root = URL(fileURLWithPath: abs)
+            for _ in project.mainFile.split(separator: "/") { root.deleteLastPathComponent() }
+            NSWorkspace.shared.activateFileViewerSelecting([root])
+        }
     }
 
     func open(_ id: String) async {

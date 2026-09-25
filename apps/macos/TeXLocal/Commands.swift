@@ -200,7 +200,7 @@ extension AppModel {
     func perform(_ command: MenuCommand) {
         guard isEnabled(command) else { return }
         switch command {
-        case .projectNew: showNewProject = true; return
+        case .projectNew: newProjectTemplate = "article"; showNewProject = true; return
         case .editUndo: undo(redo: false); return
         case .editRedo: undo(redo: true); return
         case .compileToggleAuto: autoCompile.toggle(); return
@@ -246,14 +246,25 @@ extension AppModel {
     /// The standard items would ask WebKit's undo manager, which never sees
     /// the changes CodeMirror makes itself (formatting, completions).
     private func undo(redo: Bool) {
-        if let view = NSApp.keyWindow?.firstResponder as? NSView, view.isDescendant(of: editor.webView) {
+        // A native text field (the find field, a rename, the project search)
+        // keeps its own undo. Anything else — the editor, or a click on the
+        // source bar's pill, which can take first responder from the web
+        // view — goes to CodeMirror's history: the standard undo: would reach
+        // WebKit's undo manager, which never sees CodeMirror's own changes
+        // and reverted half of an insertion.
+        if let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) {
+            sendUndo(redo: redo)
+            return
+        }
+        guard project?.openPath != nil else { sendUndo(redo: redo); return }
+        Task {
             // The page declines while one of its own fields, such as the
             // find panel's, has focus; that field's native undo takes it.
-            Task {
-                if !(await editor.command(redo ? "redo" : "undo")) { sendUndo(redo: redo) }
+            if await editor.command(redo ? "redo" : "undo") {
+                editor.focus()
+            } else {
+                sendUndo(redo: redo)
             }
-        } else {
-            sendUndo(redo: redo)
         }
     }
 
@@ -314,6 +325,11 @@ struct AppCommands: Commands {
             item(.projectClose)
             Divider()
             item(.pdfSave)
+            if let project = app.project, let url = project.pdfURL, project.pdfVersion > 0 {
+                ShareLink("Share PDF", item: url)
+            } else {
+                Button("Share PDF") {}.disabled(true)
+            }
             item(.projectExport)
         }
         CommandGroup(replacing: .textEditing) {
@@ -321,10 +337,17 @@ struct AppCommands: Commands {
             item(.projectSearch)
             item(.pdfFind)
             item(.editGotoLine)
-            Divider()
+        }
+        // Where Mac text apps keep styling (TextEdit, Pages): the toolbar's
+        // centre group, and what its Insert menu holds.
+        CommandMenu("Format") {
             item(.editBold)
             item(.editItalic)
             item(.editMath)
+            Divider()
+            InsertMenuItems(project: app.project)
+                .disabled(app.project?.openPath?.hasSuffix(".tex") != true)
+            Divider()
             item(.editComment)
         }
         CommandGroup(after: .sidebar) {

@@ -37,9 +37,7 @@ struct PDFPane: View {
         // the PDF — its page, whether it is current, its zoom, finding in it —
         // rather than to the document the window toolbar acts on. A system
         // bar, so the pages scroll beneath it with the edge effect.
-        .safeAreaBar(edge: .top) {
-            if project.pdfVersion > 0 || finding { bar }
-        }
+        .safeAreaBar(edge: .top) { bar }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -68,14 +66,67 @@ struct PDFPane: View {
         }
     }
 
+    /// The source's jump bar's twin, so the two panes' headers line up.
+    /// Finding takes the whole bar, as Preview's find does, rather than
+    /// squeezing in beside the zoom.
     private var bar: some View {
-        HStack {
-            if finding { findControls } else { status }
-            Spacer(minLength: 12)
-            zoomControls
+        PaneBar {
+            if finding {
+                findControls
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { compileControls(compact: false); status; Spacer(minLength: 8); zoomControls; share }
+                    HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 8); zoomControls; share }
+                    HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 8); zoomControls; share }
+                    HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 8); share }
+                }
+            }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+    }
+
+    /// Overleaf's Recompile, over the PDF it makes: the one prominent
+    /// control, tinted glass; Stop beside it while a build runs.
+    @ViewBuilder
+    private func compileControls(compact: Bool) -> some View {
+        if project.compiling {
+            GlassPill {
+                ProgressView().controlSize(.small).padding(.horizontal, 8)
+                PillButton(title: "Stop", systemImage: "stop.fill", help: "Stop (⌘.)") { project.stopCompile() }
+            }
+        } else {
+            Button { app.perform(.compileRun) } label: {
+                if compact {
+                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
+                } else {
+                    Label("Compile", systemImage: "play.fill")
+                        .labelStyle(.titleAndIcon)
+                        .padding(.horizontal, 4)
+                }
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .fixedSize()
+            .disabled(!app.isEnabled(.compileRun))
+            .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
+        }
+    }
+
+    @ViewBuilder
+    private var share: some View {
+        GlassPill {
+            if let url = project.pdfURL, project.pdfVersion > 0 {
+                ShareLink(item: url) {
+                    Label("Share PDF", systemImage: "square.and.arrow.up")
+                        .labelStyle(.iconOnly)
+                        .frame(width: pillItem.width, height: pillItem.height)
+                        .contentShape(.rect)
+                }
+                .help("Share PDF")
+            } else {
+                PillButton(title: "Share PDF", systemImage: "square.and.arrow.up", help: "Compile to share the PDF") {}
+                    .disabled(true)
+            }
+        }
     }
 
     /// The page, and whether the PDF still matches the source.
@@ -100,7 +151,7 @@ struct PDFPane: View {
     @ViewBuilder
     private var findControls: some View {
         PDFFindField(text: $findQuery, focus: findFocus, step: controller.step, close: closeFind)
-            .frame(minWidth: 120, maxWidth: 240)
+            .frame(minWidth: 100, maxWidth: .infinity)
             .task(id: findQuery) {
                 // Debounced like the web's, so typing doesn't search every prefix.
                 try? await Task.sleep(for: .milliseconds(200))
@@ -124,27 +175,36 @@ struct PDFPane: View {
         .fixedSize()
         .disabled(controller.matches.isEmpty)
         Button("Done") { closeFind() }
+            .fixedSize()
     }
 
     /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
     /// control (workspace.js `zoomButton`).
     private var zoomControls: some View {
-        ControlGroup {
-            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .help("Zoom Out (⌘−)")
-            Menu(controller.zoomLabel) {
+        GlassPill {
+            PillButton(title: "Zoom Out", systemImage: "minus.magnifyingglass", help: "Zoom Out (⌘−)") { controller.zoom(in: false) }
+            // Hairlines set the level, a menu, apart from the two buttons.
+            PillSeparator()
+            Menu {
                 Button("Fit Width") { controller.fitWidth() }
                 Button("Fit Height") { controller.fitHeight() }
                 Divider()
                 ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
                     Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
                 }
+            } label: {
+                // One width for every level, so the pill doesn't resize as it
+                // zooms (pinching steps through dozens).
+                Text(controller.zoomLabel)
+                    .monospacedDigit()
+                    .frame(width: 72, height: pillItem.height)
+                    .contentShape(.rect)
             }
+            .menuIndicator(.hidden)
             .help("Zoom")
-            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .help("Zoom In (⌘+)")
+            PillSeparator()
+            PillButton(title: "Zoom In", systemImage: "plus.magnifyingglass", help: "Zoom In (⌘+)") { controller.zoom(in: true) }
         }
-        .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
 

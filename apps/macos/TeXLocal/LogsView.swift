@@ -138,17 +138,42 @@ struct PanelView: View {
                 : text.split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { $0.localizedCaseInsensitiveContains(filter) }
                     .joined(separator: "\n")
-            ScrollView([.vertical, .horizontal]) {
-                Text(lines)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
-            .defaultScrollAnchor(filter.isEmpty ? .bottom : .top)
+            LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
         } else {
             ContentUnavailableView("No Log", systemImage: "doc.plaintext",
                                    description: Text("Compile to see the log here."))
         }
+    }
+}
+
+/// The build log in AppKit's text view: native scrolling and selection, the
+/// system find bar (⌘F), and fast with the megabyte logs LaTeX writes, which
+/// a SwiftUI Text laid out whole on every change.
+private struct LogTextView: NSViewRepresentable {
+    let text: String
+    /// Unfiltered, the log opens at its end, where the error usually is.
+    let scrollsToEnd: Bool
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.drawsBackground = false
+        scroll.autohidesScrollers = true
+        let view = scroll.documentView as! NSTextView
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.usesFindBar = true
+        view.isIncrementalSearchingEnabled = true
+        view.textContainerInset = NSSize(width: 8, height: 8)
+        view.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        view.textColor = .labelColor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let view = scroll.documentView as! NSTextView
+        guard view.string != text else { return }
+        view.string = text
+        if scrollsToEnd { view.scrollToEndOfDocument(nil) } else { view.scrollToBeginningOfDocument(nil) }
     }
 }

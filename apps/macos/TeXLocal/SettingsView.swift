@@ -97,7 +97,7 @@ private struct EditorSettings: View {
             Section("Status") {
                 Toggle(isOn: $showWordCount) {
                     Text("Word Count")
-                    Text("Show words and lines over the editor")
+                    Text("Show words and lines in the status bar")
                 }
             }
         }

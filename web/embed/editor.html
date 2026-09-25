@@ -10,6 +10,10 @@
   <style>
     html, body { height: 100%; margin: 0; background: var(--bg-content); }
     #editor { height: 100%; }
+    /* The platform's own scrollers — overlay ones that follow System
+       Settings on a Mac, Fluent ones on Windows — rather than the browser
+       version's tinted bar (styles.css). */
+    * { scrollbar-width: auto; scrollbar-color: auto; }
     /* Room to scroll the last line clear of the host's status bar. */
     .cm-content { padding-bottom: 64px; }
   </style>
