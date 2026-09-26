@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.System;
 
 namespace TeXLocal;
@@ -31,6 +32,8 @@ public sealed partial class SettingsView : UserControl
         {
             ScaleBox.Items.Add($"{scale}%");
         }
+        AboutIcon.Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
+        VersionText.Text = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)}";
     }
 
     private static int Index(string[] values, string value) => Math.Max(0, Array.IndexOf(values, value));

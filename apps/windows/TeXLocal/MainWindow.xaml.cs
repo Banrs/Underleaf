@@ -1,10 +1,10 @@
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
-using System.Numerics;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
 using Windows.UI.ViewManagement;
@@ -33,6 +33,10 @@ public sealed partial class MainWindow : Window
 
     // Kept alive for their change events: Windows' text size and accent.
     private readonly UISettings uiSettings = new();
+    // The window's presenter while it isn't full screen: kept, so leaving
+    // full screen restores its minimum size and state.
+    private readonly OverlappedPresenter overlapped;
+    private double minimumSizeScale;
     private bool closing;
     private bool active = true;
 
@@ -43,10 +47,11 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        // Tall, as the guidance asks of a title bar with a back button; the
-        // TitleBar control is given the same 48 px so its icon, title and
-        // back button centre on the caption buttons.
+        // Tall, as the guidance asks of a title bar holding controls: the
+        // TitleBar control grows to 48 once it has content, and the caption
+        // buttons are then as tall as it is.
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        overlapped = (OverlappedPresenter)AppWindow.Presenter;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.ico"));
         TitleIcon.ImageSource = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
         // Most of the screen, centred: an editor and a PDF side by side want room.
@@ -55,7 +60,16 @@ public sealed partial class MainWindow : Window
             area.X + area.Width / 10, area.Y + area.Height / 10, area.Width * 8 / 10, area.Height * 8 / 10));
 
         AddAccelerators();
-        AnimateScreens();
+        Root.Loaded += (_, _) =>
+        {
+            ApplyMinimumSize();
+            FitCaptionInset();
+            Root.XamlRoot.Changed += (_, _) =>
+            {
+                ApplyMinimumSize();
+                FitCaptionInset();
+            };
+        };
         Root.ActualThemeChanged += (_, _) => AppearanceChanged();
         uiSettings.TextScaleFactorChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
         uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(AppearanceChanged);
@@ -168,13 +182,31 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The title bar and the taskbar's title for what is on screen: the open
+    /// file and its project in the workspace, as a document app names its
+    /// document; the screen's name elsewhere. Worked out from the current
+    /// state alone, so anything that changes it just calls this again.
+    /// </summary>
     internal void UpdateTitle()
     {
         var settings = SettingsPage.Visibility == Visibility.Visible;
-        AppTitleBar.Subtitle = settings ? "Settings" : Project?.Id ?? "";
-        AppTitleBar.IsBackButtonVisible = settings || Project is not null;
-        AppTitleBar.IsPaneToggleButtonVisible = !settings && Project is not null;
-        Title = Project is { } p ? $"{p.Id} - TeXLocal" : "TeXLocal";
+        var project = settings ? null : Project;
+        // Project-relative paths use forward slashes on every platform.
+        var file = project?.OpenPath is { } path ? path[(path.LastIndexOf('/') + 1)..] : null;
+        // The project names the window; the open file is in the jump bar below.
+        AppTitleBar.Title = settings ? "Settings" : project?.Id ?? "TeXLocal";
+        AppTitleBar.IsBackButtonVisible = settings || project is not null;
+        AppTitleBar.IsPaneToggleButtonVisible = project is not null;
+        PaneToggles.Visibility = project is not null ? Visibility.Visible : Visibility.Collapsed;
+        SearchBox.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        var search = project is null ? "Search projects" : "Search project";
+        SearchBox.PlaceholderText = search;
+        AutomationProperties.SetName(SearchBox, search);
+        ToolTipService.SetToolTip(SearchBox, $"{search} (Ctrl+Shift+F)");
+        Title = project is null ? "TeXLocal"
+            : file is null ? $"{project.Id} – TeXLocal"
+            : $"{file} – {project.Id} – TeXLocal";
     }
 
     // ---------- screens ----------
@@ -182,46 +214,99 @@ public sealed partial class MainWindow : Window
     /// <summary>The library, the open project, or settings over either.</summary>
     private void ShowScreen(bool settings)
     {
-        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
-        Workspace.Visibility = !settings && Project is not null ? Visibility.Visible : Visibility.Collapsed;
-        Home.Visibility = !settings && Project is null ? Visibility.Visible : Visibility.Collapsed;
+        // Library, project, Settings: deeper drills in, back drills out.
+        UIElement[] screens = [Home, Workspace, SettingsPage];
+        var from = Array.FindIndex(screens, s => s.Visibility == Visibility.Visible);
+        var to = settings ? 2 : Project is null ? 0 : 1;
+        for (var i = 0; i < screens.Length; i++)
+        {
+            Motion.Show(screens[i], i == to, to > from ? Motion.DrillIn : Motion.DrillOut);
+        }
         if (settings)
         {
             SettingsPage.Render();
         }
+        // A new screen starts with nothing searched.
+        SearchBox.Text = "";
         UpdateTitle();
+        Workspace.RenderMenus();
+    }
+
+    // ---------- search ----------
+
+    /// <summary>The title bar's search box searches what's on screen.</summary>
+    private void OnSearchChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (Workspace.Visibility == Visibility.Visible)
+        {
+            Workspace.Search(sender.Text);
+        }
+        else if (Home.Visibility == Visibility.Visible)
+        {
+            Home.Search(sender.Text);
+        }
+    }
+
+    /// <summary>Enter on the library opens the first match.</summary>
+    private void OnSearchSubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+    {
+        if (Home.Visibility == Visibility.Visible)
+        {
+            Home.OpenFirstMatch();
+        }
     }
 
     /// <summary>
-    /// A screen coming into view fades in and rises a little, as a page does
-    /// when Windows apps navigate. Visibility alone never animates. Off when
-    /// Windows' animation effects are.
+    /// Room for the caption buttons and no more. TitleBar reserves the
+    /// window's caption inset, which is in physical pixels, as if it were in
+    /// effective ones — twice the buttons' width at 200% — and only once, when
+    /// its template applies. Correct it, and again when the scale changes.
     /// </summary>
-    private void AnimateScreens()
+    private void FitCaptionInset()
     {
-        if (!uiSettings.AnimationsEnabled)
+        if (VisualTreeHelper.GetChildrenCount(AppTitleBar) == 0
+            || VisualTreeHelper.GetChild(AppTitleBar, 0) is not FrameworkElement template)
         {
             return;
         }
-        var compositor = ElementCompositionPreview.GetElementVisual(Root).Compositor;
-        var decelerate = compositor.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1f));
-        var fade = compositor.CreateScalarKeyFrameAnimation();
-        fade.Target = "Opacity";
-        fade.InsertKeyFrame(0, 0);
-        fade.InsertKeyFrame(1, 1, decelerate);
-        fade.Duration = TimeSpan.FromMilliseconds(250);
-        var rise = compositor.CreateVector3KeyFrameAnimation();
-        rise.Target = "Translation";
-        rise.InsertKeyFrame(0, new Vector3(0, 24, 0));
-        rise.InsertKeyFrame(1, Vector3.Zero, decelerate);
-        rise.Duration = TimeSpan.FromMilliseconds(300);
-        var show = compositor.CreateAnimationGroup();
-        show.Add(fade);
-        show.Add(rise);
-        foreach (var screen in new UIElement[] { Home, Workspace, SettingsPage })
+        var scale = Root.XamlRoot.RasterizationScale;
+        if (template.FindName("LeftPaddingColumn") is ColumnDefinition left)
         {
-            ElementCompositionPreview.SetIsTranslationEnabled(screen, true);
-            ElementCompositionPreview.SetImplicitShowAnimation(screen, show);
+            left.Width = new GridLength(AppWindow.TitleBar.LeftInset / scale);
+        }
+        if (template.FindName("RightPaddingColumn") is ColumnDefinition right)
+        {
+            right.Width = new GridLength(AppWindow.TitleBar.RightInset / scale);
+        }
+    }
+
+    private void OnSearchAreaSizeChanged(object sender, SizeChangedEventArgs e) => PlaceSearch();
+
+    /// <summary>
+    /// Up to 400 wide and centred on the window, as Windows 11 apps centre a
+    /// title bar's search box, but never over the menus or the toggles.
+    /// </summary>
+    private void PlaceSearch()
+    {
+        if (Root.XamlRoot is null)
+        {
+            return;
+        }
+        var slotLeft = Menu.ActualWidth + SearchArea.ColumnSpacing;
+        var slotWidth = SearchArea.ActualWidth - slotLeft;
+        var width = Math.Clamp(slotWidth, 0, 400);
+        var areaLeft = SearchArea.TransformToVisual(Root).TransformPoint(default).X;
+        var centred = (Root.ActualWidth - width) / 2 - areaLeft - slotLeft;
+        SearchBox.Width = width;
+        SearchBox.Margin = new Thickness(Math.Clamp(centred, 0, slotWidth - width), 0, 0, 0);
+    }
+
+    private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Escape && SearchBox.Text.Length > 0)
+        {
+            SearchBox.Text = "";
+            e.Handled = true;
         }
     }
 
@@ -242,6 +327,10 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnPaneToggleRequested(TitleBar sender, object args) => Perform(MenuCommand.ViewToggleSidebar);
+
+    private void OnTogglePdf(object sender, RoutedEventArgs e) => Perform(MenuCommand.ViewTogglePdf);
+
+    private void OnToggleInspector(object sender, RoutedEventArgs e) => Perform(MenuCommand.ViewToggleInspector);
 
     // ---------- projects ----------
 
@@ -361,6 +450,38 @@ public sealed partial class MainWindow : Window
         Workspace.Render();
     }
 
+    // ---------- window size ----------
+
+    /// <summary>
+    /// 960 × 600 at least, as on macOS, so every pane fits at its minimum.
+    /// The presenter takes physical pixels (microsoft-ui-xaml#10452), so the
+    /// minimum is scaled again whenever the display's scale changes.
+    /// </summary>
+    private void ApplyMinimumSize()
+    {
+        var scale = Root.XamlRoot.RasterizationScale;
+        if (scale == minimumSizeScale)
+        {
+            return;
+        }
+        minimumSizeScale = scale;
+        overlapped.PreferredMinimumWidth = (int)Math.Ceiling(960 * scale);
+        overlapped.PreferredMinimumHeight = (int)Math.Ceiling(600 * scale);
+    }
+
+    /// <summary>F11: the whole screen for the window, and back.</summary>
+    internal void ToggleFullScreen()
+    {
+        if (AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen)
+        {
+            AppWindow.SetPresenter(overlapped);
+        }
+        else
+        {
+            AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+        }
+    }
+
     // ---------- keyboard ----------
 
     /// <summary>
@@ -400,18 +521,25 @@ public sealed partial class MainWindow : Window
     /// saved, the window stays unless the user chooses to lose the edits —
     /// never silently, and never a dead end.
     /// </summary>
-    private async void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (closing || Project is not { } project)
+        if (closing || Project is null)
         {
             return;
         }
         args.Cancel = true;
-        if (Dialogs.IsOpen)
+        _ = CloseAfterSavingAsync();
+    }
+
+    /// <summary>Close once the open document reaches disk, or once the user agrees to lose it.</summary>
+    private async Task CloseAfterSavingAsync()
+    {
+        if (closing || Dialogs.IsOpen)
         {
             return;
         }
-        if (!await project.FlushAsync()
+        if (Project is { } project
+            && !await project.FlushAsync()
             && !await Dialogs.ConfirmAsync(Root.XamlRoot, "Close without saving?",
                 "TeXLocal couldn’t save your latest changes. If you close now, they’ll be lost.", "Close without saving"))
         {

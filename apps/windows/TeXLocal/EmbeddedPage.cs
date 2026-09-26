@@ -78,6 +78,17 @@ internal sealed class EmbeddedPage
 #if !DEBUG
         settings.AreDevToolsEnabled = false;
 #endif
+        // Right-click is the app's, not a browser's: no Back, Reload, Save
+        // as, Print or Inspect. The PDF page has nothing of its own to offer
+        // there; the editor keeps what a text field's menu holds.
+        if (page == "pdf.html")
+        {
+            settings.AreDefaultContextMenusEnabled = false;
+        }
+        else
+        {
+            web.ContextMenuRequested += (_, e) => KeepEditItems(e);
+        }
 
         // The page itself never navigates: links open in the browser, and a
         // file dropped on it must not replace it.
@@ -115,6 +126,34 @@ internal sealed class EmbeddedPage
             }
         };
         web.Navigate($"https://{AppHost}/embed/{page}");
+    }
+
+    /// <summary>
+    /// The unlocalised names (<see cref="CoreWebView2ContextMenuItem.Name"/>)
+    /// of the items a text field's menu holds: the clipboard, Select all, and
+    /// the spelling suggestions.
+    /// </summary>
+    private static readonly HashSet<string> EditItems = ["cut", "copy", "paste", "selectAll", "spellCheck"];
+
+    /// <summary>Trim the page's menu to its edit items, with no separator left leading, trailing or doubled.</summary>
+    private static void KeepEditItems(CoreWebView2ContextMenuRequestedEventArgs e)
+    {
+        var items = e.MenuItems;
+        for (var i = items.Count - 1; i >= 0; i--)
+        {
+            var separator = items[i].Kind == CoreWebView2ContextMenuItemKind.Separator;
+            if (separator ? i == 0 || i == items.Count - 1 || items[i + 1].Kind == CoreWebView2ContextMenuItemKind.Separator
+                : !EditItems.Contains(items[i].Name))
+            {
+                items.RemoveAt(i);
+            }
+        }
+        if (items.Count > 0 && items[0].Kind == CoreWebView2ContextMenuItemKind.Separator)
+        {
+            items.RemoveAt(0);
+        }
+        // Nothing left (a right-click away from any text): no menu at all.
+        e.Handled = items.Count == 0;
     }
 
     private static void OpenExternally(string uri)

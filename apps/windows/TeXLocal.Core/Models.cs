@@ -36,7 +36,8 @@ public sealed record Symbols(IReadOnlyList<string> Citations, IReadOnlyList<stri
 
 public sealed record SearchHit(string File, int Line, string Before, string Match, string After)
 {
-    public string Location => $"{File}:{Line}";
+    /// <summary>Under its file's heading in the results, a match needs only its line.</summary>
+    public string LineLabel => $"Line {Line:N0}";
 }
 
 public sealed record FileText(string Text);

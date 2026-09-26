@@ -61,19 +61,6 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public int CursorLine { get => cursorLine; private set => Set(ref cursorLine, value); }
     private int cursorLine = 1;
 
-    /// <summary>File › section › subsection at the cursor (web/src/workspace.js renderCrumbs).</summary>
-    public IReadOnlyList<string> Breadcrumb
-    {
-        get
-        {
-            if (OpenPath is not { } path)
-            {
-                return [];
-            }
-            return [path[(path.LastIndexOf('/') + 1)..], .. Outline.Chain(Sections, CursorLine).Select(s => s.Title)];
-        }
-    }
-
     public bool Dirty { get => dirty; private set => Set(ref dirty, value); }
     private bool dirty;
 
@@ -99,8 +86,16 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public ForwardLoc? Highlight { get => highlight; private set { highlight = value; Raise(); } }
     private ForwardLoc? highlight;
 
+    /// <summary>How the PDF on screen differs from the source, or null when it is current.</summary>
+    public PdfFreshness? Freshness { get => freshness; private set => Set(ref freshness, value); }
+    private PdfFreshness? freshness;
+
+    /// <summary>The panel below the editors, and which of its tabs shows.</summary>
     public bool ShowLogs { get => showLogs; set => Set(ref showLogs, value); }
     private bool showLogs;
+
+    public PanelTab PanelTab { get => panelTab; set => Set(ref panelTab, value); }
+    private PanelTab panelTab;
 
     public string SearchQuery
     {
@@ -120,9 +115,6 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public int WarningCount => Result?.Warnings.Count ?? 0;
     public bool TexAvailable => app.Tex?.Available ?? false;
     private bool AutoCompile => app.Preferences.AutoCompile;
-
-    public string Status =>
-        Compiling ? "Compiling…" : Saving ? "Saving…" : Dirty ? "Unsaved changes" : "Saved";
 
     private void Report(CoreException error) => app.Report(error.Message);
 
@@ -321,11 +313,17 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             return;
         }
         Dirty = true;
+        if (PdfVersion > 0 && Freshness is null)
+        {
+            Freshness = PdfFreshness.Edited;
+        }
         autosave?.Cancel();
         var pending = autosave = new CancellationTokenSource();
         try
         {
-            await Task.Delay(1200, pending.Token);
+            // macOS's pause: soon enough that an automatic compile follows
+            // typing closely, long enough not to save every keystroke.
+            await Task.Delay(700, pending.Token);
         }
         catch (TaskCanceledException)
         {
@@ -484,8 +482,20 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             {
                 PdfPath = pdf;
                 PdfVersion++;
+                // Edits made while it built still aren't in it.
+                Freshness = Dirty ? PdfFreshness.Edited : null;
             }
-            ShowLogs = !result.Ok;
+            else if (!result.Ok)
+            {
+                if (PdfVersion > 0)
+                {
+                    Freshness = PdfFreshness.LastSuccessful;
+                }
+                // TeX can stop without an error the parser recognises; then
+                // the log is the only explanation.
+                PanelTab = result.Errors.Count > 0 ? PanelTab.Issues : PanelTab.Log;
+                ShowLogs = true;
+            }
             app.NotifyCompiled(result);
         }
         catch (CoreException e)
@@ -513,6 +523,28 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Stop the build in progress: its process tree is killed and the compile returns failed.</summary>
+    public void StopCompile()
+    {
+        if (Compiling)
+        {
+            compileQueued = false;
+            core.KillAll();
+        }
+    }
+
+    public async Task SetShellEscapeAsync(bool on)
+    {
+        try
+        {
+            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { shellEscape = on } });
+        }
+        catch (CoreException e)
+        {
+            Report(e);
+        }
+    }
+
     public async Task SetEngineAsync(string engine)
     {
         if (engine == Settings?.Engine)
@@ -535,7 +567,8 @@ internal sealed class ProjectModel : INotifyPropertyChanged
 
     public async Task ForwardSyncAsync()
     {
-        if (OpenPath is not { } path)
+        // Saved first, so SyncTeX reads the line against the text on disk.
+        if (OpenPath is not { } path || !await SaveNowAsync())
         {
             return;
         }
@@ -543,7 +576,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         try
         {
             var loc = await core.CallAsync<ForwardLoc>("synctex_forward", new { id = Id, file = path, line });
-            ShowLogs = false;
+            // Shown, and the panel hidden, so the spot is in view.
             app.ShowPdf();
             Highlight = loc;
         }
@@ -677,13 +710,14 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         try
         {
             await core.CallAsync<ImportResult>("import_files", new { id = Id, dir, paths });
-            await ReloadTreeAsync();
-            await RefreshSymbolsAsync();
         }
         catch (CoreException e)
         {
             Report(e);
         }
+        // Even after a failure: the files copied before it are there.
+        await ReloadTreeAsync();
+        await RefreshSymbolsAsync();
     }
 
     public async Task RevealAsync(string path)
@@ -767,4 +801,20 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public void Format(string name, string? arg = null) => _ = editor.CommandAsync(name, arg);
 
     public void Reveal(int line) => _ = editor.RevealAsync(line);
+}
+
+/// <summary>How the PDF on screen differs from the source.</summary>
+internal enum PdfFreshness
+{
+    /// <summary>The source has changed since it was built.</summary>
+    Edited,
+
+    /// <summary>The latest build failed; this is the one before it.</summary>
+    LastSuccessful,
+}
+
+internal enum PanelTab
+{
+    Issues,
+    Log,
 }

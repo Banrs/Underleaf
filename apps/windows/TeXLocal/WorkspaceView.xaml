@@ -5,251 +5,144 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:TeXLocal">
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
 
-        <!-- Menus on the left, the document's commands on the right, on Mica. -->
-        <Grid Padding="8,0,8,4" ColumnSpacing="8">
+        <Grid x:Name="Panes">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <MenuBar x:Name="Menu" VerticalAlignment="Center" />
-            <CommandBar Grid.Column="1" HorizontalAlignment="Right" DefaultLabelPosition="Right"
-                        Background="Transparent" VerticalContentAlignment="Center">
-                <!-- A switched-on toggle gets the subtle fill File Explorer's
-                     toolbar uses, not a block of accent colour. Contrast
-                     themes keep the system's own colours. -->
-                <CommandBar.Resources>
-                    <ResourceDictionary>
-                        <ResourceDictionary.ThemeDictionaries>
-                            <ResourceDictionary x:Key="Default">
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPressed" ResourceKey="ControlFillColorTransparentBrush" />
-                            </ResourceDictionary>
-                            <ResourceDictionary x:Key="Light">
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="AppBarToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundChecked" ResourceKey="SubtleFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPointerOver" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBackgroundCheckedPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-                                <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="TextFillColorSecondaryBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="ControlFillColorTransparentBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
-                                <StaticResource x:Key="ToggleButtonBorderBrushCheckedPressed" ResourceKey="ControlFillColorTransparentBrush" />
-                            </ResourceDictionary>
-                        </ResourceDictionary.ThemeDictionaries>
-                    </ResourceDictionary>
-                </CommandBar.Resources>
-                <AppBarButton Label="Insert" Icon="Add" AccessKey="I" ToolTipService.ToolTip="Insert an environment">
-                    <AppBarButton.Flyout>
-                        <MenuFlyout x:Name="InsertMenu" Placement="BottomEdgeAlignedLeft" />
-                    </AppBarButton.Flyout>
-                </AppBarButton>
-                <AppBarButton Label="Bold" LabelPosition="Collapsed" Width="40" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)">
-                    <AppBarButton.Icon>
-                        <FontIcon Glyph="&#xE8DD;" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton Label="Italic" LabelPosition="Collapsed" Width="40" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)">
-                    <AppBarButton.Icon>
-                        <FontIcon Glyph="&#xE8DB;" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton Label="Inline math" LabelPosition="Collapsed" Width="40" Click="OnMath" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
-                    <AppBarButton.Icon>
-                        <PathIcon Data="M1,3 H15 V5 H11.5 V12 C11.5,12.8 11.9,13.2 12.6,13.2 H14 V15 H12.2 C10.6,15 9.5,14 9.5,12.4 V5 H6.5 V15 H4.5 V5 H1 Z" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarSeparator />
-                <!-- Compile is the primary action; the engine and auto-compile
-                     live in its menu, the way a split button carries a default
-                     and its options. -->
-                <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
-                    <SplitButton x:Name="CompileButton" Click="OnCompile" AccessKey="R"
-                                 AutomationProperties.Name="Compile" ToolTipService.ToolTip="Compile (Ctrl+Enter)">
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="16" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon x:Name="CompileIcon" Glyph="&#xE768;" FontSize="16" />
-                            <ProgressRing x:Name="CompileProgress" Width="16" Height="16" IsActive="False"
-                                          AutomationProperties.Name="Compiling" />
-                            <TextBlock Grid.Column="1" Text="Compile" />
-                        </Grid>
-                        <SplitButton.Flyout>
-                            <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                <RadioMenuFlyoutItem x:Name="EnginePdf" Text="pdfLaTeX" GroupName="Engine" Tag="pdflatex" Click="OnEngine" />
-                                <RadioMenuFlyoutItem x:Name="EngineXe" Text="XeLaTeX" GroupName="Engine" Tag="xelatex" Click="OnEngine" />
-                                <RadioMenuFlyoutItem x:Name="EngineLua" Text="LuaLaTeX" GroupName="Engine" Tag="lualatex" Click="OnEngine" />
-                                <MenuFlyoutSeparator />
-                                <ToggleMenuFlyoutItem x:Name="AutoCompileItem" Text="Compile automatically" Click="OnAutoCompile" />
-                            </MenuFlyout>
-                        </SplitButton.Flyout>
-                    </SplitButton>
-                </AppBarElementContainer>
-                <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
-                    <ToggleButton x:Name="LogButton" Click="OnToggleLogs" AccessKey="L" AutomationProperties.Name="Compile log"
-                                  Background="Transparent" BorderThickness="0" Width="40" Height="40" Padding="0">
-                        <Grid>
-                            <FontIcon Glyph="&#xE8FD;" FontSize="16" />
-                            <InfoBadge x:Name="ErrorBadge" Style="{StaticResource CriticalValueInfoBadgeStyle}"
-                                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-8,-16,0"
-                                       Visibility="Collapsed" />
-                        </Grid>
-                    </ToggleButton>
-                </AppBarElementContainer>
-                <AppBarToggleButton x:Name="PdfToggle" Label="PDF" LabelPosition="Collapsed" Width="40" AccessKey="P" Click="OnTogglePdf"
-                                    ToolTipService.ToolTip="Show or hide the PDF (Ctrl+Shift+\)">
-                    <AppBarToggleButton.Icon>
-                        <FontIcon Glyph="&#xE90D;" />
-                    </AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarButton Label="Export" Icon="Share" AccessKey="X" ToolTipService.ToolTip="Save the PDF or the project elsewhere">
-                    <AppBarButton.Flyout>
-                        <MenuFlyout Placement="BottomEdgeAlignedRight">
-                            <MenuFlyoutItem x:Name="SavePdfItem" Text="Save PDF as…" Click="OnSavePdf" KeyboardAcceleratorTextOverride="Ctrl+Shift+S">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xEA90;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Export project as ZIP…" Click="OnExportZip">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xF012;" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </AppBarButton.Flyout>
-                </AppBarButton>
-                <CommandBar.SecondaryCommands>
-                    <AppBarButton Label="Settings" Icon="Setting" Click="OnSettings" KeyboardAcceleratorTextOverride="Ctrl+," />
-                </CommandBar.SecondaryCommands>
-            </CommandBar>
-        </Grid>
-
-        <Grid x:Name="Panes" Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SidebarColumn" Width="260" />
+                <ColumnDefinition x:Name="SidebarColumn" Width="280" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Files, project search and the outline, on Mica. Files dropped
-                 here are added to the project, or to the folder under them. -->
-            <Grid x:Name="Sidebar" Padding="8,0,0,0" RowSpacing="8" Background="Transparent" AllowDrop="True"
-                  DragOver="OnDragOver" Drop="OnDrop">
+            <!-- A writer's sidebar, on the base layer as NavigationView's pane
+                 is: the files, the open document's outline beneath them (as
+                 Overleaf pairs them) or, while the title bar's search box has
+                 a query, its results. Adding files is the Files heading's
+                 action, as a section header carries its commands in File
+                 Explorer and Visual Studio. 8 above, so the first heading
+                 sits level with the toolbar's buttons. Files dropped here
+                 are added to the project, or to the folder under them. -->
+            <Grid x:Name="Sidebar" Padding="0,8,0,0" Background="Transparent" AllowDrop="True"
+                  DragOver="OnDragOver" Drop="OnDrop" SizeChanged="OnSidebarSizeChanged">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Search project" QueryIcon="Find" AccessKey="S"
-                                AutomationProperties.Name="Search project"
-                                TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown" />
 
-                <!-- As the browser version's sidebar: the files, then the
-                     outline under a disclosure that remembers its state. -->
-                <Grid x:Name="Browse" Grid.Row="1" RowSpacing="2">
+                <Grid x:Name="Browse" Grid.Row="1">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="32" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Grid MinHeight="32">
-                        <TextBlock Text="Files" Margin="11,0" VerticalAlignment="Center"
-                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnNewFile"
-                                    AutomationProperties.Name="New file" ToolTipService.ToolTip="New file (Ctrl+N)">
-                                <FontIcon Glyph="&#xE710;" FontSize="14" />
-                            </Button>
-                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnNewFolder"
-                                    AutomationProperties.Name="New folder" ToolTipService.ToolTip="New folder (Ctrl+Alt+Shift+N)">
-                                <FontIcon Glyph="&#xE8F4;" FontSize="14" />
-                            </Button>
-                            <Button Style="{StaticResource SubtleButtonStyle}" Width="32" Height="28" Padding="0" Click="OnAddFiles"
-                                    AutomationProperties.Name="Add files" ToolTipService.ToolTip="Add files">
-                                <FontIcon Glyph="&#xE898;" FontSize="14" />
-                            </Button>
-                        </StackPanel>
-                    </Grid>
+                    <!-- Body Strong for a section header, 16 from the pane's
+                         edge; its one action at the other end, 8 in as the
+                         toolbars' buttons are. -->
+                    <TextBlock Text="Files" Margin="16,0" VerticalAlignment="Center"
+                               Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <Button Style="{StaticResource ToolbarIconButtonStyle}" Margin="0,0,8,0" HorizontalAlignment="Right"
+                            AccessKey="A" AutomationProperties.Name="Add" ToolTipService.ToolTip="Add files and folders">
+                        <FontIcon Glyph="&#xE710;" FontSize="16" />
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem Text="New file…" Click="OnNewFile" KeyboardAcceleratorTextOverride="Ctrl+N">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8A5;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="New folder…" Click="OnNewFolder" KeyboardAcceleratorTextOverride="Ctrl+Alt+Shift+N">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8F4;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Add files…" Click="OnAddFiles">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE898;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Add folder…" Click="OnAddFolder">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE838;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
                     <TreeView x:Name="Files" Grid.Row="1" SelectionMode="Single" CanDragItems="False"
                               CanReorderItems="False" ItemInvoked="OnFileInvoked" AutomationProperties.Name="Files"
                               ContextRequested="OnFileContextRequested" KeyDown="OnFilesKeyDown">
                         <TreeView.ItemTemplate>
                             <DataTemplate x:DataType="local:FileItem">
-                                <TreeViewItem Style="{StaticResource CompactTreeViewItemStyle}" ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
-                                              AutomationProperties.Name="{x:Bind AccessibleName}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
+                                              AutomationProperties.Name="{x:Bind AccessibleName}"
+                                              HorizontalContentAlignment="Stretch" Loaded="OnTreeItemLoaded">
+                                    <!-- The main file's star at the row's far end, as a
+                                         list marks an item's state after its name. -->
+                                    <Grid ColumnSpacing="8" Padding="0,0,8,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
                                         <FontIcon Glyph="{x:Bind Glyph}" FontSize="16" />
-                                        <TextBlock Text="{x:Bind Name}" />
-                                        <FontIcon Glyph="&#xE735;" FontSize="12" Visibility="{x:Bind MainVisibility}"
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
+                                        <FontIcon Grid.Column="2" Glyph="&#xE735;" FontSize="16" Visibility="{x:Bind MainVisibility}"
                                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                                   ToolTipService.ToolTip="Main file" />
-                                    </StackPanel>
+                                    </Grid>
                                 </TreeViewItem>
                             </DataTemplate>
                         </TreeView.ItemTemplate>
                     </TreeView>
-                    <Button x:Name="OutlineToggle" Grid.Row="2" Style="{StaticResource SubtleButtonStyle}" MinHeight="32"
-                            Padding="10,0,8,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                    <!-- The heading is its own disclosure button: 4 in, so its
+                         text lines up 16 from the edge as the Files heading's. -->
+                    <Button x:Name="OutlineToggle" Grid.Row="2" Margin="4,0" Style="{StaticResource SubtleButtonStyle}"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                             Click="OnToggleOutline" AutomationProperties.Name="Outline">
                         <Grid>
-                            <TextBlock Text="Outline" VerticalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                            <FontIcon x:Name="OutlineChevron" Glyph="&#xE70D;" FontSize="12" HorizontalAlignment="Right"
+                            <TextBlock Text="Outline" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <FontIcon x:Name="OutlineChevron" Glyph="&#xE70D;" FontSize="16" HorizontalAlignment="Right"
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </Grid>
                     </Button>
-                    <!-- Rows start where the file rows' icons do: TreeView keeps
-                         an expander column even for files, as File Explorer does. -->
-                    <ListView x:Name="OutlineList" Grid.Row="3" MaxHeight="280" SelectionMode="None" IsItemClickEnabled="True"
-                              AutomationProperties.Name="Outline" ItemClick="OnOutlineClick">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
-                                <Setter Property="MinHeight" Value="32" />
-                                <Setter Property="Padding" Value="44,0,12,0" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:OutlineRow">
-                                <TextBlock Text="{x:Bind Title}" Margin="{x:Bind Indent}" TextTrimming="CharacterEllipsis" />
+                    <!-- The headings as they nest, with the tree's own
+                         expanders, as the files above; the section the cursor
+                         is in shows selected. -->
+                    <TreeView x:Name="OutlineTree" Grid.Row="3" SelectionMode="Single" CanDragItems="False"
+                              CanReorderItems="False" AutomationProperties.Name="Outline" ItemInvoked="OnOutlineInvoked">
+                        <TreeView.ItemTemplate>
+                            <DataTemplate x:DataType="local:OutlineEntry">
+                                <TreeViewItem ItemsSource="{x:Bind Children}" Loaded="OnTreeItemLoaded"
+                                              IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" AutomationProperties.Name="{x:Bind Title}">
+                                    <Grid>
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind TitledVisibility}" />
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind UntitledVisibility}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </TreeViewItem>
                             </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
                 </Grid>
 
+                <!-- The matches, grouped under their files as macOS lists them. -->
                 <ListView x:Name="Results" Grid.Row="1" Visibility="Collapsed" SelectionMode="None"
                           AutomationProperties.Name="Search results" IsItemClickEnabled="True" ItemClick="OnResultClick">
-                    <ListView.Header>
-                        <TextBlock x:Name="ResultsHeader" Margin="12,0,0,4" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                    </ListView.Header>
+                    <ListView.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate x:DataType="local:SearchGroup">
+                                    <TextBlock Text="{x:Bind Header}" TextTrimming="CharacterEllipsis"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </ListView.GroupStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="local:SearchHit">
                             <StackPanel Padding="0,4">
-                                <TextBlock Text="{x:Bind Location}" Style="{StaticResource CaptionTextBlockStyle}"
+                                <TextBlock Text="{x:Bind LineLabel}" Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock TextTrimming="CharacterEllipsis">
                                     <Run Text="{x:Bind Before}" /><Run Text="{x:Bind Match}" FontWeight="SemiBold"
@@ -260,81 +153,252 @@
                     </ListView.ItemTemplate>
                 </ListView>
 
-                <!-- The browser version's sidebar footer: settings, and the
-                     engine that compiles, busy while it does. -->
-                <Grid Grid.Row="2" Padding="0,0,4,8" ColumnSpacing="4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Button Style="{StaticResource SubtleButtonStyle}" Width="36" Height="32" Padding="0" Click="OnSettings"
-                            AutomationProperties.Name="Settings" ToolTipService.ToolTip="Settings (Ctrl+,)">
-                        <FontIcon Glyph="&#xE713;" FontSize="16" />
-                    </Button>
-                    <Button x:Name="EngineStatus" Grid.Column="1" Style="{StaticResource SubtleButtonStyle}" Height="32"
-                            Padding="8,0" HorizontalAlignment="Left" Click="OnSettings">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon x:Name="EngineWarning" Glyph="&#xE7BA;" FontSize="14" Visibility="Collapsed"
-                                      Foreground="{ThemeResource SystemFillColorCautionBrush}" />
-                            <ProgressRing x:Name="EngineProgress" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
-                            <TextBlock x:Name="EngineText" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </StackPanel>
-                    </Button>
-                </Grid>
+                <StackPanel x:Name="NoResults" Grid.Row="1" Visibility="Collapsed" Spacing="8" Padding="16,0"
+                            VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite">
+                    <FontIcon Glyph="&#xE721;" FontSize="32" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                              AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="No results" HorizontalAlignment="Center" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="NoResultsText" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                               Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+
             </Grid>
 
-            <!-- The document on a layer above Mica, rounded where it meets the
-                 window's chrome, with a status bar beneath. -->
+            <!-- The content layer, as NavigationView's content area: one
+                 surface, its top and leading edges stroked and the corner
+                 where they meet rounded. Inside it: the source and the PDF
+                 over the build panel, then the inspector, divided by the
+                 splitters' 1 px lines. -->
             <Grid x:Name="Layer" Grid.Column="2" Background="{ThemeResource LayerFillColorDefaultBrush}"
                   BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0"
                   CornerRadius="8,0,0,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <Grid x:Name="Document">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MinWidth="240" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition x:Name="PreviewColumn" Width="*" />
-                    </Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition x:Name="InspectorColumn" Width="260" />
+                </Grid.ColumnDefinitions>
 
-                    <!-- The editor's WebView2 goes in first, beneath the placeholder. -->
-                    <Grid x:Name="EditorHost">
-                        <Grid x:Name="EditorPlaceholder" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
-                            <TextBlock Text="Select a file to edit" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Grid x:Name="Editors">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" MinHeight="120" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition x:Name="PanelRow" Height="220" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid x:Name="Document">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="SourceColumn" Width="*" MinWidth="240" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition x:Name="PreviewColumn" Width="*" MinWidth="240" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- The source: a writer's tools over it, then where the
+                             cursor is, then the editor. -->
+                        <Grid x:Name="Source">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="32" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- A writer's tools: a row 48 tall, as the title bar
+                                 is, of standard 32 px buttons 8 apart and 8 in
+                                 from the edge.
+                                 As the pane narrows the labels go first, then
+                                 whole groups fold into "See more" (FoldSourceBar):
+                                 references, Insert, Heading, the formats; history
+                                 never folds. -->
+                            <Grid x:Name="SourceBar" Height="48" Padding="8,0" SizeChanged="OnSourceBarSizeChanged">
+                                <Grid.Resources>
+                                    <!-- The drop-downs subtle, as the buttons beside
+                                         them are, through the keys DropDownButton
+                                         reads. The other buttons here use
+                                         SubtleButtonStyle, which reads its own keys,
+                                         so only the drop-downs change. -->
+                                    <StaticResource x:Key="ButtonBackground" ResourceKey="SubtleFillColorTransparentBrush" />
+                                    <StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="SubtleFillColorSecondaryBrush" />
+                                    <StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                                    <StaticResource x:Key="ButtonBackgroundDisabled" ResourceKey="SubtleFillColorTransparentBrush" />
+                                    <StaticResource x:Key="ButtonBorderBrush" ResourceKey="ControlFillColorTransparentBrush" />
+                                    <StaticResource x:Key="ButtonBorderBrushPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
+                                    <StaticResource x:Key="ButtonBorderBrushPressed" ResourceKey="ControlFillColorTransparentBrush" />
+                                    <StaticResource x:Key="ButtonBorderBrushDisabled" ResourceKey="ControlFillColorTransparentBrush" />
+                                </Grid.Resources>
+                                <StackPanel x:Name="SourceTools" Orientation="Horizontal" Spacing="8"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <Button x:Name="UndoButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnUndo"
+                                            AutomationProperties.Name="Undo" ToolTipService.ToolTip="Undo (Ctrl+Z)">
+                                        <FontIcon Glyph="&#xE7A7;" FontSize="16" />
+                                    </Button>
+                                    <Button x:Name="RedoButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnRedo"
+                                            AutomationProperties.Name="Redo" ToolTipService.ToolTip="Redo (Ctrl+Shift+Z)">
+                                        <FontIcon Glyph="&#xE7A6;" FontSize="16" />
+                                    </Button>
+                                    <Rectangle x:Name="HistorySeparator" Style="{StaticResource ToolbarSeparatorStyle}" />
+                                    <DropDownButton x:Name="HeadingButton" Height="32" AutomationProperties.Name="Heading"
+                                                    ToolTipService.ToolTip="Insert a part, chapter, section or subsection">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE8D2;" FontSize="16" />
+                                            <TextBlock x:Name="HeadingLabel" Text="Heading" />
+                                        </StackPanel>
+                                        <DropDownButton.Flyout>
+                                            <MenuFlyout x:Name="HeadingMenu" Placement="BottomEdgeAlignedLeft" />
+                                        </DropDownButton.Flyout>
+                                    </DropDownButton>
+                                    <StackPanel x:Name="FormatTools" Orientation="Horizontal" Spacing="8">
+                                        <Button x:Name="BoldButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnBold"
+                                                AutomationProperties.Name="Bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
+                                            <FontIcon Glyph="&#xE8DD;" FontSize="16" />
+                                        </Button>
+                                        <Button x:Name="ItalicButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnItalic"
+                                                AutomationProperties.Name="Italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
+                                            <FontIcon Glyph="&#xE8DB;" FontSize="16" />
+                                        </Button>
+                                        <Button x:Name="MathButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnMath"
+                                                AutomationProperties.Name="Inline math" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
+                                            <!-- Its path is set from MathIconData, which "See more" shares. -->
+                                            <PathIcon x:Name="MathIcon" />
+                                        </Button>
+                                    </StackPanel>
+                                    <Rectangle x:Name="FormatSeparator" Style="{StaticResource ToolbarSeparatorStyle}" />
+                                    <!-- The two references a writer makes most, a click
+                                         each, as macOS has them; the rest under Insert. -->
+                                    <StackPanel x:Name="ReferenceTools" Orientation="Horizontal" Spacing="8">
+                                        <Button x:Name="ReferenceButton" Style="{StaticResource SubtleButtonStyle}" Height="32" Click="OnReference"
+                                                AutomationProperties.Name="Reference" ToolTipService.ToolTip="Insert a reference (\ref)">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon Glyph="&#xE71B;" FontSize="16" />
+                                                <TextBlock x:Name="ReferenceLabel" Text="Reference" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button x:Name="CitationButton" Style="{StaticResource SubtleButtonStyle}" Height="32" Click="OnCitation"
+                                                AutomationProperties.Name="Citation" ToolTipService.ToolTip="Insert a citation (\cite)">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon Glyph="&#xE8F1;" FontSize="16" />
+                                                <TextBlock x:Name="CitationLabel" Text="Citation" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                    <DropDownButton x:Name="InsertButton" Height="32" AccessKey="I" AutomationProperties.Name="Insert"
+                                                    ToolTipService.ToolTip="Insert a figure, table, equation, list or reference">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE710;" FontSize="16" />
+                                            <TextBlock x:Name="InsertLabel" Text="Insert" />
+                                        </StackPanel>
+                                        <DropDownButton.Flyout>
+                                            <MenuFlyout x:Name="InsertMenu" Placement="BottomEdgeAlignedLeft" />
+                                        </DropDownButton.Flyout>
+                                    </DropDownButton>
+                                    <Button x:Name="SourceMore" Style="{StaticResource ToolbarIconButtonStyle}" Visibility="Collapsed"
+                                            AutomationProperties.Name="See more" ToolTipService.ToolTip="See more">
+                                        <FontIcon Glyph="&#xE712;" FontSize="16" />
+                                        <Button.Flyout>
+                                            <MenuFlyout x:Name="SourceMoreMenu" Placement="BottomEdgeAlignedLeft" Opening="OnSourceMoreOpening" />
+                                        </Button.Flyout>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- The jump bar: where the cursor is, as File
+                                 Explorer's address bar shows a path — the
+                                 project, its folders, the file and the section.
+                                 Each crumb opens a menu of its neighbours;
+                                 narrow panes fold the first into "…". -->
+                            <Grid Grid.Row="1" Padding="12,0"
+                                  BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+                                <BreadcrumbBar x:Name="Crumbs" VerticalAlignment="Center" ItemClicked="OnCrumbClicked"
+                                               AutomationProperties.Name="Location in document">
+                                    <BreadcrumbBar.ItemTemplate>
+                                        <DataTemplate x:DataType="local:Crumb">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" AutomationProperties.Name="{x:Bind Label}">
+                                                <FontIcon Glyph="{x:Bind Glyph}" FontSize="16" />
+                                                <TextBlock Text="{x:Bind Label}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </BreadcrumbBar.ItemTemplate>
+                                </BreadcrumbBar>
+                            </Grid>
+
+                            <!-- The editor's WebView2 goes in first, beneath the placeholder. -->
+                            <Grid x:Name="EditorHost" Grid.Row="2">
+                                <StackPanel x:Name="EditorPlaceholder" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE8A5;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                              AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="No file open" HorizontalAlignment="Center" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                    <TextBlock Text="Choose a file in the sidebar." HorizontalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Grid>
                         </Grid>
+
+                        <local:PdfPane x:Name="Pdf" x:FieldModifier="internal" Grid.Column="2" />
                     </Grid>
 
-                    <Grid x:Name="Preview" Grid.Column="2" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                          BorderThickness="1,0,0,0">
-                        <local:PdfPane x:Name="Pdf" x:FieldModifier="internal" />
-                        <local:LogsView x:Name="Logs" Visibility="Collapsed" />
-                    </Grid>
-                </Grid>
+                    <local:LogsView x:Name="Logs" Grid.Row="2" />
 
-                <!-- The status bar, as Windows editors keep one: where the
-                     cursor is, the save state, and the counts. -->
-                <Grid Grid.Row="1" Padding="12,4" ColumnSpacing="24" MinHeight="32"
+                <!-- The status bar, under the document and its panel only, as the
+                     macOS app keeps it: the sidebar and the details pane run the
+                     window's full height. How the build went (choose it for the
+                     panel's issues) and the save state; where the cursor is, the
+                     counts and the engine; the panel's toggle at the end. -->
+                <Grid x:Name="StatusBar" Grid.Row="3" Height="32" Padding="12,0"
                       BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="CrumbsText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               AutomationProperties.Name="Location in document" />
-                    <TextBlock x:Name="CountsText" Grid.Column="1" VerticalAlignment="Center"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock x:Name="StatusText" Grid.Column="2" VerticalAlignment="Center"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               AutomationProperties.LiveSetting="Polite" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button x:Name="BuildStatus" Style="{StaticResource SubtleButtonStyle}" Padding="8,0" Height="32"
+                                Click="OnShowIssues" ToolTipService.ToolTip="Show issues">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ProgressRing x:Name="BuildProgress" Width="16" Height="16" IsActive="False" Visibility="Collapsed" />
+                                <FontIcon x:Name="BuildSucceeded" Glyph="&#xEC61;" FontSize="16" Visibility="Collapsed"
+                                          Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                <FontIcon x:Name="BuildFailed" Glyph="&#xEB90;" FontSize="16" Visibility="Collapsed"
+                                          Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                                <TextBlock x:Name="BuildText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
+                                <StackPanel x:Name="ErrorCount" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                    <FontIcon Glyph="&#xEB90;" FontSize="16" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                                    <TextBlock x:Name="ErrorCountText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel x:Name="WarningCount" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                    <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                    <TextBlock x:Name="WarningCountText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Button>
+                        <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12">
+                        <TextBlock x:Name="LineText" VerticalAlignment="Center"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="CountsText" VerticalAlignment="Center"
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Button x:Name="EngineStatus" Style="{StaticResource SubtleButtonStyle}" Padding="8,0" Height="32"
+                                Click="OnEngineStatus">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="EngineWarning" Glyph="&#xE7BA;" FontSize="16" Visibility="Collapsed"
+                                          Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                <TextBlock x:Name="EngineText" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </Button>
+                        <ToggleButton x:Name="PanelToggle" Width="40" Height="32" Padding="0"
+                                      Click="OnTogglePanel" AutomationProperties.Name="Panel">
+                            <FontIcon Glyph="&#xE90E;" FontSize="16" />
+                        </ToggleButton>
+                    </StackPanel>
                 </Grid>
+                </Grid>
+
+                <local:InspectorView x:Name="Inspector" Grid.Column="2" />
             </Grid>
         </Grid>
     </Grid>

@@ -42,6 +42,20 @@ public sealed class PreferencesTests
             Assert.Equal(100, loaded.UiScale);
             Assert.Equal("white", loaded.PdfPaper);
             Assert.True(loaded.ShowWordCount);
+            // No layout until the reader drags one, then the one they dragged.
+            Assert.Null(loaded.SidebarWidth);
+            Assert.Null(loaded.PdfSplit);
+
+            loaded.SidebarWidth = 300;
+            loaded.PdfSplit = 0.4;
+            loaded.PanelHeight = 180;
+            loaded.InspectorWidth = 240;
+            loaded.Save(path);
+            var layout = Preferences.Load(path);
+            Assert.Equal(300, layout.SidebarWidth);
+            Assert.Equal(0.4, layout.PdfSplit);
+            Assert.Equal(180, layout.PanelHeight);
+            Assert.Equal(240, layout.InspectorWidth);
 
             File.WriteAllText(path, "{not json");
             Assert.Equal("system", Preferences.Load(path).Theme);

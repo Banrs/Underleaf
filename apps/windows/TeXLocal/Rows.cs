@@ -41,11 +41,59 @@ public sealed class FileItem
     public IEnumerable<FileItem> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 }
 
-public sealed class OutlineRow(OutlineItem item)
+/// <summary>A heading in the sidebar's outline, and the headings it encloses.</summary>
+public sealed class OutlineEntry
 {
-    public string Title => item.Title;
-    public int Line => item.Line;
-    public Thickness Indent => new(Math.Max(0, item.Level - 2) * 12, 0, 0, 0);
+    public OutlineEntry(OutlineNode node, IReadOnlySet<string> collapsed)
+    {
+        Item = node.Item;
+        Children = node.Children.Select(c => new OutlineEntry(c, collapsed)).ToList();
+        IsExpanded = !collapsed.Contains(Key);
+    }
+
+    public OutlineItem Item { get; }
+    public List<OutlineEntry> Children { get; }
+
+    /// <summary>Headings start expanded; a fold is written back by the tree.</summary>
+    public bool IsExpanded { get; set; }
+
+    /// <summary>Level and title, so a fold survives edits that renumber the headings.</summary>
+    public string Key => $"{Item.Level}:{Item.Title}";
+
+    public string Title => Outline.DisplayTitle(Item);
+
+    /// <summary>A heading with no title reads "Untitled section", dimmed.</summary>
+    public Visibility TitledVisibility => Item.Title == "(untitled)" ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility UntitledVisibility => Item.Title == "(untitled)" ? Visibility.Visible : Visibility.Collapsed;
+
+    public IEnumerable<OutlineEntry> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
+}
+
+/// <summary>
+/// One file's matches in the project search, as macOS groups them: a
+/// "file — n" heading over the file's lines.
+/// </summary>
+public sealed class SearchGroup(string file, IEnumerable<SearchHit> hits) : List<SearchHit>(hits)
+{
+    public string Header => $"{file} — {Count:N0}";
+}
+
+/// <summary>One step of the source's location: the project, a folder, the file or the section.</summary>
+public sealed record Crumb(string Label, string Glyph, CrumbKind Kind, string Folder)
+{
+    public override string ToString() => Label;
+}
+
+public enum CrumbKind
+{
+    /// <summary>The project or a folder in it; its menu lists the text files there.</summary>
+    Folder,
+
+    /// <summary>The open file; its menu lists the files beside it.</summary>
+    File,
+
+    /// <summary>The section around the cursor; its menu lists the file's sections.</summary>
+    Section,
 }
 
 public sealed class LogRow(LogItem item)
@@ -65,22 +113,21 @@ public sealed class ProjectRow(ProjectInfo info)
 {
     public ProjectInfo Info => info;
     public string Name => info.Name;
+    public string MainFile => info.MainFile;
 
+    /// <summary>When it was last changed, as File Explorer words a recent date.</summary>
     public string Modified
     {
         get
         {
             var age = DateTimeOffset.Now - info.Modified;
-            return age.TotalMinutes < 1 ? "Edited just now"
-                : age.TotalHours < 1 ? $"Edited {(int)age.TotalMinutes} min ago"
-                : age.TotalDays < 1 ? $"Edited {(int)age.TotalHours} h ago"
-                : age.TotalDays < 7 ? $"Edited {(int)age.TotalDays} d ago"
-                : $"Edited {info.Modified.LocalDateTime:d}";
+            return age.TotalMinutes < 1 ? "Just now"
+                : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} min ago"
+                : age.TotalDays < 1 ? $"{(int)age.TotalHours} h ago"
+                : age.TotalDays < 7 ? $"{(int)age.TotalDays} d ago"
+                : $"{info.Modified.LocalDateTime:d}";
         }
     }
 
-    /// <summary>The card's second line: when it was edited, and its main file.</summary>
-    public string Details => $"{Modified} · {info.MainFile}";
-
-    public string AccessibleName => $"{info.Name}, {Details}";
+    public string AccessibleName => $"{info.Name}, main file {info.MainFile}, modified {Modified}";
 }

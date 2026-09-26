@@ -45,10 +45,12 @@ public sealed partial class MenuCommandTests
         foreach (var command in Enum.GetValues<MenuCommand>())
         {
             Assert.Equal(command, MenuCommands.FromId(command.Id()));
-            if (command.Accel() is { } accel)
+            if (command.Accel() is { } accel && !command.IsNativeOnly())
             {
                 Assert.Equal(defs[command.Id()], accel);
             }
+            // A native-only command must not take an id the browser version uses.
+            Assert.True(!command.IsNativeOnly() || !defs.ContainsKey(command.Id()), command.Id());
         }
         Assert.Null(MenuCommands.FromId("nope"));
     }
@@ -64,6 +66,11 @@ public sealed partial class MenuCommandTests
         Assert.Equal(new Chord(VirtualKey.F, ctrl | VirtualKeyModifiers.Menu), Accelerators.Parse("CmdOrCtrl+Alt+F"));
         Assert.Equal(new Chord(VirtualKey.Number0, ctrl), Accelerators.Parse("CmdOrCtrl+0"));
         Assert.Equal(new Chord(VirtualKey.N, ctrl | VirtualKeyModifiers.Shift | VirtualKeyModifiers.Menu), Accelerators.Parse("CmdOrCtrl+Shift+Alt+N"));
+        Assert.Equal(new Chord(VirtualKey.F11, VirtualKeyModifiers.None), Accelerators.Parse("F11"));
+        // With Ctrl held, Windows reports the Pause key as Cancel (Break).
+        Assert.Equal(new Chord(VirtualKey.Cancel, ctrl), Accelerators.Parse("CmdOrCtrl+Pause"));
+        Assert.Equal(new Chord(VirtualKey.Pause, VirtualKeyModifiers.None), Accelerators.Parse("Pause"));
+        Assert.Null(Accelerators.Parse("F13"));
         // Windows has no Command key to give a Cmd-only chord to.
         Assert.Null(Accelerators.Parse("Cmd+K"));
         Assert.Null(Accelerators.Parse("CmdOrCtrl+Home"));
@@ -78,6 +85,12 @@ public sealed partial class MenuCommandTests
         Assert.Equal("Ctrl+Plus", Accelerators.Label("CmdOrCtrl+Plus"));
         Assert.Equal("Ctrl+\\", Accelerators.Label("CmdOrCtrl+\\"));
         Assert.Equal("Ctrl+B", Accelerators.Label("CmdOrCtrl+B"));
+        Assert.Equal("Ctrl+Break", Accelerators.Label("CmdOrCtrl+Pause"));
+        Assert.Equal("F11", Accelerators.Label("F11"));
+        // The details pane takes File Explorer's chord.
+        Assert.Equal("Alt+Shift+P", Accelerators.Label(MenuCommand.ViewToggleInspector.Accel()!));
+        Assert.Equal(new Chord(VirtualKey.P, VirtualKeyModifiers.Menu | VirtualKeyModifiers.Shift),
+            Accelerators.Parse(MenuCommand.ViewToggleInspector.Accel()!));
     }
 
     [Fact]
@@ -135,6 +148,9 @@ public sealed partial class MenuCommandTests
         Assert.DoesNotContain("edit.comment", ids);
         Assert.DoesNotContain("edit.undo", ids);
         Assert.DoesNotContain("project.close", ids);
+        // Stop and full screen reach the host from inside the editor too.
+        Assert.Contains("compile.stop", ids);
+        Assert.Contains("view.fullScreen", ids);
         Assert.False(MenuCommand.EditRedo.ClaimsChord());
         Assert.True(MenuCommand.EditFind.ClaimsChord());
 
@@ -145,5 +161,36 @@ public sealed partial class MenuCommandTests
         Assert.Contains("app.settings", claimed);
         Assert.DoesNotContain("edit.undo", claimed);
         Assert.Subset(claimed, ids);
+    }
+
+    [Fact]
+    public void TheClipboardBelongsToTheFocusedField()
+    {
+        // Shown in the Edit menu, never taken from a text box or the editor.
+        foreach (var command in new[] { MenuCommand.EditCut, MenuCommand.EditCopy, MenuCommand.EditPaste, MenuCommand.EditSelectAll })
+        {
+            Assert.True(command.IsTextEditing(), command.Id());
+            Assert.False(command.ClaimsChord(), command.Id());
+            Assert.NotNull(command.Accel());
+        }
+        Assert.Equal("CmdOrCtrl+C", MenuCommand.EditCopy.Accel());
+    }
+
+    [Fact]
+    public void WindowsOnlyCommandsAreNativeOnly()
+    {
+        // Web commandDefs has none of these; the id check above keeps them
+        // from ever taking one it adds.
+        foreach (var command in new[]
+        {
+            MenuCommand.FileUploadFolder, MenuCommand.EditCut, MenuCommand.EditCopy, MenuCommand.EditPaste,
+            MenuCommand.EditSelectAll, MenuCommand.ViewFullScreen, MenuCommand.AppExit, MenuCommand.CompileStop,
+        })
+        {
+            Assert.True(command.IsNativeOnly(), command.Id());
+        }
+        Assert.True(MenuCommand.ViewFullScreen.ClaimsChord());
+        Assert.True(MenuCommand.CompileStop.ClaimsChord());
+        Assert.False(MenuCommand.CompileRun.IsNativeOnly());
     }
 }

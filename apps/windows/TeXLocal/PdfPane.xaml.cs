@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.Web.WebView2.Core;
@@ -21,19 +22,43 @@ public sealed partial class PdfPane : UserControl
     private string? pdfPath;
     private bool serving;
 
+    // Typing waits this long before searching, as the Mac's find does: every
+    // keystroke searching every page would only be superseded by the next.
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer findDelay;
+
     internal ProjectModel? Project { get; set; }
 
     /// <summary>A menu chord pressed while the PDF has focus, handed back by the page.</summary>
     internal Action<MenuCommand>? Command { get; set; }
 
+    /// <summary>The zoom menu's presets, as the macOS pane offers them.</summary>
+    private static readonly int[] ZoomPercents = [50, 75, 100, 125, 150, 200];
+
     public PdfPane()
     {
         InitializeComponent();
+        AddZoomLevels(ZoomMenu.Items);
+        findDelay = DispatcherQueue.CreateTimer();
+        findDelay.Interval = TimeSpan.FromMilliseconds(200);
+        findDelay.IsRepeating = false;
+        findDelay.Tick += (_, _) => Search();
         page = new EmbeddedPage(View, "pdf.html", OnMessage);
         _ = page.RunStickyAsync("hostKeys", $"texlocal.setHostKeys({L(MenuCommands.ClaimedChords.Select(k => new { id = k.Id, accel = k.Accel }))})");
     }
 
     private static string L(object? value) => EmbeddedPage.Literal(value);
+
+    /// <summary>The zoom level's menu: the fits, then the presets.</summary>
+    private void AddZoomLevels(IList<MenuFlyoutItemBase> items)
+    {
+        items.Add(ContextMenus.Item("Fit width", FitWidth, "Ctrl+0"));
+        items.Add(ContextMenus.Item("Fit height", FitHeight, "Ctrl+Alt+0"));
+        items.Add(new MenuFlyoutSeparator());
+        foreach (var percent in ZoomPercents)
+        {
+            items.Add(ContextMenus.Item($"{percent}%", () => SetScale(percent / 100.0)));
+        }
+    }
 
     private void OnMessage(string type, JsonElement body)
     {
@@ -42,6 +67,14 @@ public sealed partial class PdfPane : UserControl
             case "page":
                 PageLabel.Text = $"Page {body.GetProperty("page").GetInt32()} of {body.GetProperty("total").GetInt32()}";
                 break;
+            case "zoom":
+                ZoomText.Text = body.GetProperty("fit").GetString() switch
+                {
+                    "width" => "Fit width",
+                    "height" => "Fit height",
+                    _ => $"{body.GetProperty("percent").GetInt32()}%",
+                };
+                break;
             case "inverse":
                 if (Project is { } project)
                 {
@@ -49,11 +82,13 @@ public sealed partial class PdfPane : UserControl
                         body.GetProperty("page").GetInt32(), body.GetProperty("x").GetDouble(), body.GetProperty("y").GetDouble());
                 }
                 break;
-            case "found":
+            // An answer that arrives after the bar closed has nothing to report to.
+            case "found" when FindBar.Visibility == Visibility.Visible:
                 var total = body.GetProperty("total").GetInt32();
-                FindStatus.Text = total == 0
-                    ? (FindBox.Text.Length == 0 ? "" : "No matches")
-                    : $"{body.GetProperty("index").GetInt32()} of {total}{(body.GetProperty("limited").GetBoolean() ? "+" : "")}";
+                ShowFindStatus(total == 0
+                    ? (FindBox.Text.Trim().Length == 0 ? "" : "Not found")
+                    : $"{body.GetProperty("index").GetInt32()} of {total}{(body.GetProperty("limited").GetBoolean() ? "+" : "")}");
+                PreviousMatch.IsEnabled = NextMatch.IsEnabled = total > 0;
                 break;
             case "command" when body.TryGetProperty("id", out var id) && MenuCommands.FromId(id.GetString() ?? "") is { } command:
                 Command?.Invoke(command);
@@ -67,6 +102,12 @@ public sealed partial class PdfPane : UserControl
     public async Task LoadAsync(string pdfPath, int version)
     {
         ShowDocument(true);
+        // The matches were in the last PDF; pdf.js drops them on load, and
+        // the Mac's bar closes with them.
+        if (FindBar.Visibility == Visibility.Visible)
+        {
+            EndFind();
+        }
         var web = await page.WebAsync();
         this.pdfPath = pdfPath;
         if (!serving)
@@ -119,8 +160,129 @@ public sealed partial class PdfPane : UserControl
     {
         View.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         Empty.Visibility = shown ? Visibility.Collapsed : Visibility.Visible;
-        ZoomOutButton.IsEnabled = ZoomInButton.IsEnabled = FitWidthButton.IsEnabled = shown;
+        ZoomOutButton.IsEnabled = ZoomInButton.IsEnabled = ZoomLevel.IsEnabled = ShareButton.IsEnabled = shown;
+        SetToolTip(ShareButton, shown ? "Share the PDF" : "Compile to share the PDF");
     }
+
+    // ---------- the bar ----------
+
+    /// <summary>Whether the bar last folded for a build running, whose Stop is wider than Compile.</summary>
+    private bool compiling;
+
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width != e.PreviousSize.Width)
+        {
+            Fold();
+        }
+    }
+
+    /// <summary>
+    /// The widest form of the bar that fits, as the source bar's
+    /// (WorkspaceView.FoldSourceBar): everything labelled; then icons only,
+    /// the tooltips keeping the names; then the zoom group into "See more";
+    /// then Share too. Each form is measured as it would lay out.
+    /// </summary>
+    private void Fold()
+    {
+        var available = Bar.ActualWidth - Bar.Padding.Left - Bar.Padding.Right - Bar.ColumnSpacing;
+        // Not laid out yet, or finding, which hides the commands.
+        if (available <= 0 || FindBar.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+        var unbounded = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        for (var form = 0; form <= 3; form++)
+        {
+            CompileLabel.Visibility = StopLabel.Visibility = ShareLabel.Visibility =
+                form == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ZoomTools.Visibility = ZoomSeparator.Visibility = form < 2 ? Visibility.Visible : Visibility.Collapsed;
+            ShareButton.Visibility = form < 3 ? Visibility.Visible : Visibility.Collapsed;
+            PdfMore.Visibility = form >= 2 ? Visibility.Visible : Visibility.Collapsed;
+            CompileControls.Measure(unbounded);
+            ViewTools.Measure(unbounded);
+            if (CompileControls.DesiredSize.Width + ViewTools.DesiredSize.Width <= available)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>"See more": what folded, enabled as the buttons it stands for are.</summary>
+    private void OnPdfMoreOpening(object? sender, object e)
+    {
+        var items = PdfMoreMenu.Items;
+        items.Clear();
+        if (ZoomTools.Visibility == Visibility.Collapsed)
+        {
+            items.Add(ContextMenus.Item("Zoom out", "\uE71F", () => ZoomBy(1 / 1.15), "Ctrl+Minus"));
+            items.Add(ContextMenus.Item("Zoom in", "\uE8A3", () => ZoomBy(1.15), "Ctrl+Plus"));
+            var level = new MenuFlyoutSubItem { Text = $"Zoom level ({ZoomText.Text})" };
+            AddZoomLevels(level.Items);
+            items.Add(level);
+        }
+        if (ShareButton.Visibility == Visibility.Collapsed)
+        {
+            if (items.Count > 0)
+            {
+                items.Add(new MenuFlyoutSeparator());
+            }
+            items.Add(ContextMenus.Item("Share", "\uE72D", () => Command?.Invoke(MenuCommand.PdfShare)));
+        }
+        foreach (var item in items)
+        {
+            item.IsEnabled = ShareButton.IsEnabled;
+        }
+    }
+
+    /// <summary>
+    /// The bar and location row for the project's state: Compile, or a
+    /// spinner and Stop while a build runs; and whether the PDF is current.
+    /// </summary>
+    internal void Render(ProjectModel p, bool canCompile)
+    {
+        CompileButton.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
+        CompileProgress.IsActive = p.Compiling;
+        CompileProgress.Visibility = StopButton.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
+        CompileButton.IsEnabled = canCompile;
+        // Render runs on every edit; the bar folds again only as Compile and Stop trade places.
+        if (p.Compiling != compiling)
+        {
+            compiling = p.Compiling;
+            Fold();
+        }
+        SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
+        Freshness.Visibility = p.Freshness is null ? Visibility.Collapsed : Visibility.Visible;
+        EditedIcon.Visibility = p.Freshness == PdfFreshness.Edited ? Visibility.Visible : Visibility.Collapsed;
+        FailedIcon.Visibility = p.Freshness == PdfFreshness.LastSuccessful ? Visibility.Visible : Visibility.Collapsed;
+        FreshnessText.Text = p.Freshness switch
+        {
+            PdfFreshness.Edited => "Preview out of date",
+            PdfFreshness.LastSuccessful => "Last successful build",
+            _ => "",
+        };
+        SetToolTip(Freshness, p.Freshness == PdfFreshness.LastSuccessful
+            ? "The latest build failed; this is the last one that succeeded"
+            : "The preview doesn’t reflect the current source");
+    }
+
+    /// <summary>
+    /// Render runs on every edit; setting a tooltip replaces it, closing one
+    /// the pointer has open, so it is set only when its text changes.
+    /// </summary>
+    internal static void SetToolTip(DependencyObject element, string text)
+    {
+        if (ToolTipService.GetToolTip(element) as string != text)
+        {
+            ToolTipService.SetToolTip(element, text);
+        }
+    }
+
+    private void OnCompile(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.CompileRun);
+
+    private void OnStop(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.CompileStop);
+
+    private void OnShare(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.PdfShare);
 
     /// <summary>
     /// The app's theme and the Windows accent, and the paper: dark paper
@@ -150,17 +312,19 @@ public sealed partial class PdfPane : UserControl
 
     public void FitHeight() => _ = page.RunAsync("texlocal.fitHeight()");
 
+    private void SetScale(double scale) =>
+        _ = page.RunAsync($"texlocal.setScale({scale.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+
     private void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(1 / 1.15);
 
     private void OnZoomIn(object sender, RoutedEventArgs e) => ZoomBy(1.15);
 
-    private void OnFitWidth(object sender, RoutedEventArgs e) => FitWidth();
-
     // ---------- find ----------
 
+    /// <summary>Finding takes the whole bar, as Preview's find does on the Mac.</summary>
     public void BeginFind()
     {
-        PageLabel.Visibility = Visibility.Collapsed;
+        CompileControls.Visibility = ViewTools.Visibility = Visibility.Collapsed;
         FindBar.Visibility = Visibility.Visible;
         FindBox.Focus(FocusState.Programmatic);
         FindBox.SelectAll();
@@ -168,11 +332,25 @@ public sealed partial class PdfPane : UserControl
 
     private void EndFind()
     {
+        findDelay.Stop();
         FindBar.Visibility = Visibility.Collapsed;
-        PageLabel.Visibility = Visibility.Visible;
+        CompileControls.Visibility = ViewTools.Visibility = Visibility.Visible;
+        Fold();
         FindBox.Text = "";
         FindStatus.Text = "";
+        PreviousMatch.IsEnabled = NextMatch.IsEnabled = false;
         _ = page.RunAsync("texlocal.clearFind()");
+    }
+
+    /// <summary>The count, read out as it changes: it is the search's only answer.</summary>
+    private void ShowFindStatus(string text)
+    {
+        if (FindStatus.Text != text)
+        {
+            FindStatus.Text = text;
+            FrameworkElementAutomationPeer.CreatePeerForElement(FindStatus)
+                .RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
     }
 
     // find() resolves once every page is searched; its status comes back as
@@ -180,11 +358,38 @@ public sealed partial class PdfPane : UserControl
     private void Report(string call) =>
         _ = page.RunAsync($"Promise.resolve({call}).then(s => chrome.webview.postMessage({{ type: 'found', ...s }}))");
 
-    private void OnFindChanged(object sender, TextChangedEventArgs e) => Report($"texlocal.find({L(FindBox.Text)})");
+    private void Search()
+    {
+        findDelay.Stop();
+        Report($"texlocal.find({L(FindBox.Text)})");
+    }
 
-    private void OnPreviousMatch(object sender, RoutedEventArgs e) => Report("texlocal.findStep(-1)");
+    private void OnFindChanged(object sender, TextChangedEventArgs e)
+    {
+        findDelay.Stop();
+        // Closing the bar empties the box, which is not a search.
+        if (FindBar.Visibility == Visibility.Visible)
+        {
+            findDelay.Start();
+        }
+    }
 
-    private void OnNextMatch(object sender, RoutedEventArgs e) => Report("texlocal.findStep(1)");
+    /// <summary>A step waits for a search still pending: Enter then finds the first match of what was typed.</summary>
+    private void Step(int delta)
+    {
+        if (findDelay.IsRunning)
+        {
+            Search();
+        }
+        else
+        {
+            Report($"texlocal.findStep({delta})");
+        }
+    }
+
+    private void OnPreviousMatch(object sender, RoutedEventArgs e) => Step(-1);
+
+    private void OnNextMatch(object sender, RoutedEventArgs e) => Step(1);
 
     private void OnFindDone(object sender, RoutedEventArgs e) => EndFind();
 
@@ -194,7 +399,7 @@ public sealed partial class PdfPane : UserControl
         {
             var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
                 .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-            Report($"texlocal.findStep({(shift ? -1 : 1)})");
+            Step(shift ? -1 : 1);
             e.Handled = true;
         }
         else if (e.Key == VirtualKey.Escape)

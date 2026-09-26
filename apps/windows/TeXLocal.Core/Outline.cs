@@ -4,6 +4,9 @@ namespace TeXLocal;
 
 public sealed record OutlineItem(int Level, string Title, int Line);
 
+/// <summary>A heading and the headings it encloses.</summary>
+public sealed record OutlineNode(OutlineItem Item, IReadOnlyList<OutlineNode> Children);
+
 /// <summary>A document's outline, words and lines, read in one pass.</summary>
 public sealed record DocumentStats(IReadOnlyList<OutlineItem> Outline, int Words, int Lines);
 
@@ -71,6 +74,56 @@ public static partial class Outline
             stack.Add(item);
         }
         return stack;
+    }
+
+    /// <summary>
+    /// Each heading's depth in the document's actual nesting: how many
+    /// headings enclose it. A subsection before any section sits flush,
+    /// rather than under a parent that isn't there (apps/macos Outline.swift).
+    /// </summary>
+    public static IReadOnlyList<int> Depths(IReadOnlyList<OutlineItem> outline)
+    {
+        var stack = new List<int>();
+        var depths = new List<int>(outline.Count);
+        foreach (var item in outline)
+        {
+            while (stack.Count > 0 && stack[^1] >= item.Level)
+            {
+                stack.RemoveAt(stack.Count - 1);
+            }
+            stack.Add(item.Level);
+            depths.Add(stack.Count - 1);
+        }
+        return depths;
+    }
+
+    /// <summary>The outline as a tree by how the headings nest, for a sidebar with expanders.</summary>
+    public static IReadOnlyList<OutlineNode> Tree(IReadOnlyList<OutlineItem> outline)
+    {
+        var depths = Depths(outline);
+        var index = 0;
+        List<OutlineNode> Children(int depth)
+        {
+            var nodes = new List<OutlineNode>();
+            while (index < outline.Count && depths[index] == depth)
+            {
+                var item = outline[index++];
+                nodes.Add(new OutlineNode(item, Children(depth + 1)));
+            }
+            return nodes;
+        }
+        return Children(0);
+    }
+
+    /// <summary>An empty heading by its kind — "Untitled subsection" — where the web writes "(untitled)".</summary>
+    public static string DisplayTitle(OutlineItem item)
+    {
+        if (item.Title != "(untitled)")
+        {
+            return item.Title;
+        }
+        string[] kinds = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph"];
+        return "Untitled " + (item.Level >= 0 && item.Level < kinds.Length ? kinds[item.Level] : "section");
     }
 
     // ---------- word count ----------

@@ -18,17 +18,67 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- The Windows App SDK title bar: icon, title, the project as the
-             subtitle, back to the library, and the sidebar toggle. -->
-        <TitleBar x:Name="AppTitleBar" Title="TeXLocal" Height="48"
+        <!-- The Windows App SDK title bar at the tall 48 px, the height the
+             guidance gives a title bar holding a search box, with the
+             system's own caption buttons at the same height. Left to right:
+             back, the sidebar toggle, the icon and the project (or the app, or
+             Settings) as the title; the menus, as Visual Studio keeps its own
+             in its title bar; search, centred in the room left, as Windows 11
+             apps centre theirs; then the PDF and Details toggles. -->
+        <TitleBar x:Name="AppTitleBar" Title="TeXLocal"
                   BackRequested="OnBackRequested" PaneToggleRequested="OnPaneToggleRequested">
+            <TitleBar.Resources>
+                <!-- The content spans the room between the title and the toggles. -->
+                <HorizontalAlignment x:Key="TitleBarContentHorizontalAlignment">Stretch</HorizontalAlignment>
+            </TitleBar.Resources>
             <TitleBar.IconSource>
                 <ImageIconSource x:Name="TitleIcon" />
             </TitleBar.IconSource>
+            <TitleBar.Content>
+                <Grid x:Name="SearchArea" ColumnSpacing="16" SizeChanged="OnSearchAreaSizeChanged">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <!-- On every screen, as a menu bar is; what doesn't apply is disabled. -->
+                    <MenuBar x:Name="Menu" x:FieldModifier="internal" />
+                    <!-- One search box that searches what's on screen: the
+                         projects on the library, the open project in it, as
+                         Settings' box finds a setting. Results show in place.
+                         Centred on the window where the menus leave room
+                         (PlaceSearch). -->
+                    <AutoSuggestBox x:Name="SearchBox" x:FieldModifier="internal" Grid.Column="1" HorizontalAlignment="Left"
+                                    VerticalAlignment="Center" QueryIcon="Find"
+                                    TextChanged="OnSearchChanged" QuerySubmitted="OnSearchSubmitted" KeyDown="OnSearchKeyDown" />
+                </Grid>
+            </TitleBar.Content>
+            <TitleBar.RightHeader>
+                <StackPanel x:Name="PaneToggles" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Visibility="Collapsed">
+                    <StackPanel.Resources>
+                        <ResourceDictionary>
+                            <ResourceDictionary.MergedDictionaries>
+                                <ResourceDictionary Source="ms-appx:///SubtleToggles.xaml" />
+                            </ResourceDictionary.MergedDictionaries>
+                        </ResourceDictionary>
+                    </StackPanel.Resources>
+                    <!-- 40 × 32, as the app's other icon buttons are. The
+                         workspace keeps the tooltips saying Show or Hide. -->
+                    <ToggleButton x:Name="PdfToggle" x:FieldModifier="internal" Width="40" Height="32" Padding="0"
+                                  AccessKey="P" AutomationProperties.Name="PDF" Click="OnTogglePdf"
+                                  ToolTipService.ToolTip="Show or hide the PDF (Ctrl+Shift+\)">
+                        <FontIcon Glyph="&#xEA90;" FontSize="16" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="InspectorToggle" x:FieldModifier="internal" Width="40" Height="32" Padding="0"
+                                  AccessKey="N" AutomationProperties.Name="Details pane" Click="OnToggleInspector"
+                                  ToolTipService.ToolTip="Show or hide the details pane (Alt+Shift+P)">
+                        <FontIcon Glyph="&#xE946;" FontSize="16" />
+                    </ToggleButton>
+                </StackPanel>
+            </TitleBar.RightHeader>
         </TitleBar>
 
         <!-- Collapsed while closed, or its margin leaves a band under the title bar. -->
-        <InfoBar x:Name="MessageBar" Grid.Row="1" Margin="16,0,16,8" Severity="Error" IsOpen="False"
+        <InfoBar x:Name="MessageBar" Grid.Row="1" Margin="12,0,12,8" Severity="Error" IsOpen="False"
                  Visibility="{x:Bind MessageBar.IsOpen, Mode=OneWay}" />
 
         <Grid Grid.Row="2">

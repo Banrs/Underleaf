@@ -19,6 +19,22 @@ public sealed class OutlineTests
     }
 
     [Fact]
+    public void HeadingsNestAsTheDocumentDoes()
+    {
+        // A subsection before any section sits flush; a chapter's sections sit under it.
+        var items = Outline.Parse("\\subsection{A}\n\\chapter{B}\n\\section{C}\n\\subsection{D}\n\\section{E}\n\\chapter{}");
+        Assert.Equal(new[] { 0, 0, 1, 2, 1, 0 }, Outline.Depths(items));
+
+        var tree = Outline.Tree(items);
+        Assert.Equal(new[] { "A", "B", "(untitled)" }, tree.Select(n => n.Item.Title));
+        Assert.Equal(new[] { "C", "E" }, tree[1].Children.Select(n => n.Item.Title));
+        Assert.Equal("D", Assert.Single(tree[1].Children[0].Children).Item.Title);
+        Assert.Empty(tree[0].Children);
+        Assert.Equal("Untitled chapter", Outline.DisplayTitle(tree[2].Item));
+        Assert.Equal("B", Outline.DisplayTitle(tree[1].Item));
+    }
+
+    [Fact]
     public void OnlyTextFilesOpenInTheEditor()
     {
         Assert.True(TextFiles.IsText("chapters/intro.TEX"));

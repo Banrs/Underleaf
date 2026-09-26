@@ -76,21 +76,16 @@ internal static class Dialogs
         return await ShowAsync(dialog, root) == ContentDialogResult.Primary;
     }
 
-    private static readonly (string Id, string Label)[] Templates =
-    [
-        ("article", "Article"), ("report", "Report"), ("beamer", "Beamer slides"), ("blank", "Blank"),
-    ];
-
-    public static async Task<(string Name, string Template)?> NewProjectAsync(XamlRoot root)
+    public static async Task<(string Name, string Template)?> NewProjectAsync(XamlRoot root, string template)
     {
         var name = new TextBox { Header = "Name", PlaceholderText = "My Paper" };
         name.Loaded += (_, _) => name.Focus(FocusState.Programmatic);
         var templates = new RadioButtons { Header = "Template" };
-        foreach (var (_, label) in Templates)
+        foreach (var t in ProjectTemplates.All)
         {
-            templates.Items.Add(label);
+            templates.Items.Add(t.Title);
         }
-        templates.SelectedIndex = 0;
+        templates.SelectedIndex = Math.Max(0, ProjectTemplates.All.ToList().FindIndex(t => t.Id == template));
         var dialog = new ContentDialog
         {
             Title = "New project",
@@ -105,6 +100,6 @@ internal static class Dialogs
         {
             return null;
         }
-        return (name.Text.Trim(), Templates[Math.Max(0, templates.SelectedIndex)].Id);
+        return (name.Text.Trim(), ProjectTemplates.All[Math.Max(0, templates.SelectedIndex)].Id);
     }
 }

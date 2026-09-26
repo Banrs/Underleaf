@@ -19,6 +19,7 @@ public enum MenuCommand
     FileUpload,
     FileSave,
     PdfSave,
+    PdfShare,
     EditUndo,
     EditRedo,
     EditFind,
@@ -31,6 +32,7 @@ public enum MenuCommand
     ViewToggleSidebar,
     ViewTogglePdf,
     ViewToggleLogs,
+    ViewToggleInspector,
     ViewZoomIn,
     ViewZoomOut,
     ViewFitWidth,
@@ -38,10 +40,21 @@ public enum MenuCommand
     ViewUiScaleUp,
     ViewUiScaleDown,
     CompileRun,
+    CompileStop,
     CompileToggleAuto,
     SyncForward,
     SyncInverse,
     AppSettings,
+
+    // Native only (IsNativeOnly): what a Windows app's menus hold and the
+    // browser's own menus already give it.
+    FileUploadFolder,
+    EditCut,
+    EditCopy,
+    EditPaste,
+    EditSelectAll,
+    ViewFullScreen,
+    AppExit,
 }
 
 public static class MenuCommands
@@ -57,6 +70,7 @@ public static class MenuCommands
         MenuCommand.FileUpload => "file.upload",
         MenuCommand.FileSave => "file.save",
         MenuCommand.PdfSave => "pdf.save",
+        MenuCommand.PdfShare => "pdf.share",
         MenuCommand.EditUndo => "edit.undo",
         MenuCommand.EditRedo => "edit.redo",
         MenuCommand.EditFind => "edit.find",
@@ -69,6 +83,7 @@ public static class MenuCommands
         MenuCommand.ViewToggleSidebar => "view.toggleSidebar",
         MenuCommand.ViewTogglePdf => "view.togglePdf",
         MenuCommand.ViewToggleLogs => "view.toggleLogs",
+        MenuCommand.ViewToggleInspector => "view.toggleInspector",
         MenuCommand.ViewZoomIn => "view.zoomIn",
         MenuCommand.ViewZoomOut => "view.zoomOut",
         MenuCommand.ViewFitWidth => "view.fitWidth",
@@ -76,10 +91,18 @@ public static class MenuCommands
         MenuCommand.ViewUiScaleUp => "view.uiScaleUp",
         MenuCommand.ViewUiScaleDown => "view.uiScaleDown",
         MenuCommand.CompileRun => "compile.run",
+        MenuCommand.CompileStop => "compile.stop",
         MenuCommand.CompileToggleAuto => "compile.toggleAuto",
         MenuCommand.SyncForward => "sync.forward",
         MenuCommand.SyncInverse => "sync.inverse",
         MenuCommand.AppSettings => "app.settings",
+        MenuCommand.FileUploadFolder => "file.uploadFolder",
+        MenuCommand.EditCut => "edit.cut",
+        MenuCommand.EditCopy => "edit.copy",
+        MenuCommand.EditPaste => "edit.paste",
+        MenuCommand.EditSelectAll => "edit.selectAll",
+        MenuCommand.ViewFullScreen => "view.fullScreen",
+        MenuCommand.AppExit => "app.exit",
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 
@@ -98,6 +121,7 @@ public static class MenuCommands
         MenuCommand.FileUpload => "Add files…",
         MenuCommand.FileSave => "Save",
         MenuCommand.PdfSave => "Save PDF as…",
+        MenuCommand.PdfShare => "Share PDF…",
         MenuCommand.EditUndo => "Undo",
         MenuCommand.EditRedo => "Redo",
         MenuCommand.EditFind => "Find and replace",
@@ -109,7 +133,8 @@ public static class MenuCommands
         MenuCommand.PdfFind => "Find in PDF",
         MenuCommand.ViewToggleSidebar => "Sidebar",
         MenuCommand.ViewTogglePdf => "PDF",
-        MenuCommand.ViewToggleLogs => "Compile log",
+        MenuCommand.ViewToggleLogs => "Panel",
+        MenuCommand.ViewToggleInspector => "Details pane",
         MenuCommand.ViewZoomIn => "Zoom in",
         MenuCommand.ViewZoomOut => "Zoom out",
         MenuCommand.ViewFitWidth => "Fit width",
@@ -117,10 +142,18 @@ public static class MenuCommands
         MenuCommand.ViewUiScaleUp => "Increase editor size",
         MenuCommand.ViewUiScaleDown => "Decrease editor size",
         MenuCommand.CompileRun => "Compile",
+        MenuCommand.CompileStop => "Stop",
         MenuCommand.CompileToggleAuto => "Compile automatically",
         MenuCommand.SyncForward => "Go to PDF position",
         MenuCommand.SyncInverse => "Go to source position",
         MenuCommand.AppSettings => "Settings",
+        MenuCommand.FileUploadFolder => "Add folder…",
+        MenuCommand.EditCut => "Cut",
+        MenuCommand.EditCopy => "Copy",
+        MenuCommand.EditPaste => "Paste",
+        MenuCommand.EditSelectAll => "Select all",
+        MenuCommand.ViewFullScreen => "Full screen",
+        MenuCommand.AppExit => "Exit",
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 
@@ -144,6 +177,8 @@ public static class MenuCommands
         MenuCommand.ViewToggleSidebar => "CmdOrCtrl+\\",
         MenuCommand.ViewTogglePdf => "CmdOrCtrl+Shift+\\",
         MenuCommand.ViewToggleLogs => "CmdOrCtrl+Shift+L",
+        // File Explorer's chord for its details pane, the Windows form of an inspector.
+        MenuCommand.ViewToggleInspector => "Alt+Shift+P",
         MenuCommand.ViewZoomIn => "CmdOrCtrl+Plus",
         MenuCommand.ViewZoomOut => "CmdOrCtrl+Minus",
         MenuCommand.ViewFitWidth => "CmdOrCtrl+0",
@@ -151,11 +186,29 @@ public static class MenuCommands
         MenuCommand.ViewUiScaleUp => "CmdOrCtrl+Alt+Plus",
         MenuCommand.ViewUiScaleDown => "CmdOrCtrl+Alt+Minus",
         MenuCommand.CompileRun => "CmdOrCtrl+Return",
+        // Windows' Stop chord, as macOS has Command-period (see Parse).
+        MenuCommand.CompileStop => "CmdOrCtrl+Pause",
         MenuCommand.SyncForward => "Ctrl+Return",
         MenuCommand.SyncInverse => "Ctrl+Shift+Return",
         MenuCommand.AppSettings => "CmdOrCtrl+,",
+        MenuCommand.EditCut => "CmdOrCtrl+X",
+        MenuCommand.EditCopy => "CmdOrCtrl+C",
+        MenuCommand.EditPaste => "CmdOrCtrl+V",
+        MenuCommand.EditSelectAll => "CmdOrCtrl+A",
+        MenuCommand.ViewFullScreen => "F11",
         _ => null,
     };
+
+    /// <summary>
+    /// Commands the native apps add to the browser version's: panes and
+    /// actions the web has no counterpart for (apps/macos has the same), and
+    /// the standard items a Windows menu bar has: Exit, the clipboard, full
+    /// screen.
+    /// </summary>
+    public static bool IsNativeOnly(this MenuCommand command) =>
+        command is MenuCommand.PdfShare or MenuCommand.ViewToggleInspector or MenuCommand.CompileStop
+            or MenuCommand.FileUploadFolder or MenuCommand.EditCut or MenuCommand.EditCopy or MenuCommand.EditPaste
+            or MenuCommand.EditSelectAll or MenuCommand.ViewFullScreen or MenuCommand.AppExit;
 
     public static MenuCommand? FromId(string id)
     {
@@ -170,12 +223,13 @@ public static class MenuCommands
     }
 
     /// <summary>
-    /// Undo and redo belong to whichever text field has focus — the editor
-    /// page or a native box — so the menu shows their chords but never claims
-    /// them.
+    /// Undo, redo and the clipboard belong to whichever text field has focus
+    /// — the editor page or a native box — so the menu shows their chords but
+    /// never claims them.
     /// </summary>
     public static bool IsTextEditing(this MenuCommand command) =>
-        command is MenuCommand.EditUndo or MenuCommand.EditRedo;
+        command is MenuCommand.EditUndo or MenuCommand.EditRedo
+            or MenuCommand.EditCut or MenuCommand.EditCopy or MenuCommand.EditPaste or MenuCommand.EditSelectAll;
 
     /// <summary>
     /// Whether the window takes this command's chord. Windows has no Command
@@ -253,6 +307,11 @@ public static class Accelerators
             "." => OemPeriod,
             "/" => OemSlash,
             "\\" => OemBackslash,
+            // Ctrl turns the Pause key into Break, which Windows reports as
+            // Cancel; the web page names the physical key, "Pause".
+            "Pause" => modifiers.HasFlag(VirtualKeyModifiers.Control) ? VirtualKey.Cancel : VirtualKey.Pause,
+            _ when name.Length > 1 && name[0] == 'F' && int.TryParse(name[1..], out var f) && f is >= 1 and <= 12 =>
+                VirtualKey.F1 + (f - 1),
             _ when name.Length == 1 && char.IsAsciiLetter(name[0]) => VirtualKey.A + (char.ToUpperInvariant(name[0]) - 'A'),
             _ when name.Length == 1 && char.IsAsciiDigit(name[0]) => VirtualKey.Number0 + (name[0] - '0'),
             _ => null,
@@ -300,6 +359,8 @@ public static class Accelerators
         names.Add(parts[^1] switch
         {
             "Return" or "Enter" => "Enter",
+            // What Windows calls the chord Stop takes.
+            "Pause" when names.Contains("Ctrl") => "Break",
             [var c] => char.ToUpperInvariant(c).ToString(),
             var key => key,
         });

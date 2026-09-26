@@ -145,6 +145,48 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Access keys on every menu and on the main toolbar buttons. Context menus in the standard order, with F2 and Delete.
   - `InfoBar`, `ProgressRing` and `InfoBadge` for feedback.
   - A Settings page in the Windows 11 style, with cards and an expander.
+  - **The 2026-09 redesign.** The macOS app's features, laid out as a native Windows app at WinUI's standard density. The spec, Microsoft's numbers and measurements of the inbox apps were worked up during the redesign; the decisions are summarised here.
+    - **Title bar: the Tall 48 px bar, with the system's own 48 × 48 caption buttons.**
+      - Left to right:
+        - back and the sidebar toggle;
+        - the icon, with the project (or the app, or Settings) as the title;
+        - the default 40 px MenuBar, on every screen, as Visual Studio keeps its menus in its title bar;
+        - one search box, centred on the window as Windows 11 apps centre theirs (`PlaceSearch`). It searches the projects on the library and the open project in a workspace, with results shown in place;
+        - the PDF and Details toggles.
+      - The open file is named by the jump bar below.
+      - WinUI's TitleBar makes only the menus, the search box and the toggles non-draggable. Hit-testing confirms that the gaps between them still drag the window.
+      - TitleBar sizes its caption-button column from `AppWindow.TitleBar.RightInset`, which is in physical pixels, as if it were in effective ones, so at 200% it reserved twice the buttons' width. `FitCaptionInset` corrects the column on load and whenever the scale changes. The 48 px left between the toggles and the buttons is TitleBar's own minimum drag area.
+      - A 40 px bar with Terminal-style caption buttons drawn by the app was tried and dropped: at 40, the toolbars under it had to be cramped to match.
+    - **Rhythm: 48 px rows, 32 px detail rows.**
+      - 48 px: title bar, pane toolbars, panel header, the Details pane's name row.
+      - 32 px: jump bar, PDF location row (and the folder row of the Details pane, which carries their divider across), status bar, the sidebar's section headings.
+      - Every control stays its standard size: 32 px buttons, 14 px text, 16 px icons, with 8 px between buttons.
+      - The pane toolbars are rows of standard buttons rather than CommandBars, so their labels are Body text like the rest of the app. When narrow, their labels drop first, then whole groups fold into "See more", as the macOS app's ViewThatFits does.
+    - **Layers.**
+      - The sidebar sits on Mica, 280 wide by default (200–360). It has no footer: Add is the Files heading's action (Settings stays in the File menu, Ctrl+,), so nothing at its foot needs to line up with the status bar.
+      - The trees' expander column is narrowed from 40 to 24 at runtime (`OnTreeItemLoaded`), since the template hard-codes its padding. Rows then start 12 in from their heading. The main file's star sits at the far end of its row.
+      - The references with no button of their own (equation reference, label, link, URL) are in the Insert menu, so the toolbar has no bare chevron button.
+      - The content layer has an 8 px top-left corner and a 1 px stroke on its top and left edges, like NavigationView's content area. It contains the source, the PDF, the bottom panel, the status bar under the document only, and the Details pane.
+      - The Details pane is File Explorer's pattern: Alt+Shift+P, 220–320 wide.
+      - Pane sizes are remembered in `Preferences`.
+    - **Motion** (`Motion.cs`) uses the Windows animation library's theme animations:
+      - DrillIn and DrillOut between the library, a project and Settings, as Settings and File Explorer do;
+      - PopIn from its own edge for the sidebar, the Details pane and the panel;
+      - FadeIn for search results and the trees they replace.
+      - Theme *transitions* (such as PaneThemeTransition) were tried, but they play only when an element joins the tree, not when it is shown again, and these panes are shown by Visibility. Frame captures confirmed they did nothing on a toggle. `Motion.Show` starts the animation as an element goes from collapsed to visible. None of it runs when Windows' animation effects are off.
+    - **Toggles are subtle everywhere.** `SubtleToggles.xaml` is merged by App.xaml and again by the title bar's toggle group, because the title-bar toggles didn't pick it up from the app's resources.
+    - **Library and Settings** are WinUI Gallery pages: a column at most 1064 wide with 36 px gutters, centred inside a full-width grid. Given to the ScrollViewer directly, that column landed off-centre.
+    - **Parity additions:**
+      - Cut, Copy, Paste and Select all; Exit; Add folder…;
+      - Full screen (F11) and Stop (Ctrl+Break);
+      - one-click Reference and Citation;
+      - project search grouped by file;
+      - a minimum window of 960 × 600, and "Open folder location";
+      - an About card in Settings;
+      - WebView2 context menus trimmed to editing commands;
+      - PDF find fixes;
+      - 700 ms autosave, and forward search that saves first.
+    - **Metrics** come from WinUI's `generic.xaml`, the Windows UI Kit in code, since the Figma kit needs a sign-in.
   - Accessibility:
     - accessible names on icon-only buttons and on tree, log and project rows;
     - the dividers take focus and resize with the arrow keys;
@@ -152,7 +194,6 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Deliberate deviations:**
   - The settings cards and the divider are hand-written, rather than taken from the Community Toolkit, to avoid adding NuGet packages.
   - Interface size scales only the editor page. Native controls follow Windows text size.
-  - The file tree uses a copy of WinUI's own TreeViewItem template (`CompactTree.xaml`) with a 16 px expander column instead of 40 px. Re-copy it from the new `generic.xaml` when the Windows App SDK is upgraded.
 - **Not done yet:**
   - recovery when the whole WebView2 browser process dies;
   - trimming the output size (the Windows App SDK brings its AI/ML parts);
@@ -163,7 +204,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Choosing the TeX folder works in both versions:
     - in the app, with Settings' Browse… and Use automatic;
     - in the browser version, with its folder browser. The browser version still creates, compiles and shows a project.
-  - The title bar uses the tall height, with its content and the caption buttons on one line.
+  - The Tall title bar was measured with UI Automation and hit-testing. Menu clicks reach the menus and empty space drags the window.
   - The library, the workspace and Settings were measured with UI Automation:
     - one left edge in the sidebar, and 16 px per tree level;
     - no band under the title bar;
