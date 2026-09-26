@@ -12,6 +12,7 @@ struct PDFPane: View {
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var controller = PDFController()
 
     var body: some View {
@@ -27,7 +28,7 @@ struct PDFPane: View {
             if finding, project.pdfVersion > 0 {
                 Divider()
                 findBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.findBar(reduceMotion: reduceMotion))
             }
             Divider()
             pages

@@ -85,6 +85,7 @@ private struct SourceAndPDF: View {
 /// shows, goes between them and the text, as TextEdit's and Xcode's do.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: ProjectModel
 
     var body: some View {
@@ -95,7 +96,7 @@ private struct SourcePane: View {
             if project.findShown {
                 Divider()
                 SourceFindBar(project: project)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.findBar(reduceMotion: reduceMotion))
             }
             Divider()
             if project.openPath != nil {
@@ -238,5 +239,13 @@ private struct StatusBar: View {
             Image(systemName: systemImage).foregroundStyle(color)
         }
         .labelStyle(.titleAndIcon)
+    }
+}
+
+extension AnyTransition {
+    /// A find bar sliding down from the bar over it; a dissolve with Reduce
+    /// Motion, as the HIG asks of slides.
+    static func findBar(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 }
