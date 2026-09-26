@@ -226,11 +226,21 @@ fn ext_of(rel: &str) -> String {
         .unwrap_or_default()
 }
 
-fn project_info(name: String, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+/// A project as the library lists it. Its date is the newest of its folder's
+/// and its content files': a folder's own date moves only when entries come
+/// or go directly in it, not when a file in it is saved or compiled.
+fn project_info(name: String, root: &Path, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+    let mut mtime = mtime_ms(meta);
+    let _ = visit_files(root, &mut |abs, _| {
+        if let Ok(meta) = fs::metadata(abs) {
+            mtime = mtime.max(mtime_ms(&meta));
+        }
+        Ok(true)
+    });
     ProjectInfo {
         id: name.clone(),
         name,
-        mtime: mtime_ms(meta),
+        mtime,
         main_file,
     }
 }
@@ -252,7 +262,7 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             continue;
         };
         let main_file = read_settings(&root).main_file;
-        projects.push(project_info(name, &meta, main_file));
+        projects.push(project_info(name, &root, &meta, main_file));
     }
     projects.sort_by_key(|p| Reverse(p.mtime));
     Ok(projects)
@@ -279,6 +289,7 @@ pub fn create_project(
     let settings = write_settings(&root, &json!({}))?;
     Ok(project_info(
         clean,
+        &root,
         &fs::metadata(&root)?,
         settings.main_file,
     ))
@@ -293,7 +304,7 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     }
     fs::rename(&root, &dest)?;
     let main_file = read_settings(&dest).main_file;
-    Ok(project_info(clean, &fs::metadata(&dest)?, main_file))
+    Ok(project_info(clean, &dest, &fs::metadata(&dest)?, main_file))
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a

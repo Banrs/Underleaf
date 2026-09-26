@@ -535,6 +535,24 @@ fn the_build_folder_name_is_reserved_at_the_top_in_any_case() {
 }
 
 #[test]
+fn a_project_is_dated_by_its_newest_file() {
+    let data = data_dir();
+    let root = project(data.path(), "dated");
+    // Saving a file in place leaves its folder's date alone.
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    let main = fs::File::options()
+        .write(true)
+        .open(root.join("main.tex"))
+        .unwrap();
+    main.set_modified(later).unwrap();
+    let expected = later
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    assert_eq!(list_projects(data.path()).unwrap()[0].mtime, expected);
+}
+
+#[test]
 fn search_stops_at_the_limit_and_skips_build_output() {
     let data = data_dir();
     let root = project(data.path(), "limits");
