@@ -77,11 +77,11 @@ extension View {
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
-    /// The open project, kept with the window's restored state: it opens
-    /// again at launch when the system restores windows (System Settings ›
-    /// Desktop & Dock › Close windows when quitting an application, or
-    /// Quit and Keep Windows).
-    @SceneStorage("project") private var restoredProject: String?
+    /// The open project and where it was left, kept with the window's
+    /// restored state: it opens again at launch as it was when the system
+    /// restores windows (System Settings › Desktop & Dock › Close windows
+    /// when quitting an application, or Quit and Keep Windows).
+    @SceneStorage("workspace") private var savedWorkspace: Data?
 
     var body: some View {
         @Bindable var app = app
@@ -105,12 +105,13 @@ struct RootView: View {
             // `open TeXLocal.app --args -openProject <id>` opens a project at
             // launch; launch arguments land in UserDefaults' argument domain
             // for this run only.
-            let restored = restoredProject.flatMap { id in app.projects.contains { $0.id == id } ? id : nil }
-            if let id = UserDefaults.standard.string(forKey: "openProject") ?? restored, app.project == nil {
-                await app.open(id)
+            let saved = savedWorkspace.flatMap { try? JSONDecoder().decode(SavedWorkspace.self, from: $0) }
+                .flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
+            if let id = UserDefaults.standard.string(forKey: "openProject") ?? saved?.project, app.project == nil {
+                await app.open(id, restoring: saved)
             }
         }
-        .onChange(of: app.project?.id) { _, id in restoredProject = id }
+        .onChange(of: app.project?.saved) { _, saved in savedWorkspace = saved.flatMap { try? JSONEncoder().encode($0) } }
         // A .tex file, a .zip or a folder from Finder's Open With or the
         // Dock icon, opened as Open… opens it.
         .onOpenURL { url in

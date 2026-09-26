@@ -31,6 +31,10 @@ final class ProjectModel {
     /// be flashed twice.
     var highlight: (loc: ForwardLoc, token: Int)?
     var showLogs = false
+    /// The PDF's page on screen (1-based), for reopening where it was.
+    var pdfPage = 0
+    /// The page to show once the PDF first loads, when reopening.
+    @ObservationIgnored var restorePDFPage: Int?
     /// Which of the panel's tabs is showing.
     var panelTab: PanelTab = .issues
 
@@ -139,9 +143,16 @@ final class ProjectModel {
     /// A project path's last component, for alert titles.
     private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
+    /// What reopening at launch puts back (`RootView`).
+    var saved: SavedWorkspace {
+        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdfPage)
+    }
+
     // ---------- loading ----------
 
-    func load() async {
+    /// Load the project: its main file, or, reopening, the file, line,
+    /// build panel and PDF page it was left at.
+    func load(restoring saved: SavedWorkspace? = nil) async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onScroll = { [weak self] line in self?.topLine = line }
@@ -173,7 +184,12 @@ final class ProjectModel {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
             await refreshSymbols()
-            if let main = settings?.mainFile { await open(main) }
+            if let saved {
+                showLogs = saved.buildPanel
+                restorePDFPage = saved.pdfPage
+            }
+            let restored = saved?.file.flatMap { file in tree.flattened.contains { $0.path == file } ? file : nil }
+            if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
         } catch {
             report(error, "Couldn’t Open “\(id)”")
         }
@@ -796,6 +812,18 @@ final class FileWatcher {
         self.source = source
         source.resume()
     }
+}
+
+/// Where a project window was left, kept with the window's restored state
+/// (SwiftUI's scene storage): the open file and its line, the build panel
+/// and the PDF's page. The panes' visibility and sizes are remembered
+/// anyway, in the defaults and the splits' autosave.
+struct SavedWorkspace: Codable, Equatable {
+    var project: String
+    var file: String?
+    var line: Int
+    var buildPanel: Bool
+    var pdfPage: Int
 }
 
 /// An import whose names are taken where it goes, as Finder words the

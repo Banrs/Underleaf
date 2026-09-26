@@ -182,12 +182,13 @@ final class AppModel {
         }
     }
 
-    func open(_ id: String) async {
+    /// Open a project; reopening at launch, where it was left.
+    func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         guard project?.id != id, await close() else { return }
         recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
-        await model.load()
+        await model.load(restoring: saved?.project == id ? saved : nil)
     }
 
     /// Save, then leave the project. Returns false — and stays — when the save

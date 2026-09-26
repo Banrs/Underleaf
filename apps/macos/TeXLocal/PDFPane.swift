@@ -34,6 +34,7 @@ struct PDFPane: View {
             pages
         }
         .animation(.snappy(duration: 0.25), value: finding)
+        .onChange(of: controller.page) { _, page in project.pdfPage = page }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -524,11 +525,16 @@ private struct PDFRepresentable: NSViewRepresentable {
         let scale = view.scaleFactor
         view.document = document
         if !autoScales { view.scaleFactor = scale }
+        // The first PDF of a reopened project opens at the page it was left at.
+        let restore = project.restorePDFPage.map { min(max($0, 1), document.pageCount) - 1 }
+        project.restorePDFPage = nil
         if let pageIndex, let spot, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: spot.point))
+        } else if let restore, let page = document.page(at: restore) {
+            view.go(to: page)
         }
         controller.pageCount = document.pageCount
-        controller.page = (pageIndex ?? 0) + 1
+        controller.page = (pageIndex ?? restore ?? 0) + 1
         return true
     }
 
