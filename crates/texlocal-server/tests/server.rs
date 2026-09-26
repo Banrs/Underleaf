@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
 use texlocal_server::{http, App, Request, Response};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 const PORT: u16 = 7878;
 const TOKEN: &str = "secret";
@@ -340,6 +340,10 @@ async fn exports_download_as_attachments() {
 // ---------- over a real socket ----------
 
 async fn start() -> (Fixture, u16) {
+    start_with(1024).await
+}
+
+async fn start_with(max_body: usize) -> (Fixture, u16) {
     let f = fixture();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -348,15 +352,25 @@ async fn start() -> (Fixture, u16) {
     let data = f._data.path().to_path_buf();
     let web = f._web.path().to_path_buf();
     let app = Arc::new(App::new(Service::new(data), web, port, TOKEN.into()));
+    let guard = {
+        let app = app.clone();
+        Arc::new(move |req: &Request| app.guard(req))
+    };
     let handler = Arc::new(move |req| {
         let app = app.clone();
         async move { app.handle(req).await }
     });
-    tokio::spawn(http::serve(listener, handler, 1024, std::future::pending()));
+    tokio::spawn(http::serve(
+        listener,
+        handler,
+        guard,
+        max_body,
+        std::future::pending(),
+    ));
     (f, port)
 }
 
-async fn read_response(stream: &mut tokio::net::TcpStream) -> String {
+async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
@@ -433,7 +447,12 @@ async fn a_request_pipelined_behind_a_body_is_kept() {
 #[tokio::test]
 async fn oversized_and_chunked_bodies_are_refused_before_reading() {
     let (_f, port) = start().await;
-    for extra in ["Content-Length: 5000", "Transfer-Encoding: chunked"] {
+    for (extra, expected) in [
+        ("Content-Length: 5000", "413"),
+        ("Transfer-Encoding: chunked", "501"),
+        ("Content-Length: 5\r\nContent-Length: 6", "400"),
+        ("Content-Length: +5", "400"),
+    ] {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
@@ -442,15 +461,191 @@ async fn oversized_and_chunked_bodies_are_refused_before_reading() {
         );
         stream.write_all(req.as_bytes()).await.unwrap();
         let response = read_response(&mut stream).await;
-        let expected = if extra.starts_with("Content") {
-            "413"
-        } else {
-            "501"
-        };
         assert!(
             response.starts_with(&format!("HTTP/1.1 {expected}")),
             "{response}"
         );
         assert!(response.contains("Connection: close"));
     }
+}
+
+/// The three refusals of `guard`, each with the cookie or Host it lacks.
+fn unauthenticated_heads(port: u16) -> [(String, &'static str); 3] {
+    let cookie = format!("Cookie: texlocal_token={TOKEN}");
+    [
+        (format!("Host: evil.example:{port}\r\n{cookie}"), "403"),
+        (
+            format!("Host: 127.0.0.1:{port}\r\n{cookie}\r\nOrigin: https://evil.example"),
+            "403",
+        ),
+        (format!("Host: 127.0.0.1:{port}"), "401"),
+    ]
+}
+
+const BIG: usize = 64 << 20;
+
+#[tokio::test]
+async fn unauthenticated_requests_are_answered_before_their_bodies() {
+    let (_f, port) = start_with(BIG).await;
+    for (head, expected) in unauthenticated_heads(port) {
+        // Only the head is sent: waiting for the body would time out.
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let req =
+            format!("POST /api/upload_file HTTP/1.1\r\n{head}\r\nContent-Length: {BIG}\r\n\r\n");
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read_response(&mut stream),
+        )
+        .await
+        .expect("answered without waiting for the body");
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {expected}")),
+            "{response}"
+        );
+        assert!(response.contains("Connection: close"), "{response}");
+    }
+}
+
+#[tokio::test]
+async fn a_refused_upload_still_delivers_the_whole_response() {
+    let (_f, port) = start_with(BIG).await;
+    for (head, expected) in unauthenticated_heads(port) {
+        let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let (mut reader, mut writer) = stream.into_split();
+        let req =
+            format!("POST /api/upload_file HTTP/1.1\r\n{head}\r\nContent-Length: {BIG}\r\n\r\n");
+        // The body keeps coming while the refusal is sent, as a browser's
+        // upload does.
+        let upload = tokio::spawn(async move {
+            writer.write_all(req.as_bytes()).await.unwrap();
+            let chunk = vec![b'x'; 1 << 20];
+            let mut sent = 0;
+            while sent < BIG && writer.write_all(&chunk).await.is_ok() {
+                sent += chunk.len();
+            }
+            sent
+        });
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            read_response(&mut reader),
+        )
+        .await
+        .unwrap();
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {expected}")),
+            "{response}"
+        );
+        let message = if expected == "401" {
+            "Open the URL texlocal-server printed at startup"
+        } else {
+            "Forbidden"
+        };
+        assert!(response.contains(message), "{response}");
+
+        // The server discards a bounded amount and closes, never taking the
+        // whole body.
+        let sent = tokio::time::timeout(std::time::Duration::from_secs(10), upload)
+            .await
+            .expect("the server closed the connection")
+            .unwrap();
+        assert!(sent < BIG, "the server read the whole body");
+    }
+}
+
+#[tokio::test]
+async fn refusals_without_a_pending_body_keep_the_connection() {
+    let (_f, port) = start().await;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let host = format!("Host: 127.0.0.1:{port}");
+
+    let bare = format!("GET / HTTP/1.1\r\n{host}\r\n\r\n");
+    stream.write_all(bare.as_bytes()).await.unwrap();
+    let refused = read_response(&mut stream).await;
+    assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
+    assert!(refused.contains("Connection: keep-alive"), "{refused}");
+
+    // A small body arrives with its head, so it is skipped, not read.
+    let cookie = format!("Cookie: texlocal_token={TOKEN}");
+    let foreign = format!(
+        "POST /api/list_projects HTTP/1.1\r\n{host}\r\n{cookie}\r\n\
+         Origin: https://evil.example\r\nContent-Length: 2\r\n\r\n{{}}"
+    );
+    stream.write_all(foreign.as_bytes()).await.unwrap();
+    let refused = read_response(&mut stream).await;
+    assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+    assert!(refused.contains("Connection: keep-alive"), "{refused}");
+
+    let exchange = format!("GET /?token={TOKEN} HTTP/1.1\r\n{host}\r\n\r\n");
+    stream.write_all(exchange.as_bytes()).await.unwrap();
+    let signed_in = read_response(&mut stream).await;
+    assert!(signed_in.starts_with("HTTP/1.1 303"), "{signed_in}");
+    assert!(
+        signed_in.contains(&format!("Set-Cookie: texlocal_token={TOKEN};")),
+        "{signed_in}"
+    );
+
+    let body = r#"{"id":"P","path":"main.tex"}"#;
+    let post = format!(
+        "POST /api/read_file HTTP/1.1\r\n{host}\r\n{cookie}\r\n\
+         Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(post.as_bytes()).await.unwrap();
+    let read = read_response(&mut stream).await;
+    assert!(read.starts_with("HTTP/1.1 200 OK"), "{read}");
+    assert!(read.contains("documentclass"), "{read}");
+}
+
+#[tokio::test]
+async fn a_head_sent_a_byte_at_a_time_is_still_read() {
+    let (_f, port) = start().await;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    stream.set_nodelay(true).unwrap();
+    // With the empty line RFC 9112 lets a client send before a request.
+    let req = format!(
+        "\r\nGET /__raw/P/img/a.svg HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Cookie: texlocal_token={TOKEN}\r\n\r\n"
+    );
+    for byte in req.as_bytes() {
+        stream.write_all(&[*byte]).await.unwrap();
+        tokio::task::yield_now().await;
+    }
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("0123456789"), "{response}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_head_of_endless_blank_lines_is_cut_off() {
+    let (_f, port) = start().await;
+    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    // Empty lines before a request are dropped, never growing the head
+    // towards its size limit, so only the head's time limit ends them.
+    let feed = tokio::spawn(async move {
+        let blank = b"\r\n".repeat(4096);
+        let until = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while tokio::time::Instant::now() < until {
+            if writer.write_all(&blank).await.is_err() {
+                return;
+            }
+        }
+    });
+    let mut chunk = [0u8; 64];
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(15), reader.read(&mut chunk))
+        .await
+        .expect("the connection outlived the head's time limit");
+    assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
+    feed.abort();
 }

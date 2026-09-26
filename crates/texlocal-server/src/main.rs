@@ -64,7 +64,11 @@ async fn main() -> std::io::Result<()> {
             async move { app.handle(req).await }
         })
     };
-    http::serve(listener, handler, MAX_BODY, async {
+    let guard = {
+        let app = app.clone();
+        Arc::new(move |req: &http::Request| app.guard(req))
+    };
+    http::serve(listener, handler, guard, MAX_BODY, async {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await;

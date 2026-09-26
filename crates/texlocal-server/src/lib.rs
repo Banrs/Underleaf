@@ -75,6 +75,8 @@ impl App {
     }
 
     pub async fn handle(&self, req: Request) -> Response {
+        // `http::serve` has already run the guard on the head, before reading
+        // the body; it runs again for anyone handing a whole request in.
         if let Some(refused) = self.guard(&req) {
             return refused;
         }
@@ -100,7 +102,10 @@ impl App {
 
     // ---------- access ----------
 
-    fn guard(&self, req: &Request) -> Option<Response> {
+    /// Host, Origin and the token, from the request head alone: the server
+    /// runs this before reading a body, so nobody unauthenticated can make it
+    /// buffer one.
+    pub fn guard(&self, req: &Request) -> Option<Response> {
         if !req
             .header("host")
             .is_some_and(|h| self.hosts.iter().any(|a| a == h))
