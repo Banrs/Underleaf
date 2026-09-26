@@ -24,6 +24,7 @@ struct PDFPane: View {
         // window its labels are drawn dark, as over any light content).
         VStack(spacing: 0) {
             bar
+            Divider()
             PageRow(project: project, controller: controller)
             Divider()
             pages
@@ -312,10 +313,10 @@ struct PDFPane: View {
 /// button that does what fixes it: compile, or show the failed build's
 /// issues. A narrow pane shortens the page to "2 / 5" and the freshness to
 /// its symbol.
-/// The page and whether the preview is current, as quiet text in the row
-/// under the PDF's bar, as Preview shows the page: paging is the keyboard's
-/// and the scroll's. The PDF's page, not the one LaTeX prints: front matter
-/// and roman numbers make those differ.
+/// Whether the preview is current, and the page at the trailing end, as
+/// quiet text in the row under the PDF's bar, as Preview shows the page:
+/// paging is the keyboard's and the scroll's. The PDF's page, not the one
+/// LaTeX prints: front matter and roman numbers make those differ.
 private struct PageRow: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -323,14 +324,6 @@ private struct PageRow: View {
 
     var body: some View {
         SecondaryBar {
-            if project.pdfVersion > 0, controller.pageCount > 0 {
-                Text("Page \(controller.page) of \(controller.pageCount)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .animation(.default, value: controller.page)
-            }
-            Spacer(minLength: 0)
             if project.pdfVersion > 0, let freshness = project.pdfFreshness {
                 Button { fix(freshness) } label: {
                     Label {
@@ -347,6 +340,14 @@ private struct PageRow: View {
                       ? "The latest build failed; this is the last one that succeeded. Show Issues"
                       : "The preview doesn’t reflect the current source. Compile")
                 .transition(.opacity)
+            }
+            Spacer(minLength: 0)
+            if project.pdfVersion > 0, controller.pageCount > 0 {
+                Text("Page \(controller.page) of \(controller.pageCount)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .animation(.default, value: controller.page)
             }
         }
         .animation(.default, value: project.pdfFreshness)

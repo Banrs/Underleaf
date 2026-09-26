@@ -98,6 +98,7 @@ private struct SourcePane: View {
     var body: some View {
         VStack(spacing: 0) {
             SourceBar(project: project)
+            Divider()
             SourceLocation(project: project)
             if project.findShown {
                 Divider()
