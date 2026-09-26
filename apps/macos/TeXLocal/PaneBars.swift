@@ -222,3 +222,124 @@ struct DialogSheet<Fields: View>: View {
         }
     }
 }
+
+/// AppKit's segmented control, for what SwiftUI's control group can't do
+/// and Apple's apps do with it: keep a segment at its widest label's width,
+/// so the control keeps its width as the label changes (as Pages' zoom
+/// keeps its own), with the label centred and no menu arrow; and open a
+/// picker from a segment (Share). Momentary, as a control group's segments
+/// are; each segment at the width AppKit gives it on its own, or its widest
+/// label's.
+struct SegmentedControl: NSViewRepresentable {
+    struct Segment {
+        var symbol: String?
+        var label: String?
+        /// The widest label the segment shows: it keeps that one's width.
+        var widest: String?
+        let help: String
+        var enabled = true
+        /// A menu to open on click, in place of `action`.
+        var menu: [MenuEntry] = []
+        /// Run on click, with the control and the segment's rect in it.
+        var action: (NSSegmentedControl, NSRect) -> Void = { _, _ in }
+    }
+
+    enum MenuEntry {
+        case item(String, checked: Bool, () -> Void)
+        case separator
+    }
+
+    let segments: [Segment]
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl()
+        control.trackingMode = .momentary
+        // A digit's width whatever the digit, so a scale's label keeps its width.
+        control.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        control.target = context.coordinator
+        control.action = #selector(Coordinator.clicked(_:))
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.segments = segments
+        control.segmentCount = segments.count
+        var widths: [CGFloat] = []
+        for (index, segment) in segments.enumerated() {
+            let image = segment.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: segment.help) }
+            control.setImage(image, forSegment: index)
+            control.setLabel(segment.label ?? "", forSegment: index)
+            control.setToolTip(segment.help, forSegment: index)
+            control.setEnabled(segment.enabled && context.environment.isEnabled, forSegment: index)
+            let width = Self.width(label: segment.widest ?? segment.label, image: image, font: control.font)
+            control.setWidth(width, forSegment: index)
+            widths.append(width)
+        }
+        context.coordinator.widths = widths
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
+    /// The width AppKit gives a segment with this content on its own: a
+    /// one-segment control is its segment's width.
+    private static func width(label: String?, image: NSImage?, font: NSFont?) -> CGFloat {
+        let probe = NSSegmentedControl()
+        probe.segmentCount = 1
+        probe.font = font
+        probe.setLabel(label ?? "", forSegment: 0)
+        probe.setImage(image, forSegment: 0)
+        return probe.intrinsicContentSize.width
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var segments: [Segment] = []
+        var widths: [CGFloat] = []
+
+        @objc func clicked(_ control: NSSegmentedControl) {
+            let index = control.selectedSegment
+            guard segments.indices.contains(index) else { return }
+            // The control is as wide as its segments, so each starts where
+            // the ones before it end.
+            let x = widths.prefix(index).reduce(0, +)
+            let rect = NSRect(x: x, y: 0, width: widths[index], height: control.bounds.height)
+            let segment = segments[index]
+            if segment.menu.isEmpty {
+                segment.action(control, rect)
+            } else {
+                let menu = NSMenu()
+                for entry in segment.menu {
+                    switch entry {
+                    case .separator: menu.addItem(.separator())
+                    case let .item(title, checked, run):
+                        let item = ActionMenuItem(title: title, run: run)
+                        item.state = checked ? .on : .off
+                        menu.addItem(item)
+                    }
+                }
+                // Under the segment, its leading edge on the segment's, as a
+                // pull-down's menu opens.
+                menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: control.isFlipped ? rect.maxY + 4 : -4), in: control)
+            }
+        }
+    }
+}
+
+/// A menu item that runs a closure.
+private final class ActionMenuItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(title: String, run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(runAction), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func runAction() { run() }
+}

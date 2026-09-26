@@ -131,19 +131,21 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile at the leading edge, zoom at the trailing.
+    /// Compile at the leading edge; Share, then zoom, at the trailing.
     private func actions(compact: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             compileControls(compact: compact)
             Spacer(minLength: 0)
+            // Share before zoom, not at the bar's edge, where its picker
+            // had no room in a full-screen window.
+            shareControl
             if zoom { zoomControls }
         }
     }
 
     /// Overleaf's Recompile, the pane's one prominent control; while a build
     /// runs, Stop in its place, the system's spinner as its icon. Nothing
-    /// follows it in the bar, so the swap moves nothing. Share PDF and Save
-    /// PDF As… are the File menu's.
+    /// follows it on its side of the bar, so the swap moves nothing.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
@@ -166,49 +168,43 @@ struct PDFPane: View {
         }
     }
 
-    /// Zoom out | the scale | zoom in, one native control group. The scale
-    /// is a menu of ways to fit and preset scales, the one in use checked:
-    /// a menu rather than a pop-up, as the scale is any percentage. Not the
-    /// View menu's commands: their route (`requestPDF`) also hides the panel.
+    /// Zoom out | the scale | zoom in, AppKit's segmented control. The scale
+    /// keeps the width of its widest ("000%"), centred, so − and + stay put
+    /// as it changes; a click opens its menu of ways to fit and preset
+    /// scales, the one in use checked (while fitting, no preset is, even at
+    /// a preset's scale). Not the View menu's commands: their route
+    /// (`requestPDF`) also hides the panel.
     private var zoomControls: some View {
-        ControlGroup {
-            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
-                .help("Zoom Out")
-            Menu {
-                // The fitting in use is checked, as Preview's is; while
-                // fitting, no preset is, even at a preset's scale.
-                Picker("Fit", selection: Binding(
-                    get: { controller.fit },
-                    set: { fit in
-                        switch fit {
-                        case .width: controller.fitWidth()
-                        case .height: controller.fitHeight()
-                        case nil: break
-                        }
-                    }
-                )) {
-                    Text("Fit Width").tag(Optional(PDFController.Fit.width))
-                    Text("Fit Height").tag(Optional(PDFController.Fit.height))
-                }
-                .pickerStyle(.inline)
-                Picker("Zoom", selection: Binding(
-                    get: { controller.fit == nil ? Self.zoomPresets.first { "\($0)%" == controller.zoomLabel } : nil },
-                    set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
-                )) {
-                    ForEach(Self.zoomPresets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Text(controller.zoomLabel).monospacedDigit()
+        let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
+            .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
+                controller.setScale(CGFloat(percent) / 100)
             }
-            .help("Zoom")
-            .accessibilityLabel("Zoom")
-            .accessibilityValue(controller.zoomLabel)
-            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
-                .help("Zoom In")
         }
+        return SegmentedControl(segments: [
+            .init(symbol: "minus", help: "Zoom Out") { _, _ in controller.zoom(in: false) },
+            .init(label: controller.zoomLabel, widest: "000%", help: "Zoom", menu: [
+                .item("Fit Width", checked: controller.fit == .width) { controller.fitWidth() },
+                .item("Fit Height", checked: controller.fit == .height) { controller.fitHeight() },
+                .separator,
+            ] + presets),
+            .init(symbol: "plus", help: "Zoom In") { _, _ in controller.zoom(in: true) },
+        ])
         .fixedSize()
         .disabled(project.pdfVersion == 0)
+        .accessibilityValue(controller.zoomLabel)
+    }
+
+    /// The system's share picker for the PDF, opened from its segment: one
+    /// segment of the same control as zoom's, so the two are one size.
+    private var shareControl: some View {
+        let url = project.pdfVersion > 0 ? project.pdfURL : nil
+        return SegmentedControl(segments: [
+            .init(symbol: "square.and.arrow.up", help: "Share PDF", enabled: url != nil) { control, rect in
+                guard let url else { return }
+                NSSharingServicePicker(items: [url]).show(relativeTo: rect, of: control, preferredEdge: .minY)
+            },
+        ])
+        .fixedSize()
     }
 
     private static let zoomPresets = [50, 75, 100, 125, 150, 200]
