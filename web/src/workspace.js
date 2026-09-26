@@ -506,8 +506,13 @@ async function openFile(path) {
     if (IMAGE_FILE.test(path)) {
       state.editor?.destroy();
       state.editor = null;
-      host.replaceChildren(el('div', { class: 'image-preview' },
-        el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
+      const img = el('img', { alt: path });
+      host.replaceChildren(el('div', { class: 'image-preview' }, img));
+      api.rawFileUrl(projectId, path).then((src) => {
+        // The <img> keeps the decoded image, so a blob: URL can go once read.
+        if (src.startsWith('blob:')) img.onload = img.onerror = () => URL.revokeObjectURL(src);
+        img.src = src;
+      }, (err) => { if (stillCurrent()) toast(err.message, 'error'); });
     } else {
       showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
     }
@@ -689,7 +694,7 @@ async function compile({ auto = false } = {}) {
       // A new PDF invalidates every match and text position from the previous
       // document. Closing the bar also invalidates the workspace debounce.
       closePdfFind();
-      const loaded = await viewer.load(api.pdfUrl(projectId));
+      const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
       setPdfFreshness(loaded ? '' : 'Preview could not reload');
     } else if (viewer.doc) {
       setPdfFreshness('Last successful build');
@@ -782,7 +787,7 @@ async function loadPdf() {
   const viewer = state.pdf;
   const current = () => generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
   try {
-    const loaded = await viewer.load(api.pdfUrl(projectId)) && current();
+    const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders) && current();
     if (loaded) setPdfFreshness('');
     return loaded;
   } catch {

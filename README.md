@@ -100,8 +100,9 @@ CI checks the three agree before drafting the release.
 
 ## Security notes
 
-- The browser version binds `127.0.0.1` only, signs in with a startup token
-  exchanged for an HttpOnly cookie, and rejects foreign Host and Origin headers.
+- The browser version binds `127.0.0.1` only, asks for its startup token in a
+  header on every request for project data (the page keeps it for its tab, never
+  in a cookie), and rejects foreign Host and Origin headers.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
 - `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 

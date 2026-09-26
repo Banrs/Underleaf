@@ -3,7 +3,13 @@
 //! token printed at startup. That is not optional hardening: a project can turn
 //! on `-shell-escape`, so anything that can reach `/api/compile` can run
 //! commands as this user. The Host check stops DNS rebinding, and the Origin
-//! check and SameSite cookie stop another site's page from driving the API.
+//! check stops another site's page from driving the API.
+//!
+//! The token travels in an `X-TeXLocal-Token` header, never a cookie: cookies
+//! ignore ports, so one would also go to every other service on 127.0.0.1,
+//! another account's among them. The page keeps the token from its first
+//! URL in sessionStorage, which is per origin and so per port. The web UI's
+//! own files hold no data and stay open, so that page can load to read it.
 
 pub mod http;
 
@@ -19,7 +25,8 @@ use texlocal_core::{paths, serve, zipexport, CoreError};
 pub use http::{Request, Response};
 use tokio::net::TcpListener;
 
-const COOKIE: &str = "texlocal_token";
+/// The header every request for project data carries the token in.
+const TOKEN_HEADER: &str = "x-texlocal-token";
 /// Uploads and whole documents travel in one body.
 pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
@@ -113,10 +120,9 @@ impl App {
         } else {
             Response::text(405, "Method not allowed")
         };
-        // No page may frame the app: a page on another loopback port is
-        // same-site, so the cookie would go with it and a clickjacked frame
-        // could turn on shell escape and compile. A sandboxed project file
-        // already has its own CSP, and no frame shows one.
+        // No page may frame the app: a clickjacked frame could turn on shell
+        // escape and compile. A sandboxed project file already has its own
+        // CSP, and no frame shows one.
         let response = if response.header("content-security-policy").is_none() {
             response.with("Content-Security-Policy", "frame-ancestors 'none'")
         } else {
@@ -125,6 +131,8 @@ impl App {
         response
             .with("X-Frame-Options", "DENY")
             .with("X-Content-Type-Options", "nosniff")
+            // The first page's URL holds the token until its script drops it.
+            .with("Referrer-Policy", "no-referrer")
     }
 
     /// Host, Origin and the token, from the request head alone: the server
@@ -148,28 +156,17 @@ impl App {
             }
         }
 
-        // The printed URL carries the token once; trade it for a cookie and
-        // drop it from the address bar.
-        let offered = req
-            .query()
-            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")));
-        if let Some(offered) = offered {
-            if !same(offered, &self.token) {
-                return Some(Response::text(401, "Wrong token"));
-            }
-            return Some(Response::text(303, "").with("Location", req.path()).with(
-                "Set-Cookie",
-                format!("{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/", self.token),
-            ));
+        // Only the routes that reach projects need the token. The web UI's
+        // files are the same for everyone, and the page has to load before
+        // it can read the token from its URL.
+        let path = req.path();
+        if !(path.starts_with("/api/") || path.starts_with("/__")) {
+            return None;
         }
-
-        let cookie = req
-            .headers
-            .iter()
-            .filter(|(n, _)| n == "cookie")
-            .flat_map(|(_, v)| v.split(';'))
-            .find_map(|pair| pair.trim().strip_prefix(COOKIE)?.strip_prefix('='));
-        if !cookie.is_some_and(|t| same(t, &self.token)) {
+        if !req
+            .header(TOKEN_HEADER)
+            .is_some_and(|t| same(t, &self.token))
+        {
             return Some(Response::text(
                 401,
                 "Open the URL texlocal-server printed at startup",

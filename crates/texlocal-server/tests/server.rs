@@ -51,10 +51,9 @@ fn request(method: &str, target: &str, headers: &[(&str, &str)], body: &[u8]) ->
     }
 }
 
-/// A request from the signed-in browser tab.
+/// A request from the browser tab that holds the token.
 fn authed(method: &str, target: &str, extra: &[(&str, &str)], body: &[u8]) -> Request {
-    let cookie = format!("texlocal_token={TOKEN}");
-    let mut headers = vec![("host", HOST), ("cookie", cookie.as_str())];
+    let mut headers = vec![("host", HOST), ("x-texlocal-token", TOKEN)];
     headers.extend_from_slice(extra);
     request(method, target, &headers, body)
 }
@@ -64,51 +63,74 @@ fn json_body(response: &Response) -> Value {
 }
 
 #[tokio::test]
-async fn requests_without_the_token_cookie_are_refused() {
+async fn project_routes_need_the_token_header() {
     let f = fixture();
-    let bare = request("GET", "/", &[("host", HOST)], b"");
-    assert_eq!(f.app.handle(bare).await.status, 401);
-
-    let wrong = request(
-        "GET",
-        "/",
-        &[("host", HOST), ("cookie", "texlocal_token=nope")],
+    for (method, target) in [
+        ("POST", "/api/list_projects"),
+        ("GET", "/__raw/P/img/a.svg"),
+        ("GET", "/__pdf/P"),
+        ("GET", "/__download/zip/P"),
+    ] {
+        let bare = request(method, target, &[("host", HOST)], b"");
+        assert_eq!(f.app.handle(bare).await.status, 401, "{target}");
+        let wrong = request(
+            method,
+            target,
+            &[("host", HOST), ("x-texlocal-token", "nope")],
+            b"",
+        );
+        assert_eq!(f.app.handle(wrong).await.status, 401, "{target}");
+    }
+    // Cookies go to every port on the host, so one is no longer enough.
+    let cookie = request(
+        "POST",
+        "/api/list_projects",
+        &[("host", HOST), ("cookie", "texlocal_token=secret")],
         b"",
     );
-    assert_eq!(f.app.handle(wrong).await.status, 401);
+    assert_eq!(f.app.handle(cookie).await.status, 401);
+    // Nor is the token in the URL: only the page reads that.
+    let query = request(
+        "POST",
+        "/api/list_projects?token=secret",
+        &[("host", HOST)],
+        b"",
+    );
+    assert_eq!(f.app.handle(query).await.status, 401);
 
-    let api = request("POST", "/api/list_projects", &[("host", HOST)], b"");
-    assert_eq!(f.app.handle(api).await.status, 401);
+    let signed = f
+        .app
+        .handle(authed("POST", "/api/list_projects", &[], b""))
+        .await;
+    assert_eq!(signed.status, 200);
 }
 
 #[tokio::test]
-async fn the_startup_token_is_traded_for_a_strict_http_only_cookie() {
+async fn the_web_ui_loads_without_the_token_and_keeps_its_url_to_itself() {
     let f = fixture();
-    let signed_in = f
+    // The printed URL: the page loads, and its script takes the token.
+    let first = f
         .app
         .handle(request("GET", "/?token=secret", &[("host", HOST)], b""))
         .await;
-    assert_eq!(signed_in.status, 303);
-    assert_eq!(signed_in.header("location"), Some("/"));
-    let cookie = signed_in.header("set-cookie").unwrap();
-    assert!(cookie.starts_with("texlocal_token=secret;"));
-    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
-
-    let wrong = request("GET", "/?token=guess", &[("host", HOST)], b"");
-    assert_eq!(f.app.handle(wrong).await.status, 401);
+    assert_eq!(first.status, 200);
+    assert!(first.header("set-cookie").is_none());
+    assert_eq!(first.header("referrer-policy"), Some("no-referrer"));
+    let bare = request("GET", "/", &[("host", HOST)], b"");
+    assert_eq!(f.app.handle(bare).await.status, 200);
+    // A web file is still only served to this server's own names.
+    let rebound = request("GET", "/", &[("host", "evil.example:7878")], b"");
+    assert_eq!(f.app.handle(rebound).await.status, 403);
 }
 
 #[tokio::test]
-async fn foreign_hosts_and_origins_are_refused_even_with_the_cookie() {
+async fn foreign_hosts_and_origins_are_refused_even_with_the_token() {
     let f = fixture();
     // DNS rebinding: an attacker's name resolving to 127.0.0.1.
     let rebound = request(
-        "GET",
-        "/",
-        &[
-            ("host", "evil.example:7878"),
-            ("cookie", "texlocal_token=secret"),
-        ],
+        "POST",
+        "/api/list_projects",
+        &[("host", "evil.example:7878"), ("x-texlocal-token", TOKEN)],
         b"",
     );
     assert_eq!(f.app.handle(rebound).await.status, 403);
@@ -432,7 +454,7 @@ async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
 async fn one_connection_carries_several_requests_with_bodies() {
     let (_f, port) = start().await;
     let mut stream = connect(port).await;
-    let head = format!("Host: 127.0.0.1:{port}\r\nCookie: texlocal_token={TOKEN}");
+    let head = format!("Host: 127.0.0.1:{port}\r\nX-TeXLocal-Token: {TOKEN}");
 
     let body = r#"{"id":"P","path":"main.tex"}"#;
     let post = format!(
@@ -455,7 +477,7 @@ async fn one_connection_carries_several_requests_with_bodies() {
 async fn a_request_pipelined_behind_a_body_is_kept() {
     let (_f, port) = start().await;
     let mut stream = connect(port).await;
-    let head = format!("Host: 127.0.0.1:{port}\r\nCookie: texlocal_token={TOKEN}");
+    let head = format!("Host: 127.0.0.1:{port}\r\nX-TeXLocal-Token: {TOKEN}");
     let body = r#"{"id":"P","path":"main.tex"}"#;
     let both = format!(
         "POST /api/read_file HTTP/1.1\r\n{head}\r\nContent-Length: {}\r\n\r\n{body}\
@@ -497,13 +519,13 @@ async fn oversized_and_chunked_bodies_are_refused_before_reading() {
     }
 }
 
-/// The three refusals of `guard`, each with the cookie or Host it lacks.
+/// The three refusals of `guard`, each with the token or Host it lacks.
 fn unauthenticated_heads(port: u16) -> [(String, &'static str); 3] {
-    let cookie = format!("Cookie: texlocal_token={TOKEN}");
+    let token = format!("X-TeXLocal-Token: {TOKEN}");
     [
-        (format!("Host: evil.example:{port}\r\n{cookie}"), "403"),
+        (format!("Host: evil.example:{port}\r\n{token}"), "403"),
         (
-            format!("Host: 127.0.0.1:{port}\r\n{cookie}\r\nOrigin: https://evil.example"),
+            format!("Host: 127.0.0.1:{port}\r\n{token}\r\nOrigin: https://evil.example"),
             "403",
         ),
         (format!("Host: 127.0.0.1:{port}"), "401"),
@@ -587,16 +609,16 @@ async fn refusals_without_a_pending_body_keep_the_connection() {
     let mut stream = connect(port).await;
     let host = format!("Host: 127.0.0.1:{port}");
 
-    let bare = format!("GET / HTTP/1.1\r\n{host}\r\n\r\n");
+    let bare = format!("POST /api/list_projects HTTP/1.1\r\n{host}\r\n\r\n");
     stream.write_all(bare.as_bytes()).await.unwrap();
     let refused = read_response(&mut stream).await;
     assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
     assert!(refused.contains("Connection: keep-alive"), "{refused}");
 
     // A small body arrives with its head, so it is skipped, not read.
-    let cookie = format!("Cookie: texlocal_token={TOKEN}");
+    let token = format!("X-TeXLocal-Token: {TOKEN}");
     let foreign = format!(
-        "POST /api/list_projects HTTP/1.1\r\n{host}\r\n{cookie}\r\n\
+        "POST /api/list_projects HTTP/1.1\r\n{host}\r\n{token}\r\n\
          Origin: https://evil.example\r\nContent-Length: 2\r\n\r\n{{}}"
     );
     stream.write_all(foreign.as_bytes()).await.unwrap();
@@ -604,18 +626,15 @@ async fn refusals_without_a_pending_body_keep_the_connection() {
     assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
     assert!(refused.contains("Connection: keep-alive"), "{refused}");
 
-    let exchange = format!("GET /?token={TOKEN} HTTP/1.1\r\n{host}\r\n\r\n");
-    stream.write_all(exchange.as_bytes()).await.unwrap();
-    let signed_in = read_response(&mut stream).await;
-    assert!(signed_in.starts_with("HTTP/1.1 303"), "{signed_in}");
-    assert!(
-        signed_in.contains(&format!("Set-Cookie: texlocal_token={TOKEN};")),
-        "{signed_in}"
-    );
+    let page = format!("GET /?token={TOKEN} HTTP/1.1\r\n{host}\r\n\r\n");
+    stream.write_all(page.as_bytes()).await.unwrap();
+    let page = read_response(&mut stream).await;
+    assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+    assert!(!page.contains("Set-Cookie"), "{page}");
 
     let body = r#"{"id":"P","path":"main.tex"}"#;
     let post = format!(
-        "POST /api/read_file HTTP/1.1\r\n{host}\r\n{cookie}\r\n\
+        "POST /api/read_file HTTP/1.1\r\n{host}\r\n{token}\r\n\
          Content-Length: {}\r\n\r\n{body}",
         body.len()
     );
@@ -633,7 +652,7 @@ async fn a_head_sent_a_byte_at_a_time_is_still_read() {
     // With the empty line RFC 9112 lets a client send before a request.
     let req = format!(
         "\r\nGET /__raw/P/img/a.svg HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
-         Cookie: texlocal_token={TOKEN}\r\n\r\n"
+         X-TeXLocal-Token: {TOKEN}\r\n\r\n"
     );
     for byte in req.as_bytes() {
         stream.write_all(&[*byte]).await.unwrap();

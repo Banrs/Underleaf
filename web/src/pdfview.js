@@ -146,8 +146,9 @@ export class PdfViewer {
 
   get numPages() { return this.doc?.numPages ?? 0; }
 
-  async load(url) {
-    const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
+  // `httpHeaders` go with every request pdf.js makes for the file.
+  async load(url, httpHeaders) {
+    const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href, httpHeaders });
     const generation = ++this._loadGeneration;
     // Every await below can be overtaken by a newer load. Failing and being
     // superseded need the same cleanup, so the task is destroyed unless this

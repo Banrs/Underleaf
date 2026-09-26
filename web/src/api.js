@@ -26,7 +26,9 @@ export const api = ipc && {
   symbols: (id) => ipc.invoke('scan_symbols', { id }),
   search: (id, q) => ipc.invoke('search_project', { id, query: q }),
   readFile: (id, p) => ipc.invoke('read_file', { id, path: p }),
-  rawFileUrl: (id, p) => ipc.fileUrl(['__raw', id, ...p.split('/')]),
+  // A URL an <img> can show the file from: a blob: one in a browser, whose
+  // server wants a header no <img> sends; revoke it once the image has loaded.
+  rawFileUrl: (id, p) => ipc.objectUrl(ipc.fileUrl(['__raw', id, ...p.split('/')])),
   writeFile: (id, p, text) => ipc.invoke('write_file', { id, path: p, text }),
   createEntry: (id, p, dir) => ipc.invoke('create_entry', { id, path: p, dir }),
   renameEntry: (id, from, to) => ipc.invoke('rename_entry', { id, from, to }),
@@ -59,6 +61,8 @@ export const api = ipc && {
 
   compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
+  // pdf.js fetches the PDF itself, a range at a time; each request sends these.
+  fileHeaders: ipc.fileHeaders,
   // The desktop asks for a destination with a native save dialog; a browser
   // downloads the attachment instead.
   downloadPdf: (id) => saveAs(id, 'pdf', 'save_pdf_as'),

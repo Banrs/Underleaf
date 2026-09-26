@@ -44,9 +44,9 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
   - The header and Swift module map live in `include/`.
 - **`crates/texlocal-server`** is the browser host. Start it with `npm run serve`.
   - It binds `127.0.0.1` only.
-  - The startup token is exchanged for an HttpOnly, SameSite=Strict cookie.
+  - The startup token travels in an `X-TeXLocal-Token` header on every `/api/` and `/__` request, never a cookie (cookies ignore ports, so one went to every service on 127.0.0.1; owner's choice, 2026-09-27). The page keeps it from the printed URL's `?token=` in sessionStorage (per origin, so per port) and drops it from the address bar (`takeToken` in `web/src/bridge.js`); pdf.js sends it through `httpHeaders`, and image previews and downloads come through fetch as blob: URLs. The web UI's own files hold no data and load without it. A new tab needs the printed URL again.
   - It rejects any Host header other than the bound address (DNS rebinding) and non-GET requests from a foreign Origin.
-  - Those checks and the cookie run on the request head, before any body is read (`http::serve`'s pre-body check); a refusal is followed by a lingering close so the client still reads the 401/403. A head must arrive within 10 s, Content-Length is strict (duplicates and signs get 400), and writes time out after 60 s.
+  - Those checks and the token run on the request head, before any body is read (`http::serve`'s pre-body check); a refusal is followed by a lingering close so the client still reads the 401/403. A head must arrive within 10 s, Content-Length is strict (duplicates and signs get 400), and writes time out after 60 s.
   - **This is security-critical.** `-shell-escape` makes compiling equivalent to running code.
   - It has its own small HTTP/1.1 layer (`src/http.rs`) built on `httparse`, pinned to a GitHub tag. See the network note below.
 - **`web/src/bridge.js`** holds `httpBridge()`, the browser host.
