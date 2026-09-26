@@ -21,6 +21,17 @@ pub struct LogItem {
     pub message: String,
 }
 
+impl LogItem {
+    pub(crate) fn error(message: impl Into<String>) -> Self {
+        Self {
+            kind: "error",
+            file: None,
+            line: None,
+            message: message.into(),
+        }
+    }
+}
+
 // Sources, and the files LaTeX writes and reads back (.aux, .toc, .bbl …),
 // where a fragile command or a bibliography entry raises its error.
 static FILE_LINE: LazyLock<Regex> = LazyLock::new(|| {
@@ -31,6 +42,11 @@ static WARNING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(LaTeX(?: Font| NFSS)?|Package (\S+)|Class (\S+)) Warning:\s*(.*)$").unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
+static BIBTEX_ERROR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
+static BIBER_ERROR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
+
 fn has_error(items: &[LogItem]) -> bool {
     items.iter().any(|item| item.kind == "error")
 }
@@ -234,9 +250,44 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     items
 }
 
+/// Errors from bibtex's or biber's own log (.blg). A bibtex error names the
+/// .bib line; biber's name none a user can open.
+pub fn parse_blg(blg: &str) -> Vec<LogItem> {
+    blg.lines()
+        .filter_map(|line| {
+            if let Some(m) = BIBTEX_ERROR.captures(line) {
+                let file = project_path(m[3].trim()).map(str::to_string);
+                Some(LogItem {
+                    kind: "error",
+                    line: file.as_ref().and(m[2].parse().ok()),
+                    file,
+                    message: m[1].trim().to_string(),
+                })
+            } else {
+                BIBER_ERROR
+                    .captures(line)
+                    .map(|m| LogItem::error(m[1].trim()))
+            }
+        })
+        .collect()
+}
+
+/// The steps latexmk's closing "Collected error summary" lists as failed,
+/// one line each; more deeply indented lines add detail.
+pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
+    output
+        .lines()
+        .skip_while(|line| !line.starts_with("Collected error summary"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .filter(|line| !line.starts_with("   "))
+        .map(|line| LogItem::error(line.trim()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_log;
+    use super::{latexmk_errors, parse_blg, parse_log};
 
     #[test]
     fn an_error_without_its_own_line_names_no_place() {
@@ -437,5 +488,34 @@ mod tests {
             items[1].message,
             "Please (re)run Biber on the file: main and rerun LaTeX afterwards."
         );
+    }
+
+    #[test]
+    fn bibliography_and_latexmk_failures_are_errors() {
+        let blg = "Database file #1: refs.bib\n\
+                   I was expecting a `,' or a `}'---line 1 of file refs.bib\n\
+                   \x20: @article{a \n\
+                   Warning--empty title in a\n\
+                   [812] Utils.pm:465> ERROR - BibTeX subsystem: syntax error\n";
+        let items = parse_blg(blg);
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            (
+                items[0].file.as_deref(),
+                items[0].line,
+                items[0].message.as_str()
+            ),
+            (Some("refs.bib"), Some(1), "I was expecting a `,' or a `}'")
+        );
+        assert_eq!(items[1].message, "BibTeX subsystem: syntax error");
+
+        let output = "Latexmk: Errors, so I did not complete making targets\n\
+                      Collected error summary (may duplicate other messages):\n\
+                      \x20 biber main: Could not find main.bcf\n\
+                      \x20     Refer to 'build/main.log' for details\n\
+                      Latexmk: done\n";
+        let items = latexmk_errors(output);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].message, "biber main: Could not find main.bcf");
     }
 }

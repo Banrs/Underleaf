@@ -1,6 +1,6 @@
 //! LaTeX compilation via latexmk: augmented PATH discovery, process-group
-//! kill, per-project supersede, timeout and output caps, and the stale-log
-//! guard.
+//! kill, per-project supersede and stop, timeout and output caps, and the
+//! stale-output guard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Notify;
 
 use crate::error::CoreError;
-use crate::logparse::{parse_log, LogItem};
+use crate::logparse::{latexmk_errors, parse_blg, parse_log, LogItem};
 use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
 use crate::BUILD_DIR;
@@ -258,15 +258,19 @@ pub(crate) async fn run(
     let Ok(mut child) = cmd.spawn() else {
         return (-1, String::new());
     };
-    let (code, stdout, _) = drive(&mut child, timeout).await;
+    let (code, stdout, ..) = drive(&mut child, timeout).await;
     (code, stdout)
 }
 
 /// Drive a spawned child to completion: stream both pipes into capped buffers,
 /// and if it outlives the timeout, kill its whole process tree before reaping
 /// it. Both callers share this so a change to the timeout or kill path cannot
-/// reach one of them and miss the other.
-async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, String, String) {
+/// reach one of them and miss the other. The last value says whether the
+/// timeout ended it.
+async fn drive(
+    child: &mut tokio::process::Child,
+    timeout: Duration,
+) -> (i32, String, String, bool) {
     let pid = child.id();
     let deadline = tokio::time::Instant::now() + timeout;
     let out_buf = Arc::new(Mutex::new(Vec::new()));
@@ -282,12 +286,12 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
         err_buf.clone(),
     ));
 
-    let status = tokio::select! {
-        status = child.wait() => status.ok(),
+    let (status, timed_out) = tokio::select! {
+        status = child.wait() => (status.ok(), false),
         _ = tokio::time::sleep_until(deadline) => {
             if let Some(pid) = pid { terminate_pid_tree(pid).await; }
             let _ = child.start_kill();
-            child.wait().await.ok()
+            (child.wait().await.ok(), true)
         }
     };
     // Once the child is gone, everything it wrote is already in the pipes, so
@@ -312,6 +316,7 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
         status.and_then(|s| s.code()).unwrap_or(-1),
         take_text(&out_buf),
         take_text(&err_buf),
+        timed_out,
     )
 }
 
@@ -363,10 +368,15 @@ pub struct CompileOverrides {
     pub shell_escape: Option<bool>,
 }
 
+/// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
+/// `pdf`: set whenever this build wrote the PDF, errors or not, since a build
+/// carries on past errors as Overleaf's does. `stopped`: Stop, a newer build
+/// of the same project, or quitting ended it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub ok: bool,
+    pub stopped: bool,
     pub duration_ms: u64,
     pub pdf: Option<String>,
     pub errors: Vec<LogItem>,
@@ -378,6 +388,7 @@ struct RunningEntry {
     token: u64,
     pid: Option<u32>,
     done: Arc<Notify>,
+    stopped: bool,
 }
 
 type Registry = HashMap<PathBuf, RunningEntry>;
@@ -410,6 +421,13 @@ impl Registration<'_> {
     fn is_current(&self, running: &Registry) -> bool {
         running.get(self.root).map(|entry| entry.token) == Some(self.token)
     }
+
+    /// Stop marked it, a newer run replaced it, or kill_all cleared it.
+    fn stopped(&self, running: &Registry) -> bool {
+        running
+            .get(self.root)
+            .is_none_or(|entry| entry.token != self.token || entry.stopped)
+    }
 }
 
 impl Drop for Registration<'_> {
@@ -429,15 +447,50 @@ impl Drop for Registration<'_> {
     }
 }
 
+/// How a build's latexmk ended.
+#[derive(Clone, Copy, PartialEq)]
+enum End {
+    Exited(i32),
+    TimedOut,
+    Stopped,
+}
+
 /// What finish() needs to know about one compile run.
 struct CompileRun<'a> {
     main_rel: &'a str,
     base: String,
     outdir: PathBuf,
-    log_path: PathBuf,
-    log_before: Option<SystemTime>,
+    /// The modification times of the outputs finish() reads, before the run.
+    before: HashMap<&'static str, SystemTime>,
     started_at: SystemTime,
     request_started: Instant,
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+impl CompileRun<'_> {
+    fn output(&self, ext: &str) -> PathBuf {
+        self.outdir.join(format!("{}.{ext}", self.base))
+    }
+
+    /// Whether this run wrote an output: its time changed, or is past the
+    /// start, for a clock too coarse to tell the two writes apart.
+    fn wrote(&self, ext: &str) -> bool {
+        modified(&self.output(ext))
+            .is_some_and(|time| self.before.get(ext) != Some(&time) || time >= self.started_at)
+    }
+
+    /// An output this run wrote, as text, if it did.
+    fn read(&self, ext: &str) -> Option<String> {
+        self.wrote(ext)
+            .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())
+            .flatten()
+            .map(crate::lossy_string)
+    }
 }
 
 impl CompileManager {
@@ -462,6 +515,23 @@ impl CompileManager {
         running.clear();
     }
 
+    /// Stop a project's build, and say whether one was running. Its entry
+    /// stays, so the run and a successor waiting on it settle as usual, and
+    /// the run reports itself stopped; one that hasn't started latexmk yet
+    /// doesn't start it.
+    pub async fn stop(&self, root: &Path) -> bool {
+        let Some(pid) = self.running().get_mut(root).map(|entry| {
+            entry.stopped = true;
+            entry.pid
+        }) else {
+            return false;
+        };
+        if let Some(pid) = pid {
+            terminate_pid_tree(pid).await;
+        }
+        true
+    }
+
     fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Option<RunningEntry>) {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
         let done = Arc::new(Notify::new());
@@ -471,6 +541,7 @@ impl CompileManager {
                 token,
                 pid: None,
                 done: Arc::clone(&done),
+                stopped: false,
             },
         );
         let registration = Registration {
@@ -484,14 +555,16 @@ impl CompileManager {
         (registration, previous)
     }
 
-    fn superseded(start: Instant) -> CompileResult {
+    /// A run stopped before latexmk started.
+    fn stopped_early(start: Instant) -> CompileResult {
         CompileResult {
             ok: false,
+            stopped: true,
             duration_ms: start.elapsed().as_millis() as u64,
             pdf: None,
             errors: Vec::new(),
             warnings: Vec::new(),
-            log: "Compile superseded by a newer request".to_string(),
+            log: "The build was stopped before it started.".to_string(),
         }
     }
 
@@ -535,7 +608,14 @@ impl CompileManager {
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
-            "-halt-on-error",
+            // By default, past errors as Overleaf compiles: TeX carries on
+            // and latexmk finishes its passes (-f), so the PDF shows all that
+            // compiled and the log every error.
+            if settings.stop_on_first_error {
+                "-halt-on-error"
+            } else {
+                "-f"
+            },
         ]);
         let outdir_arg = format!("-outdir={BUILD_DIR}");
         args.push(&outdir_arg);
@@ -557,36 +637,34 @@ impl CompileManager {
             previous.done.notified().await;
         }
 
-        if !registration.is_current(&self.running()) {
-            return Ok(Self::superseded(request_started));
+        if registration.stopped(&self.running()) {
+            return Ok(Self::stopped_early(request_started));
         }
 
-        // Capture log identity after the predecessor has stopped, otherwise its
-        // final write can be mistaken for output from this generation.
-        let base = main_base_name(&main_rel);
-        let log_path = outdir.join(format!("{base}.log"));
-        let log_before = std::fs::metadata(&log_path)
-            .and_then(|meta| meta.modified())
-            .ok();
-        let run = CompileRun {
+        // Capture output times after the predecessor has stopped, otherwise
+        // its final writes can be mistaken for output from this generation.
+        let mut run = CompileRun {
             main_rel: &main_rel,
-            base,
+            base: main_base_name(&main_rel),
             outdir,
-            log_path,
-            log_before,
+            before: HashMap::new(),
             started_at: SystemTime::now(),
             request_started,
         };
+        run.before = ["log", "pdf", "blg"]
+            .into_iter()
+            .filter_map(|ext| Some((ext, modified(&run.output(ext))?)))
+            .collect();
 
         let mut cmd = base_command("latexmk", Some(root), &self.path(tex_dir));
         cmd.args(&args);
         let spawned = {
             // Hold the registry lock across synchronous spawn + PID publication.
-            // A successor therefore sees either no child or the actual PID,
-            // never an unkillable gap between the two.
+            // A successor or Stop therefore sees either no child or the actual
+            // PID, never an unkillable gap between the two.
             let mut running = self.running();
             match running.get_mut(root) {
-                Some(entry) if entry.token == registration.token => {
+                Some(entry) if entry.token == registration.token && !entry.stopped => {
                     Some(cmd.spawn().inspect(|child| entry.pid = child.id()))
                 }
                 _ => None,
@@ -594,50 +672,79 @@ impl CompileManager {
         };
 
         let child = match spawned {
-            None => return Ok(Self::superseded(request_started)),
-            Some(Err(err)) => return Ok(finish(&run, -1, err.to_string())),
+            None => return Ok(Self::stopped_early(request_started)),
+            Some(Err(err)) => {
+                let mut result = finish(&run, End::Exited(-1), err.to_string());
+                result.errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
+                return Ok(result);
+            }
             Some(Ok(child)) => registration.child.insert(child),
         };
         let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-        let (code, mut output, stderr) = drive(child, timeout).await;
+        let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
         registration.settled = true;
         output.push_str(&stderr);
-        Ok(finish(&run, code, output))
+        let end = if registration.stopped(&self.running()) {
+            End::Stopped
+        } else if timed_out {
+            End::TimedOut
+        } else {
+            End::Exited(code)
+        };
+        Ok(finish(&run, end, output))
     }
 }
 
-fn finish(run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
-    let mut log = fallback_output;
-    if let Ok(meta) = std::fs::metadata(&run.log_path) {
-        let modified = meta.modified().ok();
-        let rewritten = modified != run.log_before;
-        let after_start = modified.is_some_and(|mtime| mtime >= run.started_at);
-        if rewritten || after_start {
-            if let Ok(bytes) = read_tail(&run.log_path, LOG_READ_MAX) {
-                log = crate::lossy_string(bytes);
+fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
+    let engine_log = run.read("log");
+    let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), run.main_rel);
+    // bibtex and biber report into a log of their own.
+    items.extend(run.read("blg").map_or_else(Vec::new, |blg| parse_blg(&blg)));
+    let (mut errors, warnings): (Vec<_>, Vec<_>) =
+        items.into_iter().partition(|item| item.kind == "error");
+
+    let ok = end == End::Exited(0) && run.output("pdf").exists();
+    // Not from a build cut short, which may have left it half-written.
+    let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
+    match end {
+        End::TimedOut => errors.push(LogItem::error(format!(
+            "The build was stopped after {} minutes. Something in the document may be repeating forever.",
+            COMPILE_TIMEOUT.as_secs() / 60
+        ))),
+        // A failure always names a cause: latexmk's own summary of the step
+        // that failed (bibtex, biber, makeindex), else how it ended.
+        End::Exited(code) if !ok && errors.is_empty() => {
+            errors = latexmk_errors(&output);
+            if errors.is_empty() {
+                errors.push(LogItem::error(match code {
+                    0 => "The build made no PDF. See the Build Log.".to_string(),
+                    code => format!("latexmk stopped with exit code {code}. See the Build Log."),
+                }));
             }
         }
+        _ => {}
     }
-
-    let (errors, warnings): (Vec<_>, Vec<_>) = parse_log(&log, run.main_rel)
-        .into_iter()
-        .partition(|item| item.kind == "error");
-    let ok = code == 0 && run.outdir.join(format!("{}.pdf", run.base)).exists();
     if !ok {
         // latexmk's record of the run. After a fatal TeX error it holds the
         // truncated .aux's state, so bibtex fails on it ("no \citation") and
         // every later run stops at "gave an error in previous invocation",
         // even with -g and the source fixed. Without it the next run starts
         // afresh.
-        let _ = std::fs::remove_file(run.outdir.join(format!("{}.fdb_latexmk", run.base)));
+        let _ = std::fs::remove_file(run.output("fdb_latexmk"));
     }
 
+    // The engine's log, then latexmk's account of the passes it ran.
+    let log = match engine_log {
+        Some(engine_log) => format!("{engine_log}\n\n{output}"),
+        None => output,
+    };
     CompileResult {
         ok,
+        stopped: end == End::Stopped,
         duration_ms: run.request_started.elapsed().as_millis() as u64,
-        // Never advertise a pre-existing PDF for a failed run. The UI keeps
-        // its old preview visible but does not reload it as fresh output.
-        pdf: ok.then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
+        // Never a PDF this run didn't write: the UI keeps its old preview
+        // visible but does not reload it as fresh output.
+        pdf: (ok || wrote_pdf).then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
         errors,
         warnings,
         log: tail(log, LOG_TAIL),

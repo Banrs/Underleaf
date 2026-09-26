@@ -466,6 +466,9 @@ impl Service {
                     &arg::<Option<CompileOverrides>>(args, "options")?.unwrap_or_default(),
                 )
                 .await?),
+            // The project's own build, which reports itself stopped; true
+            // when one was running.
+            "stop_compile" => out(self.compile.stop(&self.project_root(&s("id")?)?).await),
             "synctex_forward" => out(self
                 .synctex_forward(&s("id")?, &s("file")?, arg(args, "line")?)
                 .await?),

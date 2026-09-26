@@ -21,6 +21,8 @@ pub struct Settings {
     pub main_file: String,
     pub engine: String,
     pub shell_escape: bool,
+    /// Halt at the first LaTeX error instead of compiling past it.
+    pub stop_on_first_error: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +31,7 @@ impl Default for Settings {
             main_file: "main.tex".into(),
             engine: "pdflatex".into(),
             shell_escape: false,
+            stop_on_first_error: false,
         }
     }
 }
@@ -49,14 +52,13 @@ pub fn read_settings(root: &Path) -> Settings {
 
 fn lenient(raw: &Map<String, Value>) -> Settings {
     let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_string);
+    let flag = |key: &str| raw.get(key).and_then(Value::as_bool);
     let defaults = Settings::default();
     Settings {
         main_file: text("mainFile").unwrap_or(defaults.main_file),
         engine: text("engine").unwrap_or(defaults.engine),
-        shell_escape: raw
-            .get("shellEscape")
-            .and_then(Value::as_bool)
-            .unwrap_or(defaults.shell_escape),
+        shell_escape: flag("shellEscape").unwrap_or(defaults.shell_escape),
+        stop_on_first_error: flag("stopOnFirstError").unwrap_or(defaults.stop_on_first_error),
     }
 }
 
@@ -78,12 +80,14 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
         }
         Some(other) => return Err(CoreError::bad_request(format!("Unknown engine: {other}"))),
     }
-    match obj.get("shellEscape") {
-        None => {}
-        Some(Value::Bool(b)) => {
-            out.insert("shellEscape".into(), (*b).into());
+    for key in ["shellEscape", "stopOnFirstError"] {
+        match obj.get(key) {
+            None => {}
+            Some(Value::Bool(b)) => {
+                out.insert(key.into(), (*b).into());
+            }
+            Some(_) => return Err(CoreError::bad_request(format!("{key} must be a boolean"))),
         }
-        Some(_) => return Err(CoreError::bad_request("shellEscape must be a boolean")),
     }
     if let Some(mf) = obj.get("mainFile") {
         let mf = mf
