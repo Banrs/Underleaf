@@ -26,7 +26,10 @@ struct WorkspaceView: View {
             ])
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            .frame(minWidth: Metrics.editorsMinWidth, minHeight: 280)
+            // Room for the inspector too, whether or not it shows: a minimum
+            // that changed mid-layout crashed AppKit before. The height is the
+            // window's minimum's (`WindowMetrics`).
+            .frame(minWidth: Metrics.detailMinWidth)
             .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: {
                 app.windowCorners = $0
             }
@@ -75,6 +78,9 @@ struct WorkspaceView: View {
         /// The source and the PDF, side by side at their smallest.
         static let editorsMinWidth: CGFloat = 441
         static let inspectorWidth: ClosedRange<CGFloat> = 220...320
+        /// The editors and the inspector at their smallest, and the
+        /// divider between them.
+        static let detailMinWidth = editorsMinWidth + 1 + inspectorWidth.lowerBound
     }
 
     // ---------- toolbar ----------
