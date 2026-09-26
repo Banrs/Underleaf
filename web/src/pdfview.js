@@ -40,11 +40,12 @@ function textWidth(str, size, family) {
 }
 
 export class PdfViewer {
-  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
+  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange, onDocument } = {}) {
     this.scrollEl = scrollEl;
     this.onSyncClick = onSyncClick;
     this.onPageChange = onPageChange;
     this.onZoomChange = onZoomChange;
+    this.onDocument = onDocument;
 
     this.doc = null;
     this.loadingTask = null;
@@ -173,6 +174,9 @@ export class PdfViewer {
       this.loadingTask = task;
       this.doc = doc;
       this.pageProxies = proxies;
+      // The commands that need a document work from here on. The render below
+      // never settles in a hidden window, so they can't wait for load().
+      this.onDocument?.();
       await prev?.destroy().catch(() => {});
       await this.render();
       return !superseded() && this.doc === doc;

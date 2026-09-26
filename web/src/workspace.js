@@ -301,6 +301,7 @@ function buildChrome(id) {
   state.pdf = new PdfViewer(pdfScroll, {
     onZoomChange: (pct) => { zoomLabel.textContent = `${pct}%`; },
     onPageChange: (p, total) => { pageIndicator.textContent = `${p} of ${total}`; },
+    onDocument: refreshCommands,
     onSyncClick: async (page, x, y) => {
       try {
         const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
