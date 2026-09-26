@@ -63,10 +63,13 @@ struct WorkspaceView: View {
         } message: { path in
             Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-            // This window's only: closing Settings is no reason to save.
-            guard (note.object as? NSWindow) === NSApp.projectWindow else { return }
-            Task { await project.flush() }
+        .task {
+            for await note in NotificationCenter.default.notifications(named: NSWindow.willCloseNotification) {
+                // This window's only: closing Settings is no reason to save.
+                guard (note.object as? NSWindow) === NSApp.projectWindow else { continue }
+                // Its own task: the view's goes with the closing window.
+                Task { await project.flush() }
+            }
         }
     }
 
