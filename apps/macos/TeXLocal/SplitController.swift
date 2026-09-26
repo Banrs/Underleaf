@@ -186,7 +186,7 @@ struct SplitController: NSViewRepresentable {
         /// Panes sliding shut, by index: still in the split until closed.
         var hiding: Set<Int> = []
         /// A divider moving: the limits stand aside until it arrives.
-        private var sliding: (link: CADisplayLink, step: (CFTimeInterval) -> Void, finish: () -> Void)?
+        private var sliding: (timer: Timer, finish: () -> Void)?
         /// A divider set where a slide puts it, at once: the limits stand
         /// aside for that too, so a pane opens from nothing, not its
         /// minimum.
@@ -202,7 +202,7 @@ struct SplitController: NSViewRepresentable {
         /// then runs `done`. A slide under way arrives first.
         func slide(_ split: NSSplitView, divider: Int, to position: CGFloat, animated: Bool = true,
                    done: @escaping () -> Void = {}) {
-            sliding?.link.invalidate()
+            sliding?.timer.invalidate()
             sliding?.finish()
             let from = span(split, divider).1
             let finish = { [weak self, weak split] in
@@ -217,24 +217,22 @@ struct SplitController: NSViewRepresentable {
                 finish()
                 return
             }
-            // Frame by frame on the split's display, at its refresh rate.
-            let link = split.displayLink(target: self, selector: #selector(frame(_:)))
             let start = CACurrentMediaTime()
-            sliding = (link, { [weak self, weak split] now in
-                let t = min((now - start) / 0.25, 1)
-                guard let split, t < 1 else {
-                    self?.sliding?.link.invalidate()
-                    self?.sliding?.finish()
-                    return
+            let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self, weak split] timer in
+                let t = min((CACurrentMediaTime() - start) / 0.25, 1)
+                if t >= 1 || self == nil || split == nil { timer.invalidate() }
+                MainActor.assumeIsolated {
+                    guard let self, let split else { return }
+                    guard t < 1 else {
+                        self.sliding?.finish()
+                        return
+                    }
+                    let eased = t < 0.5 ? 2 * t * t : 1 - pow(2 - 2 * t, 2) / 2
+                    split.setPosition(from + (position - from) * eased, ofDividerAt: divider)
                 }
-                let eased = t < 0.5 ? 2 * t * t : 1 - pow(2 - 2 * t, 2) / 2
-                split.setPosition(from + (position - from) * eased, ofDividerAt: divider)
-            }, finish)
-            link.add(to: .main, forMode: .common)
-        }
-
-        @objc private func frame(_ link: CADisplayLink) {
-            sliding?.step(link.targetTimestamp)
+            }
+            sliding = (timer, finish)
+            RunLoop.main.add(timer, forMode: .common)
         }
 
         /// Where a folded pane's unfolded size is kept: the split's own
