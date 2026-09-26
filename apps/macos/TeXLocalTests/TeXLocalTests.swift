@@ -35,8 +35,12 @@ final class SyncTeXGeometryTests: XCTestCase {
     }
 }
 
+/// The core's analysis as the views take it. The counting rules themselves
+/// are checked against the web's by the core's shared fixtures
+/// (crates/texlocal-core/tests/fixtures/analyze.json).
+@MainActor
 final class OutlineTests: XCTestCase {
-    func testSectionsWithDepthTitlesAndLines() {
+    func testSectionsWithDepthTitlesAndLines() async throws {
         let text = """
         \\documentclass{article}
         \\section{Intro}
@@ -44,84 +48,59 @@ final class OutlineTests: XCTestCase {
         \\subsection*[short]{Details}
         text \\section{}
         """
-        let items = Outline.analyze(text).outline
+        let items = try await Outline.analyze(text).items
         XCTAssertEqual(items.map(\.title), ["Intro", "Details", "(untitled)"])
         XCTAssertEqual(items.map(\.level), [2, 3, 2])
         XCTAssertEqual(items.map(\.line), [2, 4, 5])
     }
 
-    func testWordsCountAsTheWebCountsThem() {
-        // Each count is what web/src/state.js lineWords gives, run in Node.
-        let cases: [(Substring, Int)] = [
-            ("Hello world", 2),
-            ("\\section{Introduction} text here", 3),
-            ("A \\textbf{bold} and \\emph{it} word", 5),
-            ("Cost is 50\\% of total % a comment here", 4),
-            ("\\begin{itemize}[leftmargin=*] item", 3),
-            ("\\cite[p.~4]{knuth} says so", 3),
-            ("\\foo*[x bar", 2),
-            ("$x^2 + y_1$ is math", 4),
-            ("Ünïcödé naïve café", 3),
-            ("e\u{301}t\u{E9}", 1),
-            ("x=1 2 3 ---", 1),
-            ("tab\tseparated\u{A0}words", 3),
-            ("don't stop", 2),
-            ("a\\\\%b c", 3),
-            ("50% off", 0),
-            ("a % b\u{2028}c d", 4),
-            ("a % b\u{2028}c % d", 3),
-            ("", 0),
-        ]
-        for (line, words) in cases {
-            XCTAssertEqual(Outline.lineWords(line), words, String(line))
-        }
-    }
-
-    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() {
-        let doc = Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
+    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() async throws {
+        let doc = try await Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
         XCTAssertEqual(doc.lines, 4)
         XCTAssertEqual(doc.words, 4)
-        XCTAssertEqual(doc.outline.map(\.title), ["One"])
-        XCTAssertEqual(Outline.analyze("").lines, 1)
+        XCTAssertEqual(doc.items.map(\.title), ["One"])
+        let empty = try await Outline.analyze("")
+        XCTAssertEqual(empty.lines, 1)
     }
 
-    func testTheBreadcrumbIsTheChainOfEnclosingHeadings() {
-        let outline = Outline.analyze("""
+    func testTheBreadcrumbIsTheChainOfEnclosingHeadings() async throws {
+        let outline = try await Outline.analyze("""
         \\chapter{A}
         \\section{B}
         \\subsection{C}
         \\section{D}
         text
-        """).outline
+        """).items
         XCTAssertEqual(Outline.chain(outline, at: 3).map(\.title), ["A", "B", "C"])
         XCTAssertEqual(Outline.chain(outline, at: 5).map(\.title), ["A", "D"])
         XCTAssertEqual(Outline.chain(outline, at: 0).map(\.title), [])
     }
 }
 
+@MainActor
 final class OutlineDisplayTests: XCTestCase {
-    func testDepthFollowsTheNestingNotTheLevel() {
+    func testDepthFollowsTheNestingNotTheLevel() async throws {
         // A subsection before any section has no parent: it sits flush, as
         // does the section after it; the subsection under that section is
         // one in.
-        let outline = Outline.analyze("""
+        let outline = try await Outline.analyze("""
         \\subsection{}
         \\section{First Section}
         \\subsection{Detail}
         \\subsubsection{Finer}
         \\section{Second}
-        """).outline
+        """).items
         XCTAssertEqual(Outline.depths(outline), [0, 0, 1, 2, 0])
     }
 
-    func testTheTreeNestsAsTheHeadingsDo() {
-        let outline = Outline.analyze("""
+    func testTheTreeNestsAsTheHeadingsDo() async throws {
+        let outline = try await Outline.analyze("""
         \\subsection{}
         \\section{A}
         \\subsection{A1}
         \\subsection{A2}
         \\section{B}
-        """).outline
+        """).items
         let tree = Outline.tree(outline)
         XCTAssertEqual(tree.map(\.item.title), ["(untitled)", "A", "B"])
         XCTAssertNil(tree[0].children)
@@ -131,16 +110,16 @@ final class OutlineDisplayTests: XCTestCase {
 
     /// A fold is keyed by the heading's level, title and which of its
     /// namesakes it is, so headings added above leave it where it was.
-    func testFoldKeysSurviveRenumbering() {
+    func testFoldKeysSurviveRenumbering() async throws {
         let text = "\\section{A}\n\\subsection{Results}\n\\section{B}\n\\subsection{Results}"
-        let keys = Outline.foldKeys(Outline.analyze(text).outline)
+        let keys = Outline.foldKeys(try await Outline.analyze(text).items)
         XCTAssertEqual(keys, ["2:A#1", "3:Results#1", "2:B#1", "3:Results#2"])
-        let later = Outline.foldKeys(Outline.analyze("\\section{New}\n\\subsection{Other}\n" + text).outline)
+        let later = Outline.foldKeys(try await Outline.analyze("\\section{New}\n\\subsection{Other}\n" + text).items)
         XCTAssertEqual(Array(later.dropFirst(2)), keys)
     }
 
-    func testEmptyHeadingsAreNamedByKind() {
-        let outline = Outline.analyze("\\subsection{}\n\\chapter{}\n\\section{Named}").outline
+    func testEmptyHeadingsAreNamedByKind() async throws {
+        let outline = try await Outline.analyze("\\subsection{}\n\\chapter{}\n\\section{Named}").items
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
     }
 }

@@ -80,6 +80,7 @@ final class ProjectModel {
     /// The latest save; each save waits for the one before it.
     private var lastSave: Task<Bool, Never>?
     private var searchTask: Task<Void, Never>?
+    private var analysis: Task<Void, Never>?
     private var highlightToken = 0
     /// Bumped by each `open`, so an earlier one still in flight stands down.
     private var openGeneration = 0
@@ -331,16 +332,20 @@ final class ProjectModel {
     }
 
     /// The outline, location row and word count read the open document; as in
-    /// the web, only a .tex file has them.
+    /// the web, only a .tex file has them. The core reads it; only the
+    /// latest text's reading lands.
     private func analyze(_ text: String) {
+        analysis?.cancel()
         guard isLaTeX else {
             outline = []
             counts = nil
             return
         }
-        let doc = Outline.analyze(text)
-        outline = doc.outline
-        counts = (doc.words, doc.lines)
+        analysis = Task {
+            guard let doc = try? await Outline.analyze(text), !Task.isCancelled else { return }
+            outline = doc.items
+            counts = (doc.words, doc.lines)
+        }
     }
 
     /// Save now, cancelling the pending autosave — before a file switch, a
@@ -628,6 +633,7 @@ final class ProjectModel {
             try await core.perform("delete_entry", ["id": id, "path": path])
             await editor.forget(path: "\(id)/\(path)")
             if let open = openPath, open == path || open.hasPrefix(path + "/") {
+                analysis?.cancel()
                 openPath = nil
                 watcher = nil
                 dirty = false
