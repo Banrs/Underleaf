@@ -12,7 +12,6 @@ struct PDFPane: View {
     /// Bumped to put the cursor in the find field, its text selected.
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
-    @Namespace private var zoomGroup
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -66,6 +65,7 @@ struct PDFPane: View {
         case .fitWidth: controller.fitWidth()
         case .fitHeight: controller.fitHeight()
         case .find: finding = true; findFocus += 1
+        case .print: controller.view?.print(with: .shared, autoRotate: true)
         case .inverseFromView:
             if case let (page, point)? = controller.sourcePoint() {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
@@ -93,6 +93,7 @@ struct PDFPane: View {
                 status
                 Spacer(minLength: 0)
             }
+            Divider()
         }
     }
 
@@ -107,7 +108,7 @@ struct PDFPane: View {
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.glass)
-                    .help("Stop (⌘.)")
+                    .help("Stop")
             }
             .fixedSize()
         } else {
@@ -122,7 +123,7 @@ struct PDFPane: View {
             .buttonBorderShape(.capsule)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun))
-            .help(project.texAvailable ? "Compile (⌘↩)" : "Install TeX to compile")
+            .help("Compile")
         }
     }
 
@@ -135,7 +136,7 @@ struct PDFPane: View {
             } else {
                 Button("Share PDF", systemImage: "square.and.arrow.up") {}
                     .disabled(true)
-                    .help("Compile to share the PDF")
+                    .help("Share PDF")
             }
         }
         .labelStyle(.iconOnly)
@@ -165,7 +166,7 @@ struct PDFPane: View {
 
     @ViewBuilder
     private var findControls: some View {
-        PDFFindField(text: $findQuery, focus: findFocus, step: controller.step, close: closeFind)
+        SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
             .frame(minWidth: 100, maxWidth: .infinity)
             .task(id: findQuery) {
                 // Debounced like the web's, so typing doesn't search every prefix.
@@ -181,58 +182,45 @@ struct PDFPane: View {
         .foregroundStyle(.secondary)
         .monospacedDigit()
         .lineLimit(1)
-        ControlGroup {
-            Button("Previous Match", systemImage: "chevron.up") { controller.step(-1) }
-                .help("Previous Match (⇧↩)")
-            Button("Next Match", systemImage: "chevron.down") { controller.step(1) }
-                .help("Next Match (↩)")
-        }
-        .fixedSize()
-        .disabled(controller.matches.isEmpty)
+        GlassGroup(items: [
+            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
+                    enabled: !controller.matches.isEmpty) { controller.step(-1) },
+            Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
+                    enabled: !controller.matches.isEmpty) { controller.step(1) },
+        ])
         Button("Done") { closeFind() }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
             .fixedSize()
     }
 
-    /// Zoom out, the zoom level with its presets, zoom in — the web's zoom
-    /// control (workspace.js `zoomButton`), as one glass capsule the way
-    /// GlassGroup makes one.
+    /// The zoom level with its presets, then zoom out and in — the web's
+    /// zoom control (workspace.js `zoomButton`). The level comes first so
+    /// the buttons don't move as its label changes width.
     private var zoomControls: some View {
-        HStack(spacing: 0) {
-            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .help("Zoom Out (⌘−)")
-                .glassEffectUnion(id: "zoom", namespace: zoomGroup)
-            // A borderless menu on glass of its own: as a glass button its
-            // label drew blurred under the merged glass. As wide as the
-            // widest level, so the capsule doesn't resize as it zooms.
-            ZStack {
-                Text("Fit Width").hidden()
-                Menu {
-                    Button("Fit Width") { controller.fitWidth() }
-                    Button("Fit Height") { controller.fitHeight() }
-                    Divider()
-                    ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-                        Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
-                    }
-                } label: {
-                    Text(controller.zoomLabel).monospacedDigit()
+        HStack(spacing: 8) {
+            Menu {
+                Button("Fit Width") { controller.fitWidth() }
+                Button("Fit Height") { controller.fitHeight() }
+                Divider()
+                ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
+                    Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
+            } label: {
+                Text(controller.zoomLabel).monospacedDigit()
             }
-            .padding(.horizontal, 8)
-            .frame(maxHeight: .infinity)
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .menuStyle(.button)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            .fixedSize()
             .help("Zoom")
-            .glassEffectUnion(id: "zoom", namespace: zoomGroup)
-            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .help("Zoom In (⌘+)")
-                .glassEffectUnion(id: "zoom", namespace: zoomGroup)
+            // Not the View menu's commands: their route (`requestPDF`) also
+            // hides the panel.
+            GlassGroup(items: [
+                Segment(id: "zoomOut", title: "Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) },
+                Segment(id: "zoomIn", title: "Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) },
+            ])
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
-        .labelStyle(.iconOnly)
-        .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
 
@@ -264,21 +252,23 @@ enum PDFFind {
     }
 }
 
-/// The find field: a search field in which Return steps to the next match,
-/// Shift-Return to the previous one, and Escape closes the bar — keys a
-/// SwiftUI text field keeps to itself.
-private struct PDFFindField: NSViewRepresentable {
+/// A search field in which Return steps to the next match, Shift-Return to
+/// the previous one, and Escape closes the bar — keys a SwiftUI text field
+/// keeps to itself. Without `step` or `close`, those keys do what they
+/// usually do.
+struct SearchField: NSViewRepresentable {
     @Binding var text: String
-    let focus: Int
-    let step: @MainActor (Int) -> Void
-    let close: @MainActor () -> Void
+    let prompt: String
+    var focus = 0
+    var step: (@MainActor (Int) -> Void)?
+    var close: (@MainActor () -> Void)?
 
     @MainActor
     final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var field: PDFFindField
+        var field: SearchField
         var focus = 0
 
-        init(_ field: PDFFindField) {
+        init(_ field: SearchField) {
             self.field = field
         }
 
@@ -290,10 +280,12 @@ private struct PDFFindField: NSViewRepresentable {
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
-                field.step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                guard let step = field.step else { return false }
+                step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
-                field.close()
+                guard let close = field.close else { return false }
+                close()
                 return true
             default:
                 return false
@@ -305,7 +297,6 @@ private struct PDFFindField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let view = NSSearchField()
-        view.placeholderString = "Find in PDF"
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -315,6 +306,17 @@ private struct PDFFindField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
+        view.placeholderString = prompt
+        // The size of the bar's other controls.
+        view.controlSize = switch context.environment.controlSize {
+        case .mini: .mini
+        case .small: .small
+        case .regular: .regular
+        case .large: .large
+        case .extraLarge: .extraLarge
+        @unknown default: .regular
+        }
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
         if view.stringValue != text { view.stringValue = text }
         if context.coordinator.focus != focus {
             context.coordinator.focus = focus

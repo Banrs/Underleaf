@@ -17,21 +17,16 @@ struct WorkspaceView: View {
             NavigatorView(project: project)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            // The inspector is a pane of the detail, drawn by SwiftUI, not
-            // `.inspector`: that makes a third column of the AppKit split
-            // view, and on opening a project with it shown the columns'
-            // minimum sizes re-measured each other until AppKit threw
-            // ("more Update Constraints passes than views"). The detail's
-            // minimum stays the same whether it shows or not.
-            HStack(spacing: 0) {
-                EditorArea(project: project)
-                if app.showInspector {
-                    InspectorPane(project: project)
-                        .transition(.move(edge: .trailing))
-                }
-            }
+            SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
+                SplitPane(minimum: 441) { EditorArea(project: project) },
+                SplitPane(minimum: 220, maximum: 320, fraction: 0.28, keepsSize: true,
+                          shown: app.showInspector) {
+                    InspectorView(project: project)
+                },
+            ])
+            // Built once per project: its panes keep the views they were made with.
+            .id(ObjectIdentifier(project))
             .frame(minWidth: 441, minHeight: 280)
-            .animation(.snappy(duration: 0.25), value: app.showInspector)
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
             // together in one pill.
@@ -46,6 +41,7 @@ struct WorkspaceView: View {
             TextField(promptLabel(prompt), text: $promptText)
             Button("Cancel", role: .cancel) {}
             Button(promptAction(prompt)) { submit(prompt) }
+                .disabled(!isValid(prompt))
         }
         .onChange(of: app.prompt?.id) { _, _ in promptText = promptDefault }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
@@ -77,11 +73,11 @@ struct WorkspaceView: View {
             Toggle(isOn: $project.showPDF) {
                 Label("PDF", systemImage: "doc.richtext")
             }
-            .help(project.showPDF ? "Hide PDF (⇧⌘\\)" : "Show PDF (⇧⌘\\)")
+            .help(project.showPDF ? "Hide PDF" : "Show PDF")
             Toggle(isOn: Bindable(app).showInspector) {
                 Label("Inspector", systemImage: "sidebar.right")
             }
-            .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+            .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
         }
     }
 
@@ -92,7 +88,7 @@ struct WorkspaceView: View {
         case .newFile: "New File"
         case .newFolder: "New Folder"
         case .gotoLine: "Go to Line"
-        case .renameEntry: "Rename"
+        case .renameEntry(let path): "Rename “\((path as NSString).lastPathComponent)”"
         case .renameProject: "Rename Project"
         case nil: ""
         }
@@ -124,9 +120,15 @@ struct WorkspaceView: View {
         }
     }
 
-    private func submit(_ prompt: Prompt) {
+    private func isValid(_ prompt: Prompt) -> Bool {
         let text = promptText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        if case .gotoLine = prompt { return Int(text) != nil }
+        return !text.isEmpty
+    }
+
+    private func submit(_ prompt: Prompt) {
+        guard isValid(prompt) else { return }
+        let text = promptText.trimmingCharacters(in: .whitespaces)
         Task {
             switch prompt {
             case .newFile: await project.createEntry(text, directory: false)
@@ -181,53 +183,13 @@ let insertTemplates: [(String, String)] = [
     ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
 ]
 
-/// The inspector column: a hairline to drag on its leading edge, then the
-/// inspector at a width remembered across launches (Xcode's 220–320 pt).
-struct InspectorPane: View {
-    let project: ProjectModel
-    @AppStorage("inspectorWidth") private var width = 260.0
-    @State private var dragStart: Double?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(.separator)
-                .frame(width: 1)
-                .overlay {
-                    Color.clear
-                        .frame(width: 8)
-                        .contentShape(.rect)
-                        // One-way at either limit, as NSSplitView shows it.
-                        .pointerStyle(.columnResize(directions:
-                            width <= 220 ? .leading : width >= 320 ? .trailing : [.leading, .trailing]))
-                        .gesture(
-                            DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                                .onChanged { drag in
-                                    let start = dragStart ?? width
-                                    dragStart = start
-                                    width = min(max(start - drag.translation.width, 220), 320)
-                                }
-                                .onEnded { _ in dragStart = nil }
-                        )
-                        .accessibilityHidden(true)
-                }
-                .zIndex(1)
-            InspectorView(project: project)
-                .frame(width: min(max(width, 220), 320))
-                .frame(maxHeight: .infinity)
-        }
-    }
-}
-
 /// The trailing inspector: the project's build settings, then facts about
 /// the open file and the PDF — what the web kept in its settings popover and
 /// status line, gathered where a Mac app keeps them.
 struct InspectorView: View {
-    @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
     var body: some View {
-        @Bindable var app = app
         Form {
             Section("Project") {
                 Picker("Main File", selection: Binding(
@@ -249,7 +211,6 @@ struct InspectorView: View {
                     Text("Shell Escape")
                     Text("Lets packages such as minted run programs. Turn on only for projects you trust.")
                 }
-                Toggle("Compile Automatically", isOn: $app.autoCompile)
             }
             .disabled(project.settings == nil)
 
@@ -267,7 +228,7 @@ struct InspectorView: View {
                 }
             }
 
-            Section("PDF") {
+            Section("Build") {
                 if let result = project.result {
                     LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
                     LabeledContent("Duration") {

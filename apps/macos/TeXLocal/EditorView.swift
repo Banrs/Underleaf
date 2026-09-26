@@ -44,48 +44,55 @@ struct EditorView: NSViewRepresentable {
 /// The editors: the source beside the PDF, a panel for the build that
 /// shows and hides below them (as VS Code's does), and a status bar along
 /// the foot.
-///
-/// Split in SwiftUI rather than with HSplitView/VSplitView: those host each
-/// pane in its own AppKit view whose size feeds Auto Layout, and inside the
-/// window's split view their minimums re-measured each other until AppKit
-/// threw ("more Update Constraints passes than views"). The area has no
-/// minimum of its own; the detail column's (WorkspaceView) is fixed, and
-/// panes short of room share it by their split's proportion.
 struct EditorArea: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    @AppStorage("pdfSplit") private var pdfSplit = 0.5
-    @AppStorage("panelSplit") private var panelSplit = 0.7
 
     var body: some View {
         VStack(spacing: 0) {
             editors
             // Stacked, not overlaid: an opaque bar over the editors only hid
             // their last lines.
+            Divider()
             StatusBar(project: project)
         }
     }
 
     private var editors: some View {
-        SplitPair(axis: .vertical, fraction: $panelSplit, minFirst: 120, minSecond: 80,
-                  showsSecond: project.showLogs) {
-            SplitPair(axis: .horizontal, fraction: $pdfSplit, minFirst: 140, minSecond: 140,
-                      showsSecond: project.showPDF) {
-                source
-            } second: {
-                PDFPane(project: project)
-            }
-        } second: {
-            PanelView(project: project)
-        }
+        SplitController(app: app, axis: .vertical, autosave: "PanelSplit", panes: [
+            SplitPane(minimum: 120) { SourceAndPDF(project: project) },
+            SplitPane(minimum: 80, fraction: 0.3, keepsSize: true, shown: project.showLogs) {
+                PanelView(project: project)
+            },
+        ])
     }
+}
 
-    /// The source's bars stacked over it, not overlaid: they are opaque, so
-    /// text scrolled beneath them was only hidden.
-    private var source: some View {
+/// The source beside the PDF. A view of its own, as a split's pane is
+/// made once and must observe the project itself.
+private struct SourceAndPDF: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+
+    var body: some View {
+        SplitController(app: app, axis: .horizontal, autosave: "PDFSplit", panes: [
+            SplitPane(minimum: 140) { SourcePane(project: project) },
+            SplitPane(minimum: 140, fraction: 0.5, shown: project.showPDF) { PDFPane(project: project) },
+        ])
+    }
+}
+
+/// The source's bars stacked over it, not overlaid: they are opaque, so
+/// text scrolled beneath them was only hidden.
+private struct SourcePane: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+
+    var body: some View {
         VStack(spacing: 0) {
             SourceBar(project: project)
             SourceLocation(project: project)
+            Divider()
             if project.openPath != nil {
                 EditorView(bridge: app.editor)
             } else {
@@ -99,93 +106,136 @@ struct EditorArea: View {
     }
 }
 
-/// Two panes and a divider to drag between them. The first keeps its place
-/// in the view tree when the second hides, so the editor is never rebuilt.
-struct SplitPair<First: View, Second: View>: View {
+/// A pane of a `SplitController`: its view, its smallest (and largest)
+/// size, the share of the split it opens at, whether it keeps its size as
+/// the window resizes, and whether it shows.
+struct SplitPane {
+    var minimum: CGFloat
+    var maximum: CGFloat?
+    var fraction: CGFloat?
+    var keepsSize = false
+    var shown = true
+    let content: AnyView
+
+    init(minimum: CGFloat, maximum: CGFloat? = nil, fraction: CGFloat? = nil, keepsSize: Bool = false,
+         shown: Bool = true, @ViewBuilder content: () -> some View) {
+        self.minimum = minimum
+        self.maximum = maximum
+        self.fraction = fraction
+        self.keepsSize = keepsSize
+        self.shown = shown
+        self.content = AnyView(content())
+    }
+}
+
+/// AppKit's split view: its dividers and resize pointers, a pane that hides
+/// collapsing with its divider, and divider positions remembered under
+/// `autosave`.
+///
+/// Not SwiftUI's: HSplitView and VSplitView laid their panes out past their
+/// bounds, and `.inspector` crashed the window on resize ("more Update
+/// Constraints passes than views"). Not NSSplitViewController either: it
+/// blurs the top of each pane under the toolbar, where the pane bars sit.
+struct SplitController: NSViewRepresentable {
+    let app: AppModel
     let axis: Axis
-    @Binding var fraction: Double
-    let minFirst: CGFloat
-    let minSecond: CGFloat
-    let showsSecond: Bool
-    @ViewBuilder var first: First
-    @ViewBuilder var second: Second
-    @State private var dragStart: Double?
+    let autosave: String
+    let panes: [SplitPane]
 
-    var body: some View {
-        GeometryReader { geo in
-            let total = axis == .horizontal ? geo.size.width : geo.size.height
-            let lead = showsSecond ? length(of: total) : total
-            let layout = axis == .horizontal
-                ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            layout {
-                first
-                    .frame(width: axis == .horizontal ? lead : nil, height: axis == .vertical ? lead : nil)
-                if showsSecond {
-                    divider(total: total)
-                    second.frame(maxWidth: .infinity, maxHeight: .infinity)
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSSplitView {
+        let split = NSSplitView()
+        split.isVertical = axis == .horizontal
+        split.dividerStyle = .thin
+        split.delegate = context.coordinator
+        context.coordinator.panes = panes
+        let rest = 1 - panes.compactMap(\.fraction).reduce(0, +)
+        for pane in panes {
+            // Made once: the views observe the models themselves.
+            let host = NSHostingView(rootView: AnyView(pane.content.environment(app)))
+            // SwiftUI's sizes stay out of Auto Layout; the delegate keeps
+            // each pane within its minimum and maximum instead.
+            host.sizingOptions = []
+            // Starting sizes in proportion, until the split has its own.
+            let share = (pane.fraction ?? rest) * 1000
+            host.frame.size = axis == .horizontal
+                ? CGSize(width: share, height: 1000) : CGSize(width: 1000, height: share)
+            context.coordinator.views.append(host)
+            if pane.shown { split.addArrangedSubview(host) }
+        }
+        split.autosaveName = autosave
+        return split
+    }
+
+    /// Shows and hides panes. A hidden pane leaves the split (AppKit kept
+    /// room for a merely hidden one); coming back, it gets the size it had,
+    /// or its share the first time.
+    func updateNSView(_ split: NSSplitView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.panes = panes
+        for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() where (view.superview === split) != pane.shown {
+            let total = split.isVertical ? split.bounds.width : split.bounds.height
+            if pane.shown {
+                let before = coordinator.views[..<index].filter { $0.superview === split }.count
+                split.insertArrangedSubview(view, at: before)
+                split.adjustSubviews()
+                if before > 0 {
+                    let size = coordinator.sizes[index] ?? (pane.fraction ?? 0.5) * total
+                    split.setPosition(total - size - split.dividerThickness, ofDividerAt: before - 1)
                 }
+            } else {
+                coordinator.sizes[index] = split.isVertical ? view.frame.width : view.frame.height
+                split.removeArrangedSubview(view)
+                view.removeFromSuperview()
+                split.adjustSubviews()
             }
         }
     }
 
-    /// The first pane's length: its share, kept within both minimums.
-    private func length(of total: CGFloat) -> CGFloat {
-        // Short of room for both minimums, the panes share it by the split's
-        // proportion; neither goes below zero (a negative frame overflows the
-        // reader and keeps layout re-measuring).
-        let room = max(0, total - 1)
-        if room < minFirst + minSecond { return (room * fraction).rounded() }
-        return min(max(total * fraction, minFirst), room - minSecond).rounded()
+    /// The whole proposal: the split fills its place, and its panes'
+    /// minimums don't reach the window's layout.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSplitView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 
-    /// NSSplitView's cursor: two-way, or one-way once a pane is at its
-    /// minimum and the divider can only move the other way.
-    private func pointer(total: CGFloat) -> PointerStyle {
-        let lead = length(of: total)
-        let atFirstMin = lead <= minFirst + 0.5
-        let atSecondMin = lead >= total - minSecond - 1.5
-        if axis == .horizontal {
-            let directions: HorizontalDirection.Set =
-                atFirstMin && !atSecondMin ? .trailing : atSecondMin && !atFirstMin ? .leading : [.leading, .trailing]
-            return .columnResize(directions: directions)
-        } else {
-            let directions: VerticalDirection.Set =
-                atFirstMin && !atSecondMin ? .down : atSecondMin && !atFirstMin ? .up : [.up, .down]
-            return .rowResize(directions: directions)
+    /// Keeps a dragged divider where both panes beside it stay within
+    /// their sizes.
+    final class Coordinator: NSObject, NSSplitViewDelegate {
+        var panes: [SplitPane] = []
+        var views: [NSView] = []
+        /// The sizes of hidden panes, by index.
+        var sizes: [Int: CGFloat] = [:]
+
+        /// The pane shown at a place in the split.
+        private func pane(_ split: NSSplitView, _ place: Int) -> SplitPane {
+            panes[views.firstIndex(of: split.arrangedSubviews[place]) ?? place]
         }
-    }
 
-    /// The fractions the minimums allow, so a drag past one doesn't leave
-    /// the divider stuck until the pointer comes back.
-    private func clamp(_ value: Double, total: CGFloat) -> Double {
-        let low = Double(minFirst / total), high = Double((total - minSecond - 1) / total)
-        return low <= high ? min(max(value, low), high) : min(max(value, 0.05), 0.95)
-    }
+        private func span(_ split: NSSplitView, _ place: Int) -> (CGFloat, CGFloat) {
+            let frame = split.arrangedSubviews[place].frame
+            return split.isVertical ? (frame.minX, frame.maxX) : (frame.minY, frame.maxY)
+        }
 
-    private func divider(total: CGFloat) -> some View {
-        Rectangle()
-            .fill(.separator)
-            .frame(width: axis == .horizontal ? 1 : nil, height: axis == .vertical ? 1 : nil)
-            .overlay {
-                // A wider grip than the line, as NSSplitView's thin divider has.
-                Color.clear
-                    .frame(width: axis == .horizontal ? 8 : nil, height: axis == .vertical ? 8 : nil)
-                    .contentShape(.rect)
-                    .pointerStyle(pointer(total: total))
-                    .gesture(
-                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                            .onChanged { drag in
-                                guard total > 0 else { return }
-                                let start = dragStart ?? fraction
-                                dragStart = start
-                                let delta = axis == .horizontal ? drag.translation.width : drag.translation.height
-                                fraction = clamp(start + delta / total, total: total)
-                            }
-                            .onEnded { _ in dragStart = nil }
-                    )
-                    .accessibilityHidden(true)
-            }
-            .zIndex(1)
+        /// A pane that keeps its size leaves a window resize to the others.
+        func splitView(_ split: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
+            guard let index = views.firstIndex(of: view) else { return true }
+            return !panes[index].keepsSize
+        }
+
+        func splitView(_ split: NSSplitView, constrainMinCoordinate proposed: CGFloat,
+                       ofSubviewAt place: Int) -> CGFloat {
+            var low = span(split, place).0 + pane(split, place).minimum
+            if let maximum = pane(split, place + 1).maximum { low = max(low, span(split, place + 1).1 - maximum) }
+            return max(proposed, low)
+        }
+
+        func splitView(_ split: NSSplitView, constrainMaxCoordinate proposed: CGFloat,
+                       ofSubviewAt place: Int) -> CGFloat {
+            var high = span(split, place + 1).1 - pane(split, place + 1).minimum
+            if let maximum = pane(split, place).maximum { high = min(high, span(split, place).0 + maximum) }
+            return min(proposed, high)
+        }
     }
 }
 
@@ -216,9 +266,6 @@ struct PaneBar<Content: View>: View {
         .frame(height: size.barHeight)
         .frame(maxWidth: .infinity)
         .background(.bar)
-        // A shape, not Divider(): inside the HStack's layout context an
-        // overlaid Divider turned vertical, a stray line down the middle.
-        .overlay(alignment: .bottom) { Hairline() }
     }
 }
 
@@ -234,7 +281,6 @@ struct LocationBar<Content: View>: View {
             .frame(height: 28)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
-            .overlay(alignment: .bottom) { Hairline() }
     }
 }
 
@@ -249,11 +295,10 @@ struct Segment: Identifiable {
 }
 
 extension Segment {
-    /// A menu command, with its shortcut in the tooltip.
+    /// A menu command; its shortcut shows in the menu, not the tooltip.
     @MainActor
     init(_ command: MenuCommand, _ systemImage: String, app: AppModel) {
         self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
-                  help: command.accel.map { "\(command.title) (\(chord($0)))" },
                   enabled: app.isEnabled(command)) { app.perform(command) }
     }
 }
@@ -279,13 +324,6 @@ struct GlassGroup: View {
         .buttonBorderShape(.capsule)
         .labelStyle(.iconOnly)
         .fixedSize()
-    }
-}
-
-/// A one-point separator line across the full width.
-struct Hairline: View {
-    var body: some View {
-        Rectangle().fill(.separator).frame(height: 1).frame(maxWidth: .infinity)
     }
 }
 
@@ -322,7 +360,7 @@ private struct SourceBar: View {
             if isLaTeX {
                 if folded < 2 {
                     templateMenu("Heading", headingTemplates)
-                        .help("Insert a part, chapter, section or subsection")
+                        .help("Heading")
                     GlassGroup(items: [
                         Segment(.editBold, "bold", app: app),
                         Segment(.editItalic, "italic", app: app),
@@ -373,7 +411,7 @@ private struct SourceBar: View {
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
         .fixedSize()
-        .help(folded == 2 ? "Format and insert" : "Insert a figure, table, equation or list")
+        .help(folded == 2 ? "Format" : "Insert")
     }
 
     private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
@@ -474,16 +512,6 @@ private struct SourceLocation: View {
     }
 }
 
-/// "CmdOrCtrl+Shift+Z" as the menu shows it: ⇧⌘Z.
-func chord(_ accel: String) -> String {
-    var parts = accel.split(separator: "+").map(String.init)
-    let key = parts.popLast() ?? ""
-    let symbols: [String: String] = ["Ctrl": "⌃", "Alt": "⌥", "Shift": "⇧", "CmdOrCtrl": "⌘", "Cmd": "⌘"]
-    let names: [String: String] = ["Return": "↩", "Plus": "+", "Minus": "−"]
-    let order = ["Ctrl", "Alt", "Shift", "CmdOrCtrl", "Cmd"]
-    return order.filter(parts.contains).compactMap { symbols[$0] }.joined() + (names[key] ?? key.uppercased())
-}
-
 /// The sectioning commands, in the order the web's outline ranks them.
 let headingTemplates: [(String, String)] = [
     ("Part", "\\part{$0}\n"), ("Chapter", "\\chapter{$0}\n"), ("Section", "\\section{$0}\n"),
@@ -541,7 +569,7 @@ private struct StatusBar: View {
             .toggleStyle(.button)
             .buttonStyle(.borderless)
             .labelStyle(.iconOnly)
-            .help(project.showLogs ? "Hide Panel (⇧⌘L)" : "Show Panel (⇧⌘L)")
+            .help(project.showLogs ? "Hide Panel" : "Show Panel")
         }
         // The small system font (11 pt), as Finder's and Xcode's status bars.
         .font(.subheadline)
@@ -551,7 +579,6 @@ private struct StatusBar: View {
         .padding(.horizontal, 12)
         .frame(height: 26)
         .background(.bar)
-        .overlay(alignment: .top) { Hairline() }
     }
 
     @ViewBuilder

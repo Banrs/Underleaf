@@ -24,6 +24,7 @@ struct PanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneBar { header }
+            Divider()
             Group {
                 switch project.panelTab {
                 case .issues: issues
@@ -51,8 +52,6 @@ struct PanelView: View {
                     Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
                 .toggleStyle(.button)
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 .disabled(project.warningCount == 0)
             } else {
@@ -60,20 +59,19 @@ struct PanelView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
                 }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
                 .help("Copy Log")
                 .disabled(project.result?.log.isEmpty ?? true)
             }
-            TextField("Filter", text: $filter, prompt: Text("Filter"))
-                .textFieldStyle(.roundedBorder)
+            SearchField(text: $filter, prompt: "Filter")
                 .frame(minWidth: 60, maxWidth: 180)
             Button("Hide Panel", systemImage: "xmark") { project.showLogs = false }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .help("Hide Panel (⇧⌘L)")
+                .help("Hide Panel")
                 .layoutPriority(1)
         }
+        // The rest of the bars' icon buttons.
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .labelStyle(.iconOnly)
     }
 
     @ViewBuilder

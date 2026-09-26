@@ -42,7 +42,7 @@ enum MenuCommand: String, CaseIterable {
         case .projectNew: "New Project…"
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
-        case .projectSearch: "Find in Project"
+        case .projectSearch: "Find in Project…"
         case .fileNew: "New File…"
         case .fileNewFolder: "New Folder…"
         case .fileUpload: "Add Files…"
@@ -50,7 +50,7 @@ enum MenuCommand: String, CaseIterable {
         case .pdfSave: "Save PDF As…"
         case .editUndo: "Undo"
         case .editRedo: "Redo"
-        case .editFind: "Find & Replace"
+        case .editFind: "Find and Replace…"
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
@@ -160,7 +160,7 @@ enum Prompt: Identifiable {
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, fitWidth, fitHeight, find, inverseFromView
+    case zoomIn, zoomOut, fitWidth, fitHeight, find, inverseFromView, print
 }
 
 extension AppModel {
@@ -183,6 +183,7 @@ extension AppModel {
         switch command {
         case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
+        case .viewToggleLogs: project?.showLogs == true ? "Hide Build Log" : "Show Build Log"
         default: command.title
         }
     }
@@ -319,7 +320,10 @@ struct AppCommands: Commands {
             item(.fileNewFolder)
             item(.fileUpload)
         }
+        // Replacing the save group drops the standard Close with it.
         CommandGroup(replacing: .saveItem) {
+            Button("Close") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w")
             item(.fileSave)
             Divider()
             item(.projectClose)
@@ -332,15 +336,26 @@ struct AppCommands: Commands {
             }
             item(.projectExport)
         }
+        // The standard Print would go to the first responder, usually the
+        // editor's web view, and print the page rather than the PDF.
+        CommandGroup(replacing: .printItem) {
+            Button("Page Setup…") { NSApp.runPageLayout(nil) }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Print…") { app.requestPDF(.print) }
+                .keyboardShortcut("p")
+                .disabled(app.project?.pdfVersion ?? 0 == 0)
+        }
         CommandGroup(replacing: .textEditing) {
-            item(.editFind)
-            item(.projectSearch)
-            item(.pdfFind)
+            Menu("Find") {
+                item(.editFind)
+                item(.projectSearch)
+                item(.pdfFind)
+            }
             item(.editGotoLine)
         }
         // Where Mac text apps keep styling (TextEdit, Pages): the toolbar's
         // centre group, and what its Insert menu holds.
-        CommandMenu("Format") {
+        CommandGroup(replacing: .textFormatting) {
             item(.editBold)
             item(.editItalic)
             item(.editMath)
@@ -350,19 +365,14 @@ struct AppCommands: Commands {
             Divider()
             item(.editComment)
         }
+        // The panes left to right, then the panel below them.
         CommandGroup(after: .sidebar) {
-            Toggle("Inspector", isOn: Binding(get: { app.showInspector }, set: { app.showInspector = $0 }))
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .disabled(app.project == nil)
-            Divider()
             item(.viewToggleSidebar)
             item(.viewTogglePdf)
-            Toggle(MenuCommand.viewToggleLogs.title, isOn: Binding(
-                get: { app.project?.showLogs ?? false },
-                set: { app.project?.showLogs = $0 }
-            ))
-            .keyboardShortcut(MenuCommand.viewToggleLogs.shortcut)
-            .disabled(app.project == nil)
+            Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(app.project == nil)
+            item(.viewToggleLogs)
             Divider()
             item(.viewZoomIn)
             item(.viewZoomOut)

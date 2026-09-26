@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
-/// panels" and "Interface size" have no counterpart: macOS draws its own
-/// sidebar and toolbar, and sizes its own text.
+/// panels", "Interface size" and theme have no counterpart: macOS draws its
+/// own sidebar and toolbar, sizes its own text, and the app follows the
+/// system's appearance (HIG, Dark Mode).
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -16,7 +17,6 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage("appearance") private var appearance = "system"
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @AppStorage("paneBarSize") private var paneBarSize = PaneSize.compact
 
@@ -24,15 +24,10 @@ private struct GeneralSettings: View {
         @Bindable var app = app
         Form {
             Section("Appearance") {
-                Picker("Theme", selection: $appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
                 Picker(selection: $pdfPaper) {
                     Text("White").tag("white")
                     Text("Dark").tag("dark")
-                    Text("Match Theme").tag("auto")
+                    Text("Match Appearance").tag("auto")
                 } label: {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading")
@@ -50,24 +45,12 @@ private struct GeneralSettings: View {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing")
                 }
-                if let project = app.project {
-                    Picker(selection: Binding(
-                        get: { project.settings?.engine ?? "pdflatex" },
-                        set: { engine in Task { await project.setEngine(engine) } }
-                    )) {
-                        ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-                    } label: {
-                        Text("Engine")
-                        Text("For \u{201C}\(project.id)\u{201D}")
-                    }
-                }
                 LabeledContent("TeX Distribution") {
                     Text(app.tex?.available == true ? texVersion : "Not found — compiling is off")
                 }
             }
         }
         .formStyle(.grouped)
-        .onChange(of: appearance) { _, value in applyAppearance(value) }
     }
 }
 
@@ -110,15 +93,5 @@ private struct EditorSettings: View {
             }
         }
         .formStyle(.grouped)
-    }
-}
-
-/// "system" follows macOS; the others pin the app's appearance.
-@MainActor
-func applyAppearance(_ value: String) {
-    NSApp.appearance = switch value {
-    case "light": NSAppearance(named: .aqua)
-    case "dark": NSAppearance(named: .darkAqua)
-    default: nil
     }
 }

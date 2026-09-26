@@ -9,10 +9,7 @@ struct TeXLocalApp: App {
         Window("TeXLocal", id: "main") {
             RootView()
                 .environment(app)
-                .onAppear {
-                    delegate.app = app
-                    applyAppearance(UserDefaults.standard.string(forKey: "appearance") ?? "system")
-                }
+                .onAppear { delegate.app = app }
         }
         .defaultSize(width: 1200, height: 760)
         .commands {
@@ -83,13 +80,13 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
-        .alert("TeXLocal", isPresented: Binding(
+        // The title says what happened, as the HIG asks; the app's name
+        // told nothing.
+        .alert(app.alert ?? "", isPresented: Binding(
             get: { app.alert != nil },
             set: { if !$0 { app.alert = nil } }
         )) {
             Button("OK") {}
-        } message: {
-            Text(app.alert ?? "")
         }
     }
 }

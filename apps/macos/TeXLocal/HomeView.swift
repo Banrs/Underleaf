@@ -15,9 +15,12 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if app.tex?.available == false { texMissing }
+            if app.tex?.available == false {
+                texMissing
+                Divider()
+            }
             templates
-            Hairline()
+            Divider()
             recents
         }
         // Named for what the window shows, not the app (HIG, Toolbars).
@@ -25,7 +28,7 @@ struct HomeView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("New Project", systemImage: "plus") { newProject("article") }
-                    .help("New Project (⌘N)")
+                    .help("New Project")
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
@@ -72,13 +75,10 @@ struct HomeView: View {
                         .help("New \(template.title) Project")
                     }
                 }
-                .padding(.vertical, 4)
             }
             .scrollIndicators(.never)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
+        .padding()
     }
 
     // ---------- recent ----------
@@ -87,15 +87,10 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Recent")
                 .font(.title3.weight(.semibold))
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
+                .padding([.horizontal, .top])
             Table(shown, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("Name", value: \.name) { project in
-                    Label {
-                        Text(project.name).fontWeight(.medium)
-                    } icon: {
-                        Image(systemName: "doc.text.fill").foregroundStyle(.tint)
-                    }
+                    Label(project.name, systemImage: "doc.text")
                 }
                 .width(min: 180, ideal: 320)
                 TableColumn("Main File", value: \.mainFile) { project in
@@ -150,17 +145,15 @@ struct HomeView: View {
 
     private var texMissing: some View {
         HStack(alignment: .firstTextBaseline) {
-            Label {
-                Text("TeX isn’t installed. Install MacTeX to compile; TeXLocal notices it once it’s there.")
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            }
+            Label(
+                "TeX isn’t installed. Install MacTeX to compile; TeXLocal notices it once it’s there.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .symbolRenderingMode(.multicolor)
             Spacer()
             Link("Get MacTeX", destination: URL(string: "https://tug.org/mactex/")!)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(.orange.opacity(0.08))
+        .padding()
     }
 }
 
@@ -185,7 +178,6 @@ struct ProjectTemplate: Identifiable {
 /// A template's card: a drawing of its first page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -193,13 +185,6 @@ private struct TemplateCard: View {
                 .frame(width: 120, height: 156)
                 .background(.white, in: .rect(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(.tint, lineWidth: 3)
-                        .padding(-4)
-                        .opacity(hovering ? 1 : 0)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             VStack(alignment: .leading, spacing: 1) {
                 Text(template.title).font(.body.weight(.medium))
                 Text(template.detail)
@@ -210,8 +195,6 @@ private struct TemplateCard: View {
             }
         }
         .contentShape(.rect)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
         .accessibilityElement(children: .combine)
     }
 }
@@ -282,12 +265,16 @@ struct NewProjectSheet: View {
     @State private var template = "article"
 
     var body: some View {
+        // A sheet shows no navigation title, so the form's header names it.
+        // The template arrives chosen (from a card, or "article" for ⌘N);
+        // the menu is there to change it.
         Form {
-            TextField("Name", text: $name, prompt: Text("My Paper"))
-            Picker("Template", selection: $template) {
-                ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
+            Section("New Project") {
+                TextField("Name", text: $name, prompt: Text("My Paper"))
+                Picker("Template", selection: $template) {
+                    ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
+                }
             }
-            .pickerStyle(.radioGroup)
         }
         .onAppear { template = app.newProjectTemplate }
         .formStyle(.grouped)
@@ -303,6 +290,5 @@ struct NewProjectSheet: View {
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .navigationTitle("New Project")
     }
 }
