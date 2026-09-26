@@ -141,7 +141,7 @@ private struct StatusBar: View {
             }
             .toggleStyle(.button)
             .labelStyle(.iconOnly)
-            .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
+            .help(app.title(.viewToggleLogs))
         }
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows, as Pages' word count

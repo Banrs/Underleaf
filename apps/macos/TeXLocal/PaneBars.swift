@@ -331,10 +331,8 @@ struct DialogSheet<Fields: View>: View {
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
 
-    /// The kit's dialogs are 390–400 pt wide.
-    static var width: CGFloat { 400 }
     /// A grouped form's own inset, so the title lines up with its sections.
-    static var formInset: CGFloat { 20 }
+    private static var formInset: CGFloat { 20 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -356,7 +354,8 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: Self.width)
+        // The kit's dialogs are 390–400 pt wide.
+        .frame(width: 400)
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {

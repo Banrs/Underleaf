@@ -94,6 +94,8 @@ struct RootView: View {
         // constraint passes then looped until AppKit threw.
         .frame(minWidth: WindowMetrics.minimum.width, minHeight: WindowMetrics.contentMinHeight)
         .task {
+            // Only the alert below has anything to show.
+            guard Core.shared.isOpen else { return }
             await app.refresh()
             // `open TeXLocal.app --args -openProject <id>` opens a project at
             // launch; launch arguments land in UserDefaults' argument domain
@@ -102,7 +104,18 @@ struct RootView: View {
                 await app.open(id)
             }
         }
-        .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
+        // While TeX is missing, look for it now and then, whichever screen
+        // shows, so installing it takes effect without a restart.
+        .task(id: app.tex?.available) { await app.watchForTeX() }
+        .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
+            switch result {
+            case .success(let url): Task { await app.importProject(from: url) }
+            case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+            }
+        }
+        .fileDialogConfirmationLabel("Open")
+        .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
+        .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
         // The title says what happened, briefly, as the HIG asks; the
         // detail is the message. `presenting`, so the text stays while the
         // alert closes.
@@ -110,6 +123,14 @@ struct RootView: View {
             Button("OK") {}
         } message: { alert in
             Text(alert.message)
+        }
+        // The library folder can't be made or opened: say so and quit, rather
+        // than leave a crash report that explains nothing.
+        .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
+            Button("Quit") { NSApp.terminate(nil) }
+        } message: {
+            let folder = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"] ?? "~/TeXLocal"
+            Text("Make sure you can create and write to \(folder), then open TeXLocal again.")
         }
     }
 }

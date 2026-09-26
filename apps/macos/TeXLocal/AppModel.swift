@@ -18,6 +18,20 @@ struct AppAlert: Sendable {
     }
 }
 
+/// A file Save PDF As… or Export Project as ZIP… writes where the save
+/// panel says (`fileExporter`): made once the panel is done, then copied
+/// there by the system.
+struct ExportFile: Transferable {
+    let name: String
+    let type: UTType
+    let make: @MainActor @Sendable () async throws -> URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .pdf) { SentTransferredFile(try await $0.make()) }
+        FileRepresentation(exportedContentType: .zip) { SentTransferredFile(try await $0.make()) }
+    }
+}
+
 /// The library: projects on disk, TeX availability, and the open project.
 @MainActor @Observable
 final class AppModel {
@@ -27,19 +41,17 @@ final class AppModel {
     var alert: AppAlert?
 
     // Requests from commands to the views that own the matching UI.
-    var showNewProject = false
-    /// The template the new-project sheet starts on: the card chosen.
-    var newProjectTemplate = "article"
+    /// The new-project sheet, on the template it starts with.
+    var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
+    /// File › Open…'s panel (RootView), Add Files…' (WorkspaceView).
+    var openingProject = false
+    var addingFiles = false
+    /// Save PDF As… or Export Project as ZIP…, while its panel shows.
+    var exporting: ExportFile?
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
-
-    init() {
-        // The pane bars' Large size (Settings › General › Toolbar Size) is
-        // gone: the bars have the one, standard size.
-        UserDefaults.standard.removeObject(forKey: "paneBarSize")
-    }
 
     // Settings the menus and models read, remembered across launches; held
     // here so they are observed. Settings the views alone read are
@@ -64,13 +76,12 @@ final class AppModel {
 
     /// ⌘N on the home screen, or a template's card.
     func newProject(_ template: String = "article") {
-        newProjectTemplate = template
-        showNewProject = true
+        newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
-    /// rather than whenever the pane next appears. The build panel stays:
-    /// it sits under both panes, not over the PDF.
+    /// rather than whenever the pane next appears. Find in PDF is a bar
+    /// over the pages that leaves the build panel open.
     func requestPDF(_ action: PDFAction) {
         project?.showPDF = true
         pdfToken += 1
@@ -92,8 +103,7 @@ final class AppModel {
         tex = try? await core.call("status", as: TexStatus.self)
     }
 
-    /// While TeX is missing, look again now and then so installing it takes
-    /// effect without a restart of this screen.
+    /// While TeX is missing, look again now and then.
     func watchForTeX() async {
         while !(tex?.available ?? true), !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
@@ -111,19 +121,22 @@ final class AppModel {
         }
     }
 
+    /// What File › Open… opens: a folder, a .tex file or a .zip.
+    static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
+
     /// File › Open…: a folder, a .tex file or a .zip from anywhere, made a
     /// project in the library and opened. The original stays where it is.
-    func chooseProjectToOpen() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.allowedContentTypes = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
-        panel.prompt = "Open"
-        panel.message = "Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await importProject(from: url) }
-    }
-
     func importProject(from url: URL) async {
+        // What it brings, before the project is made: one that can't be read
+        // leaves nothing behind.
+        let items: [URL], cleanup: () -> Void
+        do {
+            (items, cleanup) = try Self.contents(of: url)
+        } catch {
+            alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
+            return
+        }
+        defer { cleanup() }
         let base = url.deletingPathExtension().lastPathComponent
         var made: ProjectInfo?
         var failure: Error?
@@ -142,8 +155,6 @@ final class AppModel {
         }
         do {
             guard let root = await root(of: info) else { throw CoreError(message: "The new project has no folder", status: 500) }
-            let (items, cleanup) = try Self.contents(of: url)
-            defer { cleanup() }
             let fm = FileManager.default
             let isTeX = { (item: URL) in item.pathExtension.lowercased() == "tex" }
             // The template's main.tex gives way to what came in, if any TeX did.

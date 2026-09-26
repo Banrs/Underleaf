@@ -248,7 +248,9 @@ private struct PageRow: View {
     var body: some View {
         SecondaryBar {
             if project.pdfVersion > 0, let freshness = project.pdfFreshness {
-                Button { fix(freshness) } label: {
+                Button {
+                    if freshness == .edited { app.perform(.compileRun) } else { project.showBuildPanel() }
+                } label: {
                     Label {
                         Text(freshness.title)
                     } icon: {
@@ -274,13 +276,6 @@ private struct PageRow: View {
             }
         }
         .animation(.default, value: project.pdfFreshness)
-    }
-
-    private func fix(_ freshness: PDFFreshness) {
-        switch freshness {
-        case .edited: app.perform(.compileRun)
-        case .lastSuccessful: project.showBuildPanel()
-        }
     }
 }
 

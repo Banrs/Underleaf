@@ -459,7 +459,7 @@ final class ProjectModel {
                     pdfFreshness = dirty || writes != built ? .edited : nil
                 } else {
                     if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
-                    if !result.errors.isEmpty { panelTab = .issues; showLogs = true }
+                    if !result.errors.isEmpty { showBuildPanel() }
                 }
                 notify(result)
             } catch {
@@ -644,36 +644,13 @@ final class ProjectModel {
 
     // ---------- export ----------
 
-    func exportZip(to url: URL) async {
-        do {
-            try await core.perform("export_zip", ["id": id, "dest": url.path])
-        } catch {
-            report(error, "Couldn’t Export “\(id)”")
-        }
-    }
-
-    func savePDF(to url: URL) async {
-        guard let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) else {
-            app?.alert = AppAlert("No PDF to Save", "Compile the project first to make its PDF.")
-            return
-        }
-        let files = FileManager.default
-        do {
-            guard files.fileExists(atPath: url.path) else {
-                try files.copyItem(at: pdfURL, to: url)
-                return
-            }
-            // A copy beside it first, swapped in whole: a failed copy leaves
-            // the file being replaced as it was.
-            let scratch = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
-                                        appropriateFor: url, create: true)
-            defer { try? files.removeItem(at: scratch) }
-            let copy = scratch.appendingPathComponent(url.lastPathComponent)
-            try files.copyItem(at: pdfURL, to: copy)
-            _ = try files.replaceItemAt(url, withItemAt: copy)
-        } catch {
-            report(error, "Couldn’t Save the PDF")
-        }
+    /// The project as a zip in a temporary folder, for Export Project as ZIP….
+    func exportZip() async throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("\(id).zip")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await core.perform("export_zip", ["id": id, "dest": url.path])
+        return url
     }
 
     // ---------- search ----------

@@ -47,6 +47,19 @@ struct WorkspaceView: View {
         .background {
             if let url = project.openURL { Color.clear.navigationDocument(url) }
         }
+        .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
+                      allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await project.importFiles(urls) }
+            case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
+            }
+        }
+        .fileDialogConfirmationLabel("Add")
+        .fileExporter(isPresented: Binding(presenting: $app.exporting), item: app.exporting,
+                      contentTypes: app.exporting.map { [$0.type] } ?? [],
+                      defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
+            if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
+        }
         .sheet(item: $app.prompt) { prompt in
             switch prompt {
             case .newFile: NewEntrySheet(project: project, directory: false)
@@ -106,7 +119,7 @@ struct WorkspaceView: View {
 
         // The panes' toggles, sharing one piece of glass as related buttons
         // do. Nothing here acts on the PDF alone: Share is the PDF bar's.
-        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
+        ToolbarItem(placement: .primaryAction) { PDFToggle() }
         ToolbarItem(placement: .primaryAction) { InspectorToggle() }
     }
 }
@@ -174,11 +187,11 @@ private struct GoToLineSheet: View {
 /// inspector button are: a toggle draws its on state accent-filled, which
 /// made the two toggles the toolbar's loudest controls.
 private struct PDFToggle: View {
-    @Bindable var project: ProjectModel
+    @Environment(AppModel.self) private var app
 
     var body: some View {
-        let title = project.showPDF ? "Hide PDF" : "Show PDF"
-        Button(title, systemImage: "doc.richtext") { project.showPDF.toggle() }
+        let title = app.title(.viewTogglePdf)
+        Button(title, systemImage: "doc.richtext") { app.perform(.viewTogglePdf) }
             .help(title)
     }
 }
@@ -209,28 +222,9 @@ struct InspectorView: View {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: BarMetrics.groupSpacing,
                  verticalSpacing: BarMetrics.groupSpacing) {
                 header("Project")
-                GridRow {
-                    label("Main File")
-                    Picker("Main File", selection: Binding(
-                        get: { project.settings?.mainFile ?? "" },
-                        set: { path in Task { await project.setMainFile(path) } }
-                    )) {
-                        ForEach(project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path), id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                GridRow {
-                    label("Engine")
-                    Picker("Engine", selection: Binding(
-                        get: { project.settings?.engine ?? "pdflatex" },
-                        set: { engine in Task { await project.setEngine(engine) } }
-                    )) {
-                        ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
+                pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
                 GridRow {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     Toggle(isOn: Binding(
@@ -291,6 +285,19 @@ struct InspectorView: View {
 
     private func label(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+    }
+
+    /// A setting's pop-up at its own width, as Xcode's inspectors have them.
+    private func pickerRow(_ title: String, _ value: String, _ options: [(String, String)],
+                           set: @escaping (String) async -> Void) -> some View {
+        GridRow {
+            label(title)
+            Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
+                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
     }
 
     private func row(_ name: String, _ value: String) -> some View {
