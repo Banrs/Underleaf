@@ -332,7 +332,7 @@ final class SplitLayoutTests: XCTestCase {
 
 final class CompileResultTests: XCTestCase {
     func testDurationsReadTheSameEverywhere() throws {
-        let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
+        let json = #"{"ok":true,"stopped":false,"durationMs":1234,"pdf":"build/main.pdf","errors":[],"warnings":[],"log":""}"#
         let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
         XCTAssertEqual(result.durationText, "1.2 s")
     }

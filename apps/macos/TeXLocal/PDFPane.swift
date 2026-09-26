@@ -72,7 +72,7 @@ struct PDFPane: View {
             } actions: {
                 GetMacTeXButton(prominent: true)
             }
-        } else if project.result?.ok == false {
+        } else if project.result?.failed == true {
             ContentUnavailableView {
                 Label("Build Failed", systemImage: "xmark.octagon")
             } description: {

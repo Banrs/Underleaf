@@ -34,10 +34,10 @@ final class ProjectModel {
     /// Which of the panel's tabs is showing.
     var panelTab: PanelTab = .issues
 
-    /// The build panel on its issues, or on the log after a failed build
-    /// with no error parsed out of it: the log says what went wrong.
+    /// The build panel on its issues: a failed build always names one
+    /// (the core falls back to latexmk's own summary).
     func showBuildPanel() {
-        panelTab = result?.ok == false && result?.errors.isEmpty == true ? .log : .issues
+        panelTab = .issues
         showLogs = true
     }
     /// Remembered across projects and launches, like the web's.
@@ -107,10 +107,9 @@ final class ProjectModel {
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
 
-    /// The one name for "no build yet", shared by the status bar, the
-    /// inspector and the Issues tab so they can't drift: a PDF built before
-    /// the project was opened (this run of the app or an earlier one) may be
-    /// on screen, but its build's issues weren't kept.
+    /// The status bar's name for "no build yet": a PDF built before the
+    /// project was opened (this run of the app or an earlier one) may be on
+    /// screen, but its build's issues weren't kept.
     var noBuildTitle: String { pdfVersion > 0 ? "Not Built Since Opening" : "Not Compiled" }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
@@ -461,18 +460,20 @@ final class ProjectModel {
                     return
                 }
                 self.result = result
-                if result.ok {
+                // Shown whenever the build wrote one, errors or not, as
+                // Overleaf shows it; the issues stay in the panel.
+                if result.pdf != nil {
                     pdfURL = try await pdfPath()
                     pdfVersion += 1
                     builtWrites = built
                     // Edits made while it built still aren't in it, nor may
                     // a save that landed meanwhile be.
                     pdfFreshness = dirty || writes != built ? .edited : nil
-                } else {
-                    if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
-                    if !result.errors.isEmpty { showBuildPanel() }
+                } else if !result.stopped, pdfVersion > 0 {
+                    pdfFreshness = .lastSuccessful
                 }
-                notify(result)
+                if result.failed { showBuildPanel() }
+                if !result.stopped { notify(result) }
             } catch {
                 if !auto, !closed { report(error, "Couldn’t Compile") }
             }
@@ -511,12 +512,12 @@ final class ProjectModel {
         diskCheck?.cancel()
     }
 
-    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
-    /// killed and the compile returns failed.
+    /// Stop this project's build (Xcode's Stop, ⌘.): its process group is
+    /// killed and the compile returns stopped.
     func stopCompile() {
         guard compiling else { return }
         compileQueued = false
-        core.killAll()
+        Task { try? await core.perform("stop_compile", ["id": id]) }
     }
 
     // ---------- settings ----------
@@ -540,6 +541,10 @@ final class ProjectModel {
 
     func setShellEscape(_ on: Bool) async {
         await patchSettings(["shellEscape": on])
+    }
+
+    func setStopOnFirstError(_ on: Bool) async {
+        await patchSettings(["stopOnFirstError": on])
     }
 
     func setMainFile(_ path: String) async {

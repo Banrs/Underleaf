@@ -211,7 +211,9 @@ private struct StatusBar: View {
                 ProgressView().controlSize(.small)
                 Text("Compiling…")
             } else if let result = project.result {
-                if result.ok {
+                if result.stopped {
+                    Text("Build Stopped")
+                } else if result.ok {
                     badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
                     // The error count folds into the failure, so its symbol
@@ -221,7 +223,7 @@ private struct StatusBar: View {
             } else {
                 Text(project.noBuildTitle)
             }
-            if project.errorCount > 0, project.result?.ok != false {
+            if project.errorCount > 0, project.result?.failed != true {
                 badge("\(project.errorCount)", "xmark.octagon.fill", .red)
                     .accessibilityLabel("\(project.errorCount) errors")
             }

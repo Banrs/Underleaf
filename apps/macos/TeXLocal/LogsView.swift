@@ -9,7 +9,6 @@ enum PanelTab: String, CaseIterable {
 /// (web/src/logs.js `renderLogs`). The status bar's toggle and View › Hide
 /// Build Panel close it, as Xcode's debug area has no close button of its own.
 struct PanelView: View {
-    @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
@@ -74,39 +73,16 @@ struct PanelView: View {
         }
     }
 
+    /// Before any build, as after a clean one, just "No Issues": the status
+    /// bar below says whether a build has run, and Compile is the PDF bar's.
     @ViewBuilder
     private var issues: some View {
-        if project.result == nil {
-            // A PDF from an earlier session may be on screen; its build's
-            // issues weren't kept, so don't claim there was never one.
-            ContentUnavailableView {
-                Label(project.noBuildTitle, systemImage: "hammer")
-            } description: {
-                Text("Compile to see errors and warnings here.")
-            } actions: {
-                Button("Compile") { app.perform(.compileRun) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!app.isEnabled(.compileRun))
-            }
-        } else if items.isEmpty {
-            if !filter.isEmpty {
-                ContentUnavailableView.search(text: filter)
-            } else if project.result?.ok == false {
-                // The build failed on something the log's parser didn't
-                // pick out as an error: the log itself says what.
-                ContentUnavailableView {
-                    Label("Build Failed", systemImage: "xmark.octagon")
-                } description: {
-                    Text("The build log shows what went wrong.")
-                } actions: {
-                    Button("Show Build Log") { project.panelTab = .log }
-                        .buttonStyle(.borderedProminent)
-                }
-            } else {
-                ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
-            }
-        } else {
+        if !items.isEmpty {
             IssueList(items: items, project: project)
+        } else if !filter.isEmpty {
+            ContentUnavailableView.search(text: filter)
+        } else {
+            ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
     }
 
@@ -127,8 +103,8 @@ struct PanelView: View {
 }
 
 /// The errors and warnings as a list with the system's selection: a click
-/// selects, a double-click or Return opens the line — in the main file when
-/// the log names none, as the web's does.
+/// selects, a double-click or Return opens the line. The core names the file
+/// TeX had open; an issue it can't place has no location.
 private struct IssueList: View {
     let items: [LogItem]
     let project: ProjectModel
@@ -144,7 +120,7 @@ private struct IssueList: View {
         .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: Int.self) { rows in
             if let row = rows.first {
-                if file(of: items[row]) != nil {
+                if items[row].file != nil {
                     Button("Go to Line") { open(items[row]) }
                 }
                 Button("Copy") {
@@ -162,23 +138,19 @@ private struct IssueList: View {
     }
 
     private func open(_ item: LogItem) {
-        if let file = file(of: item) { Task { await project.open(file, line: item.line) } }
-    }
-
-    private func file(of item: LogItem) -> String? {
-        item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
+        if let file = item.file { Task { await project.open(file, line: item.line) } }
     }
 
     /// Where a row opens, so every row that goes somewhere says where.
     private func location(of item: LogItem) -> String? {
-        file(of: item).map { file in item.line.map { "\(file):\($0)" } ?? file }
+        item.file.map { file in item.line.map { "\(file):\($0)" } ?? file }
     }
 }
 
 /// An error or warning: its message, and where it is when the log says.
 private struct IssueRow: View {
     let item: LogItem
-    /// "file:line", the main file's when the log names none.
+    /// "file:line", or the file alone; nil when the log names none.
     let location: String?
 
     var body: some View {

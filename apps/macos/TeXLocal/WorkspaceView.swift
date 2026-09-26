@@ -228,16 +228,10 @@ struct InspectorView: View {
                 let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
                 pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
                 pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
-                GridRow {
-                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                    Toggle(isOn: Binding(
-                        get: { project.settings?.shellEscape ?? false },
-                        set: { on in Task { await project.setShellEscape(on) } }
-                    )) {
-                        Text("Shell Escape")
-                        Text("Lets packages such as minted run programs. Only for projects you trust.")
-                    }
-                }
+                toggleRow("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
+                          project.settings?.shellEscape ?? false, set: project.setShellEscape)
+                toggleRow("Stop on First Error", "Ends the build at the first error, rather than compiling past it to show them all.",
+                          project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
                 if let path = project.openPath {
                     separator
                     header("Document")
@@ -254,7 +248,7 @@ struct InspectorView: View {
                 separator
                 header("Build")
                 if let result = project.result {
-                    row("Last Build", result.ok ? "Succeeded" : "Failed")
+                    row("Last Build", result.stopped ? "Stopped" : result.ok ? "Succeeded" : "Failed")
                     row("Duration", result.durationText)
                     row("Errors", project.errorCount.formatted())
                     row("Warnings", project.warningCount.formatted())
@@ -300,6 +294,18 @@ struct InspectorView: View {
             }
             .labelsHidden()
             .fixedSize()
+        }
+    }
+
+    /// A setting's checkbox under the pop-ups, its description beneath it.
+    private func toggleRow(_ title: String, _ detail: String, _ isOn: Bool,
+                           set: @escaping (Bool) async -> Void) -> some View {
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            Toggle(isOn: Binding(get: { isOn }, set: { on in Task { await set(on) } })) {
+                Text(title)
+                Text(detail)
+            }
         }
     }
 

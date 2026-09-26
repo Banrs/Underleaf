@@ -52,6 +52,7 @@ struct ProjectSettings: Decodable {
     let mainFile: String
     let engine: String
     let shellEscape: Bool
+    let stopOnFirstError: Bool
 }
 
 struct LogItem: Decodable {
@@ -63,12 +64,21 @@ struct LogItem: Decodable {
     var isError: Bool { type == "error" }
 }
 
+/// A build's outcome. It compiles past errors, as Overleaf's do, so a
+/// failed build may still have written a PDF (`pdf`); `stopped` is a build
+/// Stop, a newer build or quitting ended.
 struct CompileResult: Decodable {
     let ok: Bool
+    let stopped: Bool
+    let pdf: String?
     let durationMs: Int
     let errors: [LogItem]
     let warnings: [LogItem]
     let log: String
+
+    /// Ended on its own without a clean run: "Build Failed", where a stopped
+    /// build reads "Build Stopped".
+    var failed: Bool { !ok && !stopped }
 
     /// How long the build took, as every place that shows it reads it: "1.2 s".
     var durationText: String {
