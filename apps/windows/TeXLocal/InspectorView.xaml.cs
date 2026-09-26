@@ -3,12 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace TeXLocal;
 
-/// <summary>
-/// The details pane: the open file, the project's build settings, and facts
-/// about the document and the PDF — what the browser version keeps in its
-/// settings popover and status line, and apps/macos in its inspector, in the
-/// form File Explorer's Details pane gives them.
-/// </summary>
+/// <summary>The details pane: the open file, the project's build settings, and facts about the document and the PDF.</summary>
 public sealed partial class InspectorView : UserControl
 {
     private static MainWindow Main => MainWindow.Instance;
@@ -21,10 +16,7 @@ public sealed partial class InspectorView : UserControl
     public InspectorView()
     {
         InitializeComponent();
-        foreach (var (_, name) in LatexTemplates.Engines)
-        {
-            EngineBox.Items.Add(name);
-        }
+        EngineBox.ItemsSource = LatexTemplates.Engines.Select(e => e.Name).ToList();
     }
 
     internal void Render(ProjectModel p)
@@ -40,19 +32,14 @@ public sealed partial class InspectorView : UserControl
             var texFiles = TexFiles(p.Tree).ToList();
             if (!texFiles.SequenceEqual(MainFileBox.Items.Cast<string>()))
             {
-                MainFileBox.Items.Clear();
-                foreach (var file in texFiles)
-                {
-                    MainFileBox.Items.Add(file);
-                }
+                MainFileBox.ItemsSource = texFiles;
             }
             MainFileBox.SelectedItem = settings?.MainFile;
             EngineBox.SelectedIndex = LatexTemplates.Engines.ToList().FindIndex(e => e.Id == (settings?.Engine ?? "pdflatex"));
             ShellEscapeSwitch.IsOn = settings?.ShellEscape ?? false;
             AutoCompileSwitch.IsOn = Main.Preferences.AutoCompile;
 
-            // The open file heads the pane, as the selection heads
-            // Explorer's; with none open, the project does.
+            // The open file heads the pane, as the selection heads Explorer's; with none open, the project does.
             if (p.OpenPath is { } path)
             {
                 var slash = path.LastIndexOf('/');

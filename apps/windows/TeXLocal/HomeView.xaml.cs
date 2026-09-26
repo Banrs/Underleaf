@@ -20,26 +20,22 @@ public sealed partial class HomeView : UserControl
     public HomeView()
     {
         InitializeComponent();
-        foreach (var template in ProjectTemplates.All)
-        {
-            Templates.Items.Add(TemplateCard(template));
-        }
+        Templates.ItemsSource = ProjectTemplates.All.Select(TemplateCard).ToList();
         RenderColumns();
     }
 
     internal void Render()
     {
-        IEnumerable<ProjectInfo> shown = Main.Projects
-            .Where(p => query.Length == 0 || p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase));
-        shown = sortBy switch
-        {
-            "name" => descending ? shown.OrderByDescending(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
-                : shown.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase),
-            "main" => descending ? shown.OrderByDescending(p => p.MainFile, StringComparer.CurrentCultureIgnoreCase)
-                : shown.OrderBy(p => p.MainFile, StringComparer.CurrentCultureIgnoreCase),
-            _ => descending ? shown.OrderByDescending(p => p.Mtime) : shown.OrderBy(p => p.Mtime),
-        };
-        var rows = shown.Select(p => new ProjectRow(p)).ToList();
+        var sign = descending ? -1 : 1;
+        var rows = Main.Projects
+            .Where(p => query.Length == 0 || p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            .Order(Comparer<ProjectInfo>.Create((a, b) => sign * (sortBy switch
+            {
+                "name" => string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase),
+                "main" => string.Compare(a.MainFile, b.MainFile, StringComparison.CurrentCultureIgnoreCase),
+                _ => a.Mtime.CompareTo(b.Mtime),
+            })))
+            .Select(p => new ProjectRow(p)).ToList();
         Projects.ItemsSource = rows;
 
         var none = rows.Count == 0;
@@ -84,16 +80,22 @@ public sealed partial class HomeView : UserControl
     private static UIElement PagePreview(TemplatePage page)
     {
         var column = new StackPanel { Spacing = 5, HorizontalAlignment = HorizontalAlignment.Center };
-        void Bar(double width, double height, double before = 0) =>
-            column.Children.Add(new Rectangle
+        static Rectangle Bar(double width, double height, double before = 0) => new()
+        {
+            Width = width,
+            Height = height,
+            RadiusX = height / 2,
+            RadiusY = height / 2,
+            Fill = new SolidColorBrush(Colors.Gray) { Opacity = 0.45 },
+            Margin = new Thickness(0, before, 0, 0),
+        };
+        void Add(params ReadOnlySpan<Rectangle> bars)
+        {
+            foreach (var bar in bars)
             {
-                Width = width,
-                Height = height,
-                RadiusX = height / 2,
-                RadiusY = height / 2,
-                Fill = new SolidColorBrush(Colors.Gray) { Opacity = 0.45 },
-                Margin = new Thickness(0, before, 0, 0),
-            });
+                column.Children.Add(bar);
+            }
+        }
         switch (page)
         {
             case TemplatePage.Blank:
@@ -106,48 +108,22 @@ public sealed partial class HomeView : UserControl
                     VerticalAlignment = VerticalAlignment.Center,
                 };
             case TemplatePage.Article:
-                Bar(64, 5, before: 16);
-                Bar(40, 3);
-                Bar(52, 3);
-                Bar(78, 2, before: 6);
-                Bar(78, 2);
-                Bar(60, 2);
-                column.Children.Add(new Rectangle
-                {
-                    Width = 40, Height = 3, RadiusX = 1.5, RadiusY = 1.5,
-                    Fill = new SolidColorBrush(Colors.Gray) { Opacity = 0.45 },
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Margin = new Thickness(0, 4, 0, 0),
-                });
-                for (var i = 0; i < 4; i++)
-                {
-                    Bar(88, 2);
-                }
-                Bar(50, 2);
+                Add(Bar(64, 5, before: 16), Bar(40, 3), Bar(52, 3), Bar(78, 2, before: 6), Bar(78, 2), Bar(60, 2));
+                var heading = Bar(40, 3, before: 4);
+                heading.HorizontalAlignment = HorizontalAlignment.Left;
+                Add(heading, Bar(88, 2), Bar(88, 2), Bar(88, 2), Bar(88, 2), Bar(50, 2));
                 return column;
             case TemplatePage.Report:
                 column.VerticalAlignment = VerticalAlignment.Center;
                 column.Spacing = 6;
-                Bar(70, 6);
-                Bar(46, 3);
-                Bar(36, 3);
-                return new Grid
-                {
-                    Children =
-                    {
-                        column,
-                        new Rectangle
-                        {
-                            Width = 30, Height = 2, RadiusX = 1, RadiusY = 1,
-                            Fill = new SolidColorBrush(Colors.Gray) { Opacity = 0.45 },
-                            VerticalAlignment = VerticalAlignment.Bottom,
-                            Margin = new Thickness(0, 0, 0, 18),
-                        },
-                    },
-                };
+                Add(Bar(70, 6), Bar(46, 3), Bar(36, 3));
+                var date = Bar(30, 2);
+                date.VerticalAlignment = VerticalAlignment.Bottom;
+                date.Margin = new Thickness(0, 0, 0, 18);
+                return new Grid { Children = { column, date } };
             default:
                 // A slide: a title band over a heading and a line.
-                var slide = new StackPanel
+                column = new StackPanel
                 {
                     Width = 104,
                     Height = 58,
@@ -156,11 +132,8 @@ public sealed partial class HomeView : UserControl
                     BorderThickness = new Thickness(1),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                slide.Children.Add(new Rectangle { Height = 14, Fill = new SolidColorBrush(Colors.RoyalBlue) { Opacity = 0.55 } });
-                column = slide;
-                Bar(60, 4);
-                Bar(40, 3);
-                return slide;
+                Add(new Rectangle { Height = 14, Fill = new SolidColorBrush(Colors.RoyalBlue) { Opacity = 0.55 } }, Bar(60, 4), Bar(40, 3));
+                return column;
         }
     }
 
@@ -234,23 +207,22 @@ public sealed partial class HomeView : UserControl
 
     private void OnProjectContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
-        if (ContextMenus.Row<ListViewItem>(e.OriginalSource) is not { Content: ProjectRow row } item)
+        if (ContextMenus.Row<ListViewItem>(e.OriginalSource) is not { Content: ProjectRow { Info: var project } } item)
         {
             return;
         }
-        ContextMenus.Show(ProjectMenu(row.Info), item, e);
-    }
-
-    private MenuFlyout ProjectMenu(ProjectInfo project)
-    {
-        var menu = new MenuFlyout();
-        menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = Main.OpenAsync(project.Id)));
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(project), "F2"));
-        menu.Items.Add(ContextMenus.Item("Open folder location", "\uE838", () => _ = RevealAsync(project)));
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(project), "Delete"));
-        return menu;
+        ContextMenus.Show(new MenuFlyout
+        {
+            Items =
+            {
+                ContextMenus.Item("Open", "\uE8E5", () => _ = Main.OpenAsync(project.Id)),
+                new MenuFlyoutSeparator(),
+                ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(project), "F2"),
+                ContextMenus.Item("Open folder location", "\uE838", () => _ = RevealAsync(project)),
+                new MenuFlyoutSeparator(),
+                ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(project), "Delete"),
+            },
+        }, item, e);
     }
 
     /// <summary>F2 renames and Delete deletes the focused project, as in File Explorer.</summary>
@@ -272,11 +244,7 @@ public sealed partial class HomeView : UserControl
         }
     }
 
-    /// <summary>
-    /// Select the project's folder in File Explorer, as Explorer's own "Open
-    /// file location" does. The core hands out paths only inside a project,
-    /// so the folder is its main file's path less the main file's segments.
-    /// </summary>
+    /// <summary>Select the project's folder in Explorer: the core hands out paths only inside a project, so walk up from the main file.</summary>
     private static async Task RevealAsync(ProjectInfo project)
     {
         try

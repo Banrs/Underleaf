@@ -13,10 +13,9 @@ public sealed class CoreException(string message, int status) : Exception(messag
 }
 
 /// <summary>
-/// The Rust core through its C ABI (crates/texlocal-ffi): JSON in, JSON out,
-/// the same command names the browser version uses. <c>tl_call</c> blocks for
-/// as long as the command runs — minutes, for a compile — so every call runs
-/// on the thread pool and the UI thread only encodes and decodes.
+/// The Rust core through its C ABI (crates/texlocal-ffi), JSON in and out, with
+/// the web's command names. <c>tl_call</c> blocks for as long as the command
+/// runs (minutes, for a compile), so every call runs on the thread pool.
 /// </summary>
 public sealed partial class Core
 {
@@ -38,10 +37,7 @@ public sealed partial class Core
     // stops compiles with kill_all instead, since a call may still be running.
     private readonly nint handle;
 
-    /// <summary>
-    /// Opens the library folder the core picks: TEXLOCAL_DATA when it is set,
-    /// otherwise TeXLocal in the user's profile.
-    /// </summary>
+    /// <summary>Opens the library folder the core picks: TEXLOCAL_DATA, else TeXLocal in the user's profile.</summary>
     public Core()
     {
         handle = tl_open(null);
@@ -80,12 +76,8 @@ public sealed partial class Core
     }
 
     /// <summary>Run a command and decode its result.</summary>
-    public async Task<T> CallAsync<T>(string command, object? args = null)
-    {
-        var ok = await SendAsync(command, args);
-        return ok.Deserialize<T>(Json)
-            ?? throw new CoreException($"The core returned nothing for {command}", 500);
-    }
+    public async Task<T> CallAsync<T>(string command, object? args = null) =>
+        (await SendAsync(command, args)).Deserialize<T>(Json) ?? throw new CoreException($"The core returned nothing for {command}", 500);
 
     /// <summary>Run a command whose result is not needed.</summary>
     public Task PerformAsync(string command, object? args = null) => SendAsync(command, args);

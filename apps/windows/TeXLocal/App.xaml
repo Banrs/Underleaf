@@ -12,21 +12,11 @@
             <Style x:Key="SplitterRuleStyle" TargetType="Rectangle">
                 <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
             </Style>
-            <!-- The pane toolbars are rows of standard buttons, 48 tall as the
-                 title bar and a CommandBar are, with the buttons 8 apart as
-                 Microsoft spaces them. Their icon-only buttons are the app's
-                 usual 40 × 32 subtle button, as Photos has them, and their
-                 groups are divided by a 24 px rule. -->
+            <!-- The app's 40 x 32 subtle icon button, as Photos has them. -->
             <Style x:Key="ToolbarIconButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
                 <Setter Property="Width" Value="40" />
                 <Setter Property="Height" Value="32" />
                 <Setter Property="Padding" Value="0" />
-            </Style>
-            <Style x:Key="ToolbarSeparatorStyle" TargetType="Rectangle">
-                <Setter Property="Width" Value="1" />
-                <Setter Property="Height" Value="24" />
-                <Setter Property="VerticalAlignment" Value="Center" />
-                <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

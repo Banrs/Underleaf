@@ -4,9 +4,7 @@ namespace TeXLocal;
 
 /// <summary>
 /// The app's commands, with the browser version's ids and accelerators
-/// (web/src/workspace.js <c>commandDefs</c>). The accelerator string is the
-/// one source for the window's keyboard accelerators, the shortcut text the
-/// menus show, and the chords the embedded pages hand back to the host.
+/// (web/src/workspace.js <c>commandDefs</c>).
 /// </summary>
 public enum MenuCommand
 {
@@ -48,8 +46,7 @@ public enum MenuCommand
     SyncInverse,
     AppSettings,
 
-    // Native only (IsNativeOnly): what a Windows app's menus hold and the
-    // browser's own menus already give it.
+    // Native only (IsNativeOnly): the browser's own menus give the web these.
     FileUploadFolder,
     EditCut,
     EditCopy,
@@ -61,11 +58,8 @@ public enum MenuCommand
 
 public static class MenuCommands
 {
-    /// <summary>
-    /// Each command's id, its menu text (sentence case; an ellipsis when it
-    /// asks for more before acting) and its accelerator. Alt+Shift+P is File
-    /// Explorer's details-pane chord; Ctrl+Break is Windows' Stop.
-    /// </summary>
+    // Id, menu text (an ellipsis when it asks for more) and accelerator.
+    // Alt+Shift+P is File Explorer's details-pane chord; Ctrl+Break is Windows' Stop.
     private static readonly Dictionary<MenuCommand, (string Id, string Title, string? Accel)> Defs = new()
     {
         [MenuCommand.ProjectNew] = ("project.new", "New project…", "CmdOrCtrl+Shift+N"),
@@ -115,17 +109,10 @@ public static class MenuCommands
     };
 
     public static string Id(this MenuCommand command) => Defs[command].Id;
-
     public static string Title(this MenuCommand command) => Defs[command].Title;
-
     public static string? Accel(this MenuCommand command) => Defs[command].Accel;
 
-    /// <summary>
-    /// Commands the native apps add to the browser version's: panes and
-    /// actions the web has no counterpart for (apps/macos has the same), and
-    /// the standard items a Windows menu bar has: Exit, the clipboard, full
-    /// screen.
-    /// </summary>
+    /// <summary>Commands the web has no counterpart for (as in apps/macos), plus a Windows menu bar's standard items.</summary>
     public static bool IsNativeOnly(this MenuCommand command) =>
         command is MenuCommand.PdfShare or MenuCommand.ViewToggleInspector or MenuCommand.CompileStop
             or MenuCommand.FileUploadFolder or MenuCommand.EditCut or MenuCommand.EditCopy or MenuCommand.EditPaste
@@ -135,10 +122,9 @@ public static class MenuCommands
         Defs.Where(d => d.Value.Id == id).Select(d => (MenuCommand?)d.Key).FirstOrDefault();
 
     /// <summary>
-    /// Undo, redo and the clipboard belong to whichever text field has focus
-    /// — the editor page or a native box — and find next and previous to the
-    /// editor page's find panel, which also answers F3 and Shift+F3, so the
-    /// menu shows their chords but never claims them.
+    /// Chords the menu shows but never claims: undo, redo and the clipboard
+    /// belong to the focused text field, find next and previous (and F3) to
+    /// the editor page's find panel.
     /// </summary>
     public static bool IsTextEditing(this MenuCommand command) =>
         command is MenuCommand.EditUndo or MenuCommand.EditRedo
@@ -146,10 +132,8 @@ public static class MenuCommands
             or MenuCommand.EditFindNext or MenuCommand.EditFindPrevious;
 
     /// <summary>
-    /// Whether the window takes this command's chord. Windows has no Command
-    /// key, so CmdOrCtrl+Return (compile) and Ctrl+Return (forward search)
-    /// are one chord here; the command listed first keeps it, as it does in
-    /// the browser version, and the other is left to its menu item.
+    /// Whether the window takes this command's chord. CmdOrCtrl+Return and
+    /// Ctrl+Return are one chord here; the command listed first keeps it.
     /// </summary>
     public static bool ClaimsChord(this MenuCommand command) =>
         command.Accel() is { } accel
@@ -158,20 +142,11 @@ public static class MenuCommands
             .TakeWhile(earlier => earlier != command)
             .Any(earlier => earlier.Accel() is { } other && Accelerators.Parse(other) == Accelerators.Parse(accel));
 
-    /// <summary>
-    /// Every chord the menus claim. A page with focus sees a chord before the
-    /// window does, so the embedded pages hand these back to the host.
-    /// </summary>
+    /// <summary>Every chord the menus claim, which a focused page sees first and hands back to the host.</summary>
     public static IReadOnlyList<(string Id, string Accel)> ClaimedChords { get; } =
-        Enum.GetValues<MenuCommand>()
-            .Where(c => c.ClaimsChord())
-            .Select(c => (c.Id(), c.Accel()!))
-            .ToList();
+        Enum.GetValues<MenuCommand>().Where(c => c.ClaimsChord()).Select(c => (c.Id(), c.Accel()!)).ToList();
 
-    /// <summary>
-    /// The chords the editor page hands back: all but find and comment, which
-    /// the editor implements itself (as it does undo and redo).
-    /// </summary>
+    /// <summary>The chords the editor page hands back: all but find and comment, which it implements.</summary>
     public static IReadOnlyList<(string Id, string Accel)> HostKeys { get; } =
         ClaimedChords.Where(k => k.Id is not ("edit.find" or "edit.comment")).ToList();
 }
@@ -234,9 +209,8 @@ public static class Accelerators
     }
 
     /// <summary>
-    /// Every key combination an accelerator stands for: its own, plus the
-    /// numeric keypad's +, − and digits, as the web side accepts them
-    /// (web/src/commands.js CODES). Enter is one key code for both keys.
+    /// An accelerator's key combinations: its own, plus the keypad's +, − and
+    /// digits, as web/src/commands.js CODES accepts them.
     /// </summary>
     public static IReadOnlyList<Chord> Chords(string accel)
     {
@@ -254,10 +228,7 @@ public static class Accelerators
         return keypad is { } key ? [chord, chord with { Key = key }] : [chord];
     }
 
-    /// <summary>
-    /// The shortcut text a Windows menu shows: "CmdOrCtrl+Shift+Alt+N" →
-    /// "Ctrl+Alt+Shift+N", modifiers in the order Windows lists them.
-    /// </summary>
+    /// <summary>A Windows menu's shortcut text: "CmdOrCtrl+Shift+Alt+N" → "Ctrl+Alt+Shift+N".</summary>
     public static string Label(string accel)
     {
         var parts = accel.Split('+');
@@ -278,28 +249,18 @@ public static class Accelerators
     }
 }
 
-/// <summary>
-/// Access keys (the letters Alt reveals) for a list of labels: a letter each,
-/// unique within the list, preferring the start of a word as Windows does.
-/// </summary>
+/// <summary>Access keys for a list of labels: a letter each, unique, preferring a word's start as Windows does.</summary>
 public static class AccessKeys
 {
     public static IReadOnlyList<string> Assign(IReadOnlyList<string> labels)
     {
         var taken = new HashSet<char>();
-        var keys = new List<string>();
-        foreach (var label in labels)
+        return labels.Select(label =>
         {
             var starts = label.Where((c, i) => char.IsAsciiLetter(c) && (i == 0 || label[i - 1] == ' '));
-            var key = starts.Concat(label.Where(char.IsAsciiLetter))
-                .Select(char.ToUpperInvariant)
-                .FirstOrDefault(c => !taken.Contains(c));
-            if (key != default)
-            {
-                taken.Add(key);
-            }
-            keys.Add(key == default ? "" : key.ToString());
-        }
-        return keys;
+            // HashSet.Add claims the first letter still free.
+            var key = starts.Concat(label.Where(char.IsAsciiLetter)).Select(char.ToUpperInvariant).FirstOrDefault(taken.Add);
+            return key == default ? "" : key.ToString();
+        }).ToList();
     }
 }

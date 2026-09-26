@@ -27,12 +27,8 @@ internal static class ContextMenus
 
     public static MenuFlyoutItem Item(string text, Action action, string? shortcut = null)
     {
-        var item = new MenuFlyoutItem { Text = text };
+        var item = new MenuFlyoutItem { Text = text, KeyboardAcceleratorTextOverride = shortcut ?? "" };
         item.Click += (_, _) => action();
-        if (shortcut is not null)
-        {
-            item.KeyboardAcceleratorTextOverride = shortcut;
-        }
         return item;
     }
 

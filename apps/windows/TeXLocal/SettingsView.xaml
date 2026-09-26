@@ -4,10 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <UserControl.Resources>
-        <!-- A settings card with the Windows Community Toolkit's SettingsCard
-             metrics: MinHeight 68, padding 16, radius 4, a 20 px icon with
-             2,0,20,0 around it, the header 24 clear of the control, and the
-             control at least 120 wide. -->
+        <!-- The Windows Community Toolkit's SettingsCard metrics. -->
         <Style x:Key="Card" TargetType="Grid">
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
@@ -29,8 +26,7 @@
             <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
-        <!-- A row inside an expander card, with SettingsExpander's item
-             metrics: its text lines up under the header's, a 1 px line above. -->
+        <!-- A row in an expander card, with SettingsExpander's item metrics. -->
         <Style x:Key="ExpanderItem" TargetType="Grid">
             <Setter Property="MinHeight" Value="52" />
             <Setter Property="Padding" Value="58,8,44,8" />
@@ -43,8 +39,6 @@
         </Style>
     </UserControl.Resources>
 
-    <!-- The WinUI Gallery's settings page: the title outside the scrolling
-         column, both at most 1064 wide and centred. -->
     <Grid KeyDown="OnKeyDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -52,8 +46,7 @@
         </Grid.RowDefinitions>
         <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="36,24,36,0" MaxWidth="1064" />
 
-        <!-- The column is centred inside a full-width grid: given straight to
-             the ScrollViewer, a column with a MaxWidth was placed off-centre. -->
+        <!-- Centred inside a full-width grid: given straight to the ScrollViewer, a MaxWidth column sat off-centre. -->
         <ScrollViewer Grid.Row="1">
         <Grid>
         <StackPanel MaxWidth="1064" Margin="36,0,36,36" Spacing="4">
@@ -70,7 +63,7 @@
                     <TextBlock Text="Light, dark, or the same as Windows" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ComboBox x:Name="ThemeBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
-                          AutomationProperties.Name="App theme" SelectionChanged="OnSelectionChanged">
+                          AutomationProperties.Name="App theme" SelectionChanged="OnChanged">
                     <x:String>Use system setting</x:String>
                     <x:String>Light</x:String>
                     <x:String>Dark</x:String>
@@ -88,7 +81,7 @@
                     <TextBlock Text="Scales the editor, on top of the text size you set in Windows" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ComboBox x:Name="ScaleBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
-                          AutomationProperties.Name="Editor size" SelectionChanged="OnSelectionChanged" />
+                          AutomationProperties.Name="Editor size" SelectionChanged="OnChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -102,7 +95,7 @@
                     <TextBlock Text="Dark inverts the pages' colors for reading at night" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ComboBox x:Name="PaperBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
-                          AutomationProperties.Name="PDF paper" SelectionChanged="OnSelectionChanged">
+                          AutomationProperties.Name="PDF paper" SelectionChanged="OnChanged">
                     <x:String>White</x:String>
                     <x:String>Dark</x:String>
                     <x:String>Match app theme</x:String>
@@ -110,10 +103,7 @@
             </Grid>
 
             <TextBlock Text="Editor" Style="{StaticResource SectionHeader}" />
-            <!-- SettingsExpander's metrics on the WinUI Expander: the header a
-                 68 px card whose icon and text sit where a card's do (the
-                 Expander pads its header 16 on the left), and the rows below
-                 with no padding of the Expander's own. -->
+            <!-- SettingsExpander's metrics on the WinUI Expander (which pads its header 16 on the left). -->
             <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="68" Padding="0"
                       IsExpanded="True" AutomationProperties.Name="Text">
                 <Expander.Header>
@@ -137,7 +127,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Syntax colors" VerticalAlignment="Center" />
                         <ComboBox x:Name="PaletteBox" Grid.Column="1" MinWidth="120" VerticalAlignment="Center"
-                                  AutomationProperties.Name="Syntax colors" SelectionChanged="OnSelectionChanged">
+                                  AutomationProperties.Name="Syntax colors" SelectionChanged="OnChanged">
                             <x:String>One Dark</x:String>
                             <x:String>Xcode</x:String>
                         </ComboBox>
@@ -149,7 +139,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Font" VerticalAlignment="Center" />
                         <ComboBox x:Name="FontBox" Grid.Column="1" MinWidth="120" VerticalAlignment="Center"
-                                  AutomationProperties.Name="Font" SelectionChanged="OnSelectionChanged">
+                                  AutomationProperties.Name="Font" SelectionChanged="OnChanged">
                             <x:String>System monospace</x:String>
                             <x:String>JetBrains Mono</x:String>
                         </ComboBox>
@@ -179,7 +169,7 @@
                 </StackPanel>
                 <!-- A switch keeps its own width, as SettingsCard leaves it. -->
                 <ToggleSwitch x:Name="WordCountSwitch" Grid.Column="2" MinWidth="0" VerticalAlignment="Center"
-                              AutomationProperties.Name="Word count" Toggled="OnToggled" />
+                              AutomationProperties.Name="Word count" Toggled="OnChanged" />
             </Grid>
 
             <TextBlock Text="Compiling" Style="{StaticResource SectionHeader}" />
@@ -195,7 +185,7 @@
                     <TextBlock Text="Save and compile when you stop typing" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ToggleSwitch x:Name="AutoCompileSwitch" Grid.Column="2" MinWidth="0" VerticalAlignment="Center"
-                              AutomationProperties.Name="Compile automatically" Toggled="OnToggled" />
+                              AutomationProperties.Name="Compile automatically" Toggled="OnChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -231,8 +221,6 @@
                 </StackPanel>
             </Grid>
 
-            <!-- As the WinUI Gallery ends its settings: the app, its version, and
-                 what it is. -->
             <TextBlock Text="About" Style="{StaticResource SectionHeader}" />
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>

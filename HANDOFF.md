@@ -8,11 +8,11 @@ All checks pass: Debug build with no Swift warnings, 30 XCTests, `cargo fmt`, cl
 
 Crashes (18 reports, 25–26 Sep): 15 were one update-constraints loop that `d08f82b` (AppKit splits) fixed, and the editor view no longer adds constraints mid-layout; the startup-alert crash was already fixed; one was a debugger's leftover breakpoint. **Still open: an AppKit assertion leaving full screen** (`-[_NSFullScreenMenuBarCompanionController _relinquishTitlebar]`, 26 Sep 11:03, a window restored into full screen at launch). Not reproduced in many tries; if it recurs, break on `__assert_rtn` under lldb (developer mode is now on, so lldb attaches without a prompt).
 
-**Windows session (2026-09-26, evening, on the owner's PC), branch `claude/windows-parity`.** The uncommitted 2026-09 Fluent redesign found in the Windows checkout is committed as `53e4a1e` and merged with `main`; then the parity gaps from issue #10 (Banrs/Underleaf), a native-motion pass and a WinUI deflation, described under the Windows app below. The Windows build (warnings as errors), its xUnit tests and `npm test` pass.
+**Windows session (2026-09-26, evening, on the owner's PC), branch `claude/windows-parity`.** The uncommitted 2026-09 Fluent redesign found in the Windows checkout is committed as `53e4a1e` and merged with `main`; then the parity gaps from issue #10 (Banrs/Underleaf), a native-motion pass and a WinUI deflation, described under the Windows app below. Later that night: the source and PDF bars became `CommandBar`s, WebView2 browser-process recovery, the trimmed Windows App SDK packages, an Inno Setup installer built in CI, and a behaviour-preserving deflation of the Windows code (its .cs and .xaml went from about 8,400 lines at their largest to 7,300). The Windows build (warnings as errors), its 41 xUnit tests and `npm test` (53) pass, and the deflated build was checked on screen.
 
 Next:
 - The on-screen checks that need TeXLocal frontmost (below), on both apps.
-- Windows: the items under "Not done yet".
+- Windows: try the installer from CI on the owner's PC (it installs over the hand-published copy).
 
 ## Goal
 
@@ -202,10 +202,11 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
     - the outline parser, `ProjectPaths` (moving the open file's path on a rename) and `Preferences` (JSON under `%LOCALAPPDATA%\TeXLocal`).
   - **`TeXLocal.Tests`** (xUnit): the FFI round trip, the shortcut table checked against `workspace.js`, and the pure logic.
   - **`TeXLocal`:** the WinUI 3 app.
-    - It is unpackaged and x64. .NET 10 and Windows App SDK 2.5.1 are both bundled, so users install neither.
+    - It is unpackaged and x64. .NET 10 and the Windows App SDK are both bundled, so users install neither. It references the SDK's WinUI, Foundation and InteractiveExperiences packages rather than the `Microsoft.WindowsAppSDK` metapackage, which also shipped the AI, ML, search and widgets runtimes (onnxruntime, DirectML…): a Release publish went from 234 MB to 174 MB.
     - `texlocal_ffi.dll` is copied from `target\debug` or `target\release` to match the configuration.
 - **Web surfaces:** the editor and PDF pages each run in a WebView2.
-  - The bundled `web\` is served at `app.texlocal`. The PDF is answered at `project.texlocal` from `WebResourceRequested`, with a CORS header for `app.texlocal`. A folder mapping only applies to pages loaded after it is set, so it never reached the already-open viewer.
+  - The bundled `web\` is served at `app.texlocal`. The PDF is answered at `project.texlocal` from `WebResourceRequested`, with a CORS header for `app.texlocal`, set up on each new CoreWebView2 before the page loads (`EmbeddedPage`'s `configure`).
+  - A renderer crash reloads the page. When the whole browser process dies, every WebView2 is dead and can't be started again, so `EmbeddedPage.Replace` puts a new one in the old one's place in its panel; the pages come back as after a renderer crash (checked by killing the browser process: a new one started, both pages reloaded with the document, and editing and autosave worked).
   - Window-level keyboard shortcuts stand down while a page has focus. The page posts the chord back instead: the editor page already did this, and `web/src/embed/pdf.js` now does too.
 - **Parity:** every command in `commandDefs`, and every setting the macOS app has.
   - Done: menus, toolbar, sidebar (tree, search, outline), autosave and the compile queue, compile and log, PDF find and zoom, SyncTeX, import and export.
@@ -215,7 +216,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
   - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
   - **Issue #10's parity gaps (2026-09-26, evening):**
-    - The source bar has the Mac's and the browser's groups and order: undo, redo | section level (a `DropDownButton` naming the caret line's level, as wide as "Subsubsection"; `setHeading`) | bold, italic | inline math, display math, symbols (a `Flyout` holding a grouped `GridView`, 10 columns, one tab stop; `insertSymbol` via the `symbol` command) | link, reference, citation | figure, table | bulleted, numbered list | "See more". Groups fold into "See more" from the end, then the section level, then redo (`FoldSourceBar` measures each form). The Format menu gains Display math, Symbols and Section level. `LatexTemplates` holds the levels and symbols; a test reads `SYMBOL_GROUPS` from `web/src/sourcebar.js` so the tables can't drift.
+    - The source bar has the Mac's and the browser's groups and order: undo, redo | section level (a `DropDownButton` naming the caret line's level, as wide as "Subsubsection"; `setHeading`) | bold, italic | inline math, display math, symbols (a `Flyout` holding a grouped `GridView`, 10 columns, one tab stop; `insertSymbol` via the `symbol` command) | link, reference, citation | figure, table | bulleted, numbered list | "See more". It is a `CommandBar` with dynamic overflow, so WinUI itself moves buttons into "See more" from the end; the templates with no button are its secondary commands. The PDF's zoom and Share are a `CommandBar` too. The Format menu gains Display math, Symbols and Section level. `LatexTemplates` holds the levels and symbols; a test reads `SYMBOL_GROUPS` from `web/src/sourcebar.js` so the tables can't drift.
     - Segoe Fluent Icons has no sigma, pi, number sign or numbered list: Σ and # come from Segoe UI, π and the numbered list are 16 px `PathIcon`s (`PiIconData`, `NumberedListIconData`). The glyph sheets were rendered from `SegoeIcons.ttf` to check.
     - The File Outline is docked under Files: a 32 px "File outline" heading (its line is the divider) with a chevron that folds it to the sidebar's foot, a divider whose height is remembered (`OutlineHeight`), folds remembered per project and file (`OutlineFolded`, by `Outline.FoldKeys`). It has no selection: the current section is accent semibold, follows the editor's top visible line (the page's `scroll` message → `ProjectModel.TopLine`), and opens its parents and scrolls into view. Choosing a heading reveals it at the top of the editor without taking focus (`reveal(line, atTop, focus)`).
     - "Out of date" by save counting (`writes` / `builtWrites`), as the Mac: it clears after the lost-edits message when nothing was saved since the last good build.
@@ -246,7 +247,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
       - 48 px: title bar, pane toolbars, panel header, the Details pane's name row.
       - 32 px: jump bar, PDF location row (and the folder row of the Details pane, which carries their divider across), status bar, the sidebar's section headings.
       - Every control stays its standard size: 32 px buttons, 14 px text, 16 px icons, with 8 px between buttons.
-      - The pane toolbars are rows of standard buttons rather than CommandBars, so their labels are Body text like the rest of the app. When narrow, whole groups fold into "See more", as the macOS app's ViewThatFits does.
+      - The source and PDF toolbars are `CommandBar`s (icon buttons, labels in tooltips), whose own overflow folds them into "See more" as they narrow. Hand-folded rows of buttons were tried first and took far more code.
     - **Layers.**
       - The sidebar sits on Mica, 280 wide by default (200–360), in an inline `SplitView` pane. It has no footer: Add is the Files heading's action (Settings stays in the File menu, Ctrl+,).
       - The trees' expander column is narrowed from 40 to 24 at runtime (`OnTreeItemLoaded`), since the template hard-codes its padding. Rows then start 12 in from their heading.
@@ -280,10 +281,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Deliberate deviations:**
   - The settings cards and the divider are hand-written, rather than taken from the Community Toolkit, to avoid adding NuGet packages.
   - Interface size scales only the editor page. Native controls follow Windows text size.
-- **Not done yet:**
-  - recovery when the whole WebView2 browser process dies;
-  - trimming the output size (the Windows App SDK brings its AI/ML parts);
-  - an installer. For now, run `cargo build --release -p texlocal-ffi`, then `dotnet publish apps/windows/TeXLocal/TeXLocal.csproj -c Release -p:Platform=x64 -r win-x64 -o %LOCALAPPDATA%\Programs\TeXLocal`, and add a Start-menu shortcut to the exe. The owner's PC is set up this way, with no desktop shortcut.
+- **Installer:** `apps/windows/installer/TeXLocal.iss` (Inno Setup 6): per user, no admin rights, into `%LOCALAPPDATA%\Programs\TeXLocal` (where the owner's PC already has it) with a Start-menu shortcut and an entry in Settings › Apps; an update replaces the whole folder, and projects and settings stay on uninstall. The Windows app workflow's "Installer" job builds it (`cargo build --release -p texlocal-ffi`, `dotnet publish … -c Release -o release/windows`, `iscc`) and uploads `TeXLocal-<version>-setup.exe` as an artifact. Inno Setup isn't installed on the owner's PC, so it was first built in CI. By hand: build the Rust core with `--release` first (a stale `target\release\texlocal_ffi.dll` from 25 Sep was being published).
 - **Verified by hand on Windows 11 (build 26340), with TeX Live 2026:**
   - The PDF loads and renders with a text layer, and find works.
   - Compiling works, including a recompile after a failed run (latexmk now gets `-g`). A new TeX install is found without restarting the app.
@@ -302,6 +300,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - **2026-09-26, evening, a Debug build against a scratch `TEXLOCAL_DATA`:** the source bar at full width and folding as the PDF divider moves, "See more"'s contents, the section level menu turning `\section` into `\subsection` (and the outline nesting it), the symbol palette inserting `$\alpha$` in text, undo after both, the outline's current section following wheel-scrolling, choosing a heading, a file changed by another program reloading and rebuilding, the semibold main file, and the sidebar and Details pane sliding both ways.
   - Launching the installed build while a Debug build runs breaks the Debug build's WebView2 pages (the two share `%LOCALAPPDATA%\TeXLocal\WebView2` with different options); run one at a time.
 - **Known issues:**
+  - Once (2026-09-26, 22:29), a Release build crashed while idle with a fail-fast in `ucrtbase.dll` (0xc0000409, abort). That build linked a stale `target\release\texlocal_ffi.dll` from 25 Sep; rebuilt against the current core, it ran 8 minutes of editing, compiling and idling without a crash. Not reproduced since.
   - Once, a window kept showing a frozen frame while it went on working. Fresh launches never did. It may be a GPU device loss on this Insider build, but that is unconfirmed.
 - **Still to check by hand on Windows:**
   - Every shortcut fires exactly once whether focus is in the editor, the PDF or the sidebar.
@@ -344,7 +343,7 @@ Behaviour-preserving, with no public API, C ABI or server-check change:
 ## Remaining plan
 
 1. **Run both apps by hand** using the checklists above, and fix what they turn up.
-2. **Windows:** the items under "Not done yet" above.
+2. **Windows:** the installer on a real install and uninstall.
 3. **The full-screen assertion** (above), if it recurs.
 4. **Small follow-ups:** in the web version, `contextMenu` / `menuUnder` in `web/src/dom.js` place menus with unscaled rects, so under Interface Size ≠ 100% they may land offset (`popoverUnder` already converts); the web outline has no per-section folding; the server has no cap on concurrent connections (local only, so low value); a light One Dark variant for Syntax Colors. A later run (2026-09-26, night) had `a_timed_out_compile_keeps_the_output_it_wrote` (`crates/texlocal-core/tests/compile_stub.rs:128`) fail once; three reruns passed.
 5. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.

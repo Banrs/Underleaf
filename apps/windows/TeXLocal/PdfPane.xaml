@@ -10,17 +10,14 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Two rows lined up with the source's: Compile, the one accent
-             control, then zoom and Share, which CommandBar moves into "See
-             more" as the pane narrows; beneath, where the reader is. Finding
-             takes the actions row. -->
+        <!-- Lined up with the source's rows; finding takes the actions row. -->
         <Grid x:Name="Bar" Height="48" Padding="8,0" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <StackPanel x:Name="CompileControls" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <Button x:Name="CompileButton" Style="{StaticResource AccentButtonStyle}" Height="32" Click="OnCompile" AccessKey="R"
+                <Button x:Name="CompileButton" Style="{StaticResource AccentButtonStyle}" Height="32" Click="OnCommand" Tag="CompileRun" AccessKey="R"
                         AutomationProperties.Name="Compile">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE768;" FontSize="16" />
@@ -29,7 +26,7 @@
                 </Button>
                 <ProgressRing x:Name="CompileProgress" Width="16" Height="16" IsActive="False" Visibility="Collapsed"
                               AutomationProperties.Name="Compiling" />
-                <Button x:Name="StopButton" Height="32" Click="OnStop" Visibility="Collapsed" AutomationProperties.Name="Stop"
+                <Button x:Name="StopButton" Height="32" Click="OnCommand" Tag="CompileStop" Visibility="Collapsed" AutomationProperties.Name="Stop"
                         ToolTipService.ToolTip="Stop (Ctrl+Break)">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE71A;" FontSize="16" />
@@ -39,7 +36,7 @@
             </StackPanel>
             <CommandBar x:Name="ViewTools" Grid.Column="1" HorizontalAlignment="Right" Background="Transparent"
                         DefaultLabelPosition="Collapsed" IsDynamicOverflowEnabled="True">
-                <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Click="OnZoomOut" KeyboardAcceleratorTextOverride="Ctrl+Minus" />
+                <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Click="OnZoom" KeyboardAcceleratorTextOverride="Ctrl+Minus" />
                 <!-- A fixed width, so the bar doesn't shift as the level changes. -->
                 <AppBarElementContainer VerticalContentAlignment="Center">
                     <DropDownButton x:Name="ZoomLevel" MinWidth="104" AutomationProperties.Name="Zoom level" ToolTipService.ToolTip="Zoom level">
@@ -49,12 +46,11 @@
                         </DropDownButton.Flyout>
                     </DropDownButton>
                 </AppBarElementContainer>
-                <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Click="OnZoomIn" KeyboardAcceleratorTextOverride="Ctrl+Plus" />
+                <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Click="OnZoom" KeyboardAcceleratorTextOverride="Ctrl+Plus" />
                 <AppBarSeparator />
-                <AppBarButton x:Name="ShareButton" Label="Share" Icon="Share" Click="OnShare" />
+                <AppBarButton x:Name="ShareButton" Label="Share" Icon="Share" Click="OnCommand" Tag="PdfShare" />
             </CommandBar>
-            <!-- The field takes what the buttons leave, as the Mac's search
-                 field does, within a readable width. -->
+            <!-- The field takes what the buttons leave, within a readable width. -->
             <Grid x:Name="FindBar" Grid.ColumnSpan="2" ColumnSpacing="8" VerticalAlignment="Center" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" MaxWidth="320" />
@@ -64,19 +60,14 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBox x:Name="FindBox" MinWidth="120" PlaceholderText="Find in PDF" AutomationProperties.Name="Find in PDF"
-                         VerticalAlignment="Center" IsSpellCheckEnabled="False"
-                         TextChanged="OnFindChanged" KeyDown="OnFindKeyDown" />
-                <!-- Read out as it changes, as the count is the search's only answer. -->
-                <TextBlock x:Name="FindStatus" Grid.Column="1" VerticalAlignment="Center"
-                           AutomationProperties.LiveSetting="Polite"
+                         VerticalAlignment="Center" IsSpellCheckEnabled="False" TextChanged="OnFindChanged" KeyDown="OnFindKeyDown" />
+                <TextBlock x:Name="FindStatus" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <Button x:Name="PreviousMatch" Grid.Column="2" Style="{StaticResource ToolbarIconButtonStyle}" IsEnabled="False"
-                        Click="OnPreviousMatch"
+                <Button x:Name="PreviousMatch" Grid.Column="2" Style="{StaticResource ToolbarIconButtonStyle}" IsEnabled="False" Click="OnStepMatch"
                         ToolTipService.ToolTip="Previous match (Shift+Enter)" AutomationProperties.Name="Previous match">
                     <FontIcon Glyph="&#xE70E;" FontSize="16" />
                 </Button>
-                <Button x:Name="NextMatch" Grid.Column="3" Style="{StaticResource ToolbarIconButtonStyle}" IsEnabled="False"
-                        Click="OnNextMatch"
+                <Button x:Name="NextMatch" Grid.Column="3" Style="{StaticResource ToolbarIconButtonStyle}" IsEnabled="False" Click="OnStepMatch"
                         ToolTipService.ToolTip="Next match (Enter)" AutomationProperties.Name="Next match">
                     <FontIcon Glyph="&#xE70D;" FontSize="16" />
                 </Button>

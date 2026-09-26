@@ -4,8 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:TeXLocal">
-    <!-- The panel below the editors, shown and hidden as VS Code's is: the
-         build's issues, or its whole log. -->
+    <!-- The panel below the editors: the build's issues, or its whole log. -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -13,7 +12,6 @@
         </Grid.RowDefinitions>
 
         <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
-            <!-- 48 tall, as the pane toolbars are. -->
             <Grid Padding="12,0" ColumnSpacing="8" Height="48">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -85,10 +83,7 @@
                 </ListView.ItemTemplate>
             </ListView>
 
-            <!-- The log as a read-only text box: one selection across lines, as
-                 a text view gives, and a text engine that keeps a megabyte log
-                 responsive where a TextBlock would lay it all out. Drawn as the
-                 pane's own text rather than as a field. -->
+            <!-- A read-only TextBox, not a TextBlock: one selection across lines, and a megabyte log stays responsive. -->
             <TextBox x:Name="LogText" Visibility="Collapsed" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
                      FontFamily="Cascadia Mono, Consolas" FontSize="12" Padding="16,8" BorderThickness="0"
                      IsSpellCheckEnabled="False" IsTextPredictionEnabled="False"

@@ -10,14 +10,9 @@ using Windows.System;
 namespace TeXLocal;
 
 /// <summary>
-/// A divider between two columns or rows of a Grid, resizing one of them —
-/// the one before it or the one after it — by dragging, or with the arrow
-/// keys once it has focus. WinUI has no splitter of its own.
-/// <para>
-/// It sits in an Auto column (or row) of its own and takes no room there: an
-/// 8 px grip overhangs both panes, over a 1 px line when it draws one, as a
-/// thin split-view divider is drawn.
-/// </para>
+/// A divider resizing the Grid column or row (or SplitView pane) before or
+/// after it, by dragging or with the arrow keys; WinUI has none. It takes no
+/// room: an 8 px grip overhangs both panes, over an optional 1 px line.
 /// </summary>
 internal sealed partial class Splitter : ContentControl
 {
@@ -33,28 +28,21 @@ internal sealed partial class Splitter : ContentControl
     private double start;
     private double startLength;
 
-    /// <summary>
-    /// Between two columns, resizing <paramref name="target"/>. The maximum
-    /// is asked for on each move, as it can depend on the room there is.
-    /// </summary>
+    /// <summary>Between two columns; the maximum is asked for on each move, as the room can change.</summary>
     public Splitter(ColumnDefinition target, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line = true)
-        : this(() => target.ActualWidth, w => target.Width = new GridLength(w), vertical: false, targetIsBefore, minimum, maximum, name, line)
+        : this(() => target.ActualWidth, w => target.Width = new GridLength(w), targetIsBefore, minimum, maximum, name, line)
     {
     }
 
-    /// <summary>Between two rows, resizing <paramref name="target"/>.</summary>
+    /// <summary>Between two rows.</summary>
     public Splitter(RowDefinition target, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line = true)
-        : this(() => target.ActualHeight, h => target.Height = new GridLength(h), vertical: true, targetIsBefore, minimum, maximum, name, line)
+        : this(() => target.ActualHeight, h => target.Height = new GridLength(h), targetIsBefore, minimum, maximum, name, line, vertical: true)
     {
     }
 
     /// <summary>Beside a SplitView's pane, resizing it through <paramref name="set"/>.</summary>
-    public Splitter(Func<double> actual, Action<double> set, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line = true)
-        : this(actual, set, vertical: false, targetIsBefore, minimum, maximum, name, line)
-    {
-    }
-
-    private Splitter(Func<double> actual, Action<double> set, bool vertical, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line)
+    public Splitter(Func<double> actual, Action<double> set, bool targetIsBefore, double minimum, Func<double> maximum, string name,
+        bool line = true, bool vertical = false)
     {
         this.actual = actual;
         this.set = set;
@@ -62,34 +50,23 @@ internal sealed partial class Splitter : ContentControl
         this.targetIsBefore = targetIsBefore;
         this.minimum = minimum;
         this.maximum = maximum;
-        if (vertical)
-        {
-            Height = Grip;
-            Margin = new Thickness(0, -Grip / 2, 0, -Grip / 2);
-        }
-        else
-        {
-            Width = Grip;
-            Margin = new Thickness(-Grip / 2, 0, -Grip / 2, 0);
-        }
+        // NaN is the unset length.
+        Width = vertical ? double.NaN : Grip;
+        Height = vertical ? Grip : double.NaN;
+        Margin = vertical ? new Thickness(0, -Grip / 2, 0, -Grip / 2) : new Thickness(-Grip / 2, 0, -Grip / 2, 0);
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
         // Transparent, not null: an element with no background is not hit-tested.
         var grip = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         if (line)
         {
-            // Styled rather than filled here, so the line follows the theme of
-            // the window it is in (App.xaml SplitterRuleStyle).
-            var rule = new Rectangle { Style = (Style)Application.Current.Resources["SplitterRuleStyle"] };
-            if (vertical)
+            // Styled, so the line follows the theme of the window it is in.
+            grip.Children.Add(new Rectangle
             {
-                rule.Height = 1;
-            }
-            else
-            {
-                rule.Width = 1;
-            }
-            grip.Children.Add(rule);
+                Style = (Style)Application.Current.Resources["SplitterRuleStyle"],
+                Width = vertical ? double.NaN : 1,
+                Height = vertical ? 1 : double.NaN,
+            });
         }
         Content = grip;
         IsTabStop = true;

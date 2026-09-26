@@ -48,11 +48,7 @@ public sealed class FileItem
     public IEnumerable<FileItem> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 }
 
-/// <summary>
-/// A heading in the sidebar's outline, and the headings it encloses. The
-/// outline has no selection: the current section is drawn in the accent
-/// colour, semibold, instead.
-/// </summary>
+/// <summary>A heading in the sidebar's outline; the current one is drawn in the accent colour, not selected.</summary>
 public sealed partial class OutlineEntry : INotifyPropertyChanged
 {
     public OutlineEntry(OutlineNode node, IReadOnlyDictionary<OutlineItem, string> keys, IReadOnlySet<string> folded)
@@ -60,7 +56,7 @@ public sealed partial class OutlineEntry : INotifyPropertyChanged
         Item = node.Item;
         Key = keys[node.Item];
         Children = node.Children.Select(c => new OutlineEntry(c, keys, folded)).ToList();
-        isExpanded = !folded.Contains(Key);
+        IsExpanded = !folded.Contains(Key);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -76,28 +72,26 @@ public sealed partial class OutlineEntry : INotifyPropertyChanged
     /// <summary>Headings start expanded unless folded before; the tree writes a fold back.</summary>
     public bool IsExpanded
     {
-        get => isExpanded;
+        get;
         set
         {
-            if (isExpanded != value)
+            if (field != value)
             {
-                isExpanded = value;
+                field = value;
                 Raise();
             }
         }
     }
 
-    private bool isExpanded;
-
     /// <summary>The section at the top of the source.</summary>
     public bool IsCurrent
     {
-        get => isCurrent;
+        get;
         set
         {
-            if (isCurrent != value)
+            if (field != value)
             {
-                isCurrent = value;
+                field = value;
                 Raise(nameof(TitledVisibility));
                 Raise(nameof(UntitledVisibility));
                 Raise(nameof(CurrentVisibility));
@@ -105,8 +99,6 @@ public sealed partial class OutlineEntry : INotifyPropertyChanged
             }
         }
     }
-
-    private bool isCurrent;
 
     public string Title => Outline.DisplayTitle(Item);
 
@@ -123,10 +115,7 @@ public sealed partial class OutlineEntry : INotifyPropertyChanged
     public IEnumerable<OutlineEntry> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 }
 
-/// <summary>
-/// One file's matches in the project search, as macOS groups them: a
-/// "file — n" heading over the file's lines.
-/// </summary>
+/// <summary>One file's matches in the project search: a "file — n" heading over its lines.</summary>
 public sealed class SearchGroup(string file, IEnumerable<SearchHit> hits) : List<SearchHit>(hits)
 {
     public string Header => $"{file} — {Count:N0}";

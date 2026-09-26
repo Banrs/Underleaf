@@ -10,9 +10,8 @@ using Windows.System;
 namespace TeXLocal;
 
 /// <summary>
-/// The compiled PDF in pdf.js (web/embed/pdf.html, contract in
-/// web/src/embed/pdf.js), driven by native controls. Windows has no PDF view
-/// of its own with selectable text and find.
+/// The compiled PDF in pdf.js (contract in web/src/embed/pdf.js) under native
+/// controls: Windows has no PDF view of its own with selectable text and find.
 /// </summary>
 public sealed partial class PdfPane : UserControl
 {
@@ -22,8 +21,7 @@ public sealed partial class PdfPane : UserControl
     private readonly EmbeddedPage page;
     private string? pdfPath;
 
-    // Typing waits this long before searching, as the Mac's find does: every
-    // keystroke searching every page would only be superseded by the next.
+    // Typing pauses before searching: each keystroke's search would be superseded by the next.
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer findDelay;
 
     internal ProjectModel? Project { get; set; }
@@ -31,16 +29,13 @@ public sealed partial class PdfPane : UserControl
     /// <summary>A menu chord pressed while the PDF has focus, handed back by the page.</summary>
     internal Action<MenuCommand>? Command { get; set; }
 
-    /// <summary>The zoom menu's presets, as the macOS pane offers them.</summary>
-    private static readonly int[] ZoomPercents = [50, 75, 100, 125, 150, 200];
-
     public PdfPane()
     {
         InitializeComponent();
         ZoomMenu.Items.Add(ContextMenus.Item("Fit width", FitWidth, "Ctrl+0"));
         ZoomMenu.Items.Add(ContextMenus.Item("Fit height", FitHeight, "Ctrl+Alt+0"));
         ZoomMenu.Items.Add(new MenuFlyoutSeparator());
-        foreach (var percent in ZoomPercents)
+        foreach (var percent in new[] { 50, 75, 100, 125, 150, 200 })
         {
             ZoomMenu.Items.Add(ContextMenus.Item($"{percent}%", () => SetScale(percent / 100.0)));
         }
@@ -48,8 +43,7 @@ public sealed partial class PdfPane : UserControl
         findDelay.Interval = TimeSpan.FromMilliseconds(200);
         findDelay.IsRepeating = false;
         findDelay.Tick += (_, _) => Search();
-        // Served from here rather than through a folder mapping, which would
-        // tie the page to one project's folder.
+        // Served from here, not a folder mapping, which would tie the page to one project.
         page = new EmbeddedPage(View, "pdf.html", OnMessage, web =>
         {
             web.AddWebResourceRequestedFilter($"https://{ProjectHost}/*", CoreWebView2WebResourceContext.All);
@@ -102,8 +96,7 @@ public sealed partial class PdfPane : UserControl
     public async Task LoadAsync(string pdfPath, int version)
     {
         ShowDocument(true);
-        // The matches were in the last PDF; pdf.js drops them on load, and
-        // the Mac's bar closes with them.
+        // pdf.js drops the last PDF's matches on load; the bar closes with them.
         if (FindBar.Visibility == Visibility.Visible)
         {
             EndFind();
@@ -114,11 +107,7 @@ public sealed partial class PdfPane : UserControl
         await page.RunStickyAsync("load", $"texlocal.load({L(url)})");
     }
 
-    /// <summary>
-    /// The current PDF, read whole, so a compile rewriting the file cannot
-    /// tear the copy pdf.js is reading. The page is on another origin, hence
-    /// the CORS header.
-    /// </summary>
+    /// <summary>The PDF read whole, so a compile can't tear pdf.js's copy; CORS as the page is on another origin.</summary>
     private CoreWebView2WebResourceResponse PdfResponse(CoreWebView2Environment environment)
     {
         byte[] bytes;
@@ -156,10 +145,7 @@ public sealed partial class PdfPane : UserControl
 
     // ---------- the bar ----------
 
-    /// <summary>
-    /// The bar and location row for the project's state: Compile, or a
-    /// spinner and Stop while a build runs; and whether the PDF is current.
-    /// </summary>
+    /// <summary>Compile, or a spinner and Stop while a build runs; and whether the PDF is current.</summary>
     internal void Render(ProjectModel p, bool canCompile)
     {
         CompileButton.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
@@ -181,10 +167,7 @@ public sealed partial class PdfPane : UserControl
             : "The preview doesn’t reflect the current source");
     }
 
-    /// <summary>
-    /// Render runs on every edit; setting a tooltip replaces it, closing one
-    /// the pointer has open, so it is set only when its text changes.
-    /// </summary>
+    /// <summary>Set only on change: Render runs on every edit, and setting one closes an open tooltip.</summary>
     internal static void SetToolTip(DependencyObject element, string text)
     {
         if (ToolTipService.GetToolTip(element) as string != text)
@@ -193,16 +176,11 @@ public sealed partial class PdfPane : UserControl
         }
     }
 
-    private void OnCompile(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.CompileRun);
+    /// <summary>Compile, Stop and Share, each naming its <see cref="MenuCommand"/> in its Tag.</summary>
+    private void OnCommand(object sender, RoutedEventArgs e) =>
+        Command?.Invoke(Enum.Parse<MenuCommand>((string)((FrameworkElement)sender).Tag));
 
-    private void OnStop(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.CompileStop);
-
-    private void OnShare(object sender, RoutedEventArgs e) => Command?.Invoke(MenuCommand.PdfShare);
-
-    /// <summary>
-    /// The app's theme and the Windows accent, and the paper: dark paper
-    /// inverts the pages as the browser version's pdf-dark class does.
-    /// </summary>
+    /// <summary>The app's theme, the Windows accent, and dark paper, which inverts the pages.</summary>
     public void SetAppearance(bool dark, string accent, bool darkPaper)
     {
         _ = page.RunStickyAsync("theme", $"texlocal.setTheme({L(dark ? "dark" : "light")})");
@@ -212,10 +190,7 @@ public sealed partial class PdfPane : UserControl
 
     public void Highlight(ForwardLoc loc) => _ = page.RunAsync($"texlocal.highlight({L(loc)})");
 
-    /// <summary>
-    /// Go to the source of what the reader is looking at. The page answers
-    /// through the same message a double-click sends.
-    /// </summary>
+    /// <summary>Go to the source of what the reader is looking at; the answer comes as a double-click's.</summary>
     public void InverseFromView() => _ = page.RunAsync(
         "Promise.resolve(texlocal.currentLocation()).then(l => l && chrome.webview.postMessage({ type: 'inverse', ...l }))");
 
@@ -230,9 +205,7 @@ public sealed partial class PdfPane : UserControl
     private void SetScale(double scale) =>
         _ = page.RunAsync($"texlocal.setScale({scale.ToString(CultureInfo.InvariantCulture)})");
 
-    private void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(1 / 1.15);
-
-    private void OnZoomIn(object sender, RoutedEventArgs e) => ZoomBy(1.15);
+    private void OnZoom(object sender, RoutedEventArgs e) => ZoomBy(ReferenceEquals(sender, ZoomInButton) ? 1.15 : 1 / 1.15);
 
     // ---------- find ----------
 
@@ -267,8 +240,7 @@ public sealed partial class PdfPane : UserControl
         }
     }
 
-    // find() resolves once every page is searched; its status comes back as
-    // a message because a script's promise does not.
+    // find() resolves once every page is searched; a message carries its status, as a promise can't.
     private void Report(string call) =>
         _ = page.RunAsync($"Promise.resolve({call}).then(s => chrome.webview.postMessage({{ type: 'found', ...s }}))");
 
@@ -301,9 +273,7 @@ public sealed partial class PdfPane : UserControl
         }
     }
 
-    private void OnPreviousMatch(object sender, RoutedEventArgs e) => Step(-1);
-
-    private void OnNextMatch(object sender, RoutedEventArgs e) => Step(1);
+    private void OnStepMatch(object sender, RoutedEventArgs e) => Step(ReferenceEquals(sender, NextMatch) ? 1 : -1);
 
     private void OnFindDone(object sender, RoutedEventArgs e) => EndFind();
 

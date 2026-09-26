@@ -47,9 +47,7 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        // Tall, as the guidance asks of a title bar holding controls: the
-        // TitleBar control grows to 48 once it has content, and the caption
-        // buttons are then as tall as it is.
+        // Tall, as the guidance asks of a title bar holding controls.
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         overlapped = (OverlappedPresenter)AppWindow.Presenter;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.ico"));
@@ -157,11 +155,7 @@ public sealed partial class MainWindow : Window
         Home.Render();
     }
 
-    /// <summary>
-    /// Show a message above the content: errors by default. A short title —
-    /// what happened, "Couldn’t rename “x”" — then the detail. An InfoBar,
-    /// not a dialog, so it never interrupts typing.
-    /// </summary>
+    /// <summary>A message over the content, never a dialog that interrupts typing: a short title, then the detail.</summary>
     internal void Report(string title, string? message = null, InfoBarSeverity severity = InfoBarSeverity.Error)
     {
         MessageBar.Severity = severity;
@@ -184,19 +178,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// The title bar and the taskbar's title for what is on screen: the open
-    /// file and its project in the workspace, as a document app names its
-    /// document; the screen's name elsewhere. Worked out from the current
-    /// state alone, so anything that changes it just calls this again.
-    /// </summary>
+    /// <summary>The title bar and taskbar title for what is on screen, from the current state alone.</summary>
     internal void UpdateTitle()
     {
         var settings = SettingsPage.Visibility == Visibility.Visible;
         var project = settings ? null : Project;
-        // Project-relative paths use forward slashes on every platform.
         var file = project?.OpenPath is { } path ? path[(path.LastIndexOf('/') + 1)..] : null;
-        // The project names the window; the open file is in the jump bar below.
         AppTitleBar.Title = settings ? "Settings" : project?.Id ?? "TeXLocal";
         AppTitleBar.IsBackButtonVisible = settings || project is not null;
         AppTitleBar.IsPaneToggleButtonVisible = project is not null;
@@ -259,10 +246,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Room for the caption buttons and no more. TitleBar reserves the
-    /// window's caption inset, which is in physical pixels, as if it were in
-    /// effective ones — twice the buttons' width at 200% — and only once, when
-    /// its template applies. Correct it, and again when the scale changes.
+    /// TitleBar reserves the caption inset, which is in physical pixels, as if
+    /// it were in effective ones, and only when its template applies: correct it.
     /// </summary>
     private void FitCaptionInset()
     {
@@ -284,10 +269,7 @@ public sealed partial class MainWindow : Window
 
     private void OnSearchAreaSizeChanged(object sender, SizeChangedEventArgs e) => PlaceSearch();
 
-    /// <summary>
-    /// Up to 400 wide and centred on the window, as Windows 11 apps centre a
-    /// title bar's search box, but never over the menus or the toggles.
-    /// </summary>
+    /// <summary>Up to 400 wide and centred on the window, but never over the menus or the toggles.</summary>
     private void PlaceSearch()
     {
         if (Root.XamlRoot is null)
@@ -330,9 +312,8 @@ public sealed partial class MainWindow : Window
 
     private void OnPaneToggleRequested(TitleBar sender, object args) => Perform(MenuCommand.ViewToggleSidebar);
 
-    private void OnTogglePdf(object sender, RoutedEventArgs e) => Perform(MenuCommand.ViewTogglePdf);
-
-    private void OnToggleInspector(object sender, RoutedEventArgs e) => Perform(MenuCommand.ViewToggleInspector);
+    /// <summary>A button that runs a menu command; its Tag is the command's id.</summary>
+    private void OnCommand(object sender, RoutedEventArgs e) => Perform(MenuCommands.FromId((string)((FrameworkElement)sender).Tag)!.Value);
 
     // ---------- projects ----------
 
@@ -349,10 +330,7 @@ public sealed partial class MainWindow : Window
         await project.LoadAsync();
     }
 
-    /// <summary>
-    /// Save, then leave the project. False — and it stays — when the save
-    /// fails, rather than dropping the only copy of the edits.
-    /// </summary>
+    /// <summary>Save, then leave the project; false, and it stays, when the save fails.</summary>
     internal async Task<bool> CloseAsync()
     {
         if (Project is not { } project)
@@ -432,17 +410,14 @@ public sealed partial class MainWindow : Window
     internal void AppearanceChanged()
     {
         var dark = Root.ActualTheme == ElementTheme.Dark;
-        // The caption buttons are the system's, drawn for the Windows theme,
-        // so a pinned app theme recolours them — except in a contrast theme,
-        // whose colours are the user's and stay the system's.
+        // A pinned app theme recolours the caption buttons, except in a contrast theme.
         var titleBar = AppWindow.TitleBar;
         var contrast = new AccessibilitySettings().HighContrast;
         titleBar.ButtonForegroundColor = contrast ? null : dark ? Colors.White : Colors.Black;
         titleBar.ButtonBackgroundColor = contrast ? null : Colors.Transparent;
         titleBar.ButtonInactiveBackgroundColor = contrast ? null : Colors.Transparent;
 
-        // The web pages have no access to the Windows accent colour (Chromium
-        // dropped CSS AccentColor), so it reaches them from here.
+        // Chromium dropped CSS AccentColor, so the accent reaches the pages from here.
         var color = uiSettings.GetColorValue(UIColorType.Accent);
         var accent = $"#{color.R:x2}{color.G:x2}{color.B:x2}";
         _ = Editor.SetAppearanceAsync(dark, Preferences, accent);
@@ -454,11 +429,7 @@ public sealed partial class MainWindow : Window
 
     // ---------- window size ----------
 
-    /// <summary>
-    /// 960 × 600 at least, as on macOS, so every pane fits at its minimum.
-    /// The presenter takes physical pixels (microsoft-ui-xaml#10452), so the
-    /// minimum is scaled again whenever the display's scale changes.
-    /// </summary>
+    /// <summary>960 × 600 at least, as on macOS; the presenter takes physical pixels (microsoft-ui-xaml#10452).</summary>
     private void ApplyMinimumSize()
     {
         var scale = Root.XamlRoot.RasterizationScale;
@@ -486,11 +457,7 @@ public sealed partial class MainWindow : Window
 
     // ---------- keyboard ----------
 
-    /// <summary>
-    /// The menus' chords, on the root so they work on every screen. With focus
-    /// in a web page, the page hands the chord back itself (setHostKeys), and
-    /// handling it here as well would run the command twice.
-    /// </summary>
+    /// <summary>The menus' chords. A focused page hands chords back itself (setHostKeys), so they're skipped there.</summary>
     private void AddAccelerators()
     {
         foreach (var command in Enum.GetValues<MenuCommand>())
@@ -518,11 +485,7 @@ public sealed partial class MainWindow : Window
 
     // ---------- quitting ----------
 
-    /// <summary>
-    /// Closing waits for the open document to reach disk. When it cannot be
-    /// saved, the window stays unless the user chooses to lose the edits —
-    /// never silently, and never a dead end.
-    /// </summary>
+    /// <summary>Closing waits for the open document to reach disk, or for the user to agree to lose it.</summary>
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (closing || Project is null)

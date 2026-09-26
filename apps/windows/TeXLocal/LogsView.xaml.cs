@@ -14,20 +14,16 @@ public sealed partial class LogsView : UserControl
 
     private int issueCount;
 
-    // What the log box shows. Kept here because the box hands its text back
-    // with CR line ends, so it can't be compared with the log.
+    // What the log box shows: the box hands its text back with CR line ends.
     private string logShown = "";
 
-    // The log's text changed since it was last scrolled into place. The box
-    // lays out only while shown, so a log that arrives behind the Issues tab
-    // is scrolled when the tab turns.
+    // Changed since last scrolled into place; the box lays out only while shown.
     private bool logMoved;
 
     public LogsView()
     {
         InitializeComponent();
-        // Selected here rather than in XAML, where the change would reach
-        // OnTabChanged before the panes it toggles exist.
+        // Not in XAML, where OnTabChanged would run before the panes it toggles exist.
         Tabs.SelectedItem = IssuesTab;
     }
 
@@ -97,8 +93,7 @@ public sealed partial class LogsView : UserControl
             : issueCount > 0 ? null
             : filter.Length > 0 ? ("\uE721", "No matches", $"No issues match “{filter}”.")
             : result.Ok ? ("\uE73E", "No issues", "")
-            // TeX stopped without an error the log parser recognises (a
-            // missing format, a crash): the log is the only explanation.
+            // TeX stopped without a recognised error (a missing format, a crash).
             : ("\uE783", "Build failed", "The compile failed without a recognisable error. See the build log for TeX’s own output.");
 
         Issues.Visibility = !ShowingLog && empty is null ? Visibility.Visible : Visibility.Collapsed;

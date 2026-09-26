@@ -12,12 +12,7 @@ using Windows.System;
 
 namespace TeXLocal;
 
-/// <summary>
-/// An open project, laid out as apps/macos lays it out: files and the
-/// outline in the sidebar; the source beside the PDF over a build panel and a
-/// status bar; a details pane at the trailing edge. It renders a
-/// ProjectModel and sends every action through the window's commands.
-/// </summary>
+/// <summary>An open project, laid out as apps/macos lays it out. It renders a ProjectModel.</summary>
 public sealed partial class WorkspaceView : UserControl
 {
     private static MainWindow Main => MainWindow.Instance;
@@ -107,9 +102,7 @@ public sealed partial class WorkspaceView : UserControl
         outlineHeight = Math.Max(preferences.OutlineHeight ?? 240, OutlineMinimum);
         foldedSections = [.. preferences.OutlineFolded];
 
-        // Added last, so each grip lies over the panes it overhangs. The
-        // layer's own edge is the line beside the sidebar, and the outline's
-        // heading the line above it.
+        // Added last, so each grip lies over the panes it overhangs.
         sidebarSplitter = Add(SidebarContent, new Splitter(() => Panes.OpenPaneLength, w => Panes.OpenPaneLength = w,
             targetIsBefore: true, SidebarMinimum, () => SidebarMaximum, "Resize the sidebar", line: false)
         {
@@ -352,11 +345,7 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnStatusBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldStatusBar();
 
-    /// <summary>
-    /// A narrow status bar drops whole items, never cutting one short, as
-    /// macOS's does: the engine (the details pane and Compile menu show it
-    /// too), then the counts, then the save state.
-    /// </summary>
+    /// <summary>A narrow status bar drops whole items, as macOS's does: the engine, then the counts, then the save state.</summary>
     private void FoldStatusBar()
     {
         var available = StatusBar.ActualWidth - StatusBar.Padding.Left - StatusBar.Padding.Right;
@@ -691,10 +680,7 @@ public sealed partial class WorkspaceView : UserControl
         FollowTopLine();
     }
 
-    /// <summary>
-    /// The section at the top of the source is current, as Overleaf's outline
-    /// follows where you read: its headings open, and it scrolls into view.
-    /// </summary>
+    /// <summary>The section at the top of the source is current: its headings open, and it scrolls into view.</summary>
     private void FollowTopLine()
     {
         if (project is not { } p)
@@ -768,10 +754,7 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    /// <summary>
-    /// The trees' expander column, 24 wide rather than 40, so a row starts 12
-    /// in from its heading. The template fixes that padding and no resource reaches it.
-    /// </summary>
+    /// <summary>The trees' expander column 24 wide rather than 40; no resource reaches that padding.</summary>
     private void OnTreeItemLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is TreeViewItem item && VisualTreeHelper.GetChildrenCount(item) > 0
@@ -901,15 +884,8 @@ public sealed partial class WorkspaceView : UserControl
         Main.Editor.Focus();
     }
 
-    private void OnUndo(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditUndo);
-
-    private void OnRedo(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditRedo);
-
-    private void OnBold(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditBold);
-
-    private void OnItalic(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditItalic);
-
-    private void OnMath(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditMath);
+    /// <summary>A button that runs a menu command; its Tag is the command's id.</summary>
+    private void OnCommand(object sender, RoutedEventArgs e) => Main.Perform(MenuCommands.FromId((string)((FrameworkElement)sender).Tag)!.Value);
 
     private void OnDisplayMath(object sender, RoutedEventArgs e) => Format("displayMath");
 
@@ -936,8 +912,6 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    private void OnTogglePanel(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ViewToggleLogs);
-
     private void OnShowIssues(object sender, RoutedEventArgs e)
     {
         if (project is { } p)
@@ -959,14 +933,6 @@ public sealed partial class WorkspaceView : UserControl
         AddEngines(menu.Items, keep: null);
         menu.ShowAt(EngineStatus);
     }
-
-    private void OnNewFile(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileNew);
-
-    private void OnNewFolder(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileNewFolder);
-
-    private void OnAddFiles(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileUpload);
-
-    private void OnAddFolder(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileUploadFolder);
 
     // ---------- dropping files in ----------
 

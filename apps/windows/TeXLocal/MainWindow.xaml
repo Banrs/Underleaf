@@ -9,8 +9,7 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <!-- The menu chords live here, on the root, so they work on every screen
-         and whichever native control has focus. -->
+    <!-- The menu chords live on the root, so they work on every screen. -->
     <Grid x:Name="Root" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -18,17 +17,11 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- The Windows App SDK title bar at the tall 48 px, the height the
-             guidance gives a title bar holding a search box, with the
-             system's own caption buttons at the same height. Left to right:
-             back, the sidebar toggle, the icon and the project (or the app, or
-             Settings) as the title; the menus, as Visual Studio keeps its own
-             in its title bar; search, centred in the room left, as Windows 11
-             apps centre theirs; then the PDF and Details toggles. -->
+        <!-- The tall title bar holds the menus, as Visual Studio's does, a
+             centred search box, and the PDF and Details toggles. -->
         <TitleBar x:Name="AppTitleBar" Title="TeXLocal"
                   BackRequested="OnBackRequested" PaneToggleRequested="OnPaneToggleRequested">
             <TitleBar.Resources>
-                <!-- The content spans the room between the title and the toggles. -->
                 <HorizontalAlignment x:Key="TitleBarContentHorizontalAlignment">Stretch</HorizontalAlignment>
             </TitleBar.Resources>
             <TitleBar.IconSource>
@@ -40,13 +33,8 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <!-- On every screen, as a menu bar is; what doesn't apply is disabled. -->
                     <MenuBar x:Name="Menu" x:FieldModifier="internal" />
-                    <!-- One search box that searches what's on screen: the
-                         projects on the library, the open project in it, as
-                         Settings' box finds a setting. Results show in place.
-                         Centred on the window where the menus leave room
-                         (PlaceSearch). -->
+                    <!-- Searches what's on screen; placed by PlaceSearch. -->
                     <AutoSuggestBox x:Name="SearchBox" x:FieldModifier="internal" Grid.Column="1" HorizontalAlignment="Left"
                                     VerticalAlignment="Center" QueryIcon="Find"
                                     TextChanged="OnSearchChanged" QuerySubmitted="OnSearchSubmitted" KeyDown="OnSearchKeyDown" />
@@ -61,16 +49,13 @@
                             </ResourceDictionary.MergedDictionaries>
                         </ResourceDictionary>
                     </StackPanel.Resources>
-                    <!-- 40 × 32, as the app's other icon buttons are. The
-                         workspace keeps the tooltips saying Show or Hide. -->
+                    <!-- The workspace sets their tooltips. -->
                     <ToggleButton x:Name="PdfToggle" x:FieldModifier="internal" Width="40" Height="32" Padding="0"
-                                  AccessKey="P" AutomationProperties.Name="PDF" Click="OnTogglePdf"
-                                  ToolTipService.ToolTip="Show or hide the PDF (Ctrl+Shift+\)">
+                                  AccessKey="P" AutomationProperties.Name="PDF" Tag="view.togglePdf" Click="OnCommand">
                         <FontIcon Glyph="&#xEA90;" FontSize="16" />
                     </ToggleButton>
                     <ToggleButton x:Name="InspectorToggle" x:FieldModifier="internal" Width="40" Height="32" Padding="0"
-                                  AccessKey="N" AutomationProperties.Name="Details pane" Click="OnToggleInspector"
-                                  ToolTipService.ToolTip="Show or hide the details pane (Alt+Shift+P)">
+                                  AccessKey="N" AutomationProperties.Name="Details pane" Tag="view.toggleInspector" Click="OnCommand">
                         <FontIcon Glyph="&#xE946;" FontSize="16" />
                     </ToggleButton>
                 </StackPanel>

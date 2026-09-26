@@ -2,14 +2,9 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- Toggles are subtle, as File Explorer's toolbar has them: clear at
-         rest, SubtleFillColorSecondary on hover and when switched on (a pane
-         shown, warnings listed), Tertiary when pressed, and no accent block.
-         Every toggle in the app is a toolbar toggle, so this is said once
-         here. Brushes of their own, because aliases of the theme brushes were
-         ignored. Contrast themes keep the system's own colours, so they have
-         no entry. App.xaml merges this, and so does the title bar's toggle
-         group, whose toggles didn't pick it up from the app's resources. -->
+    <!-- Subtle toggles, as File Explorer's toolbar has them. Brushes of their own: aliases of the theme
+         brushes were ignored. Contrast themes keep the system's colours. The title bar's toggle group
+         merges this too, as its toggles didn't pick it up from App.xaml. -->
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
             <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#0FFFFFFF" />

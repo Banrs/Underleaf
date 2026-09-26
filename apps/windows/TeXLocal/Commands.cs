@@ -5,8 +5,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Windows.ApplicationModel.DataTransfer;
+using Microsoft.Windows.Storage.Pickers;
 using Windows.Storage;
-using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace TeXLocal;
@@ -155,7 +155,7 @@ public sealed partial class MainWindow
                 }
                 break;
             case MenuCommand.FileUploadFolder:
-                if (await PickFolderAsync(new FolderPicker { CommitButtonText = "Add" }) is { } added)
+                if (await PickFolderAsync(new FolderPicker(AppWindow.Id) { CommitButtonText = "Add" }) is { } added)
                 {
                     await project.ImportFilesAsync([added]);
                 }
@@ -206,28 +206,22 @@ public sealed partial class MainWindow
                 SavePreferences();
                 Workspace.Render();
                 break;
+            // These act on a PDF the reader can see, not out of sight.
             case MenuCommand.ViewZoomIn:
-            case MenuCommand.ViewZoomOut:
-            case MenuCommand.ViewFitWidth:
-            case MenuCommand.ViewFitHeight:
-                // They act on a PDF the reader can see, so it comes into view
-                // first rather than changing out of sight.
                 ShowPdf();
-                switch (command)
-                {
-                    case MenuCommand.ViewZoomIn:
-                        Workspace.Pdf.ZoomBy(1.15);
-                        break;
-                    case MenuCommand.ViewZoomOut:
-                        Workspace.Pdf.ZoomBy(1 / 1.15);
-                        break;
-                    case MenuCommand.ViewFitWidth:
-                        Workspace.Pdf.FitWidth();
-                        break;
-                    default:
-                        Workspace.Pdf.FitHeight();
-                        break;
-                }
+                Workspace.Pdf.ZoomBy(1.15);
+                break;
+            case MenuCommand.ViewZoomOut:
+                ShowPdf();
+                Workspace.Pdf.ZoomBy(1 / 1.15);
+                break;
+            case MenuCommand.ViewFitWidth:
+                ShowPdf();
+                Workspace.Pdf.FitWidth();
+                break;
+            case MenuCommand.ViewFitHeight:
+                ShowPdf();
+                Workspace.Pdf.FitHeight();
                 break;
             case MenuCommand.CompileRun:
                 await project.CompileAsync();
@@ -261,10 +255,7 @@ public sealed partial class MainWindow
         Workspace.Render();
     }
 
-    /// <summary>
-    /// Bring the PDF into view, for commands that act on it: shown, and with
-    /// the panel out of its way, as macOS does.
-    /// </summary>
+    /// <summary>Bring the PDF into view for commands that act on it, the panel out of its way, as macOS does.</summary>
     internal void ShowPdf()
     {
         Project?.ShowLogs = false;
@@ -278,11 +269,7 @@ public sealed partial class MainWindow
 
     // ---------- text editing ----------
 
-    /// <summary>
-    /// The native text box or page that last had focus, which Edit's
-    /// commands act on; null for anything else, when they go to the editor.
-    /// Kept as focus moves, since opening a menu takes focus from it.
-    /// </summary>
+    /// <summary>The text box or page that last had focus, which Edit's commands act on; null means the editor.</summary>
     private DependencyObject? textTarget;
 
     /// <summary>Follow focus for the Edit menu. Called once, as the workspace is built.</summary>
@@ -301,11 +288,7 @@ public sealed partial class MainWindow
         }
     };
 
-    /// <summary>
-    /// Undo, redo and the clipboard for the focused text box, else the page
-    /// that had focus, else the editor, as macOS sends them down the
-    /// responder chain (parity D16, K15).
-    /// </summary>
+    /// <summary>Undo, redo and the clipboard for the focused text box, else the page, else the editor (parity D16, K15).</summary>
     private void EditText(MenuCommand command)
     {
         if (textTarget is TextBox box)
@@ -350,11 +333,7 @@ public sealed partial class MainWindow
         _ = PressAsync(textTarget as WebView2 ?? Editor.View, key);
     }
 
-    /// <summary>
-    /// Ctrl and a letter, pressed in a page as the reader would press them.
-    /// A script may not read or write the clipboard unasked, and the editor
-    /// keeps its selection itself, so the page handles the keys as its own.
-    /// </summary>
+    /// <summary>Ctrl and a letter pressed in a page, since a script may not use the clipboard unasked.</summary>
     private static async Task PressAsync(WebView2 view, char key)
     {
         view.Focus(FocusState.Programmatic);
@@ -386,10 +365,7 @@ public sealed partial class MainWindow
 
     private DataTransferManager? share;
 
-    /// <summary>
-    /// The PDF to Windows' share sheet, as macOS offers its share menu. An
-    /// unpackaged app reaches the sheet through its window handle.
-    /// </summary>
+    /// <summary>The PDF to Windows' share sheet, reached through the window handle as the app is unpackaged.</summary>
     private void SharePdf()
     {
         var window = WindowNative.GetWindowHandle(this);
@@ -426,21 +402,14 @@ public sealed partial class MainWindow
 
     // ---------- file pickers ----------
 
-    // An unpackaged app's pickers need to be told which window they belong to.
-    private T Owned<T>(T picker)
-    {
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        return picker;
-    }
-
     private async Task<string?> PickSaveAsync(string name, string kind, string extension)
     {
-        var picker = Owned(new FileSavePicker
+        var picker = new FileSavePicker(AppWindow.Id)
         {
             SuggestedStartLocation = PickerLocationId.Downloads,
             SuggestedFileName = name,
-        });
-        picker.FileTypeChoices.Add(kind, new List<string> { extension });
+        };
+        picker.FileTypeChoices.Add(kind, [extension]);
         try
         {
             return (await picker.PickSaveFileAsync())?.Path;
@@ -455,7 +424,7 @@ public sealed partial class MainWindow
     /// <summary>Choose the folder with TeX's programs; a TeX Live or MiKTeX root works too.</summary>
     internal async Task ChooseTexFolderAsync()
     {
-        if (await PickFolderAsync(new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder, CommitButtonText = "Use this folder" }) is { } folder)
+        if (await PickFolderAsync(new FolderPicker(AppWindow.Id) { SuggestedStartLocation = PickerLocationId.ComputerFolder, CommitButtonText = "Use this folder" }) is { } folder)
         {
             await SetTexDirAsync(folder);
         }
@@ -463,7 +432,6 @@ public sealed partial class MainWindow
 
     private async Task<string?> PickFolderAsync(FolderPicker picker)
     {
-        Owned(picker).FileTypeFilter.Add("*");
         try
         {
             return (await picker.PickSingleFolderAsync())?.Path;
@@ -477,8 +445,7 @@ public sealed partial class MainWindow
 
     private async Task<IReadOnlyList<string>?> PickFilesAsync()
     {
-        var picker = Owned(new FileOpenPicker { CommitButtonText = "Add" });
-        picker.FileTypeFilter.Add("*");
+        var picker = new FileOpenPicker(AppWindow.Id) { CommitButtonText = "Add" };
         try
         {
             return (await picker.PickMultipleFilesAsync()).Select(f => f.Path).ToList();

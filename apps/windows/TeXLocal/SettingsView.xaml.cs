@@ -6,11 +6,7 @@ using Windows.System;
 
 namespace TeXLocal;
 
-/// <summary>
-/// Settings as a page in the Windows 11 style: grouped cards, each applied
-/// the moment it changes. The engine belongs to the open project; the rest
-/// to the app.
-/// </summary>
+/// <summary>Settings cards, each applied as it changes. The engine belongs to the open project; the rest to the app.</summary>
 public sealed partial class SettingsView : UserControl
 {
     private static MainWindow Main => MainWindow.Instance;
@@ -21,21 +17,14 @@ public sealed partial class SettingsView : UserControl
     private static readonly string[] Fonts = ["system", "jetbrains"];
     private static readonly string[] Engines = [.. LatexTemplates.Engines.Select(e => e.Id)];
 
-    // Set while Render fills the controls, whose change events would
-    // otherwise write the values straight back.
+    // Set while Render fills the controls, whose change events would otherwise write the values straight back.
     private bool rendering;
 
     public SettingsView()
     {
         InitializeComponent();
-        foreach (var scale in Preferences.UiScales)
-        {
-            ScaleBox.Items.Add($"{scale}%");
-        }
-        foreach (var (_, name) in LatexTemplates.Engines)
-        {
-            EngineBox.Items.Add(name);
-        }
+        ScaleBox.ItemsSource = Preferences.UiScales.Select(scale => $"{scale}%").ToList();
+        EngineBox.ItemsSource = LatexTemplates.Engines.Select(e => e.Name).ToList();
         AboutIcon.Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
         VersionText.Text = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)}";
     }
@@ -76,11 +65,7 @@ public sealed partial class SettingsView : UserControl
         rendering = false;
     }
 
-    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e) => Apply();
-
-    private void OnToggled(object sender, RoutedEventArgs e) => Apply();
-
-    private void Apply()
+    private void OnChanged(object sender, RoutedEventArgs e)
     {
         if (rendering)
         {

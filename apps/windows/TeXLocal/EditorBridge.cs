@@ -4,11 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace TeXLocal;
 
-/// <summary>
-/// The CodeMirror editor (web/embed/editor.html, contract in
-/// web/src/embed/editor.js) in a WebView2: content in native chrome. One
-/// editor serves the app's whole lifetime, handed from project to project.
-/// </summary>
+/// <summary>The CodeMirror editor (contract in web/src/embed/editor.js), one for the app's lifetime.</summary>
 internal sealed class EditorBridge
 {
     private readonly EmbeddedPage page;
@@ -83,10 +79,7 @@ internal sealed class EditorBridge
         return line.ValueKind == JsonValueKind.Number ? line.GetInt32() : 1;
     }
 
-    /// <summary>
-    /// Go to a line: centred, or at the top as the outline shows a heading;
-    /// <paramref name="focus"/> false leaves keyboard focus where it is.
-    /// </summary>
+    /// <summary>Go to a line: centred, or at the top as the outline shows a heading.</summary>
     public Task RevealAsync(int line, bool atTop = false, bool focus = true) =>
         page.RunAsync($"texlocal.reveal({line}, {L(atTop)}, {L(focus)})");
 
@@ -95,25 +88,15 @@ internal sealed class EditorBridge
 
     public Task ForgetAsync(string path) => page.RunAsync($"texlocal.forget({L(path)})");
 
-    /// <summary>
-    /// Move a file's remembered state (undo history) to its new path. Pages
-    /// without rename() just forget it.
-    /// </summary>
+    /// <summary>Move a file's undo history to its new path; pages without rename() forget it.</summary>
     public Task RenameAsync(string from, string to) =>
         page.RunAsync($"texlocal.rename ? texlocal.rename({L(from)}, {L(to)}) : texlocal.forget({L(from)})");
 
-    /// <summary>
-    /// Undo or redo in the page. The editor declines when focus is in one of
-    /// its own inputs (the find panel), which then takes the browser's own.
-    /// </summary>
+    /// <summary>Undo or redo; in the editor's own inputs (the find panel) the browser's.</summary>
     public Task UndoAsync(bool redo) => page.RunAsync(
         $"texlocal.command({L(redo ? "redo" : "undo")}) || document.execCommand({L(redo ? "redo" : "undo")})");
 
-    /// <summary>
-    /// The editor's size: the interface-size setting times Windows' text
-    /// size (Settings › Accessibility), which a web page does not follow by
-    /// itself. The page scales as the browser version's window does.
-    /// </summary>
+    /// <summary>The interface size times Windows' text size, which a web page does not follow by itself.</summary>
     public Task SetZoomAsync(double zoom) =>
         page.RunStickyAsync("zoom", $"document.body.style.zoom = {L(zoom)}");
 

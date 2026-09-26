@@ -8,14 +8,9 @@ public sealed partial class MenuCommandTests
     [GeneratedRegex(@"\{ id: '([^']+)'.*?accel: '((?:[^'\\]|\\.)+)'")]
     private static partial Regex CommandDef();
 
-    /// <summary>
-    /// Every (id, accel) pair in the browser version's commandDefs
-    /// (web/src/workspace.js), read from the source so the two cannot drift.
-    /// </summary>
+    /// <summary>Every (id, accel) pair in web/src/workspace.js commandDefs, read from the source so they cannot drift.</summary>
     private static List<(string Id, string Accel)> CommandDefs() =>
-        CommandDef().Matches(WebSource.Read("workspace.js"))
-            .Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value)))
-            .ToList();
+        CommandDef().Matches(WebSource.Read("workspace.js")).Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value))).ToList();
 
     [Fact]
     public void EveryCommandDefsAcceleratorParses()
@@ -91,26 +86,17 @@ public sealed partial class MenuCommandTests
         // compile, listed first, keeps them.
         Assert.True(MenuCommand.CompileRun.ClaimsChord());
         Assert.False(MenuCommand.SyncForward.ClaimsChord());
-        var chords = Enum.GetValues<MenuCommand>()
-            .Where(c => c.ClaimsChord())
-            .SelectMany(c => Accelerators.Chords(c.Accel()!))
-            .ToList();
+        var chords = Enum.GetValues<MenuCommand>().Where(c => c.ClaimsChord()).SelectMany(c => Accelerators.Chords(c.Accel()!)).ToList();
         Assert.Equal(chords.Count, chords.Distinct().Count());
     }
 
     [Fact]
     public void TheKeypadWorksAsTheWebAcceptsIt()
     {
-        const VirtualKeyModifiers ctrl = VirtualKeyModifiers.Control;
-        Assert.Equal(
-            new[] { new Chord((VirtualKey)0xBB, ctrl), new Chord(VirtualKey.Add, ctrl) },
-            Accelerators.Chords("CmdOrCtrl+Plus"));
-        Assert.Equal(
-            new[] { new Chord((VirtualKey)0xBD, ctrl | VirtualKeyModifiers.Menu), new Chord(VirtualKey.Subtract, ctrl | VirtualKeyModifiers.Menu) },
-            Accelerators.Chords("CmdOrCtrl+Alt+Minus"));
-        Assert.Equal(
-            new[] { new Chord(VirtualKey.Number0, ctrl), new Chord(VirtualKey.NumberPad0, ctrl) },
-            Accelerators.Chords("CmdOrCtrl+0"));
+        const VirtualKeyModifiers ctrl = VirtualKeyModifiers.Control, ctrlAlt = ctrl | VirtualKeyModifiers.Menu;
+        Assert.Equal(new[] { new Chord((VirtualKey)0xBB, ctrl), new Chord(VirtualKey.Add, ctrl) }, Accelerators.Chords("CmdOrCtrl+Plus"));
+        Assert.Equal(new[] { new Chord((VirtualKey)0xBD, ctrlAlt), new Chord(VirtualKey.Subtract, ctrlAlt) }, Accelerators.Chords("CmdOrCtrl+Alt+Minus"));
+        Assert.Equal(new[] { new Chord(VirtualKey.Number0, ctrl), new Chord(VirtualKey.NumberPad0, ctrl) }, Accelerators.Chords("CmdOrCtrl+0"));
         Assert.Equal(new[] { new Chord(VirtualKey.S, ctrl) }, Accelerators.Chords("CmdOrCtrl+S"));
         Assert.Empty(Accelerators.Chords("Cmd+K"));
     }
@@ -122,9 +108,7 @@ public sealed partial class MenuCommandTests
         // "Save" takes S; "Save PDF as…" then takes the P of PDF.
         Assert.Equal(new[] { "S", "P", "E" }, AccessKeys.Assign(["Save", "Save PDF as…", "Export project as ZIP…"]));
         Assert.Equal(new[] { "A", "B", "" }, AccessKeys.Assign(["a", "ab", "…"]));
-        var keys = AccessKeys.Assign(Enum.GetValues<MenuCommand>().Select(c => c.Title()).ToList())
-            .Where(k => k.Length > 0)
-            .ToList();
+        var keys = AccessKeys.Assign(Enum.GetValues<MenuCommand>().Select(c => c.Title()).ToList()).Where(k => k.Length > 0).ToList();
         Assert.Equal(keys.Count, keys.Distinct().Count());
     }
 

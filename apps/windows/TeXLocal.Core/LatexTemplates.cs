@@ -1,17 +1,9 @@
 namespace TeXLocal;
 
-/// <summary>
-/// What the source bar and the Format menu insert — the web's source bar
-/// (web/src/sourcebar.js), as apps/macos has it. "$0" marks where the
-/// cursor lands.
-/// </summary>
+/// <summary>What the source bar and Format menu insert (web/src/sourcebar.js); "$0" marks the cursor.</summary>
 public static class LatexTemplates
 {
-    /// <summary>
-    /// The section levels, as the caret line's style: plain text, then the
-    /// sectioning commands in the order the outline ranks them, so an
-    /// outline level is its index less one.
-    /// </summary>
+    /// <summary>Plain text, then the sectioning commands by outline level (an outline level is its index less one).</summary>
     public static readonly IReadOnlyList<(string Label, string Command)> HeadingLevels =
     [
         ("Normal text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
@@ -22,10 +14,7 @@ public static class LatexTemplates
     public static string LevelAt(IReadOnlyList<OutlineItem> outline, int line) =>
         HeadingLevels[outline.FirstOrDefault(o => o.Line == line) is { } heading ? heading.Level + 1 : 0].Label;
 
-    /// <summary>
-    /// Symbols by kind, each inserted as its command: bare in math, in $…$
-    /// in text (web/src/sourcebar.js SYMBOL_GROUPS).
-    /// </summary>
+    /// <summary>Symbols by kind, inserted bare in math, in $…$ in text (web/src/sourcebar.js SYMBOL_GROUPS).</summary>
     public static readonly IReadOnlyList<(string Title, IReadOnlyList<(string Glyph, string Command)> Symbols)> SymbolGroups =
     [
         ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
@@ -71,9 +60,7 @@ public static class LatexTemplates
 
     /// <summary>The engines a project can compile with: the core's id, then its name.</summary>
     public static readonly IReadOnlyList<(string Id, string Name)> Engines =
-    [
-        ("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX"),
-    ];
+        [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")];
 
     public static string EngineName(string engine) =>
         Engines.FirstOrDefault(e => e.Id == engine).Name ?? engine;

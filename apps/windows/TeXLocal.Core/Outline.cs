@@ -24,9 +24,8 @@ public static partial class Outline
     public static IReadOnlyList<OutlineItem> Parse(string text) => Analyze(text).Outline;
 
     /// <summary>
-    /// The outline, words and lines (web/src/state.js analyzeDoc). Lines
-    /// break where CodeMirror breaks them — at CR LF, CR or LF — so the line
-    /// count is the editor's.
+    /// The outline, words and lines (web/src/state.js analyzeDoc). Lines break
+    /// at CR LF, CR or LF, as CodeMirror breaks them.
     /// </summary>
     public static DocumentStats Analyze(string text)
     {
@@ -40,61 +39,39 @@ public static partial class Outline
             {
                 continue;
             }
-            var match = Section().Match(line);
-            if (match.Success)
+            if (Section().Match(line) is { Success: true } match)
             {
                 var title = match.Groups[2].Value;
-                items.Add(new OutlineItem(
-                    Array.IndexOf(Levels, match.Groups[1].Value),
-                    title.Length == 0 ? "(untitled)" : title,
-                    i + 1));
+                items.Add(new OutlineItem(Array.IndexOf(Levels, match.Groups[1].Value), title is "" ? "(untitled)" : title, i + 1));
             }
             words += LineWords(line);
         }
         return new DocumentStats(items, words, lines.Length);
     }
 
-    /// <summary>
-    /// The headings that enclose a line, outermost first: the breadcrumb
-    /// (web/src/state.js outlineChain).
-    /// </summary>
-    public static IReadOnlyList<OutlineItem> Chain(IReadOnlyList<OutlineItem> outline, int line)
-    {
-        var stack = new List<OutlineItem>();
-        foreach (var item in outline)
-        {
-            if (item.Line > line)
-            {
-                break;
-            }
-            while (stack.Count > 0 && stack[^1].Level >= item.Level)
-            {
-                stack.RemoveAt(stack.Count - 1);
-            }
-            stack.Add(item);
-        }
-        return stack;
-    }
+    /// <summary>The headings that enclose a line, outermost first: the breadcrumb (web/src/state.js outlineChain).</summary>
+    public static IReadOnlyList<OutlineItem> Chain(IReadOnlyList<OutlineItem> outline, int line) =>
+        outline.TakeWhile(item => item.Line <= line).Aggregate(new List<OutlineItem>(), Enclose);
 
     /// <summary>
-    /// Each heading's depth in the document's actual nesting: how many
-    /// headings enclose it. A subsection before any section sits flush,
-    /// rather than under a parent that isn't there (apps/macos Outline.swift).
+    /// How many headings enclose each heading. A subsection before any section
+    /// sits flush, not under a parent that isn't there (apps/macos Outline.swift).
     /// </summary>
     public static IReadOnlyList<int> Depths(IReadOnlyList<OutlineItem> outline)
     {
-        var stack = new List<int>();
-        var depths = new List<int>(outline.Count);
-        foreach (var item in outline)
+        var stack = new List<OutlineItem>();
+        return outline.Select(item => Enclose(stack, item).Count - 1).ToList();
+    }
+
+    /// <summary>Pushes a heading onto the stack of those enclosing it, after popping its peers and juniors.</summary>
+    private static List<OutlineItem> Enclose(List<OutlineItem> stack, OutlineItem item)
+    {
+        while (stack.Count > 0 && stack[^1].Level >= item.Level)
         {
-            while (stack.Count > 0 && stack[^1] >= item.Level)
-            {
-                stack.RemoveAt(stack.Count - 1);
-            }
-            stack.Add(item.Level);
-            depths.Add(stack.Count - 1);
+            stack.RemoveAt(stack.Count - 1);
         }
-        return depths;
+        stack.Add(item);
+        return stack;
     }
 
     /// <summary>The outline as a tree by how the headings nest, for a sidebar with expanders.</summary>
@@ -116,9 +93,8 @@ public static partial class Outline
     }
 
     /// <summary>
-    /// A key per heading that survives edits renumbering the lines: level and
-    /// title, and which of the headings so named it is (apps/macos
-    /// Outline.swift foldKeys). A fold is remembered by it.
+    /// A fold's key per heading, surviving renumbered lines: level, title and
+    /// which of the headings so named it is (apps/macos Outline.swift foldKeys).
     /// </summary>
     public static IReadOnlyList<string> FoldKeys(IReadOnlyList<OutlineItem> outline)
     {
@@ -133,14 +109,12 @@ public static partial class Outline
 
     /// <summary>An empty heading by its kind — "Untitled subsection" — where the web writes "(untitled)".</summary>
     public static string DisplayTitle(OutlineItem item) =>
-        item.Title != "(untitled)" ? item.Title
-            : "Untitled " + (item.Level >= 0 && item.Level < Levels.Length ? Levels[item.Level] : "section");
+        item.Title != "(untitled)" ? item.Title : "Untitled " + (Levels.ElementAtOrDefault(item.Level) ?? "section");
 
     // ---------- word count ----------
 
-    // The rules below are web/src/state.js lineWords, whose regular
-    // expressions run on JavaScript's terms; they are spelled out here so
-    // every line counts the same in both (as apps/macos Outline.swift does).
+    // web/src/state.js lineWords's regular expressions, spelled out on
+    // JavaScript's terms so every line counts the same (as apps/macos does).
     // Every character involved is in the BMP, so UTF-16 units serve.
 
     /// <summary>JavaScript's \s.</summary>
@@ -151,17 +125,7 @@ public static partial class Outline
     /// <summary>TeX's special characters, which separate words like spaces do.</summary>
     private static bool IsSpecial(char c) => c is '{' or '}' or '$' or '&' or '_' or '^' or '~' or '\\' or '%';
 
-    private static bool IsComment(string line)
-    {
-        foreach (var c in line)
-        {
-            if (!IsSpace(c))
-            {
-                return c == '%';
-            }
-        }
-        return false;
-    }
+    private static bool IsComment(string line) => line.FirstOrDefault(c => !IsSpace(c)) == '%';
 
     /// <summary>
     /// Rough word count of a prose line: drop the comment, then commands with
@@ -178,6 +142,13 @@ public static partial class Outline
         while (i <= text.Length)
         {
             var c = i < text.Length ? text[i] : ' ';
+            // A backslash is special, so a command ends the run before it too.
+            var separator = IsSpace(c) || IsSpecial(c);
+            if (separator && letter)
+            {
+                words++;
+            }
+            letter = !separator && (letter || char.IsAsciiLetter(c) || c is >= '\u00C0' and <= '\u017E');
             if (c == '\\' && i + 1 < text.Length && char.IsAsciiLetter(text[i + 1]))
             {
                 i++;
@@ -193,24 +164,7 @@ public static partial class Outline
                 {
                     i = close + 1;
                 }
-                if (letter)
-                {
-                    words++;
-                }
-                letter = false;
                 continue;
-            }
-            if (IsSpace(c) || IsSpecial(c))
-            {
-                if (letter)
-                {
-                    words++;
-                }
-                letter = false;
-            }
-            else if (char.IsAsciiLetter(c) || c is >= '\u00C0' and <= '\u017E')
-            {
-                letter = true;
             }
             i++;
         }
