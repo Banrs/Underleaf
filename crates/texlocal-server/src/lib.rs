@@ -28,7 +28,6 @@ pub struct App {
     web_dir: Arc<Path>,
     token: String,
     hosts: [String; 2],
-    origins: [String; 2],
 }
 
 /// 32 random bytes as hex.
@@ -88,10 +87,6 @@ impl App {
             web_dir: web_dir.into(),
             token,
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
-            origins: [
-                format!("http://127.0.0.1:{port}"),
-                format!("http://localhost:{port}"),
-            ],
         }
     }
 
@@ -118,7 +113,18 @@ impl App {
         } else {
             Response::text(405, "Method not allowed")
         };
-        response.with("X-Content-Type-Options", "nosniff")
+        // No page may frame the app: a page on another loopback port is
+        // same-site, so the cookie would go with it and a clickjacked frame
+        // could turn on shell escape and compile. A sandboxed project file
+        // already has its own CSP, and no frame shows one.
+        let response = if response.header("content-security-policy").is_none() {
+            response.with("Content-Security-Policy", "frame-ancestors 'none'")
+        } else {
+            response
+        };
+        response
+            .with("X-Frame-Options", "DENY")
+            .with("X-Content-Type-Options", "nosniff")
     }
 
     /// Host, Origin and the token, from the request head alone: the server
@@ -132,8 +138,12 @@ impl App {
             return Some(Response::text(403, "Forbidden host"));
         }
         let safe_method = matches!(req.method.as_str(), "GET" | "HEAD");
+        // An Origin must be this server's own: http:// and one of its hosts.
         if let Some(origin) = req.header("origin") {
-            if !safe_method && !self.origins.iter().any(|a| a == origin) {
+            let own = origin
+                .strip_prefix("http://")
+                .is_some_and(|host| self.hosts.iter().any(|a| a == host));
+            if !safe_method && !own {
                 return Some(Response::text(403, "Forbidden origin"));
             }
         }
