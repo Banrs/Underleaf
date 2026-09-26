@@ -229,6 +229,6 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - An unfinished Word-style safe save (write a temporary file, then replace) is kept, uncommitted, at `.claude/wip/safesave.rs`. It is not wired in.
 
 - On the owner's Mac, `static.crates.io` is blocked by network policy, while GitHub works. Before adding a Rust dependency, check `~/.cargo/registry/cache`, or pin a dependency-free crate to its GitHub tag. That is why the server doesn't use axum.
-- `CLAUDE.md` was deleted by the owner on purpose. That deletion is left unstaged and is not part of these commits.
+- `CLAUDE.md` is deleted; the owner's global `AGENTS.md` replaces it.
 - XcodeGen 2.46 is not installed system-wide. Download it from GitHub releases and regenerate after editing `project.yml`.
 - The Tauri app's behaviour must not regress while it still ships. Run `npm run app` to check.
