@@ -423,9 +423,11 @@ final class SyncPDFView: PDFView {
             wantsLayer = true
             layerUsesCoreImageFilters = true
             appearance = darkPaper ? NSAppearance(named: .aqua) : nil
-            // A neutral light grey, which the inversion turns neutral dark;
-            // the tinted under-page colour would come out olive.
-            backgroundColor = darkPaper ? NSColor(white: 0.84, alpha: 1) : .underPageBackgroundColor
+            // A neutral near-white, which the inversion turns into dark
+            // mode's under-page grey (40 of 255): Core Image inverts in
+            // linear light, where 0.84 came out a mid grey. The tinted
+            // under-page colour would come out olive.
+            backgroundColor = darkPaper ? NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1) : .underPageBackgroundColor
             pageShadowsEnabled = !darkPaper
             let hue = CIFilter.hueAdjust()
             hue.angle = .pi
@@ -513,14 +515,18 @@ private struct PDFRepresentable: NSViewRepresentable {
         coordinator.watches.forEach { $0.cancel() }
     }
 
-    /// Load a rebuilt PDF where the reader was: same spot on the same page,
-    /// same zoom. It is read whole: PDFKit reads a document from its file as
-    /// it goes, and the next compile rewrites that file in place.
+    /// Load a rebuilt PDF where the reader was: the same scroll offset at the
+    /// same zoom, which, a document's pages keeping their size, is the same
+    /// spot on the same page. Not `currentDestination`: it reads the top of
+    /// the view, under the scroll view's top inset, and `go(to:)` puts it
+    /// below that inset, so the pages crept down with every build. It is
+    /// read whole: PDFKit reads a document from its file as it goes, and the
+    /// next compile rewrites that file in place.
     private func reload(_ view: SyncPDFView, from url: URL) -> Bool {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return false }
         hideLinkBorders(document)
-        let spot = view.currentDestination
-        let pageIndex = spot?.page.flatMap { view.document?.index(for: $0) }
+        let clip = view.documentView?.enclosingScrollView?.contentView
+        let offset = view.document == nil ? nil : clip?.bounds.origin
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
@@ -528,13 +534,15 @@ private struct PDFRepresentable: NSViewRepresentable {
         // The first PDF of a reopened project opens at the page it was left at.
         let restore = project.restorePDFPage.map { min(max($0, 1), document.pageCount) - 1 }
         project.restorePDFPage = nil
-        if let pageIndex, let spot, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
-            view.go(to: PDFDestination(page: page, at: spot.point))
+        if let clip, let offset {
+            view.layoutDocumentView()
+            clip.scroll(to: offset)
+            clip.enclosingScrollView?.reflectScrolledClipView(clip)
         } else if let restore, let page = document.page(at: restore) {
             view.go(to: page)
         }
         controller.pageCount = document.pageCount
-        controller.page = (pageIndex ?? restore ?? 0) + 1
+        controller.pageChanged()
         return true
     }
 
