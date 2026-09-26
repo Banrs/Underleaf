@@ -15,7 +15,7 @@ use serde_json::json;
 
 use crate::atomic;
 use crate::error::CoreError;
-use crate::paths::{project_root, rel_key, safe_path, safe_write_path, sanitize_name};
+use crate::paths::{fold_case, project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
 use crate::BUILD_DIR;
@@ -505,9 +505,9 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 
 /// Move to the Trash an entry an incoming file of its name replaces. The main
 /// file may go, since the file taking its place keeps it valid; a folder
-/// holding it may not.
+/// holding it may not, however the upload spells its name.
 pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> {
-    if is_under(&main_file_key(root), rel) {
+    if is_under(&fold_case(&main_file_key(root)), &fold_case(rel)) {
         return Err(CoreError::conflict(
             "Choose a different main file before replacing this folder",
         ));

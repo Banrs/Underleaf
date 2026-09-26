@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use crate::analyze;
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
+use crate::paths::fold_case;
 use crate::projects::{self, FileStamp, Symbols};
 use crate::settings;
 use crate::synctex;
@@ -85,20 +86,14 @@ fn clash(base: &Path, rel: &str) -> Option<String> {
     let mut end = 0;
     loop {
         end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
-        let meta = fs::symlink_metadata(base.join(&rel[..end])).ok()?;
-        if end == rel.len() || !meta.is_dir() {
+        let abs = base.join(&rel[..end]);
+        let meta = fs::symlink_metadata(&abs).ok()?;
+        // A link to a folder is a folder on the way: the path checks have
+        // already kept it inside the project.
+        if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
             return Some(rel[..end].to_string());
         }
         end += 1;
-    }
-}
-
-/// A path as the volume compares it: macOS's and Windows' ignore case.
-fn fold_case(path: &str) -> String {
-    if cfg!(any(windows, target_os = "macos")) {
-        path.to_lowercase()
-    } else {
-        path.to_owned()
     }
 }
 

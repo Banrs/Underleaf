@@ -247,7 +247,35 @@ fn an_upload_reports_what_it_would_land_on_and_never_overwrites_unasked() {
     texlocal_core::settings::write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
     let err = service.upload_file("P", "", "ch", b"x", true).unwrap_err();
     assert_eq!(err.status, 409);
+    // However the upload spells it, on a volume that ignores case.
+    #[cfg(any(windows, target_os = "macos"))]
+    assert_eq!(
+        service
+            .upload_file("P", "", "CH", b"x", true)
+            .unwrap_err()
+            .status,
+        409
+    );
     assert!(root.join("ch/main.tex").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_folder_in_the_project_is_a_folder_an_upload_goes_into() {
+    let (_dir, service) = with_project();
+    let root = service.data_dir.join("P");
+    std::fs::create_dir(root.join("figs")).unwrap();
+    std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
+    let spec = texlocal_core::service::UploadSpec {
+        path: "link/a.png".into(),
+        size: 1,
+    };
+    let check = service.validate_uploads("P", "", &[spec]).unwrap();
+    assert!(check.existing.is_empty());
+    service
+        .upload_file("P", "", "link/a.png", b"png", false)
+        .unwrap();
+    assert_eq!(std::fs::read(root.join("figs/a.png")).unwrap(), b"png");
 }
 
 #[test]

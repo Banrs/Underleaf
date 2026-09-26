@@ -14,9 +14,10 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// project walks never show one left behind by a crash.
 fn sibling(path: &Path, ext: &str) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let name = path
+    // Shortened, so a name near the volume's 255-byte limit still has room.
+    let name: String = path
         .file_name()
-        .map(|n| n.to_string_lossy())
+        .map(|n| n.to_string_lossy().chars().take(64).collect())
         .unwrap_or_default();
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     parent.join(format!(".{name}.texlocal-{}-{n}.{ext}", std::process::id()))
@@ -81,10 +82,12 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     let (temp, mut file) = create_temp(&target)?;
     let result = (|| {
-        file.write_all(bytes)?;
+        // Before the contents, so a private file's text is never readable
+        // under the temporary file's default mode.
         if let Some(meta) = &old {
             file.set_permissions(meta.permissions())?;
         }
+        file.write_all(bytes)?;
         file.sync_all()?;
         // Closed before the rename, which Windows needs.
         drop(file);
@@ -154,6 +157,16 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let mode = fs::metadata(&target).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o640);
+    }
+
+    #[test]
+    fn a_file_with_a_long_name_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(format!("{}.tex", "n".repeat(240)));
+        write(&file, b"one").unwrap();
+        write(&file, b"two").unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"two");
+        assert_eq!(names(dir.path()).len(), 1);
     }
 
     #[test]

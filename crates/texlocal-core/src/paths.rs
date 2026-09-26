@@ -185,6 +185,15 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     join_within(root, &segments)
 }
 
+/// A path as the volume compares it: macOS's and Windows' ignore case.
+pub(crate) fn fold_case(path: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        path.to_lowercase()
+    } else {
+        path.to_owned()
+    }
+}
+
 /// The normalized forward-slash spelling of a user-supplied project path, for
 /// comparing it with a stored one such as the main file. It checks nothing on
 /// disk: pair it with `safe_path`, and use `safe_rel_file` for anything that
