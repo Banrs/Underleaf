@@ -130,7 +130,9 @@ private struct StatusBar: View {
         // leading one with the sidebar hidden, the trailing one with the
         // inspector hidden), by the system's own corner insets.
         let corners = app.windowCorners
-        SecondaryBar(spacing: BarMetrics.itemSpacing,
+        // The items, the line and the toggle a group's 8 pt apart: the
+        // line has the same room either side.
+        SecondaryBar(spacing: BarMetrics.groupSpacing,
                      leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
                      trailingInset: app.showInspector ? BarMetrics.inset
                          : max(BarMetrics.inset, corners.bottomTrailing.width)) {
@@ -142,16 +144,13 @@ private struct StatusBar: View {
             }
             // The text only: on the toggle, it would hide its tint.
             .foregroundStyle(.secondary)
-            // A group of its own: the kit's 8 pt either side of the line.
-            HStack(spacing: BarMetrics.groupSpacing) {
-                ToolSeparator()
-                Toggle(isOn: $project.showLogs) {
-                    Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
-                }
-                .toggleStyle(.button)
-                .labelStyle(.iconOnly)
-                .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
+            ToolSeparator()
+            Toggle(isOn: $project.showLogs) {
+                Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
         }
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows, as Pages' word count
@@ -179,7 +178,8 @@ private struct StatusBar: View {
             if project.openPath != nil {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showCounts, app.showWordCount, let counts = project.counts {
-                    Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
+                    // Singular for one, by Foundation's grammar agreement.
+                    Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
                         .monospacedDigit()
                 }
             }
