@@ -61,151 +61,64 @@ public enum MenuCommand
 
 public static class MenuCommands
 {
-    public static string Id(this MenuCommand command) => command switch
-    {
-        MenuCommand.ProjectNew => "project.new",
-        MenuCommand.ProjectClose => "project.close",
-        MenuCommand.ProjectExport => "project.export",
-        MenuCommand.ProjectSearch => "project.search",
-        MenuCommand.FileNew => "file.new",
-        MenuCommand.FileNewFolder => "file.newFolder",
-        MenuCommand.FileUpload => "file.upload",
-        MenuCommand.FileSave => "file.save",
-        MenuCommand.PdfSave => "pdf.save",
-        MenuCommand.PdfShare => "pdf.share",
-        MenuCommand.EditUndo => "edit.undo",
-        MenuCommand.EditRedo => "edit.redo",
-        MenuCommand.EditFind => "edit.find",
-        MenuCommand.EditFindNext => "edit.findNext",
-        MenuCommand.EditFindPrevious => "edit.findPrevious",
-        MenuCommand.EditBold => "edit.bold",
-        MenuCommand.EditItalic => "edit.italic",
-        MenuCommand.EditMath => "edit.math",
-        MenuCommand.EditComment => "edit.comment",
-        MenuCommand.EditGotoLine => "edit.gotoLine",
-        MenuCommand.PdfFind => "pdf.find",
-        MenuCommand.ViewToggleSidebar => "view.toggleSidebar",
-        MenuCommand.ViewTogglePdf => "view.togglePdf",
-        MenuCommand.ViewToggleLogs => "view.toggleLogs",
-        MenuCommand.ViewToggleInspector => "view.toggleInspector",
-        MenuCommand.ViewZoomIn => "view.zoomIn",
-        MenuCommand.ViewZoomOut => "view.zoomOut",
-        MenuCommand.ViewFitWidth => "view.fitWidth",
-        MenuCommand.ViewFitHeight => "view.fitHeight",
-        MenuCommand.ViewUiScaleUp => "view.uiScaleUp",
-        MenuCommand.ViewUiScaleDown => "view.uiScaleDown",
-        MenuCommand.CompileRun => "compile.run",
-        MenuCommand.CompileStop => "compile.stop",
-        MenuCommand.CompileToggleAuto => "compile.toggleAuto",
-        MenuCommand.SyncForward => "sync.forward",
-        MenuCommand.SyncInverse => "sync.inverse",
-        MenuCommand.AppSettings => "app.settings",
-        MenuCommand.FileUploadFolder => "file.uploadFolder",
-        MenuCommand.EditCut => "edit.cut",
-        MenuCommand.EditCopy => "edit.copy",
-        MenuCommand.EditPaste => "edit.paste",
-        MenuCommand.EditSelectAll => "edit.selectAll",
-        MenuCommand.ViewFullScreen => "view.fullScreen",
-        MenuCommand.AppExit => "app.exit",
-        _ => throw new ArgumentOutOfRangeException(nameof(command)),
-    };
-
     /// <summary>
-    /// Menu text in sentence case, as Windows writes commands; an ellipsis
-    /// marks a command that asks for more before it acts.
+    /// Each command's id, its menu text (sentence case; an ellipsis when it
+    /// asks for more before acting) and its accelerator. Alt+Shift+P is File
+    /// Explorer's details-pane chord; Ctrl+Break is Windows' Stop.
     /// </summary>
-    public static string Title(this MenuCommand command) => command switch
+    private static readonly Dictionary<MenuCommand, (string Id, string Title, string? Accel)> Defs = new()
     {
-        MenuCommand.ProjectNew => "New project…",
-        MenuCommand.ProjectClose => "Close project",
-        MenuCommand.ProjectExport => "Export project as ZIP…",
-        MenuCommand.ProjectSearch => "Find in project",
-        MenuCommand.FileNew => "New file…",
-        MenuCommand.FileNewFolder => "New folder…",
-        MenuCommand.FileUpload => "Add files…",
-        MenuCommand.FileSave => "Save",
-        MenuCommand.PdfSave => "Save PDF as…",
-        MenuCommand.PdfShare => "Share PDF…",
-        MenuCommand.EditUndo => "Undo",
-        MenuCommand.EditRedo => "Redo",
-        MenuCommand.EditFind => "Find and replace",
-        MenuCommand.EditFindNext => "Find next",
-        MenuCommand.EditFindPrevious => "Find previous",
-        MenuCommand.EditBold => "Bold",
-        MenuCommand.EditItalic => "Italic",
-        MenuCommand.EditMath => "Inline math",
-        MenuCommand.EditComment => "Toggle comment",
-        MenuCommand.EditGotoLine => "Go to line…",
-        MenuCommand.PdfFind => "Find in PDF",
-        MenuCommand.ViewToggleSidebar => "Sidebar",
-        MenuCommand.ViewTogglePdf => "PDF",
-        MenuCommand.ViewToggleLogs => "Panel",
-        MenuCommand.ViewToggleInspector => "Details pane",
-        MenuCommand.ViewZoomIn => "Zoom in",
-        MenuCommand.ViewZoomOut => "Zoom out",
-        MenuCommand.ViewFitWidth => "Fit width",
-        MenuCommand.ViewFitHeight => "Fit height",
-        MenuCommand.ViewUiScaleUp => "Increase editor size",
-        MenuCommand.ViewUiScaleDown => "Decrease editor size",
-        MenuCommand.CompileRun => "Compile",
-        MenuCommand.CompileStop => "Stop",
-        MenuCommand.CompileToggleAuto => "Compile automatically",
-        MenuCommand.SyncForward => "Go to PDF position",
-        MenuCommand.SyncInverse => "Go to source position",
-        MenuCommand.AppSettings => "Settings",
-        MenuCommand.FileUploadFolder => "Add folder…",
-        MenuCommand.EditCut => "Cut",
-        MenuCommand.EditCopy => "Copy",
-        MenuCommand.EditPaste => "Paste",
-        MenuCommand.EditSelectAll => "Select all",
-        MenuCommand.ViewFullScreen => "Full screen",
-        MenuCommand.AppExit => "Exit",
-        _ => throw new ArgumentOutOfRangeException(nameof(command)),
+        [MenuCommand.ProjectNew] = ("project.new", "New project…", "CmdOrCtrl+Shift+N"),
+        [MenuCommand.ProjectClose] = ("project.close", "Close project", null),
+        [MenuCommand.ProjectExport] = ("project.export", "Export project as ZIP…", null),
+        [MenuCommand.ProjectSearch] = ("project.search", "Find in project", "CmdOrCtrl+Shift+F"),
+        [MenuCommand.FileNew] = ("file.new", "New file…", "CmdOrCtrl+N"),
+        [MenuCommand.FileNewFolder] = ("file.newFolder", "New folder…", "CmdOrCtrl+Shift+Alt+N"),
+        [MenuCommand.FileUpload] = ("file.upload", "Add files…", null),
+        [MenuCommand.FileSave] = ("file.save", "Save", "CmdOrCtrl+S"),
+        [MenuCommand.PdfSave] = ("pdf.save", "Save PDF as…", "CmdOrCtrl+Shift+S"),
+        [MenuCommand.PdfShare] = ("pdf.share", "Share PDF…", null),
+        [MenuCommand.EditUndo] = ("edit.undo", "Undo", "CmdOrCtrl+Z"),
+        [MenuCommand.EditRedo] = ("edit.redo", "Redo", "CmdOrCtrl+Shift+Z"),
+        [MenuCommand.EditFind] = ("edit.find", "Find and replace", "CmdOrCtrl+F"),
+        [MenuCommand.EditFindNext] = ("edit.findNext", "Find next", "CmdOrCtrl+G"),
+        [MenuCommand.EditFindPrevious] = ("edit.findPrevious", "Find previous", "CmdOrCtrl+Shift+G"),
+        [MenuCommand.EditBold] = ("edit.bold", "Bold", "CmdOrCtrl+B"),
+        [MenuCommand.EditItalic] = ("edit.italic", "Italic", "CmdOrCtrl+I"),
+        [MenuCommand.EditMath] = ("edit.math", "Inline math", "CmdOrCtrl+Shift+M"),
+        [MenuCommand.EditComment] = ("edit.comment", "Toggle comment", "CmdOrCtrl+/"),
+        [MenuCommand.EditGotoLine] = ("edit.gotoLine", "Go to line…", "CmdOrCtrl+L"),
+        [MenuCommand.PdfFind] = ("pdf.find", "Find in PDF", "CmdOrCtrl+Alt+F"),
+        [MenuCommand.ViewToggleSidebar] = ("view.toggleSidebar", "Sidebar", "CmdOrCtrl+\\"),
+        [MenuCommand.ViewTogglePdf] = ("view.togglePdf", "PDF", "CmdOrCtrl+Shift+\\"),
+        [MenuCommand.ViewToggleLogs] = ("view.toggleLogs", "Panel", "CmdOrCtrl+Shift+L"),
+        [MenuCommand.ViewToggleInspector] = ("view.toggleInspector", "Details pane", "Alt+Shift+P"),
+        [MenuCommand.ViewZoomIn] = ("view.zoomIn", "Zoom in", "CmdOrCtrl+Plus"),
+        [MenuCommand.ViewZoomOut] = ("view.zoomOut", "Zoom out", "CmdOrCtrl+Minus"),
+        [MenuCommand.ViewFitWidth] = ("view.fitWidth", "Fit width", "CmdOrCtrl+0"),
+        [MenuCommand.ViewFitHeight] = ("view.fitHeight", "Fit height", "CmdOrCtrl+Alt+0"),
+        [MenuCommand.ViewUiScaleUp] = ("view.uiScaleUp", "Increase editor size", "CmdOrCtrl+Alt+Plus"),
+        [MenuCommand.ViewUiScaleDown] = ("view.uiScaleDown", "Decrease editor size", "CmdOrCtrl+Alt+Minus"),
+        [MenuCommand.CompileRun] = ("compile.run", "Compile", "CmdOrCtrl+Return"),
+        [MenuCommand.CompileStop] = ("compile.stop", "Stop", "CmdOrCtrl+Pause"),
+        [MenuCommand.CompileToggleAuto] = ("compile.toggleAuto", "Compile automatically", null),
+        [MenuCommand.SyncForward] = ("sync.forward", "Go to PDF position", "Ctrl+Return"),
+        [MenuCommand.SyncInverse] = ("sync.inverse", "Go to source position", "Ctrl+Shift+Return"),
+        [MenuCommand.AppSettings] = ("app.settings", "Settings", "CmdOrCtrl+,"),
+        [MenuCommand.FileUploadFolder] = ("file.uploadFolder", "Add folder…", null),
+        [MenuCommand.EditCut] = ("edit.cut", "Cut", "CmdOrCtrl+X"),
+        [MenuCommand.EditCopy] = ("edit.copy", "Copy", "CmdOrCtrl+C"),
+        [MenuCommand.EditPaste] = ("edit.paste", "Paste", "CmdOrCtrl+V"),
+        [MenuCommand.EditSelectAll] = ("edit.selectAll", "Select all", "CmdOrCtrl+A"),
+        [MenuCommand.ViewFullScreen] = ("view.fullScreen", "Full screen", "F11"),
+        [MenuCommand.AppExit] = ("app.exit", "Exit", null),
     };
 
-    public static string? Accel(this MenuCommand command) => command switch
-    {
-        MenuCommand.ProjectNew => "CmdOrCtrl+Shift+N",
-        MenuCommand.ProjectSearch => "CmdOrCtrl+Shift+F",
-        MenuCommand.FileNew => "CmdOrCtrl+N",
-        MenuCommand.FileNewFolder => "CmdOrCtrl+Shift+Alt+N",
-        MenuCommand.FileSave => "CmdOrCtrl+S",
-        MenuCommand.PdfSave => "CmdOrCtrl+Shift+S",
-        MenuCommand.EditUndo => "CmdOrCtrl+Z",
-        MenuCommand.EditRedo => "CmdOrCtrl+Shift+Z",
-        MenuCommand.EditFind => "CmdOrCtrl+F",
-        MenuCommand.EditFindNext => "CmdOrCtrl+G",
-        MenuCommand.EditFindPrevious => "CmdOrCtrl+Shift+G",
-        MenuCommand.EditBold => "CmdOrCtrl+B",
-        MenuCommand.EditItalic => "CmdOrCtrl+I",
-        MenuCommand.EditMath => "CmdOrCtrl+Shift+M",
-        MenuCommand.EditComment => "CmdOrCtrl+/",
-        MenuCommand.EditGotoLine => "CmdOrCtrl+L",
-        MenuCommand.PdfFind => "CmdOrCtrl+Alt+F",
-        MenuCommand.ViewToggleSidebar => "CmdOrCtrl+\\",
-        MenuCommand.ViewTogglePdf => "CmdOrCtrl+Shift+\\",
-        MenuCommand.ViewToggleLogs => "CmdOrCtrl+Shift+L",
-        // File Explorer's chord for its details pane, the Windows form of an inspector.
-        MenuCommand.ViewToggleInspector => "Alt+Shift+P",
-        MenuCommand.ViewZoomIn => "CmdOrCtrl+Plus",
-        MenuCommand.ViewZoomOut => "CmdOrCtrl+Minus",
-        MenuCommand.ViewFitWidth => "CmdOrCtrl+0",
-        MenuCommand.ViewFitHeight => "CmdOrCtrl+Alt+0",
-        MenuCommand.ViewUiScaleUp => "CmdOrCtrl+Alt+Plus",
-        MenuCommand.ViewUiScaleDown => "CmdOrCtrl+Alt+Minus",
-        MenuCommand.CompileRun => "CmdOrCtrl+Return",
-        // Windows' Stop chord, as macOS has Command-period (see Parse).
-        MenuCommand.CompileStop => "CmdOrCtrl+Pause",
-        MenuCommand.SyncForward => "Ctrl+Return",
-        MenuCommand.SyncInverse => "Ctrl+Shift+Return",
-        MenuCommand.AppSettings => "CmdOrCtrl+,",
-        MenuCommand.EditCut => "CmdOrCtrl+X",
-        MenuCommand.EditCopy => "CmdOrCtrl+C",
-        MenuCommand.EditPaste => "CmdOrCtrl+V",
-        MenuCommand.EditSelectAll => "CmdOrCtrl+A",
-        MenuCommand.ViewFullScreen => "F11",
-        _ => null,
-    };
+    public static string Id(this MenuCommand command) => Defs[command].Id;
+
+    public static string Title(this MenuCommand command) => Defs[command].Title;
+
+    public static string? Accel(this MenuCommand command) => Defs[command].Accel;
 
     /// <summary>
     /// Commands the native apps add to the browser version's: panes and
@@ -219,7 +132,7 @@ public static class MenuCommands
             or MenuCommand.EditSelectAll or MenuCommand.ViewFullScreen or MenuCommand.AppExit;
 
     public static MenuCommand? FromId(string id) =>
-        Enum.GetValues<MenuCommand>().Where(c => c.Id() == id).Select(c => (MenuCommand?)c).FirstOrDefault();
+        Defs.Where(d => d.Value.Id == id).Select(d => (MenuCommand?)d.Key).FirstOrDefault();
 
     /// <summary>
     /// Undo, redo and the clipboard belong to whichever text field has focus

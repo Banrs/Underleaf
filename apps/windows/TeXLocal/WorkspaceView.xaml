@@ -212,180 +212,133 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
-                            <!-- A writer's tools: a row 48 tall, as the title bar
-                                 is, of standard 32 px buttons 8 apart and 8 in
-                                 from the edge.
-                                 Overleaf's tools in its order: history; the
-                                 section level; bold and italic; math and symbols;
-                                 links, references and citations; figures and
-                                 tables; lists; then the rest in "See more". As the
-                                 pane narrows, groups fold into it from the end,
-                                 then the section level, then redo (FoldSourceBar). -->
-                            <Grid x:Name="SourceBar" Height="48" Padding="8,0" SizeChanged="OnSourceBarSizeChanged">
-                                <Grid.Resources>
-                                    <!-- The drop-downs subtle, as the buttons beside
-                                         them are, through the keys DropDownButton
-                                         reads. The other buttons here use
-                                         SubtleButtonStyle, which reads its own keys,
-                                         so only the drop-downs change. -->
-                                    <StaticResource x:Key="ButtonBackground" ResourceKey="SubtleFillColorTransparentBrush" />
-                                    <StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="SubtleFillColorSecondaryBrush" />
-                                    <StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
-                                    <StaticResource x:Key="ButtonBackgroundDisabled" ResourceKey="SubtleFillColorTransparentBrush" />
-                                    <StaticResource x:Key="ButtonBorderBrush" ResourceKey="ControlFillColorTransparentBrush" />
-                                    <StaticResource x:Key="ButtonBorderBrushPointerOver" ResourceKey="ControlFillColorTransparentBrush" />
-                                    <StaticResource x:Key="ButtonBorderBrushPressed" ResourceKey="ControlFillColorTransparentBrush" />
-                                    <StaticResource x:Key="ButtonBorderBrushDisabled" ResourceKey="ControlFillColorTransparentBrush" />
-                                </Grid.Resources>
-                                <StackPanel x:Name="SourceTools" Orientation="Horizontal" Spacing="8"
-                                            HorizontalAlignment="Left" VerticalAlignment="Center">
-                                    <Button x:Name="UndoButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnUndo"
-                                            AutomationProperties.Name="Undo" ToolTipService.ToolTip="Undo (Ctrl+Z)">
-                                        <FontIcon Glyph="&#xE7A7;" FontSize="16" />
-                                    </Button>
-                                    <Button x:Name="RedoButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnRedo"
-                                            AutomationProperties.Name="Redo" ToolTipService.ToolTip="Redo (Ctrl+Shift+Z)">
-                                        <FontIcon Glyph="&#xE7A6;" FontSize="16" />
-                                    </Button>
-                                    <!-- Each group carries the separator before it, so a
-                                         group folded into "See more" takes its own. -->
-                                    <StackPanel x:Name="LatexTools" Orientation="Horizontal" Spacing="8">
-                                        <!-- The caret line's level, as a word processor shows
-                                             a paragraph's style; as wide as its widest value,
-                                             so the bar holds still as the caret moves. -->
-                                        <StackPanel x:Name="LevelTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <DropDownButton x:Name="LevelButton" Height="32" AutomationProperties.Name="Section level"
-                                                            ToolTipService.ToolTip="Section level">
-                                                <Grid>
-                                                    <TextBlock x:Name="LevelLabel" Text="Normal text" />
-                                                    <TextBlock Text="Subsubsection" Opacity="0" AutomationProperties.AccessibilityView="Raw" />
-                                                </Grid>
-                                                <DropDownButton.Flyout>
-                                                    <MenuFlyout x:Name="LevelMenu" Placement="BottomEdgeAlignedLeft" Opening="OnLevelMenuOpening" />
-                                                </DropDownButton.Flyout>
-                                            </DropDownButton>
-                                        </StackPanel>
-                                        <StackPanel x:Name="FormatTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnBold"
-                                                    AutomationProperties.Name="Bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
-                                                <FontIcon Glyph="&#xE8DD;" FontSize="16" />
-                                            </Button>
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnItalic"
-                                                    AutomationProperties.Name="Italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
-                                                <FontIcon Glyph="&#xE8DB;" FontSize="16" />
-                                            </Button>
-                                        </StackPanel>
-                                        <StackPanel x:Name="MathTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnMath"
-                                                    AutomationProperties.Name="Inline math" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
-                                                <FontIcon Glyph="&#xE94B;" FontSize="16" />
-                                            </Button>
-                                            <!-- Segoe Fluent Icons has no sigma or pi: Σ from the
-                                                 UI font, and π drawn (PiIconData). -->
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnDisplayMath"
-                                                    AutomationProperties.Name="Display math" ToolTipService.ToolTip="Display math">
-                                                <FontIcon Glyph="Σ" FontFamily="Segoe UI" FontSize="16" />
-                                            </Button>
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}"
-                                                    AutomationProperties.Name="Symbols" ToolTipService.ToolTip="Symbols">
-                                                <PathIcon x:Name="PiIcon" />
-                                                <Button.Flyout>
-                                                    <!-- A grid per kind, each symbol named by its
-                                                         command: one tab stop, the arrow keys
-                                                         moving through it. -->
-                                                    <Flyout x:Name="SymbolsFlyout" Placement="BottomEdgeAlignedLeft">
-                                                        <GridView x:Name="SymbolGrid" SelectionMode="None" IsItemClickEnabled="True"
-                                                                  ItemClick="OnSymbolClick" AutomationProperties.Name="Symbols">
-                                                            <GridView.GroupStyle>
-                                                                <GroupStyle>
-                                                                    <GroupStyle.HeaderTemplate>
-                                                                        <DataTemplate x:DataType="local:PaletteGroup">
-                                                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                                        </DataTemplate>
-                                                                    </GroupStyle.HeaderTemplate>
-                                                                </GroupStyle>
-                                                            </GridView.GroupStyle>
-                                                            <GridView.ItemsPanel>
-                                                                <ItemsPanelTemplate>
-                                                                    <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="10" />
-                                                                </ItemsPanelTemplate>
-                                                            </GridView.ItemsPanel>
-                                                            <GridView.ItemContainerStyle>
-                                                                <Style TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
-                                                                    <Setter Property="Width" Value="36" />
-                                                                    <Setter Property="Height" Value="36" />
-                                                                    <Setter Property="MinWidth" Value="36" />
-                                                                    <Setter Property="MinHeight" Value="36" />
-                                                                    <Setter Property="Margin" Value="0" />
-                                                                    <Setter Property="Padding" Value="0" />
-                                                                    <Setter Property="HorizontalContentAlignment" Value="Center" />
-                                                                    <Setter Property="VerticalContentAlignment" Value="Center" />
-                                                                </Style>
-                                                            </GridView.ItemContainerStyle>
-                                                            <GridView.ItemTemplate>
-                                                                <DataTemplate x:DataType="local:PaletteSymbol">
-                                                                    <TextBlock Text="{x:Bind Glyph}" FontSize="20" ToolTipService.ToolTip="{x:Bind Command}" />
-                                                                </DataTemplate>
-                                                            </GridView.ItemTemplate>
-                                                        </GridView>
-                                                    </Flyout>
-                                                </Button.Flyout>
-                                            </Button>
-                                        </StackPanel>
-                                        <StackPanel x:Name="ReferenceTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Link"
-                                                    AutomationProperties.Name="Link" ToolTipService.ToolTip="Link (\href)">
-                                                <FontIcon Glyph="&#xE71B;" FontSize="16" />
-                                            </Button>
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Reference"
-                                                    AutomationProperties.Name="Reference" ToolTipService.ToolTip="Reference (\ref)">
-                                                <FontIcon Glyph="#" FontFamily="Segoe UI" FontSize="16" />
-                                            </Button>
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Citation"
-                                                    AutomationProperties.Name="Citation" ToolTipService.ToolTip="Citation (\cite)">
-                                                <FontIcon Glyph="&#xE9B1;" FontSize="16" />
-                                            </Button>
-                                        </StackPanel>
-                                        <StackPanel x:Name="FigureTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Figure"
-                                                    AutomationProperties.Name="Figure" ToolTipService.ToolTip="Figure">
-                                                <FontIcon Glyph="&#xE8B9;" FontSize="16" />
-                                            </Button>
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Table"
-                                                    AutomationProperties.Name="Table" ToolTipService.ToolTip="Table">
-                                                <FontIcon Glyph="&#xE80A;" FontSize="16" />
-                                            </Button>
-                                        </StackPanel>
-                                        <StackPanel x:Name="ListTools" Orientation="Horizontal" Spacing="8">
-                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Bulleted list"
-                                                    AutomationProperties.Name="Bulleted list" ToolTipService.ToolTip="Bulleted list">
-                                                <FontIcon Glyph="&#xE8FD;" FontSize="16" />
-                                            </Button>
-                                            <!-- None in Segoe Fluent Icons either (NumberedListIconData). -->
-                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Numbered list"
-                                                    AutomationProperties.Name="Numbered list" ToolTipService.ToolTip="Numbered list">
-                                                <PathIcon x:Name="NumberedListIcon" />
-                                            </Button>
-                                        </StackPanel>
-                                        <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
-                                        <!-- What has folded, then what has no button. -->
-                                        <Button Style="{StaticResource ToolbarIconButtonStyle}"
-                                                AutomationProperties.Name="See more" ToolTipService.ToolTip="See more">
-                                            <FontIcon Glyph="&#xE712;" FontSize="16" />
-                                            <Button.Flyout>
-                                                <MenuFlyout x:Name="SourceMoreMenu" Placement="BottomEdgeAlignedLeft" Opening="OnSourceMoreOpening" />
-                                            </Button.Flyout>
-                                        </Button>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Grid>
+                            <!-- Overleaf's tools in its order. As the pane narrows,
+                                 CommandBar moves them into "See more" from the end;
+                                 the templates with no button of their own live there. -->
+                            <CommandBar x:Name="SourceBar" Background="Transparent" HorizontalAlignment="Left"
+                                        DefaultLabelPosition="Collapsed" IsDynamicOverflowEnabled="True">
+                                <AppBarButton x:Name="UndoButton" Label="Undo" Icon="Undo" Click="OnUndo" KeyboardAcceleratorTextOverride="Ctrl+Z" />
+                                <AppBarButton x:Name="RedoButton" Label="Redo" Icon="Redo" Click="OnRedo" KeyboardAcceleratorTextOverride="Ctrl+Shift+Z" />
+                                <AppBarSeparator />
+                                <!-- The caret line's level, as wide as its widest value
+                                     so the bar holds still as the caret moves. -->
+                                <AppBarElementContainer VerticalContentAlignment="Center">
+                                    <DropDownButton x:Name="LevelButton" AutomationProperties.Name="Section level"
+                                                    ToolTipService.ToolTip="Section level">
+                                        <Grid>
+                                            <TextBlock x:Name="LevelLabel" Text="Normal text" />
+                                            <TextBlock Text="Subsubsection" Opacity="0" AutomationProperties.AccessibilityView="Raw" />
+                                        </Grid>
+                                        <DropDownButton.Flyout>
+                                            <MenuFlyout x:Name="LevelMenu" Placement="BottomEdgeAlignedLeft" Opening="OnLevelMenuOpening" />
+                                        </DropDownButton.Flyout>
+                                    </DropDownButton>
+                                </AppBarElementContainer>
+                                <AppBarSeparator />
+                                <AppBarButton Label="Bold" Icon="Bold" Click="OnBold" KeyboardAcceleratorTextOverride="Ctrl+B" />
+                                <AppBarButton Label="Italic" Icon="Italic" Click="OnItalic" KeyboardAcceleratorTextOverride="Ctrl+I" />
+                                <AppBarSeparator />
+                                <!-- Segoe Fluent Icons has no sigma, pi, number sign or
+                                     numbered list: Σ and # are the UI font's, π and
+                                     the list are drawn (PiIconData, NumberedListIconData). -->
+                                <AppBarButton Label="Inline math" Click="OnMath" KeyboardAcceleratorTextOverride="Ctrl+Shift+M">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE94B;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Label="Display math" Click="OnDisplayMath">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="Σ" FontFamily="Segoe UI" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Label="Symbols">
+                                    <AppBarButton.Icon>
+                                        <PathIcon x:Name="PiIcon" />
+                                    </AppBarButton.Icon>
+                                    <AppBarButton.Flyout>
+                                        <!-- One tab stop; the arrow keys move through the grid. -->
+                                        <Flyout x:Name="SymbolsFlyout" Placement="BottomEdgeAlignedLeft">
+                                            <GridView x:Name="SymbolGrid" SelectionMode="None" IsItemClickEnabled="True"
+                                                      ItemClick="OnSymbolClick" AutomationProperties.Name="Symbols">
+                                                <GridView.GroupStyle>
+                                                    <GroupStyle>
+                                                        <GroupStyle.HeaderTemplate>
+                                                            <DataTemplate x:DataType="local:PaletteGroup">
+                                                                <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                            </DataTemplate>
+                                                        </GroupStyle.HeaderTemplate>
+                                                    </GroupStyle>
+                                                </GridView.GroupStyle>
+                                                <GridView.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="10" />
+                                                    </ItemsPanelTemplate>
+                                                </GridView.ItemsPanel>
+                                                <GridView.ItemContainerStyle>
+                                                    <Style TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+                                                        <Setter Property="Width" Value="36" />
+                                                        <Setter Property="Height" Value="36" />
+                                                        <Setter Property="MinWidth" Value="36" />
+                                                        <Setter Property="MinHeight" Value="36" />
+                                                        <Setter Property="Margin" Value="0" />
+                                                        <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                                    </Style>
+                                                </GridView.ItemContainerStyle>
+                                                <GridView.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:PaletteSymbol">
+                                                        <TextBlock Text="{x:Bind Glyph}" FontSize="20" ToolTipService.ToolTip="{x:Bind Command}" />
+                                                    </DataTemplate>
+                                                </GridView.ItemTemplate>
+                                            </GridView>
+                                        </Flyout>
+                                    </AppBarButton.Flyout>
+                                </AppBarButton>
+                                <AppBarSeparator />
+                                <AppBarButton Label="Link" Icon="Link" Tag="Link" Click="OnInline" />
+                                <AppBarButton Label="Reference" Tag="Reference" Click="OnInline">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="#" FontFamily="Segoe UI" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Label="Citation" Tag="Citation" Click="OnInline">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE9B1;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarSeparator />
+                                <AppBarButton Label="Figure" Tag="Figure" Click="OnInsert">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE8B9;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Label="Table" Tag="Table" Click="OnInsert">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE80A;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarSeparator />
+                                <AppBarButton Label="Bulleted list" Tag="Bulleted list" Click="OnInsert">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE8FD;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton Label="Numbered list" Tag="Numbered list" Click="OnInsert">
+                                    <AppBarButton.Icon>
+                                        <PathIcon x:Name="NumberedListIcon" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <CommandBar.SecondaryCommands>
+                                    <AppBarButton Label="Equation" Tag="Equation" Click="OnInsert" />
+                                    <AppBarButton Label="Align (multi-line math)" Tag="Align (multi-line math)" Click="OnInsert" />
+                                    <AppBarButton Label="Code block" Tag="Code block" Click="OnInsert" />
+                                    <AppBarButton Label="Description list" Tag="Description list" Click="OnInsert" />
+                                    <AppBarSeparator />
+                                    <AppBarButton Label="Equation reference" Tag="Equation reference" Click="OnInline" />
+                                    <AppBarButton Label="Label" Tag="Label" Click="OnInline" />
+                                    <AppBarButton Label="URL" Tag="URL" Click="OnInline" />
+                                </CommandBar.SecondaryCommands>
+                            </CommandBar>
 
                             <!-- The jump bar: where the cursor is, as File
                                  Explorer's address bar shows a path — the
