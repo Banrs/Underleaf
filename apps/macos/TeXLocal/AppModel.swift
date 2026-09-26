@@ -57,6 +57,10 @@ final class AppModel {
     var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
         didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
     }
+    /// How far the project window's rounded corners reach into its detail
+    /// (SwiftUI's `containerCornerInsets`), for the views inside the split's
+    /// panes, which SwiftUI gives none: each pane is hosted on its own.
+    var windowCorners = RectangleCornerInsets()
 
     /// ⌘N on the home screen, or a template's card.
     func newProject(_ template: String = "article") {

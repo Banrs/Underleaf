@@ -115,8 +115,9 @@ private struct SourcePane: View {
 /// The status bar, as Finder's is: a little text about the window's
 /// contents (HIG, Windows). How the build went (choose it for the panel's
 /// issues), the save state and where the cursor is, then, past a line, the
-/// build panel's toggle, its bezel on while the panel shows, as the kit's
-/// borderless buttons are. The one place the build's summary shows. A narrow window drops whole
+/// build panel's toggle. Borderless, as the controls in Xcode's bottom
+/// bars are: no hover bezels, and the toggle tinted while the panel shows.
+/// The one place the build's summary shows. A narrow window drops whole
 /// items, never cutting one short: the engine first (the inspector and the
 /// Compile menu show it too), then the counts, then the save state.
 private struct StatusBar: View {
@@ -125,31 +126,34 @@ private struct StatusBar: View {
 
     var body: some View {
         @Bindable var project = project
-        // Its ends as far from the edge as its items are from each other:
-        // the panel's toggle sits centred between the line and the window's
-        // edge, and its bezel clear of, and concentric with, the window's
-        // rounded corner. (SwiftUI's containerCornerOffset can't see the
-        // window's corners from inside the split's panes.)
-        SecondaryBar(spacing: BarMetrics.itemSpacing, edgeInset: BarMetrics.itemSpacing) {
+        // Clear of the window's rounded corners where it meets them (the
+        // leading one with the sidebar hidden, the trailing one with the
+        // inspector hidden), by the system's own corner insets.
+        let corners = app.windowCorners
+        SecondaryBar(spacing: BarMetrics.itemSpacing,
+                     leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
+                     trailingInset: app.showInspector ? BarMetrics.inset
+                         : max(BarMetrics.inset, corners.bottomTrailing.width)) {
             ViewThatFits(in: .horizontal) {
                 items(save: true, counts: true, engine: true)
                 items(save: true, counts: true, engine: false)
                 items(save: true, counts: false, engine: false)
                 items(save: false, counts: false, engine: false)
             }
-            ToolSeparator()
-            // The large symbol scale: the status item's height, so the two
-            // sit level.
-            Toggle(isOn: $project.showLogs) {
-                Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
+            // The text only: on the toggle, it would hide its tint.
+            .foregroundStyle(.secondary)
+            // A group of its own: the kit's 8 pt either side of the line.
+            HStack(spacing: BarMetrics.groupSpacing) {
+                ToolSeparator()
+                Toggle(isOn: $project.showLogs) {
+                    Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
             }
-            .toggleStyle(.button)
-            .labelStyle(.iconOnly)
-            .imageScale(.large)
-            .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
         }
-        .buttonStyle(.accessoryBar)
-        .foregroundStyle(.secondary)
+        .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows, as Pages' word count
         // is (View › Show Word Count too), not in Settings.
         .contextMenu {
