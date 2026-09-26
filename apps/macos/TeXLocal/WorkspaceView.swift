@@ -60,6 +60,9 @@ struct WorkspaceView: View {
                       defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
             if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
         }
+        // Save PDF As… saves, as every Save As does; a zip is exported.
+        .fileExporterFilenameLabel(app.exporting?.type == .pdf ? "Save As:" : "Export As:")
+        .fileDialogConfirmationLabel(app.exporting?.type == .pdf ? "Save" : "Export")
         .sheet(item: $app.prompt) { prompt in
             switch prompt {
             case .newFile: NewEntrySheet(project: project, directory: false)

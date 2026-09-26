@@ -53,6 +53,7 @@
 		55756959E4BD347AD47DCBDB /* TeXLocalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalApp.swift; sourceTree = "<group>"; };
 		639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeXLocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		67C8D90033DCF0BC03B38114 /* Commands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commands.swift; sourceTree = "<group>"; };
+		E34671B84360ABBFBBB0C5D2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		6A947A0ACCBDB707B2BE2099 /* Outline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Outline.swift; sourceTree = "<group>"; };
 		D39583A134CAD40376A4A3DB /* LaTeX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeX.swift; sourceTree = "<group>"; };
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -108,6 +109,7 @@
 				C0DE5A1E0000000000000B02 /* PaneBars.swift */,
 				C0DE5A1E0000000000000C02 /* SourceBars.swift */,
 				92DFFB06FAB61A26B9807116 /* HomeView.swift */,
+				E34671B84360ABBFBBB0C5D2 /* Info.plist */,
 				CE1B774F61877030414C0844 /* LogsView.swift */,
 				BB64852D001BF573F24FB9C8 /* Models.swift */,
 				6A947A0ACCBDB707B2BE2099 /* Outline.swift */,
@@ -468,6 +470,7 @@
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "TeXLocal asks Finder to move deleted files to the Trash, so you can put them back.";
@@ -496,6 +499,7 @@
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "TeXLocal asks Finder to move deleted files to the Trash, so you can put them back.";

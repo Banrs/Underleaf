@@ -181,11 +181,11 @@ extension AppModel {
         // Undo and redo also serve text fields outside the editor.
         case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
         case .fileSave, .editFind, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
-            project?.openPath != nil
+            project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
             project?.pdfVersion ?? 0 > 0
-        case .syncForward: (project?.pdfVersion ?? 0) > 0 && project?.openPath != nil
+        case .syncForward: (project?.pdfVersion ?? 0) > 0 && project?.editsText == true
         default: project != nil
         }
     }
@@ -267,7 +267,7 @@ extension AppModel {
     /// reach WebKit's undo manager, which never sees CodeMirror's own changes
     /// (formatting, completions) and reverted half of an insertion.
     private func undo(redo: Bool) {
-        guard nativeText == nil, project?.openPath != nil else { sendUndo(redo: redo); return }
+        guard nativeText == nil, project?.editsText == true else { sendUndo(redo: redo); return }
         Task {
             // The page declines while one of its own fields, such as the
             // find panel's, has focus; that field's native undo takes it.
@@ -335,6 +335,14 @@ struct AppCommands: Commands {
             // Mac only: the browser can't read a folder from disk.
             Button("Open…") { app.openingProject = true }
                 .keyboardShortcut("o")
+            Menu("Open Recent") {
+                ForEach(app.recentProjects.compactMap { id in app.projects.first { $0.id == id } }) { project in
+                    Button(project.name) { Task { await app.open(project.id) } }
+                }
+                Divider()
+                Button("Clear Menu") { app.recentProjects = [] }
+                    .disabled(app.recentProjects.isEmpty)
+            }
             Divider()
             item(.fileNew)
             item(.fileNewFolder)

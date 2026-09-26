@@ -25,6 +25,13 @@ struct HomeView: View {
             Divider()
             recents
         }
+        // A folder, .tex file or .zip dropped on the window opens as Open…
+        // opens it, as Apple's start windows take a dropped document.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first, AppModel.canOpen(url) else { return false }
+            Task { await app.importProject(from: url) }
+            return true
+        }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {

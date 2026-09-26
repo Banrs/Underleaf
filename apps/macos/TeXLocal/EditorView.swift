@@ -89,7 +89,9 @@ private struct SourcePane: View {
                     .transition(.findBar(reduceMotion: reduceMotion))
             }
             Divider()
-            if project.openPath != nil {
+            if project.openPath != nil, !project.editsText, let url = project.openURL {
+                FilePreview(url: url)
+            } else if project.openPath != nil {
                 EditorView(bridge: app.editor)
             } else {
                 // No file open, or it was deleted: nothing to type into
@@ -100,6 +102,30 @@ private struct SourcePane: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: project.findShown)
+    }
+}
+
+/// An image or a PDF figure in place of the editor, as the web previews
+/// one: fitted to the pane but never enlarged past its own size, as Xcode
+/// shows an image. A PDF is a page, so on white paper as the PDF pane's.
+private struct FilePreview: View {
+    let url: URL
+
+    var body: some View {
+        if let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
+                .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel(url.lastPathComponent)
+        } else {
+            ContentUnavailableView("No Preview", systemImage: "photo",
+                                   description: Text("“\(url.lastPathComponent)” couldn’t be read as an image."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
@@ -158,12 +184,12 @@ private struct StatusBar: View {
             }
             .help("Show Issues")
             // While a build runs the build status says so; the save state
-            // would repeat it.
-            if save, !project.compiling {
+            // would repeat it. A preview has none, as the web's.
+            if save, !project.compiling, project.editsText {
                 Text(project.status)
             }
             Spacer(minLength: BarMetrics.itemSpacing)
-            if project.openPath != nil {
+            if project.editsText {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showCounts, app.showWordCount, let counts = project.counts {
                     // Singular for one, by Foundation's grammar agreement.

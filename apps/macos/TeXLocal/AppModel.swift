@@ -28,7 +28,9 @@ struct ExportFile: Transferable {
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .pdf) { SentTransferredFile(try await $0.make()) }
+            .suggestedFileName(\.name)
         FileRepresentation(exportedContentType: .zip) { SentTransferredFile(try await $0.make()) }
+            .suggestedFileName(\.name)
     }
 }
 
@@ -68,6 +70,10 @@ final class AppModel {
     }
     var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
         didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
+    }
+    /// File › Open Recent: the projects last opened, newest first, by id.
+    var recentProjects = UserDefaults.standard.stringArray(forKey: "recentProjects") ?? [] {
+        didSet { UserDefaults.standard.set(recentProjects, forKey: "recentProjects") }
     }
     /// How far the project window's rounded corners reach into its detail
     /// (SwiftUI's `containerCornerInsets`), for the views inside the split's
@@ -111,6 +117,12 @@ final class AppModel {
         }
     }
 
+    /// Settings' TeX folder: one the user chose, or nil to find TeX
+    /// automatically. The core refuses a folder without latexmk.
+    func setTeXFolder(_ path: String?) async throws {
+        tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+    }
+
     func create(name: String, template: String) async {
         do {
             let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
@@ -123,6 +135,11 @@ final class AppModel {
 
     /// What File › Open… opens: a folder, a .tex file or a .zip.
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
+
+    /// Whether Open… takes an item dropped or handed to the app.
+    static func canOpen(_ url: URL) -> Bool {
+        url.isFileURL && (url.hasDirectoryPath || ["tex", "zip"].contains(url.pathExtension.lowercased()))
+    }
 
     /// File › Open…: a folder, a .tex file or a .zip from anywhere, made a
     /// project in the library and opened. The original stays where it is.
@@ -220,7 +237,8 @@ final class AppModel {
 
     func rename(_ project: ProjectInfo, to name: String) async {
         do {
-            _ = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
+            let renamed = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
+            recentProjects = recentProjects.map { $0 == project.id ? renamed.id : $0 }
         } catch {
             alert = AppAlert("Couldn’t Rename “\(project.name)”", error)
         }
@@ -245,7 +263,8 @@ final class AppModel {
     }
 
     func open(_ id: String) async {
-        guard await close() else { return }
+        guard project?.id != id, await close() else { return }
+        recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
         await model.load()

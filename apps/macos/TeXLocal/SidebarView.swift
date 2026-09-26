@@ -93,7 +93,9 @@ private struct FilesList: View {
             if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
+            if let path, path != project.openPath, isTextFile(path) || isPreviewFile(path) {
+                Task { await project.open(path, focus: false) }
+            }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         // ⌫, as Finder and the projects table take it.
@@ -175,10 +177,18 @@ private struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: icon(for: node))
+            Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
         }
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
+        // Into the folder dropped on, or the one the file dropped on is in,
+        // as Windows' tree takes them; elsewhere the list's own drop adds
+        // them at the top.
+        .dropDestination(for: URL.self) { urls, _ in
+            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            Task { await project.importFiles(urls, into: folder) }
+            return true
+        }
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
@@ -202,18 +212,6 @@ private struct FilesList: View {
         guard !name.isEmpty, name != node.name, !name.contains("/") else { return }
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
-    }
-
-    /// The file kind's symbol, as every list of the project's files shows it.
-    private func icon(for node: TreeNode) -> String {
-        if node.isDirectory { return "folder" }
-        switch (node.name as NSString).pathExtension.lowercased() {
-        case "tex": return "doc.text"
-        case "bib": return "books.vertical"
-        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg": return "photo"
-        case "pdf": return "doc.richtext"
-        default: return "doc"
-        }
     }
 }
 

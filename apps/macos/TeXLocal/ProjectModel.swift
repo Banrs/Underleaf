@@ -100,6 +100,9 @@ final class ProjectModel {
 
     /// The open file is LaTeX: it has an outline, counts and the LaTeX tools.
     var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+    /// The open file is text in the editor, rather than an image or a PDF
+    /// in its preview: what the editor's commands and saves act on.
+    var editsText: Bool { openPath.map(isTextFile) ?? false }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -193,11 +196,12 @@ final class ProjectModel {
 
     // ---------- editing ----------
 
-    /// Open a file: text in the editor, anything else in its own app.
-    /// Choosing in a sidebar list passes `focus: false`, so the arrow keys
-    /// stay in the list, as Xcode's navigator keeps them.
+    /// Open a file: text in the editor, an image or PDF figure in a preview
+    /// in its place (as the web previews one), anything else in its own
+    /// app. Choosing in a sidebar list passes `focus: false`, so the arrow
+    /// keys stay in the list, as Xcode's navigator keeps them.
     func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
-        guard isTextFile(path) else {
+        guard isTextFile(path) || isPreviewFile(path) else {
             if let url = await fileURL(path) { NSWorkspace.shared.open(url) }
             return
         }
@@ -206,7 +210,14 @@ final class ProjectModel {
         // file while `openPath` — where autosave writes — names the other.
         openGeneration += 1
         let generation = openGeneration
-        if path != openPath {
+        if path != openPath, isPreviewFile(path) {
+            guard await saveEdits(), generation == openGeneration else { return }
+            openPath = path
+            openURL = await fileURL(path)
+            diskText = nil
+            watchOpenFile()
+            analyze("")
+        } else if path != openPath {
             guard await saveEdits(), generation == openGeneration else { return }
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
@@ -223,7 +234,7 @@ final class ProjectModel {
                 return
             }
         }
-        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+        if let line, editsText, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
     func showInFinder(_ path: String) {
@@ -258,7 +269,7 @@ final class ProjectModel {
     }
 
     private func write() async -> Bool {
-        guard dirty, let path = openPath else { return true }
+        guard dirty, editsText, let path = openPath else { return true }
         // Not over another app's change until asked which to keep.
         guard diskConflict == nil else { return false }
         saving = true
@@ -358,7 +369,7 @@ final class ProjectModel {
     /// Watch the open file, so a change made by another app (an editor, a
     /// sync, git) shows here rather than being saved over.
     private func watchOpenFile() {
-        guard let url = openURL else {
+        guard let url = openURL, editsText else {
             watcher = nil
             return
         }
@@ -632,9 +643,10 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    func importFiles(_ urls: [URL]) async {
+    /// Copies files in, at the top of the project or into `dir`.
+    func importFiles(_ urls: [URL], into dir: String = "") async {
         do {
-            try await core.perform("import_files", ["id": id, "dir": "", "paths": urls.map(\.path)])
+            try await core.perform("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)])
         } catch {
             report(error, "Couldn’t Add the Files")
         }

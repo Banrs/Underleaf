@@ -307,7 +307,7 @@ struct SourceLocation: View {
                 Button((file as NSString).lastPathComponent) { Task { await project.open(file) } }
             }
         } label: {
-            Label(name, systemImage: "doc.text").labelStyle(.titleAndIcon)
+            Label(name, systemImage: fileSymbol(path)).labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
         // A quiet fill under the pointer, as Xcode's jump bar has.

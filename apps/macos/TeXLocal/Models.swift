@@ -31,6 +31,8 @@ extension [TreeNode] {
 struct TexStatus: Decodable {
     let available: Bool
     let version: String?
+    /// The TeX folder chosen in Settings; nil finds TeX automatically.
+    var texDir: String?
     /// The folder latexmk runs from.
     var found: String?
 
@@ -122,11 +124,29 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     return path
 }
 
-/// The extensions the core treats as text (projects.rs `TEXT_EXT`); anything
-/// else opens in its own app rather than the editor.
+/// The files the editor opens (web/src/state.js `TEXT_FILE`).
 func isTextFile(_ path: String) -> Bool {
     [
         "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-        "py", "r", "dat", "def", "clo", "tikz", "svg",
+        "py", "r", "dat", "def", "clo", "tikz",
     ].contains((path as NSString).pathExtension.lowercased())
+}
+
+/// A file kind's symbol, as the sidebar and the location row show it.
+func fileSymbol(_ path: String, directory: Bool = false) -> String {
+    if directory { return "folder" }
+    switch (path as NSString).pathExtension.lowercased() {
+    case "tex": return "doc.text"
+    case "bib": return "books.vertical"
+    case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg": return "photo"
+    case "pdf": return "doc.richtext"
+    default: return "doc"
+    }
+}
+
+/// The files previewed in the source pane: images (web/src/state.js
+/// `IMAGE_FILE`, SVG among them) and PDF figures. Anything else opens in
+/// its own app.
+func isPreviewFile(_ path: String) -> Bool {
+    ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "pdf"].contains((path as NSString).pathExtension.lowercased())
 }

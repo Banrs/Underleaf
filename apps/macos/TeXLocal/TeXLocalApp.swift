@@ -77,6 +77,11 @@ extension View {
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    /// The open project, kept with the window's restored state: it opens
+    /// again at launch when the system restores windows (System Settings ›
+    /// Desktop & Dock › Close windows when quitting an application, or
+    /// Quit and Keep Windows).
+    @SceneStorage("project") private var restoredProject: String?
 
     var body: some View {
         @Bindable var app = app
@@ -100,21 +105,33 @@ struct RootView: View {
             // `open TeXLocal.app --args -openProject <id>` opens a project at
             // launch; launch arguments land in UserDefaults' argument domain
             // for this run only.
-            if let id = UserDefaults.standard.string(forKey: "openProject"), app.project == nil {
+            let restored = restoredProject.flatMap { id in app.projects.contains { $0.id == id } ? id : nil }
+            if let id = UserDefaults.standard.string(forKey: "openProject") ?? restored, app.project == nil {
                 await app.open(id)
             }
+        }
+        .onChange(of: app.project?.id) { _, id in restoredProject = id }
+        // A .tex file, a .zip or a folder from Finder's Open With or the
+        // Dock icon, opened as Open… opens it.
+        .onOpenURL { url in
+            if AppModel.canOpen(url) { Task { await app.importProject(from: url) } }
         }
         // While TeX is missing, look for it now and then, whichever screen
         // shows, so installing it takes effect without a restart.
         .task(id: app.tex?.available) { await app.watchForTeX() }
-        .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
-            switch result {
-            case .success(let url): Task { await app.importProject(from: url) }
-            case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
-            }
+        // On a view of its own: a file dialog's labels reach every dialog
+        // presented from inside the view they're set on.
+        .background {
+            Color.clear
+                .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
+                    switch result {
+                    case .success(let url): Task { await app.importProject(from: url) }
+                    case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+                    }
+                }
+                .fileDialogConfirmationLabel("Open")
+                .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
         }
-        .fileDialogConfirmationLabel("Open")
-        .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
         .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
         // The title says what happened, briefly, as the HIG asks; the
         // detail is the message. `presenting`, so the text stays while the
