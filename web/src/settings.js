@@ -80,6 +80,31 @@ function toggle(get, set) {
   return b;
 }
 
+// A switch for a project setting, saved to disk as it flips: it stays put
+// while the save runs and flips back if the save fails.
+function projectSwitch(projectId, key) {
+  const b = el('button', {
+    class: 'switch',
+    role: 'switch',
+    'aria-checked': String(!!state.settings?.[key]),
+    onclick: async () => {
+      const on = b.getAttribute('aria-checked') !== 'true';
+      b.disabled = true;
+      b.setAttribute('aria-checked', String(on));
+      try {
+        const settings = await api.saveSettings(projectId, { [key]: on });
+        if (state.projectId === projectId) state.settings = settings;
+      } catch (err) {
+        b.setAttribute('aria-checked', String(!on));
+        toast(err.message, 'error');
+      } finally {
+        b.disabled = false;
+      }
+    },
+  }, el('span', { class: 'switch-knob' }));
+  return b;
+}
+
 // Stepper over a fixed list of values, with the ends disabled rather than silently
 // doing nothing.
 function stepper(values, get, set, format) {
@@ -213,7 +238,10 @@ export function openSettings(options = {}) {
       }, ['pdflatex', 'xelatex', 'lualatex'].map((e) =>
         el('option', { value: e, selected: state.settings?.engine === e ? '' : undefined }, e)));
       const control = el('div', { class: 'settings-control' }, saving, engine);
-      groups.push(group('Project', row('TeX engine', state.settings?.title || projectId, control)));
+      groups.push(group('Project',
+        row('TeX engine', state.settings?.title || projectId, control),
+        row('Stop on first error', 'Halt at the first LaTeX error instead of compiling past it',
+          projectSwitch(projectId, 'stopOnFirstError'))));
       // The row labels the control group; the select itself is what gets focus.
       engine.setAttribute('aria-labelledby', control.getAttribute('aria-labelledby'));
       control.removeAttribute('aria-labelledby');

@@ -3,7 +3,7 @@
 // a row is chosen, which keeps the dependency one-directional.
 
 import { api } from './api.js';
-import { el, toast, promptModal, confirmModal, contextMenu } from './dom.js';
+import { el, toast, promptModal, confirmModal, contextMenu, showModal, dialogShell } from './dom.js';
 import { icon } from './icons.js';
 import { state, IMAGE_FILE, sectionIndexAt } from './state.js';
 import { prefs } from './prefs.js';
@@ -385,9 +385,13 @@ function setupDropzone(treeEl) {
   });
 }
 
-// Walk dropped items so folder drops preserve their structure.
-async function collectDroppedFiles(dt) {
+// Walk dropped items so folder drops preserve their structure. Hidden entries
+// inside a folder (.git, .DS_Store) and macOS's __MACOSX stay behind, as the
+// core's own import leaves them and the tree would never show them; an item
+// dropped by its own name still comes.
+export async function collectDroppedFiles(dt) {
   const out = [];
+  const hidden = (entry) => entry.name.startsWith('.') || entry.name === '__MACOSX';
   const walk = async (entry, prefix) => {
     if (entry.isFile) {
       const file = await new Promise((res, rej) => entry.file(res, rej));
@@ -398,7 +402,7 @@ async function collectDroppedFiles(dt) {
       let batch;
       do {
         batch = await new Promise((res, rej) => reader.readEntries(res, rej));
-        for (const child of batch) await walk(child, `${prefix}${entry.name}/`);
+        for (const child of batch) if (!hidden(child)) await walk(child, `${prefix}${entry.name}/`);
       } while (batch.length);
     }
   };
@@ -408,11 +412,41 @@ async function collectDroppedFiles(dt) {
   return out;
 }
 
+// Names already taken are asked about once for the whole upload, as Finder
+// asks: Replace (the old ones go to the Trash), Keep Both or Stop.
+export function clashQuestion(existing) {
+  const names = existing.map((c) => c.path);
+  const one = names.length === 1;
+  const title = one
+    ? `An item named “${names[0].split('/').pop()}” already exists in this location.`
+    : `${names.length} items with these names already exist in this location.`;
+  const replace = one
+    ? `Do you want to replace it with the one you’re uploading? The one here goes to the ${trashName}.`
+    : `Do you want to replace them with the ones you’re uploading? The ones here go to the ${trashName}.`;
+  // A few by name, so a folder's worth doesn't fill the dialog.
+  const shown = names.slice(0, 3).map((n) => `“${n}”`);
+  if (names.length > shown.length) shown.push(`${names.length - shown.length} more`);
+  const list = new Intl.ListFormat('en', { type: 'conjunction' }).format(shown);
+  return { title, body: one ? replace : `${list}. ${replace}` };
+}
+
+function askClash(existing) {
+  const { title, body } = clashQuestion(existing);
+  return showModal((close) => dialogShell(title,
+    el('p', { class: 'modal-body' }, body),
+    [
+      el('button', { class: 'btn', onclick: () => close(null) }, 'Stop'),
+      el('button', { class: 'btn', onclick: () => close('keepBoth') }, 'Keep Both'),
+      el('button', { class: 'btn primary', autofocus: '', onclick: () => close('replace') }, 'Replace'),
+    ]));
+}
+
 async function upload(files) {
   const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
   let msg, kind;
   try {
-    const { saved } = await api.upload(state.projectId, files);
+    const { saved, stopped } = await api.upload(state.projectId, files, '', askClash);
+    if (stopped) return;
     msg = `Uploaded ${count(saved.length)}`;
   } catch (err) {
     if (!err.saved?.length) { toast(err.message, 'error'); return; }
