@@ -41,8 +41,7 @@ export function toast(msg, kind = '') {
   if (!root) return;
   // Cap concurrent toasts — drop the oldest so they never stack to infinity.
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
-  const t = el('div', { class: `toast ${kind}`, role: 'status' }, msg);
-  root.appendChild(t);
+  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: 'status' }, msg));
   setTimeout(() => t.remove(), 3200);
 }
 
@@ -108,7 +107,7 @@ export function showModal(build) {
   });
 }
 
-function dialogShell(title, body, actions) {
+export function dialogShell(title, body, actions) {
   return el('div', { class: 'modal' },
     el('h2', { class: 'modal-title' }, title),
     body,
@@ -122,14 +121,13 @@ export function promptModal({ title, label, value = '', confirm = 'OK' }) {
     const input = el('input', {
       id, value, onkeydown: (e) => { if (e.key === 'Enter') close(input.value.trim()); },
     });
-    const dialog = dialogShell(title,
+    setTimeout(() => { input.focus(); input.select(); });
+    return dialogShell(title,
       el('div', { class: 'field' }, label ? el('label', { for: id }, label) : null, input),
       [
         el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
         el('button', { class: 'btn primary', onclick: () => close(input.value.trim()) }, confirm),
       ]);
-    setTimeout(() => { input.focus(); input.select(); });
-    return dialog;
   });
 }
 
@@ -220,7 +218,7 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
 // Open a menu below a control, aligned to its leading edge — the macOS
 // pull-down convention. Clicking the control again closes it.
 export function menuUnder(target, items, options) {
-  if (openMenu?.anchor && openMenu.anchor === target) { openMenu.dismiss(); return null; }
+  if (openMenu?.anchor === target) { openMenu.dismiss(); return null; }
   const r = target.getBoundingClientRect();
   return contextMenu(r.left, r.bottom + 4, items, { ...options, anchor: target });
 }

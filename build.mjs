@@ -10,30 +10,26 @@ const at = (...p) => path.join(ROOT, ...p);
 
 const watch = process.argv.includes('--watch');
 
-fs.mkdirSync(at('web/dist'), { recursive: true });
-fs.copyFileSync(
-  at('node_modules/pdfjs-dist/build/pdf.worker.min.mjs'),
-  at('web/dist/pdf.worker.min.mjs'),
-);
-fs.copyFileSync(at('node_modules/katex/dist/katex.min.css'), at('web/dist/katex.min.css'));
+function copyInto(dest, src, names) {
+  fs.mkdirSync(at(dest), { recursive: true });
+  for (const f of names) fs.copyFileSync(at(src, f), at(dest, f));
+}
+copyInto('web/dist', 'node_modules/pdfjs-dist/build', ['pdf.worker.min.mjs']);
+copyInto('web/dist', 'node_modules/katex/dist', ['katex.min.css']);
 // woff2 only — Chromium/WKWebView both support it, so the .woff/.ttf duplicates
 // KaTeX ships (several MB) are never fetched. @font-face lists woff2 first.
-fs.mkdirSync(at('web/dist/fonts'), { recursive: true });
-for (const f of fs.readdirSync(at('node_modules/katex/dist/fonts'))) {
-  if (f.endsWith('.woff2')) fs.copyFileSync(at('node_modules/katex/dist/fonts', f), at('web/dist/fonts', f));
-}
-fs.mkdirSync(at('web/dist/fonts-jbm'), { recursive: true });
-for (const f of [
+const katexFonts = 'node_modules/katex/dist/fonts';
+copyInto('web/dist/fonts', katexFonts, fs.readdirSync(at(katexFonts)).filter((f) => f.endsWith('.woff2')));
+copyInto('web/dist/fonts-jbm', 'node_modules/@fontsource/jetbrains-mono/files', [
   'jetbrains-mono-latin-400-normal.woff2',
   'jetbrains-mono-latin-400-italic.woff2',
   'jetbrains-mono-latin-700-normal.woff2',
-]) {
-  fs.copyFileSync(at('node_modules/@fontsource/jetbrains-mono/files', f), at('web/dist/fonts-jbm', f));
-}
+]);
 
 const common = {
   bundle: true,
   format: 'esm',
+  outdir: at('web/dist'),
   minify: !watch,
   // Sourcemap only in dev/watch — the production map is ~5MB of dead weight.
   sourcemap: watch,
@@ -48,7 +44,6 @@ const builds = [
   {
     ...common,
     entryPoints: { bundle: at('web/src/main.js') },
-    outdir: at('web/dist'),
     splitting: true,
     chunkNames: 'chunks/[name]-[hash]',
   },
@@ -61,7 +56,6 @@ const builds = [
       'embed-editor': at('web/src/embed/editor.js'),
       'embed-pdf': at('web/src/embed/pdf.js'),
     },
-    outdir: at('web/dist'),
   },
 ];
 

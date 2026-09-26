@@ -33,8 +33,9 @@ function group(title, ...rows) {
 }
 
 // Segmented control as a radio group: arrow keys move between options and the
-// selected option is exposed, not just coloured.
-function segmented(options, get, set) {
+// selected option is exposed, not just coloured. `options` are [value, label].
+function segmented(pairs, get, set) {
+  const options = pairs.map(([value, label]) => ({ value, label }));
   const wrap = el('div', { class: 'segmented', role: 'radiogroup' });
   const buttons = options.map(({ value, label }) => el('button', {
     class: 'segment',
@@ -158,16 +159,11 @@ export function openSettings(options = {}) {
   return showModal((close) => {
     const groups = [
       group('Appearance',
-        row('Theme', null, segmented([
-          { value: 'system', label: 'System' },
-          { value: 'light', label: 'Light' },
-          { value: 'dark', label: 'Dark' },
-        ], () => prefs.themeMode, (v) => { prefs.themeMode = v; })),
-        row('Document paper', 'Dark paper inverts the rendered PDF for night reading', segmented([
-          { value: 'white', label: 'White' },
-          { value: 'dark', label: 'Dark' },
-          { value: 'auto', label: 'Auto' },
-        ], () => prefs.pdfPaper, (v) => { prefs.pdfPaper = v; })),
+        row('Theme', null, segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']],
+          () => prefs.themeMode, (v) => { prefs.themeMode = v; })),
+        row('Document paper', 'Dark paper inverts the rendered PDF for night reading',
+          segmented([['white', 'White'], ['dark', 'Dark'], ['auto', 'Auto']],
+            () => prefs.pdfPaper, (v) => { prefs.pdfPaper = v; })),
         row('Floating panels', 'Inset rounded panes instead of edge-to-edge',
           toggle(() => prefs.floating, (v) => { prefs.floating = v; })),
       ),
@@ -176,14 +172,10 @@ export function openSettings(options = {}) {
           toggle(() => prefs.autoCompile, (v) => { prefs.autoCompile = v; })),
         row('Word count', 'Show words and lines over the editor',
           toggle(() => prefs.showWordCount, (v) => { prefs.showWordCount = v; })),
-        row('Syntax colours', 'Colours for LaTeX commands in the source', segmented([
-          { value: 'onedark', label: 'One Dark' },
-          { value: 'xcode', label: 'Xcode' },
-        ], () => prefs.editorTheme, (v) => { prefs.editorTheme = v; })),
-        row('Editor font', null, segmented([
-          { value: 'system', label: 'System' },
-          { value: 'jetbrains', label: 'JetBrains' },
-        ], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
+        row('Syntax colours', 'Colours for LaTeX commands in the source',
+          segmented([['onedark', 'One Dark'], ['xcode', 'Xcode']], () => prefs.editorTheme, (v) => { prefs.editorTheme = v; })),
+        row('Editor font', null,
+          segmented([['system', 'System'], ['jetbrains', 'JetBrains']], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
         row('Editor font size', null,
           stepper(FONT_SIZES, () => prefs.editorFontSize, (v) => { prefs.editorFontSize = v; }, (v) => `${v} pt`)),
         // A browser has its own zoom, which this would only duplicate.

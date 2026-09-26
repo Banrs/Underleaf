@@ -24,7 +24,6 @@ test('quit reports a failed save instead of acknowledging success', async () => 
   assert.deepEqual(outcome, { ok: false, error: 'disk full' });
 });
 
-
 test('quit interaction lock is reversible after an aborted flush', () => {
   const attrs = new Set();
   const body = {

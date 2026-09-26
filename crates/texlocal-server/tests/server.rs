@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_server::{http, App, Request, Response};
+use texlocal_server::{serve, App, Request, Response};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 const PORT: u16 = 7878;
@@ -352,22 +352,14 @@ async fn start_with(max_body: usize) -> (Fixture, u16) {
     let data = f._data.path().to_path_buf();
     let web = f._web.path().to_path_buf();
     let app = Arc::new(App::new(Service::new(data), web, port, TOKEN.into()));
-    let guard = {
-        let app = app.clone();
-        Arc::new(move |req: &Request| app.guard(req))
-    };
-    let handler = Arc::new(move |req| {
-        let app = app.clone();
-        async move { app.handle(req).await }
-    });
-    tokio::spawn(http::serve(
-        listener,
-        handler,
-        guard,
-        max_body,
-        std::future::pending(),
-    ));
+    tokio::spawn(serve(app, listener, max_body, std::future::pending()));
     (f, port)
+}
+
+async fn connect(port: u16) -> tokio::net::TcpStream {
+    tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap()
 }
 
 async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
@@ -397,9 +389,7 @@ async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
 #[tokio::test]
 async fn one_connection_carries_several_requests_with_bodies() {
     let (_f, port) = start().await;
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let mut stream = connect(port).await;
     let head = format!("Host: 127.0.0.1:{port}\r\nCookie: texlocal_token={TOKEN}");
 
     let body = r#"{"id":"P","path":"main.tex"}"#;
@@ -422,9 +412,7 @@ async fn one_connection_carries_several_requests_with_bodies() {
 #[tokio::test]
 async fn a_request_pipelined_behind_a_body_is_kept() {
     let (_f, port) = start().await;
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let mut stream = connect(port).await;
     let head = format!("Host: 127.0.0.1:{port}\r\nCookie: texlocal_token={TOKEN}");
     let body = r#"{"id":"P","path":"main.tex"}"#;
     let both = format!(
@@ -453,9 +441,7 @@ async fn oversized_and_chunked_bodies_are_refused_before_reading() {
         ("Content-Length: 5\r\nContent-Length: 6", "400"),
         ("Content-Length: +5", "400"),
     ] {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let mut stream = connect(port).await;
         let req = format!(
             "POST /api/list_projects HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{extra}\r\n\r\n"
         );
@@ -489,9 +475,7 @@ async fn unauthenticated_requests_are_answered_before_their_bodies() {
     let (_f, port) = start_with(BIG).await;
     for (head, expected) in unauthenticated_heads(port) {
         // Only the head is sent: waiting for the body would time out.
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let mut stream = connect(port).await;
         let req =
             format!("POST /api/upload_file HTTP/1.1\r\n{head}\r\nContent-Length: {BIG}\r\n\r\n");
         stream.write_all(req.as_bytes()).await.unwrap();
@@ -513,9 +497,7 @@ async fn unauthenticated_requests_are_answered_before_their_bodies() {
 async fn a_refused_upload_still_delivers_the_whole_response() {
     let (_f, port) = start_with(BIG).await;
     for (head, expected) in unauthenticated_heads(port) {
-        let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let stream = connect(port).await;
         let (mut reader, mut writer) = stream.into_split();
         let req =
             format!("POST /api/upload_file HTTP/1.1\r\n{head}\r\nContent-Length: {BIG}\r\n\r\n");
@@ -560,9 +542,7 @@ async fn a_refused_upload_still_delivers_the_whole_response() {
 #[tokio::test]
 async fn refusals_without_a_pending_body_keep_the_connection() {
     let (_f, port) = start().await;
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let mut stream = connect(port).await;
     let host = format!("Host: 127.0.0.1:{port}");
 
     let bare = format!("GET / HTTP/1.1\r\n{host}\r\n\r\n");
@@ -606,9 +586,7 @@ async fn refusals_without_a_pending_body_keep_the_connection() {
 #[tokio::test]
 async fn a_head_sent_a_byte_at_a_time_is_still_read() {
     let (_f, port) = start().await;
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let mut stream = connect(port).await;
     stream.set_nodelay(true).unwrap();
     // With the empty line RFC 9112 lets a client send before a request.
     let req = format!(
@@ -627,9 +605,7 @@ async fn a_head_sent_a_byte_at_a_time_is_still_read() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_head_of_endless_blank_lines_is_cut_off() {
     let (_f, port) = start().await;
-    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let stream = connect(port).await;
     let (mut reader, mut writer) = stream.into_split();
     // Empty lines before a request are dropped, never growing the head
     // towards its size limit, so only the head's time limit ends them.

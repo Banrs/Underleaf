@@ -17,7 +17,7 @@ export const HEADING_LEVELS = [
   ['Subsection', 'subsection'], ['Subsubsection', 'subsubsection'], ['Paragraph', 'paragraph'],
 ];
 
-export const INSERT_TEMPLATES = [
+const INSERT_TEMPLATES = [
   ['Figure', '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n'],
   ['Table', '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n'],
   ['Equation', '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n'],
@@ -25,7 +25,7 @@ export const INSERT_TEMPLATES = [
   ['Code Block', '\\begin{verbatim}\n$0\n\\end{verbatim}\n'],
 ];
 
-export const LIST_TEMPLATES = [
+const LIST_TEMPLATES = [
   ['Bulleted List', '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n'],
   ['Numbered List', '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n'],
   ['Description List', '\\begin{description}\n  \\item[$0] \n\\end{description}\n'],
@@ -34,7 +34,7 @@ export const LIST_TEMPLATES = [
 // Cross-references, citations and links, around the selection; "$0" is
 // where the selection (or the cursor) goes, inside the braces completion
 // fills.
-export const REFERENCE_TEMPLATES = [
+const REFERENCE_TEMPLATES = [
   ['Reference', '\\ref{$0}'], ['Equation Reference', '\\eqref{$0}'], ['Citation', '\\cite{$0}'],
   ['Label', '\\label{$0}'], ['Link', '\\href{$0}{}'], ['URL', '\\url{$0}'],
 ];
@@ -109,6 +109,14 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
     class: 'icon-btn small', title, 'aria-label': title, onclick: run, ...attrs,
   }, icon(glyph));
 
+  // Template lists with the tools given a button; the rest go in the ⋯ menu.
+  const references = [REFERENCE_TEMPLATES, inline, [['Link', 'link'], ['Reference', 'hash'], ['Citation', 'quote']]];
+  const inserts = [INSERT_TEMPLATES, insert, [['Figure', 'image'], ['Table', 'table']]];
+  const lists = [LIST_TEMPLATES, insert, [['Bulleted List', 'list'], ['Numbered List', 'list-ordered']]];
+  const unbuttoned = ([list, apply, tools]) => list
+    .filter(([title]) => !tools.some(([t]) => t === title))
+    .map(([label, tpl]) => ({ label, action: apply(tpl) }));
+
   const symbolsButton = tool('Symbols', 'pi', () => openSymbols(symbolsButton), { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
   const commandItem = (id) => ({
     label: commandTitle(id), hint: accelLabel(getCommand(id)?.accel), action: () => runCommand(id),
@@ -129,25 +137,17 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
         { label: 'Symbols…', action: () => openSymbols(moreButton) },
       ],
     },
-    ...[
-      [REFERENCE_TEMPLATES, inline, [['Link', 'link'], ['Reference', 'hash'], ['Citation', 'quote']]],
-      [INSERT_TEMPLATES, insert, [['Figure', 'image'], ['Table', 'table']]],
-      [LIST_TEMPLATES, insert, [['Bulleted List', 'list'], ['Numbered List', 'list-ordered']]],
-    ].map(([list, apply, tools]) => ({
+    ...[references, inserts, lists].map(([list, apply, tools]) => ({
       buttons: tools.map(([title, glyph]) => tool(title, glyph, apply(find(list, title)))),
       items: () => tools.map(([title]) => ({ label: title, action: apply(find(list, title)) })),
     })),
   ];
   for (const g of groups) g.element = el('span', { class: 'tool-group' }, el('span', { class: 'toolbar-separator' }), g.buttons);
 
-  // The rest, after whatever has folded: the templates without a button.
-  const buttoned = (list, n) => list.filter(([title]) => !n.includes(title));
+  // Whatever has folded, then the templates without a button.
   const moreItems = () => [
     ...groups.filter((g) => g.element.hidden).flatMap((g) => [...g.items(), '-']),
-    ...buttoned(INSERT_TEMPLATES, ['Figure', 'Table']).map(([label, tpl]) => ({ label, action: insert(tpl) })),
-    ...buttoned(LIST_TEMPLATES, ['Bulleted List', 'Numbered List']).map(([label, tpl]) => ({ label, action: insert(tpl) })),
-    '-',
-    ...buttoned(REFERENCE_TEMPLATES, ['Link', 'Reference', 'Citation']).map(([label, tpl]) => ({ label, action: inline(tpl) })),
+    ...unbuttoned(inserts), ...unbuttoned(lists), '-', ...unbuttoned(references),
   ];
   const moreButton = tool('More', 'ellipsis', null, { 'aria-haspopup': 'menu', 'aria-expanded': 'false' });
   moreButton.addEventListener('click', opensMenu(moreButton, moreItems));

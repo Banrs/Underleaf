@@ -15,8 +15,7 @@ a Mac app look shrunken.
 **The scale is expressed as five roles, not five sizes** (`--fs-title`,
 `--fs-body`, `--fs-header`, `--fs-control`, `--fs-small`, `--fs-micro` plus
 `--fs-large-title`). Every `font-size` in `web/styles.css` refers to a role, so a
-value can't drift: the earlier pass had 15 separate uses of 11px against 2 of
-15px, which is what made the interface read small no matter what the row spec was.
+value can't drift.
 
 | Role | Size | Used for |
 | --- | --- | --- |
@@ -32,10 +31,9 @@ Section headers scale with the variant too: Small/Medium use 11 Bold in an 18px
 box, **Large uses 13 Bold in a 20px box** — pairing an 11px header with 15px rows
 is the mismatch that reads wrong.
 
-**Row height follows the text size, so one sidebar gets one row height.** The
-outline used 32px rows next to the file tree's 40px while both rendered 15/20
-text; the kit's Large `Items` master — the variant that carries 15/20 — is 40, so
-both are 40 now. Two densities in one pane was the mismatch, not the type size.
+**Row height follows the text size, so one sidebar gets one row height:** the
+kit's Large `Items` master, which carries 15/20, is 40, so the file tree and the
+outline both use 40.
 
 **Measured component text** (weights matter as much as sizes — most control text
 is *Medium*, not Regular, and titles are heavier than web defaults):
@@ -67,7 +65,7 @@ work on both opaque panels and vibrant materials.
 | Role | Light | Dark |
 | --- | --- | --- |
 | Label primary | `rgba(0,0,0,.85)` | `#fff` |
-| Label secondary | `rgba(0,0,0,.50)` | `rgba(255,255,255,.55)` |
+| Label secondary | `rgba(0,0,0,.50)` (`.60` here, for AA) | `rgba(255,255,255,.55)` |
 | Label tertiary | `rgba(0,0,0,.25)` | `rgba(255,255,255,.25)` |
 | Label quaternary | `rgba(0,0,0,.10)` | `rgba(255,255,255,.10)` |
 | Fill primary → quinary | black `.10 .08 .05 .03 .02` | white, same ramp |
@@ -157,9 +155,9 @@ nothing needs an ad-hoc radius.
 
 ## The editor: Xcode 27's Default themes
 
-The reference app for this one is Xcode, so the editor uses **Xcode 27's own
-Default (Light) and Default (Dark)**, read out of the installed beta rather than
-sampled by eye:
+Syntax colours are a Settings choice: One Dark (the default; CodeMirror's
+`defaultHighlightStyle` in light) or **Xcode 27's own Default (Light) and
+Default (Dark)**, read out of the installed beta rather than sampled by eye:
 
 ```
 /Applications/Xcode-beta.app/Contents/SharedFrameworks/
@@ -167,10 +165,6 @@ sampled by eye:
     Default (Light).xccolortheme      # plists; DVTSourceTextSyntaxColors
     Default (Dark).xccolortheme       # holds "r g b a" component strings
 ```
-
-It previously shipped CodeMirror's generic `defaultHighlightStyle` in light and
-**One Dark** in dark, so the largest surface in the app was the one that looked
-least like macOS.
 
 The LaTeX (`stex`) mode's tokens are mapped to Xcode's categories **by meaning**,
 read off the mode's source rather than guessed at:
@@ -193,19 +187,16 @@ category purity.
 Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
 invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's
 (`#FFFFFF`/`#1F1F24`) — the editor sits flush against this app's panels, so it
-follows `--bg-panel` and a one-value difference can't show as a seam.
+follows `--bg-content` and a one-value difference can't show as a seam.
 
 Gutter: no fill, no rule, dim numbers, and the current line's number brightens —
-Xcode's treatment. (The previous rule mixed `--text-dim` and `--border`, neither
-of which exists in the token set, so every declaration in it was invalid and
-dropped; the grey that appeared came from One Dark.)
+Xcode's treatment.
 
 **Monospace: the platform's, not a bundled one.** `--mono` starts at
 `ui-monospace`, which resolves to SF Mono on macOS (what Xcode sets) and Cascadia
 Mono on Windows. JetBrains Mono stays bundled and selectable in Settings, but an
 app that should read as native shouldn't ship its own code face ahead of the
-platform's. Leading is 1.45 — code wants tighter than prose, Xcode's is about 1.3,
-and 1.6 was costing a line of context per screen.
+platform's. Leading is 1.45 — code wants tighter than prose; Xcode's is about 1.3.
 
 **Xcode has no semantic colour catalogue to copy.** Its `Assets.car` holds only 27
 unnamed branding colours (`assetutil --info` will show them); the chrome is drawn
@@ -214,12 +205,12 @@ outside the editor, and matching "Xcode" means matching the system.
 
 ## Platform abstraction
 
-macOS-only chrome is gated on `html.mac`, set from the host platform — never
-assumed. Windows keeps the same tokens under standard window decorations; see
-[windows.md](windows.md).
+The Tauri Mac window's chrome is gated on `html.mac`, set from the host
+platform — never assumed. Everywhere else the same tokens run on opaque
+surfaces; a browser tab also gets `html.browser` (web type sizes).
 
-- `html.mac` — vibrancy materials, traffic-light inset, `⌘`-style shortcut glyphs
-- `html.win` — opaque panels under a standard title bar
+- `html.mac` — vibrancy materials, traffic-light inset, accent-filled menu rows
+- `html.browser` — 14px controls, opaque menus and toasts
 
 The accent goes the other way: one concept both systems have, read through each
 one's own API and delivered as a single token, so the CSS never learns which

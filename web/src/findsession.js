@@ -34,10 +34,8 @@ export function indexMatchesBySpan(pageMatches, spans) {
   for (let i = 0; i < spans.length; i++) {
     const range = spans[i];
     while (first < pageMatches.length && pageMatches[first].end <= range.start) first++;
-    let at = first;
-    while (at < pageMatches.length && pageMatches[at].start < range.end) {
+    for (let at = first; at < pageMatches.length && pageMatches[at].start < range.end; at++) {
       (out[i] ??= []).push(pageMatches[at]);
-      at++;
     }
   }
   return out;

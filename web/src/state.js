@@ -81,9 +81,8 @@ export function outlineChain(line) {
 }
 
 // The outline entry a line is in: the last heading at or above it, or -1
-// above the first. Given the line at the top of the editor, it is the
-// section on screen, which the outline's selection follows as the source
-// scrolls (the macOS app's `Outline.chain(…).last`).
+// above the first. Given the editor's top line, it is the section on screen,
+// which the outline's selection follows as the source scrolls.
 export function sectionIndexAt(outline, line) {
   let found = -1;
   for (let i = 0; i < outline.length && outline[i].line <= line; i++) found = i;

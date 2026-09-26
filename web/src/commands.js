@@ -91,10 +91,10 @@ let notifyHost = () => {};
 // project are simply absent when no project is open.
 export function registerCommands(defs) {
   for (const d of defs) registry.set(d.id, d);
-  publish();
+  refreshCommands();
   return () => {
     for (const d of defs) registry.delete(d.id);
-    publish();
+    refreshCommands();
   };
 }
 
@@ -109,8 +109,10 @@ export function commandTitle(id) {
 
 function commandEnabled(id) {
   const c = registry.get(id);
-  return !!c && (c.enabled ? !!c.enabled() : true);
+  return !!c && (!c.enabled || !!c.enabled());
 }
+
+const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (FALLBACK_TITLES[id] ?? id));
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
@@ -127,11 +129,13 @@ export function runCommand(id) {
 }
 
 // Push the current menu spec + enabled state to the shell, which owns the
-// actual native menu. Most refreshes (every appearance change, a compile
+// actual native menu. Called when app state changes (project opened, compile
+// started, PDF loaded) to re-evaluate every `enabled`/`checked` predicate.
+// Most refreshes (every appearance change, a compile
 // finishing the same way it started) leave the spec as it was; those skip the
 // IPC round trip and the shell's per-item native setters entirely.
 let lastSpec = '';
-function publish() {
+export function refreshCommands() {
   const spec = MENU.map((m) => ({
     label: m.label,
     items: m.items.map((it) => {
@@ -140,7 +144,7 @@ function publish() {
       const c = registry.get(it.id);
       return {
         id: it.id,
-        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
+        label: menuLabel(it.id),
         accelerator: accelOf(it.id),
         enabled: commandEnabled(it.id),
         checked: c?.checked?.(),
@@ -155,10 +159,6 @@ function publish() {
   }
   notifyHost();
 }
-
-// Re-evaluate every `enabled`/`checked` predicate. Called when app state changes
-// (project opened, compile started, PDF loaded).
-export const refreshCommands = publish;
 
 export function onCommandsChanged(fn) { notifyHost = fn; }
 
@@ -221,16 +221,16 @@ export function tooltip(id) {
 // menu bar and its shortcuts are drawn and dispatched here instead.
 const nativeMenu = () => ipc?.kind !== 'browser';
 
+// Without a native menu this is a browser, which zooms the page itself; an
+// interface size of our own would only stack on top of it.
+const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
+
 // A native menu owns its accelerators, so on the desktop nothing here listens
 // for keys — handling them a second time would fire every command twice. In a
 // browser the listener runs in the capture phase, ahead of the editor's own
 // keymap, which is the order a native menu's key equivalents take too.
 // `nativeOnly` commands are left out: the editor's keymap has them already,
 // and catching them here would make Ctrl+Z in a search field undo the editor.
-// Without a native menu this is a browser, which zooms the page itself; an
-// interface size of our own would only stack on top of it.
-const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
-
 export function installMenuBridge() {
   if (nativeMenu()) {
     ipc?.onCommand?.((id) => runCommand(id));
@@ -297,12 +297,11 @@ export function menuBar(openMenu) {
         if (items.length && items.at(-1) !== '-') items.push('-');
         continue;
       }
-      const c = registry.get(it.id);
       items.push({
-        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
+        label: menuLabel(it.id),
         hint: accelLabel(shownAccel(it.id)),
         disabled: !commandEnabled(it.id),
-        checked: c?.checked?.(),
+        checked: registry.get(it.id)?.checked?.(),
         action: () => runCommand(it.id),
       });
     }

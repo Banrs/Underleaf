@@ -7,6 +7,7 @@
 
 pub mod http;
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
 use texlocal_core::{paths, serve, zipexport, CoreError};
 
 pub use http::{Request, Response};
+use tokio::net::TcpListener;
 
 const COOKIE: &str = "texlocal_token";
 /// Uploads and whole documents travel in one body.
@@ -59,6 +61,25 @@ fn error(err: CoreError) -> Response {
     Response::json(err.status, &json!({ "error": err.message }))
 }
 
+/// Serve `app` on `listener` until `shutdown` resolves, running its guard on
+/// each request head before any body is read.
+pub async fn serve(
+    app: Arc<App>,
+    listener: TcpListener,
+    max_body: usize,
+    shutdown: impl Future<Output = ()>,
+) {
+    let guard = {
+        let app = Arc::clone(&app);
+        Arc::new(move |req: &Request| app.guard(req))
+    };
+    let handler = Arc::new(move |req| {
+        let app = Arc::clone(&app);
+        async move { app.handle(req).await }
+    });
+    http::serve(listener, handler, guard, max_body, shutdown).await
+}
+
 impl App {
     /// `port` is the one actually bound: Host and Origin are checked against it.
     pub fn new(service: Service, web_dir: PathBuf, port: u16, token: String) -> Self {
@@ -99,8 +120,6 @@ impl App {
         };
         response.with("X-Content-Type-Options", "nosniff")
     }
-
-    // ---------- access ----------
 
     /// Host, Origin and the token, from the request head alone: the server
     /// runs this before reading a body, so nobody unauthenticated can make it
@@ -149,8 +168,6 @@ impl App {
         None
     }
 
-    // ---------- commands ----------
-
     /// Run file-system work (tree walks, searches, whole-file reads and writes,
     /// ZIP builds) on the blocking pool, so a large project cannot stall the
     /// async workers every other request, pdf.js's range fetches included,
@@ -177,13 +194,9 @@ impl App {
         // A command may mix blocking file work with async process work, so
         // the blocking thread drives it to completion on the runtime's handle.
         let runtime = tokio::runtime::Handle::current();
-        let called = self
-            .blocking(move |service| runtime.block_on(service.call(&command, &args)))
-            .await;
-        match called {
-            Ok(value) => Response::json(200, &value),
-            Err(e) => error(e),
-        }
+        self.blocking(move |service| runtime.block_on(service.call(&command, &args)))
+            .await
+            .map_or_else(error, |value| Response::json(200, &value))
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
@@ -195,24 +208,18 @@ impl App {
                 .ok_or_else(|| CoreError::bad_request(format!("Missing {name} header")))
         };
         let names = (|| Ok((header("x-project")?, header("x-dir")?, header("x-path")?)))();
-        let saved = match names {
-            Ok((id, dir, path)) => {
-                let body = req.body;
-                self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
-                    .await
-            }
-            Err(e) => Err(e),
+        let (id, dir, path) = match names {
+            Ok(names) => names,
+            Err(e) => return error(e),
         };
-        match saved {
-            Ok(rel) => Response::json(200, &json!({ "saved": [rel] })),
-            Err(e) => error(e),
-        }
+        let body = req.body;
+        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
+            .await
+            .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }
 
-    // ---------- files ----------
-
     /// Path resolution and the stat run on the blocking pool with everything
-    /// else that touches the disk, in the one hop the stat alone used to take.
+    /// else that touches the disk.
     async fn file(&self, path: &str, range: Option<&str>) -> Response {
         let segments = segments(path);
         let located = self
@@ -257,36 +264,26 @@ impl App {
     }
 
     async fn download_pdf(&self, id: String) -> Response {
-        let bytes = {
-            let id = id.clone();
-            self.blocking(move |service| {
-                let pdf = service.pdf_path(&id)?;
-                std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
-            })
-            .await
-        };
-        match bytes {
-            Ok(bytes) => attachment(bytes, &format!("{id}.pdf"), "application/pdf"),
-            Err(e) => error(e),
-        }
+        let name = format!("{id}.pdf");
+        self.blocking(move |service| {
+            let pdf = service.pdf_path(&id)?;
+            std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
+        })
+        .await
+        .map_or_else(error, |bytes| attachment(bytes, &name, "application/pdf"))
     }
 
     async fn download_zip(&self, id: String) -> Response {
-        let bytes = {
-            let id = id.clone();
-            self.blocking(move |service| {
-                let root = service.project_root(&id)?;
-                let dir = tempfile::tempdir()?;
-                let dest = dir.path().join("export.zip");
-                zipexport::export_zip(&root, &dest)?;
-                Ok(std::fs::read(dest)?)
-            })
-            .await
-        };
-        match bytes {
-            Ok(bytes) => attachment(bytes, &format!("{id}.zip"), "application/zip"),
-            Err(e) => error(e),
-        }
+        let name = format!("{id}.zip");
+        self.blocking(move |service| {
+            let root = service.project_root(&id)?;
+            let dir = tempfile::tempdir()?;
+            let dest = dir.path().join("export.zip");
+            zipexport::export_zip(&root, &dest)?;
+            Ok(std::fs::read(dest)?)
+        })
+        .await
+        .map_or_else(error, |bytes| attachment(bytes, &name, "application/zip"))
     }
 }
 

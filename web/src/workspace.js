@@ -39,7 +39,7 @@ const EDITOR_CACHE_MAX = 8;
 const editorStateCache = new Map();   // path → { state, scrollTop }
 
 function stashEditorState(path) {
-  if (!path || !state.editor?.getState) return;
+  if (!path || !state.editor) return;
   editorStateCache.delete(path);
   editorStateCache.set(path, {
     state: state.editor.getState(),
@@ -141,8 +141,7 @@ function buildChrome(id) {
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
-    // A rename moved the open file: the location row names it anew.
-    onOpenPathChange: () => ui.sourceBar?.update(),
+    onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
       if (!(await flushCurrent())) throw new Error('The active document changed while saving');
     },
@@ -156,7 +155,6 @@ function buildChrome(id) {
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.classList.toggle('collapsed', prefs.sidebarCollapsed);
 
-  // --- window title bar (one 52px band across the whole window) ---
   const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
@@ -178,7 +176,6 @@ function buildChrome(id) {
     iconButton('project.export', 'archivebox'),
   );
 
-  // --- editor pane ---
   const sourceBar = buildSourceBar({
     commandButton: (commandId, glyph) => iconButton(commandId, glyph, 'small'),
     openFile,
@@ -190,7 +187,6 @@ function buildChrome(id) {
   const wordCountPill = el('span', { class: 'word-count' });
   const editorPane = el('div', { class: 'pane editor-pane' }, sourceBar.toolbar, sourceBar.location, editorHost, wordCountPill);
 
-  // --- PDF pane ---
   const pageIndicator = el('span', { class: 'page-indicator' });
   const pdfFreshness = el('span', {
     class: 'pdf-freshness', role: 'status', hidden: true,
@@ -223,11 +219,8 @@ function buildChrome(id) {
     },
   });
 
-  // --- PDF find bar (hidden until the command opens it) ---
   const findCount = el('span', { class: 'find-count', role: 'status' });
-  const findInput = el('input', {
-    type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF',
-  });
+  const findInput = el('input', { type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF' });
   const showCount = ({ total, index, limited = false }) => {
     const totalLabel = limited ? `${total}+` : String(total);
     findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${totalLabel}` : 'Not found') : '';
@@ -247,12 +240,9 @@ function buildChrome(id) {
     const query = findInput.value;
     pdfFindTimer = setTimeout(async () => {
       const result = await viewer.find(query);
-      if (
-        generation === pdfFindGeneration
-        && state.pdf === viewer
-        && ui.findInput === findInput
-        && !findBar.hidden
-      ) showCount(result);
+      if (generation === pdfFindGeneration && state.pdf === viewer && ui.findInput === findInput && !findBar.hidden) {
+        showCount(result);
+      }
     }, 200);
   });
   findInput.addEventListener('keydown', (e) => {
@@ -280,7 +270,6 @@ function buildChrome(id) {
     pdfScroll,
   );
 
-  // --- dividers ---
   const sidebarDivider = el('div', { class: 'divider', role: 'separator', 'aria-orientation': 'vertical' });
   const syncPill = el('div', { class: 'sync-pill' },
     el('button', { dataset: { command: 'sync.forward' }, onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
@@ -354,6 +343,7 @@ export function syncToolbarState() {
 
 const hasProject = () => !!state.projectId;
 const hasEditor = () => !!state.editor;
+const hasPdf = () => !!state.pdf?.doc;
 
 // Find Next and Previous step the search being typed in. A native menu takes
 // the chord from every field, so the PDF find field steps its own matches and
@@ -365,7 +355,6 @@ function findAgain(delta) {
   if (delta > 0) state.editor?.findNext();
   else state.editor?.findPrevious();
 }
-const hasPdf = () => !!state.pdf?.doc;
 
 function commandDefs() {
   return [
@@ -467,49 +456,30 @@ function showEditorPlaceholder(message) {
   state.editor?.destroy();
   state.editor = null;
   ui.editorHost?.replaceChildren(el('p', { class: 'editor-placeholder' }, message));
-  ui.sourceBar?.update();
+  renderCrumbs();
   refreshCommands();
 }
 
-function transitionStillCurrent(request, generation, projectId, host) {
-  return request === openGeneration
-    && generation === workspaceGeneration
-    && state.projectId === projectId
-    && host === ui.editorHost;
-}
-
-async function flushEditsBeforeSwitch(request, generation, projectId, host, editor, path) {
-  const isCurrent = () => transitionStillCurrent(request, generation, projectId, host)
-    && state.editor === editor
-    && state.openPath === path;
+// Save until no edit arrived during the last write, while `isCurrent` holds
+// and `editor` still shows `path`.
+function flushWhile(isCurrent, editor, path) {
   return flushUntilStable({
-    isCurrent,
+    isCurrent: () => isCurrent() && state.editor === editor && state.openPath === path,
     isDirty: () => state.dirty,
     save: () => saveCurrent({ triggerCompile: false }),
   });
 }
 
-// Save the currently mounted document until no edit arrived during the last
-// write. Quit, navigation, compilation and filesystem mutations use this rather
-// than a one-shot save so their success really means the latest buffer is safe.
+// Quit, navigation, compilation and filesystem mutations flush rather than
+// save once, so their success really means the latest buffer is safe.
 export async function flushCurrent() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
-  const editor = state.editor;
-  const path = state.openPath;
-  if (state.dirty && (!editor || !path)) return false;
-  const isCurrent = () => generation === workspaceGeneration
-    && state.projectId === projectId
-    && state.editor === editor
-    && state.openPath === path;
-  return flushUntilStable({
-    isCurrent,
-    isDirty: () => state.dirty,
-    save: () => saveCurrent({ triggerCompile: false }),
-  });
+  if (state.dirty && (!state.editor || !state.openPath)) return false;
+  return flushWhile(() => generation === workspaceGeneration && state.projectId === projectId, state.editor, state.openPath);
 }
 
-export async function openFile(path) {
+async function openFile(path) {
   if (!path || path === state.openPath) return;
   const request = ++openGeneration;
   const generation = workspaceGeneration;
@@ -518,33 +488,29 @@ export async function openFile(path) {
   const projectId = state.projectId;
   const prevPath = state.openPath;
   const prevEditor = state.editor;
+  const stillCurrent = () => request === openGeneration && generation === workspaceGeneration
+    && state.projectId === projectId && host === ui.editorHost;
+  const flushPrevious = () => flushWhile(stillCurrent, prevEditor, prevPath);
 
   // Stabilise the old buffer before every kind of transition. This includes
   // image/binary previews: an edit may have arrived during the preceding save,
   // even though the final path swap itself is synchronous.
-  if (!(await flushEditsBeforeSwitch(
-    request, generation, projectId, host, prevEditor, prevPath,
-  ))) return;
+  if (!(await flushPrevious())) return;
 
   // Non-text previews do not await a read, so no edit can interleave between
   // the stable check above and committing the new active path.
-  if (IMAGE_FILE.test(path)) {
-    stashEditorState(prevPath);
-    state.openPath = path;
-    updateTreeSelection();
-    state.editor?.destroy();
-    state.editor = null;
-    host.replaceChildren(el('div', { class: 'image-preview' },
-      el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
-    setSaveState('');
-    updateDocMeta();
-    return;
-  }
   if (!TEXT_FILE.test(path)) {
     stashEditorState(prevPath);
     state.openPath = path;
     updateTreeSelection();
-    showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
+    if (IMAGE_FILE.test(path)) {
+      state.editor?.destroy();
+      state.editor = null;
+      host.replaceChildren(el('div', { class: 'image-preview' },
+        el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
+    } else {
+      showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
+    }
     setSaveState('');
     updateDocMeta();
     return;
@@ -553,17 +519,15 @@ export async function openFile(path) {
   let text;
   try { ({ text } = await api.readFile(projectId, path)); }
   catch (err) {
-    if (transitionStillCurrent(request, generation, projectId, host)) toast(err.message, 'error');
+    if (stillCurrent()) toast(err.message, 'error');
     return;
   }
-  if (!transitionStillCurrent(request, generation, projectId, host)) return;
+  if (!stillCurrent()) return;
 
   // The old buffer remained active throughout the read. Persist anything typed
   // during it before changing openPath, or that text could be routed to the new
   // file or discarded with the old editor.
-  if (!(await flushEditsBeforeSwitch(
-    request, generation, projectId, host, prevEditor, prevPath,
-  ))) return;
+  if (!(await flushPrevious())) return;
 
   stashEditorState(prevPath);
   const cached = editorStateCache.get(path);
@@ -648,7 +612,6 @@ async function doSave({ triggerCompile = true } = {}) {
 }
 
 let crumbTimer;
-
 let symbolsTimer;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
@@ -671,29 +634,21 @@ function scheduleDocMeta() {
 }
 
 function updateDocMeta() {
-  const isTex = state.openPath?.endsWith('.tex');
-  const editor = state.editor;
-  const pill = ui.wordCountPill;
-  const show = !!(isTex && editor);
+  const show = !!(state.editor && state.openPath?.endsWith('.tex'));
   const countWords = show && prefs.showWordCount;
-  const { outline, words, lines } = show
-    ? analyzeDoc(editor.scanLines, { countWords })
-    : { outline: [] };
+  const { outline, words, lines } = show ? analyzeDoc(state.editor.scanLines, { countWords }) : { outline: [] };
   state.outline = outline;
   renderOutline();
   renderCrumbs();
 
+  const pill = ui.wordCountPill;
   if (!pill) return;
   pill.hidden = !countWords;
-  if (countWords) {
-    pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
-  }
+  if (countWords) pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
 }
 
-// The source bar's section level and location row follow the caret.
-function renderCrumbs() {
-  ui.sourceBar?.update();
-}
+// The source bar's section level and location row follow the caret and path.
+const renderCrumbs = () => ui.sourceBar?.update();
 
 // ---------- compile ----------
 
@@ -825,15 +780,13 @@ async function loadPdf() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   const viewer = state.pdf;
+  const current = () => generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
   try {
-    const loaded = await viewer.load(api.pdfUrl(projectId));
-    const current = generation === workspaceGeneration
-      && state.projectId === projectId
-      && state.pdf === viewer;
-    if (loaded && current) setPdfFreshness('');
-    return loaded && current;
+    const loaded = await viewer.load(api.pdfUrl(projectId)) && current();
+    if (loaded) setPdfFreshness('');
+    return loaded;
   } catch {
-    if (generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer) showPdfEmpty();
+    if (current()) showPdfEmpty();
     return false;
   }
 }
@@ -878,11 +831,8 @@ async function inverseSync() {
 function toggleSidebar() {
   prefs.sidebarCollapsed = !prefs.sidebarCollapsed;
   ui.sidebar?.classList.toggle('collapsed', prefs.sidebarCollapsed);
-  if (!prefs.sidebarCollapsed && prefs.sidebarWidth) {
-    ui.sidebar.style.width = `${prefs.sidebarWidth}px`;
-  } else if (prefs.sidebarCollapsed) {
-    ui.sidebar.style.width = '';
-  }
+  if (prefs.sidebarCollapsed) ui.sidebar.style.width = '';
+  else if (prefs.sidebarWidth) ui.sidebar.style.width = `${prefs.sidebarWidth}px`;
   refreshCommands();
 }
 
@@ -918,14 +868,14 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     // Resizing tracks the pointer 1:1 — suppress the collapse animation.
     const prevTransition = pane.style.transition;
     pane.style.transition = 'none';
-    state.pdf?.beginLiveResize?.();
+    state.pdf?.beginLiveResize();
     const startX = e.clientX;
     const startW = pane.getBoundingClientRect().width;
     const dir = mode === 'width' ? 1 : -1;
     const onMove = (ev) => {
       const w = Math.max(min, Math.min(max ?? innerWidth * 0.7, startW + dir * (ev.clientX - startX)));
       applyWidth(w);
-      state.pdf?.liveResize?.();
+      state.pdf?.liveResize();
     };
     let done = false;
     const onUp = () => {
@@ -936,7 +886,7 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
-      state.pdf?.endLiveResize?.();
+      state.pdf?.endLiveResize();
       prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
     };
     handle.addEventListener('pointermove', onMove);

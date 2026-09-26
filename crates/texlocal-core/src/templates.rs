@@ -125,8 +125,7 @@ const BEAMER_MAIN: &str = r#"\documentclass{beamer}
 \end{document}
 "#;
 
-/// The files for a template; an unknown name falls back to `article`, as the
-/// JS original did.
+/// The files for a template; an unknown name falls back to `article`.
 pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
         "blank" => &[("main.tex", BLANK_MAIN)],

@@ -9,9 +9,7 @@
 
 import { createEditor } from '../editor.js';
 import { prefs } from '../prefs.js';
-import { matchesAccel } from '../commands.js';
-import { isMac } from '../bridge.js';
-import { post } from './channel.js';
+import { post, forwardHostKeys } from './channel.js';
 
 const parent = document.getElementById('editor');
 const cached = new Map(); // path → EditorState, so undo history survives a file switch
@@ -19,7 +17,6 @@ let editor = null;
 let path = null;
 let symbols = { labels: [], citations: [] };
 let dark = matchMedia('(prefers-color-scheme: dark)').matches;
-let hostKeys = [];
 
 const WRAPS = {
   bold: ['\\textbf{', '}'],
@@ -68,10 +65,7 @@ window.texlocal = {
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
-  // The accelerators the host's native menu owns. The page sees a chord
-  // before the menu does, and the editor's keymap would otherwise take some
-  // of them (Mod-Enter inserts a blank line), so these are handed back.
-  setHostKeys(list) { hostKeys = list; },
+  setHostKeys: forwardHostKeys(),
   // `accent` and the selection colours are the host system's (the Mac's
   // accent and highlight colours); without them the page keeps its own.
   setAppearance({ theme, palette, font, fontSize, accent, selection, inactiveSelection }) {
@@ -112,14 +106,6 @@ window.texlocal = {
     return true;
   },
 };
-
-addEventListener('keydown', (e) => {
-  const hit = hostKeys.find((k) => matchesAccel(k.accel, e, isMac));
-  if (!hit) return;
-  e.preventDefault();
-  e.stopPropagation();
-  post({ type: 'command', id: hit.id });
-}, true);
 
 document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 post({ type: 'ready' });

@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { platform, trashName, deleteLabel } from './bridge.js';
-import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder, contextMenu } from './dom.js';
+import { $, el, toast, withTimeout, showModal, dialogShell, promptModal, confirmModal, menuUnder, contextMenu } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip, menuBar } from './commands.js';
@@ -36,10 +36,6 @@ function relativeDate(ms) {
 }
 
 const projectHref = (id) => `#/p/${encodeURIComponent(id)}`;
-
-function openProject(id) {
-  location.hash = projectHref(id);
-}
 
 // The row is a real link (open in a new tab, copy address), stretched over
 // the whole row by `.doc-name::after`; the actions button sits above it.
@@ -97,20 +93,18 @@ export async function newProjectFlow() {
     );
     const go = () => close({ name: name.value.trim() || 'Untitled', template: tpl.value });
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    return el('div', { class: 'modal' },
-      el('h2', { class: 'modal-title' }, 'New Project'),
+    return dialogShell('New Project', [
       el('div', { class: 'field' }, el('label', { for: 'np-name' }, 'Name'), name),
       el('div', { class: 'field' }, el('label', { for: 'np-tpl' }, 'Template'), tpl),
-      el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
-        el('button', { class: 'btn primary', onclick: go }, 'Create'),
-      ),
-    );
+    ], [
+      el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
+      el('button', { class: 'btn primary', onclick: go }, 'Create'),
+    ]);
   });
   if (!result?.name) return;
   try {
     const p = await api.createProject(result.name, result.template);
-    openProject(p.id);
+    location.hash = projectHref(p.id);
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -132,10 +126,8 @@ export async function renderHome() {
   const app = $('#app');
   // Render the shell first, then fill in projects — a slow or permission-blocked
   // data dir must never leave a blank window.
-  const list = el('div', { class: 'doc-list' },
-    el('p', { class: 'placeholder' }, 'Loading projects…'));
+  const list = el('div', { class: 'doc-list' }, el('p', { class: 'placeholder' }, 'Loading projects…'));
   const banner = el('div');
-
   const reload = () => renderHome();
 
   // Welcome-window layout (the Xcode pattern): branding and primary actions on

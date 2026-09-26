@@ -1,6 +1,4 @@
-//! Port of test/projects.test.js — the same cases and UI-facing error strings,
-//! plus coverage for platform aliases, symlink containment, transactional
-//! rename, and safe ZIP export.
+//! Projects, paths, settings and ZIP export, with the UI-facing error strings.
 
 use std::fs;
 use std::path::Path;
@@ -15,6 +13,7 @@ use texlocal_core::projects::{
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
+use texlocal_core::CoreError;
 
 fn data_dir() -> TempDir {
     tempfile::Builder::new()
@@ -26,6 +25,12 @@ fn data_dir() -> TempDir {
 fn project(data: &Path, name: &str) -> std::path::PathBuf {
     create_project(data, name, "blank").unwrap();
     project_root(data, name).unwrap()
+}
+
+#[track_caller]
+fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
+    let message = result.unwrap_err().message;
+    assert!(message.contains(text), "{message:?} lacks {text:?}");
 }
 
 fn zip_names(path: &Path) -> Vec<String> {
@@ -40,23 +45,17 @@ fn settings_reject_unsafe_compiler_inputs() {
     let data = data_dir();
     let root = project(data.path(), "settings-test");
 
-    let err = write_settings(&root, &json!({ "shellEscape": "false" })).unwrap_err();
-    assert!(
-        err.message.contains("shellEscape must be a boolean"),
-        "{}",
-        err.message
+    fails_with(
+        write_settings(&root, &json!({ "shellEscape": "false" })),
+        "shellEscape must be a boolean",
     );
-    let err = write_settings(&root, &json!({ "mainFile": "-interaction.tex" })).unwrap_err();
-    assert!(
-        err.message.contains("Path segments cannot start"),
-        "{}",
-        err.message
+    fails_with(
+        write_settings(&root, &json!({ "mainFile": "-interaction.tex" })),
+        "Path segments cannot start",
     );
-    let err = write_settings(&root, &json!({ "mainFile": "../outside.tex" })).unwrap_err();
-    assert!(
-        err.message.contains("Path escapes project"),
-        "{}",
-        err.message
+    fails_with(
+        write_settings(&root, &json!({ "mainFile": "../outside.tex" })),
+        "Path escapes project",
     );
 }
 
@@ -89,18 +88,11 @@ fn the_active_main_file_and_its_parent_cannot_be_deleted() {
     let root = project(data.path(), "delete-test");
     create_file(&root, "chapters/main.tex", false).unwrap();
     write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-    let err = delete_entry(&root, "chapters/main.tex").unwrap_err();
-    assert!(
-        err.message.contains("different main file"),
-        "{}",
-        err.message
+    fails_with(
+        delete_entry(&root, "chapters/main.tex"),
+        "different main file",
     );
-    let err = delete_entry(&root, "chapters").unwrap_err();
-    assert!(
-        err.message.contains("different main file"),
-        "{}",
-        err.message
-    );
+    fails_with(delete_entry(&root, "chapters"), "different main file");
     let raw: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
     assert_eq!(raw["mainFile"], "chapters/main.tex");
@@ -166,10 +158,7 @@ fn a_folder_cannot_be_moved_into_itself() {
 fn path_traversal_is_rejected_at_every_boundary() {
     let data = data_dir();
     let root = project(data.path(), "paths-test");
-    assert!(project_root(data.path(), "../etc")
-        .unwrap_err()
-        .message
-        .contains("Bad project id"));
+    fails_with(project_root(data.path(), "../etc"), "Bad project id");
     // A folder inside a project is not a project of its own.
     create_file(&root, "chapters/intro.tex", false).unwrap();
     for id in ["paths-test/chapters", r"paths-test\chapters"] {
@@ -177,15 +166,9 @@ fn path_traversal_is_rejected_at_every_boundary() {
     }
     assert_eq!(project_root(data.path(), "./paths-test/").unwrap(), root);
     for path in ["../x", "a/../../b", ".", r"..\x", r"C:\x"] {
-        assert!(safe_path(&root, path)
-            .unwrap_err()
-            .message
-            .contains("Path escapes project"));
+        fails_with(safe_path(&root, path), "Path escapes project");
     }
-    assert!(safe_path(&root, "")
-        .unwrap_err()
-        .message
-        .contains("Missing path"));
+    fails_with(safe_path(&root, ""), "Missing path");
 }
 
 #[cfg(unix)]
@@ -230,14 +213,14 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
-    assert!(safe_path(&root, "outside/secret.tex")
-        .unwrap_err()
-        .message
-        .contains("Path escapes project"));
-    assert!(safe_rel_file(&root, "outside/secret.tex")
-        .unwrap_err()
-        .message
-        .contains("Path escapes project"));
+    fails_with(
+        safe_path(&root, "outside/secret.tex"),
+        "Path escapes project",
+    );
+    fails_with(
+        safe_rel_file(&root, "outside/secret.tex"),
+        "Path escapes project",
+    );
 }
 
 #[cfg(unix)]
@@ -266,38 +249,21 @@ fn implicit_project_scans_skip_external_symlink_files() {
         .all(|node| node.path != "external.tex"));
 }
 
+// Not gated: the settings name's case aliases are reserved on every platform
+// on purpose, because macOS volumes are case-insensitive too.
 #[test]
-fn the_settings_file_is_not_reachable_through_the_file_api() {
+fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api() {
     let data = data_dir();
     let root = project(data.path(), "reserved-test");
-    assert!(safe_path(&root, ".texlocal.json")
-        .unwrap_err()
-        .message
-        .contains("Reserved file"));
-    assert!(safe_path(&root, ".TEXLOCAL.JSON")
-        .unwrap_err()
-        .message
-        .contains("Reserved file"));
-    assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
-}
-
-// Not gated: `component_eq` reserves the settings name's case aliases on every
-// platform on purpose, because macOS volumes are case-insensitive too. Keeping
-// this assertion inside the cfg(windows) test below meant the only host that
-// ever checked it was Windows.
-#[test]
-fn settings_aliases_are_reserved_on_every_platform() {
-    let data = data_dir();
-    let root = project(data.path(), "settings-aliases");
-    for alias in [".TEXLOCAL.JSON", ".TexLocal.Json", ".texlocal.JSON"] {
-        assert!(
-            safe_path(&root, alias)
-                .unwrap_err()
-                .message
-                .contains("Reserved file"),
-            "{alias} must be reserved"
-        );
+    for name in [
+        ".texlocal.json",
+        ".TEXLOCAL.JSON",
+        ".TexLocal.Json",
+        ".texlocal.JSON",
+    ] {
+        fails_with(safe_path(&root, name), "Reserved file");
     }
+    assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
 #[cfg(windows)]
@@ -315,19 +281,16 @@ fn windows_reserved_device_names_are_rejected() {
 #[test]
 fn project_names_are_sanitized() {
     let data = data_dir();
-    assert!(create_project(data.path(), ".hidden", "blank")
-        .unwrap_err()
-        .message
-        .contains("Invalid name"));
-    assert!(create_project(data.path(), "   ", "blank")
-        .unwrap_err()
-        .message
-        .contains("Invalid name"));
+    fails_with(
+        create_project(data.path(), ".hidden", "blank"),
+        "Invalid name",
+    );
+    fails_with(create_project(data.path(), "   ", "blank"), "Invalid name");
     create_project(data.path(), "dup-test", "blank").unwrap();
-    assert!(create_project(data.path(), "dup-test", "blank")
-        .unwrap_err()
-        .message
-        .contains("already exists"));
+    fails_with(
+        create_project(data.path(), "dup-test", "blank"),
+        "already exists",
+    );
 }
 
 #[test]
@@ -513,9 +476,7 @@ fn a_hit_carries_the_text_either_side_of_it() {
 fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
     // Only the project's own top-level build/ is compile output. A `build`
     // deeper in the tree is the author's: file_tree lists it and export_zip
-    // archives it, so search and the symbol scan must see it too. All three
-    // used to skip any directory of that name at any depth, which left a real
-    // source file invisible to search while still showing in the sidebar.
+    // archives it, so search and the symbol scan must see it too.
     let data = data_dir();
     let root = project(data.path(), "nested-build");
     create_file(&root, "chapters/build/notes.tex", false).unwrap();
@@ -663,8 +624,7 @@ fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
     // Settings written by an older build can hold "chapters\main.tex". The
     // rename normalises separators before comparing, so it still recognises the
     // file it is moving; without that the main file keeps pointing at the old
-    // path and the next compile fails. Browser mode's suite was the only place
-    // this pairing was covered, and it went with the deletion.
+    // path and the next compile fails.
     let data = data_dir();
     let root = project(data.path(), "legacy-sep");
     create_file(&root, "chapters/main.tex", false).unwrap();

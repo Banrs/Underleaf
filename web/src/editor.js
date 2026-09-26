@@ -141,7 +141,12 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 
 const MATH_ENVS = 'equation|align|gather|multline|eqnarray|alignat|flalign|cases|split';
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
-const DISPLAY_RE = [/\$\$([\s\S]*?)\$\$/g, /\\\[([\s\S]*?)\\\]/g];
+// Display math: a math environment, $$…$$ or \[…\], each with how to read it.
+const BLOCKS = [
+  [ENV_RE, (m) => texForPreview(m[1], m[3])],
+  [/\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
+  [/\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
+];
 
 // KaTeX-friendly cleanup: drop labels/numbering, map env content to aligned/cases.
 function texForPreview(env, body) {
@@ -161,18 +166,11 @@ function mathAtCursor(state) {
   const text = state.doc.sliceString(from, Math.min(state.doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
-  ENV_RE.lastIndex = 0;
-  for (let m; (m = ENV_RE.exec(text)); ) {
-    if (rel >= m.index && rel <= m.index + m[0].length) {
-      return { from: from + m.index, tex: texForPreview(m[1], m[3]), display: true };
-    }
-    if (m.index > rel) break;
-  }
-  for (const re of DISPLAY_RE) {
+  for (const [re, tex] of BLOCKS) {
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
       if (rel >= m.index && rel <= m.index + m[0].length) {
-        return { from: from + m.index, tex: texForPreview(null, m[1]), display: true };
+        return { from: from + m.index, tex: tex(m), display: true };
       }
       if (m.index > rel) break;
     }
@@ -198,7 +196,7 @@ function mathAtCursor(state) {
 
 function mathTooltip(state, prev = null) {
   const m = mathAtCursor(state);
-  if (!m || !m.tex) return null;
+  if (!m?.tex) return null;
   // The tooltip manager keys its views by `create`, so a fresh object rebuilds
   // the DOM and reruns KaTeX. Moving within an unchanged equation keeps it.
   if (prev && prev.pos === m.from && prev.tex === m.tex && prev.display === m.display) return prev;
@@ -310,10 +308,6 @@ export function latexCompletions(getSymbols) {
   };
 }
 
-// `restore` (a previously captured EditorState) takes precedence over
-// `content`: it carries the document, selection, and undo history of an
-// earlier session with the same file. Its embedded listener closures only
-// touch stable module-level state, so reattaching them is safe.
 // A line as a heading of `command` (`section` etc.), or as plain text given
 // none, and where the caret goes: after the title. A heading is found where
 // the outline finds one (state.js SECTION_RE): anywhere on the line, with
@@ -337,6 +331,10 @@ export function headingLine(line, command) {
   return { text: `${head}${title}}${rest}`, cursor: head.length + title.length };
 }
 
+// `restore` (a previously captured EditorState) takes precedence over
+// `content`: it carries the document, selection, and undo history of an
+// earlier session with the same file. Its embedded listener closures only
+// touch stable module-level state, so reattaching them is safe.
 export function createEditor({ parent, content, restore, onChange, onCursor, onScroll, dark, getSymbols }) {
   const state = restore ?? EditorState.create({
     doc: content,

@@ -1,17 +1,16 @@
-//! Real spawn/kill/timeout coverage using a stub `latexmk` on PATH — the part
-//! of compile.js the JS suite never exercised. Unix-only: the stubs are shell
-//! scripts, and CI runs this on Linux and macOS.
+//! Real spawn/kill/timeout coverage using a stub `latexmk` on PATH. Unix-only:
+//! the stubs are shell scripts, and CI runs this on Linux and macOS.
 #![cfg(unix)]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides};
+use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides, CompileResult};
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
 use texlocal_core::settings::write_settings;
@@ -29,28 +28,34 @@ fn stub_env(bin: &Path, script: &str) -> String {
     )
 }
 
-fn project(data: &Path) -> std::path::PathBuf {
+fn project(data: &Path) -> PathBuf {
     create_project(data, "proj", "blank").unwrap();
     let root = project_root(data, "proj").unwrap();
     write_settings(&root, &json!({ "mainFile": "main.tex" })).unwrap();
     root
 }
 
-#[tokio::test]
-async fn compile_happy_path_parses_the_log_it_wrote() {
+/// A project, and a manager whose PATH finds a stub latexmk running `script`.
+fn setup(script: &str) -> (TempDir, PathBuf, CompileManager) {
     let tmp = TempDir::new().unwrap();
     let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
+    let mut mgr = CompileManager::default();
+    mgr.path_env = Some(stub_env(&tmp.path().join("bin"), script));
+    (tmp, root, mgr)
+}
+
+async fn compile(mgr: &CompileManager, root: &Path) -> CompileResult {
+    mgr.compile(root, &CompileOverrides::default(), None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn compile_happy_path_parses_the_log_it_wrote() {
+    let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nprintf './main.tex:3: Undefined control sequence.\\nl.3 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit 0\n",
     );
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let result = compile(&mgr, &root).await;
 
     assert!(result.ok);
     assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
@@ -61,18 +66,10 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 
 #[tokio::test]
 async fn a_compile_reruns_even_after_a_failed_run() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
+    let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n",
     );
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
-    mgr.compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    compile(&mgr, &root).await;
 
     let args = fs::read_to_string(root.join("build/args")).unwrap();
     assert!(args.split_whitespace().any(|a| a == "-g"), "{args}");
@@ -80,23 +77,20 @@ async fn a_compile_reruns_even_after_a_failed_run() {
 
 #[tokio::test]
 async fn a_stale_log_is_not_reported() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
+    let (_tmp, root, mgr) =
+        setup("#!/bin/sh\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
     fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(root.join("build/main.log"), "./main.tex:9: Stale error.\n").unwrap();
-    let mtime = filetime_from_secs_ago(120);
-    set_mtime(&root.join("build/main.log"), mtime);
-    let path = stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
+    let log = root.join("build/main.log");
+    fs::write(&log, "./main.tex:9: Stale error.\n").unwrap();
+    let two_minutes_ago = SystemTime::now() - Duration::from_secs(120);
+    fs::File::options()
+        .append(true)
+        .open(&log)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(two_minutes_ago))
         .unwrap();
+
+    let result = compile(&mgr, &root).await;
 
     assert!(result.ok);
     assert!(
@@ -108,21 +102,13 @@ async fn a_stale_log_is_not_reported() {
 
 #[tokio::test]
 async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    fs::create_dir_all(root.join("build")).unwrap();
-    fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
-    let path = stub_env(
-        &tmp.path().join("bin"),
+    let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Current failure.\\n' > build/main.log\nexit 1\n",
     );
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.pdf"), "old successful output").unwrap();
 
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
@@ -134,20 +120,9 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
 #[tokio::test]
 async fn a_timed_out_compile_keeps_the_output_it_wrote() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n",
-    );
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
+    let (_tmp, root, mut mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n");
     mgr.timeout = Some(Duration::from_millis(500));
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
     assert!(result.log.contains("Running pdflatex"), "{:?}", result.log);
@@ -155,18 +130,10 @@ async fn a_timed_out_compile_keeps_the_output_it_wrote() {
 
 #[tokio::test]
 async fn a_timed_out_compile_is_killed_and_reported_failed() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(&tmp.path().join("bin"), "#!/bin/sh\nsleep 20\n");
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
+    let (_tmp, root, mut mgr) = setup("#!/bin/sh\nsleep 20\n");
     mgr.timeout = Some(Duration::from_millis(300));
-    let started = std::time::Instant::now();
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let started = Instant::now();
+    let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None);
@@ -181,20 +148,10 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
     // latexmk has exited, but something it started in the background (a
     // shell-escape `&`, a latexmkrc previewer) still holds stdout open. The
     // compile answers after a short drain grace, not at its timeout.
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\nsleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n",
-    );
-
-    let mut mgr = CompileManager::new();
-    mgr.path_env = Some(path);
-    let started = std::time::Instant::now();
-    let result = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let (_tmp, root, mgr) =
+        setup("#!/bin/sh\nsleep 30 &\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
+    let started = Instant::now();
+    let result = compile(&mgr, &root).await;
 
     assert!(result.ok);
     assert!(
@@ -206,35 +163,20 @@ async fn a_descendant_holding_the_output_pipe_does_not_hold_the_compile() {
 
 #[tokio::test]
 async fn a_new_compile_supersedes_the_in_flight_one() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
+    let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else sleep 20; fi\n",
     );
-
-    let mgr = Arc::new({
-        let mut m = CompileManager::new();
-        m.path_env = Some(path);
-        m
-    });
+    let mgr = Arc::new(mgr);
 
     let first = tokio::spawn({
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
-        async move {
-            mgr.compile(&root, &CompileOverrides::default(), None)
-                .await
-                .unwrap()
-        }
+        async move { compile(&mgr, &root).await }
     });
     tokio::time::sleep(Duration::from_millis(400)).await;
     fs::write(root.join("fast"), "").unwrap();
 
-    let second = mgr
-        .compile(&root, &CompileOverrides::default(), None)
-        .await
-        .unwrap();
+    let second = compile(&mgr, &root).await;
     let first = first.await.unwrap();
 
     assert!(second.ok, "superseding compile should succeed");
@@ -248,10 +190,7 @@ async fn a_new_compile_supersedes_the_in_flight_one() {
 
 #[tokio::test]
 async fn a_third_compile_can_supersede_a_replacement_before_it_spawns() {
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
+    let (_tmp, root, mgr) = setup(
         r#"#!/bin/sh
 case "$*" in
   *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
@@ -259,13 +198,9 @@ case "$*" in
 esac
 "#,
     );
-
-    let mgr = Arc::new({
-        let mut m = CompileManager::new();
-        m.path_env = Some(path);
-        m
-    });
-    let launch = |mgr: Arc<CompileManager>, root: std::path::PathBuf, engine: &str| {
+    let mgr = Arc::new(mgr);
+    let launch = |engine: &str| {
+        let (mgr, root) = (Arc::clone(&mgr), root.clone());
         let options = CompileOverrides {
             engine: Some(engine.to_string()),
             ..CompileOverrides::default()
@@ -273,13 +208,13 @@ esac
         tokio::spawn(async move { mgr.compile(&root, &options, None).await.unwrap() })
     };
 
-    let first = launch(Arc::clone(&mgr), root.clone(), "pdflatex");
+    let first = launch("pdflatex");
     tokio::time::sleep(Duration::from_millis(250)).await;
-    let second = launch(Arc::clone(&mgr), root.clone(), "xelatex");
+    let second = launch("xelatex");
     // The second request is waiting for the first process to settle and may not
     // have a child PID yet. The third must still supersede it without deadlock.
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let third = launch(Arc::clone(&mgr), root.clone(), "lualatex");
+    let third = launch("lualatex");
 
     let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
         (
@@ -303,18 +238,8 @@ esac
 async fn a_cancelled_compile_takes_its_whole_tree_down() {
     // Dropping the compile future kills latexmk (kill_on_drop), but the
     // engine it started must not keep writing into the build directory.
-    let tmp = TempDir::new().unwrap();
-    let root = project(tmp.path());
-    let path = stub_env(
-        &tmp.path().join("bin"),
-        "#!/bin/sh\n(sleep 1; touch late) &\nsleep 20\n",
-    );
-
-    let mgr = Arc::new({
-        let mut m = CompileManager::new();
-        m.path_env = Some(path);
-        m
-    });
+    let (_tmp, root, mgr) = setup("#!/bin/sh\n(sleep 1; touch late) &\nsleep 20\n");
+    let mgr = Arc::new(mgr);
     let task = tokio::spawn({
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
@@ -345,16 +270,6 @@ async fn tex_available_reports_the_stub_version() {
     let none = tex_available("/nonexistent-dir-for-test").await;
     assert!(!none.available);
     assert_eq!(none.version, None);
-}
-
-fn filetime_from_secs_ago(secs: u64) -> std::time::SystemTime {
-    std::time::SystemTime::now() - Duration::from_secs(secs)
-}
-
-fn set_mtime(path: &Path, to: std::time::SystemTime) {
-    let file = fs::File::options().append(true).open(path).unwrap();
-    file.set_times(fs::FileTimes::new().set_modified(to))
-        .unwrap();
 }
 
 #[tokio::test]

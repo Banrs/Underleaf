@@ -190,8 +190,7 @@ fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>
 }
 
 /// Every content file in the project, depth-first, with its project-relative
-/// path. The visitor returns false to stop the walk — search uses that to stop
-/// reading files once it has the hits it was asked for.
+/// path. The visitor returns false to stop the walk.
 fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
@@ -336,13 +335,11 @@ where
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 fn discard(path: &Path) -> Result<(), CoreError> {
-    discard_using(path, |candidate| trash::delete(candidate))
+    discard_using(path, |path| trash::delete(path))
 }
 
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
-    let root = project_root(data_dir, id)?;
-    discard(&root)?;
-    Ok(())
+    discard(&project_root(data_dir, id)?)
 }
 
 // ---------- files ----------
@@ -362,8 +359,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
                 children,
             });
         }
-        // Folders first, then by name ignoring case. The key is built once per
-        // entry, not twice per comparison.
+        // Folders first, then by name ignoring case.
         nodes.sort_by_cached_key(|n| {
             (
                 n.kind != "dir",
@@ -381,10 +377,6 @@ const TEXT_EXT: &[&str] = &[
     "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
     "py", "r", "dat", "def", "clo", "tikz", "svg",
 ];
-
-pub fn is_text_file(rel: &str) -> bool {
-    TEXT_EXT.contains(&ext_of(rel).as_str())
-}
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
@@ -523,7 +515,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
     let mut hits: Vec<SearchHit> = Vec::new();
     let mut lower = Vec::new();
     visit_files(root, &mut |abs, rel| {
-        if !is_text_file(&rel) {
+        if !TEXT_EXT.contains(&ext_of(&rel).as_str()) {
             return Ok(true);
         }
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
@@ -662,36 +654,16 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::{create_file, create_project, delete_entry_using, discard_using};
-    use crate::error::CoreError;
     use crate::paths::project_root;
     use crate::settings::write_settings;
     use serde_json::json;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     fn project() -> (tempfile::TempDir, PathBuf) {
         let data = tempfile::tempdir().unwrap();
         create_project(data.path(), "P", "blank").unwrap();
         let root = project_root(data.path(), "P").unwrap();
         (data, root)
-    }
-
-    fn unavailable(path: &Path) -> Result<(), CoreError> {
-        discard_using(path, |_| Err::<(), _>("trash unavailable"))
-    }
-
-    #[test]
-    fn failed_trash_operation_never_falls_back_to_permanent_deletion() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("keep.tex");
-        std::fs::write(&path, "important").unwrap();
-
-        let result = discard_using(&path, |_| Err::<(), _>("trash unavailable"));
-
-        assert!(result.is_err());
-        assert!(
-            path.exists(),
-            "the original must remain after trash failure"
-        );
     }
 
     // These go through a stand-in for the platform trash: the real one is slow
@@ -701,6 +673,7 @@ mod tests {
     fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
         let (_data, root) = project();
         create_file(&root, "notes/scratch.tex", false).unwrap();
+        let unavailable = |path: &_| discard_using(path, |_| Err::<(), _>("trash unavailable"));
         let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
         assert_eq!(err.status, 500);
         assert!(root.join("notes/scratch.tex").is_file());

@@ -10,8 +10,8 @@ import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
 import { trashName, deleteLabel } from './bridge.js';
 
-let host = {};          // { openFile, gotoLine, revealSection, onMainFileChange, onOpenPathChange, … }
-let nodes = {};         // cached elements for the mounted sidebar
+let host = {};          // the workspace's callbacks
+let nodes = {};         // elements of the mounted sidebar
 
 // Expansion state is per project — one shared list would apply project A's
 // expanded folders to project B.
@@ -34,6 +34,7 @@ function containsPath(parent, candidate) {
     || candidate?.startsWith(`${parent}/`)
     || candidate?.startsWith(`${parent}\\`);
 }
+
 function remapPath(candidate, from, to) {
   return containsPath(from, candidate) ? to + candidate.slice(from.length) : candidate;
 }
@@ -92,16 +93,15 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   const engineLabel = el('span', {}, state.tex.available ? (state.settings?.engine ?? 'pdflatex') : 'No LaTeX');
   const engineSpinner = el('span', { class: 'spinner', hidden: '', 'aria-hidden': 'true' });
 
-  nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner };
-
   const engineStatus = el('button', {
     class: `engine-status ${state.tex.available ? '' : 'warn'}`,
     title: state.tex.available ? 'TeX engine — open Settings to change' : 'No LaTeX distribution found — open Settings',
     onclick: () => host.openSettings?.(),
   }, state.tex.available ? null : icon('warning'), engineSpinner, engineLabel);
-  nodes.engineStatus = engineStatus;
 
-  const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
+  nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
+
+  return el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
     el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
       el('span', { class: 'spacer' }), titlebarTrailing),
     el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
@@ -128,8 +128,6 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     ),
     fileInput,
   );
-
-  return element;
 }
 
 // Engine name plus a spinner while a compile runs, so the engine that is
@@ -194,8 +192,7 @@ function renderNode(node, level) {
       onclick: () => {
         if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
         persistOpenDirs();
-        // Rebuild only this folder's subtree. Toggling one folder used to
-        // recreate every row in the project.
+        // Rebuild only this folder's subtree.
         const fresh = renderNode(node, level);
         group.replaceWith(fresh);
         syncRovingFocus();
@@ -335,7 +332,7 @@ function rowMenu(e, node) {
 // Never throws: callers await it inside their own try blocks, and a tree-fetch
 // hiccup must not be reported as the caller's failure (e.g. after a successful
 // upload).
-export async function refreshTree() {
+async function refreshTree() {
   const projectId = state.projectId;
   if (!projectId) return;
   let tree;
@@ -378,7 +375,7 @@ function setupDropzone(treeEl) {
     e.preventDefault();
     treeEl.classList.remove('drop-target');
     // Walking the dropped entries can reject (an unreadable folder, a permission
-    // refusal). Without this the drop failed silently as an unhandled rejection.
+    // refusal); uncaught, the drop would fail silently as an unhandled rejection.
     try {
       const files = await collectDroppedFiles(e.dataTransfer);
       if (files.length) await upload(files);
@@ -412,21 +409,19 @@ async function collectDroppedFiles(dt) {
 }
 
 async function upload(files) {
+  const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
+  let msg, kind;
   try {
     const { saved } = await api.upload(state.projectId, files);
-    toast(`Uploaded ${saved.length} file${saved.length === 1 ? '' : 's'}`);
-    await refreshTree();
-    host.onFilesChanged?.();
+    msg = `Uploaded ${count(saved.length)}`;
   } catch (err) {
-    const saved = err.saved ?? [];
-    if (saved.length) {
-      await refreshTree();
-      host.onFilesChanged?.();
-      toast(`Upload stopped after ${saved.length} file${saved.length === 1 ? '' : 's'}: ${err.message}`, 'error');
-    } else {
-      toast(err.message, 'error');
-    }
+    if (!err.saved?.length) { toast(err.message, 'error'); return; }
+    msg = `Upload stopped after ${count(err.saved.length)}: ${err.message}`;
+    kind = 'error';
   }
+  await refreshTree();
+  host.onFilesChanged?.();
+  toast(msg, kind);
 }
 
 // ---------- outline ----------
@@ -456,12 +451,9 @@ export function renderOutline() {
     // gradients so nesting reads at a glance without extra elements.
     let style = `padding-left:${GUTTER + rd * INDENT}px`;
     if (rd > 0) {
-      const imgs = [], pos = [];
-      for (let i = 0; i < rd; i++) {
-        imgs.push('linear-gradient(var(--separator),var(--separator))');
-        pos.push(`${GUTTER + i * INDENT + RAIL}px 0`);
-      }
-      style += `;background-image:${imgs.join(',')};background-position:${pos.join(',')};background-size:1px 100%`;
+      const rail = 'linear-gradient(var(--separator),var(--separator))';
+      const pos = Array.from({ length: rd }, (_, k) => `${GUTTER + k * INDENT + RAIL}px 0`);
+      style += `;background-image:${Array(rd).fill(rail)};background-position:${pos};background-size:1px 100%`;
     }
     return el('div', {
       class: 'outline-row',
@@ -514,7 +506,7 @@ function chooseSection(i, focusEditor = false) {
 }
 
 function outlineKeys(e) {
-  const rows = [...nodes.outline.children].filter((r) => r.getAttribute('role') === 'option');
+  const rows = [...nodes.outline.children];
   const i = rows.indexOf(document.activeElement);
   if (i === -1) return;
   const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[e.key];

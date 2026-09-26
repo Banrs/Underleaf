@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use texlocal_core::service::Service;
-use texlocal_server::{http, new_token, App, MAX_BODY};
+use texlocal_server::{new_token, serve, App, MAX_BODY};
 
 const DEFAULT_PORT: u16 = 7878;
 
@@ -57,18 +57,7 @@ async fn main() -> std::io::Result<()> {
     println!("TeXLocal is serving {}", data_dir.display());
     println!("Open http://127.0.0.1:{port}/?token={token}");
 
-    let handler = {
-        let app = app.clone();
-        Arc::new(move |req| {
-            let app = app.clone();
-            async move { app.handle(req).await }
-        })
-    };
-    let guard = {
-        let app = app.clone();
-        Arc::new(move |req: &http::Request| app.guard(req))
-    };
-    http::serve(listener, handler, guard, MAX_BODY, async {
+    serve(app.clone(), listener, MAX_BODY, async {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await;

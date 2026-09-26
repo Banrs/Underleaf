@@ -36,32 +36,29 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
             visited: HashSet::from([root_canonical.clone()]),
         };
         export.add_dir(root, &root_canonical, "")?;
-        let completed = export.writer.finish()?;
-        completed.sync_all()?;
-        Ok(())
+        export.writer.finish()?.sync_all()?;
+        Ok(replace_completed(&temp_path, dest)?)
     })();
-
-    if let Err(err) = result {
+    if result.is_err() {
         let _ = fs::remove_file(&temp_path);
-        return Err(err);
     }
-
-    if let Err(err) = replace_completed(&temp_path, dest) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(err.into());
-    }
-    Ok(())
+    result
 }
 
-fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
+/// A fresh hidden name beside `dest`, ending in `.{ext}`.
+fn sibling(dest: &Path, ext: &str) -> PathBuf {
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
     let name = dest
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_else(|| "archive.zip".into());
+    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(".{name}.texlocal-{}-{n}.{ext}", std::process::id()))
+}
+
+fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
     for _ in 0..100 {
-        let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{name}.texlocal-{}-{n}.tmp", std::process::id()));
+        let candidate = sibling(dest, "tmp");
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -89,7 +86,7 @@ fn replace_completed(temp: &Path, dest: &Path) -> io::Result<()> {
                     io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
                 ) =>
         {
-            let backup = sibling_backup(dest);
+            let backup = sibling(dest, "bak");
             fs::rename(dest, &backup)?;
             match fs::rename(temp, dest) {
                 Ok(()) => {
@@ -106,20 +103,6 @@ fn replace_completed(temp: &Path, dest: &Path) -> io::Result<()> {
         }
         Err(err) => Err(err),
     }
-}
-
-#[cfg(windows)]
-fn sibling_backup(dest: &Path) -> PathBuf {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    let name = dest
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_else(|| "archive.zip".into());
-    parent.join(format!(
-        ".{name}.texlocal-{}-{}.bak",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ))
 }
 
 /// The parts of an export that do not change as the walk descends: where the

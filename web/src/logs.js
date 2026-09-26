@@ -16,28 +16,21 @@ export function destroyLogsView() {
   nodes = {};
 }
 
-// The toolbar button carries a badge with the more severe of the two counts.
-function logsBadge() {
-  const errs = state.lastResult?.errors ?? [];
-  const warns = state.lastResult?.warnings ?? [];
-  const count = errs.length || warns.length;
-  if (!count) return null;
-  return el('span', { class: `badge-count ${errs.length ? 'error' : 'warning'}` }, String(count));
-}
-
 export function renderLogs({ pdfScroll, logsButton }) {
   const { view, onJump } = nodes;
   if (!view) return;
   const r = state.lastResult;
   const errs = r?.errors ?? [];
   const warns = r?.warnings ?? [];
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   if (logsButton) {
     logsButton.classList.toggle('selected', state.logOpen);
     logsButton.setAttribute('aria-pressed', String(state.logOpen));
     logsButton.querySelector('.badge-count')?.remove();
-    const badge = logsBadge();
-    if (badge) logsButton.appendChild(badge);
+    // A badge with the more severe of the two counts.
+    const count = errs.length || warns.length;
+    if (count) logsButton.appendChild(el('span', { class: `badge-count ${errs.length ? 'error' : 'warning'}` }, String(count)));
   }
 
   view.hidden = !state.logOpen;
@@ -48,9 +41,9 @@ export function renderLogs({ pdfScroll, logsButton }) {
     ? el('span', { class: 'logs-summary' }, 'Not compiled yet')
     : el('span', { class: 'logs-summary' },
       errs.length
-        ? el('span', { class: 'badge error' }, `${errs.length} error${errs.length === 1 ? '' : 's'}`)
+        ? el('span', { class: 'badge error' }, plural(errs.length, 'error'))
         : el('span', { class: 'badge ok' }, 'Compiled'),
-      warns.length ? el('span', { class: 'badge warning' }, `${warns.length} warning${warns.length === 1 ? '' : 's'}`) : null,
+      warns.length ? el('span', { class: 'badge warning' }, plural(warns.length, 'warning')) : null,
       r.durationMs ? el('span', { class: 'logs-duration' }, `${(r.durationMs / 1000).toFixed(1)}s`) : null,
     );
 

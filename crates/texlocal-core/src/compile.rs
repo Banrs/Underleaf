@@ -19,7 +19,7 @@ use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
 use crate::BUILD_DIR;
 
-pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
+const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: usize = 1_000_000;
 /// How long a finished child's pipes are read before giving up on them.
@@ -29,7 +29,7 @@ const LOG_TAIL: usize = 200_000;
 /// most; one that loops on `\message` until the timeout can reach gigabytes.
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
 
-fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
     match engine {
         "pdflatex" => Some(&["-pdf"]),
         "xelatex" => Some(&["-xelatex"]),
@@ -157,21 +157,25 @@ pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- process plumbing ----------
 
+#[cfg(windows)]
+fn taskkill(pid: u32) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new("taskkill");
+    command
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x0800_0000);
+    command
+}
+
 /// Synchronous shutdown kill. On Windows this waits for taskkill because the
 /// app process is about to exit and cannot leave a console helper behind.
-pub(crate) fn kill_pid_tree(pid: u32) {
+fn kill_pid_tree(pid: u32) {
     #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000)
-            .status();
-    }
+    let _ = taskkill(pid).status();
 }
 
 /// Async equivalent used while the application remains live. Waiting for the
@@ -179,18 +183,9 @@ pub(crate) fn kill_pid_tree(pid: u32) {
 /// while descendants of the previous latexmk still own and write build files.
 async fn terminate_pid_tree(pid: u32) {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
+    kill_pid_tree(pid);
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("taskkill");
-        command
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000);
-        let _ = tokio::process::Command::from(command).status().await;
-    }
+    let _ = tokio::process::Command::from(taskkill(pid)).status().await;
 }
 
 fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::process::Command {
@@ -261,16 +256,13 @@ pub(crate) async fn run(
 ) -> RunOutput {
     let mut cmd = base_command(program, cwd, path_env);
     cmd.args(args);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => {
-            return RunOutput {
-                code: -1,
-                stdout: String::new(),
-            }
-        }
+    let Ok(mut child) = cmd.spawn() else {
+        return RunOutput {
+            code: -1,
+            stdout: String::new(),
+        };
     };
-    let (code, stdout, _stderr) = drive(&mut child, timeout).await;
+    let (code, stdout, _) = drive(&mut child, timeout).await;
     RunOutput { code, stdout }
 }
 
@@ -453,10 +445,6 @@ struct CompileRun<'a> {
 }
 
 impl CompileManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     fn path(&self, tex_dir: Option<&Path>) -> String {
         self.path_env.clone().unwrap_or_else(|| tex_path(tex_dir))
     }

@@ -21,17 +21,15 @@ function errorMessage(err) {
   return typeof err === 'string' ? err : (err?.message ?? String(err));
 }
 
-
+// Flush, then tell the shell whether it worked, so it quits only on success.
 export async function runQuitFlush(flush, acknowledge) {
-  let ok = false;
-  let error = null;
+  let outcome;
   try {
     await flush();
-    ok = true;
+    outcome = { ok: true, error: null };
   } catch (err) {
-    error = errorMessage(err);
+    outcome = { ok: false, error: errorMessage(err) };
   }
-  const outcome = { ok, error };
   await acknowledge(outcome);
   return outcome;
 }
@@ -50,7 +48,6 @@ function tauriBridge() {
   const { invoke } = tauri.core;
   const { listen } = tauri.event;
   const platform = agentPlatform();
-
   const origin = platform === 'win32' ? 'http://texlocal.localhost' : 'texlocal://localhost';
 
   return {

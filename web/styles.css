@@ -1,9 +1,8 @@
 /* TeXLocal interface.
    Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
-   extraction. Platform-specific chrome is gated on html.mac / html.win so the
-   Windows shell is additive rather than a rewrite. In a browser tab the root
-   gets html.browser instead, and the vibrancy that needs a native window
-   falls back to opaque surfaces (html:not(.mac)). */
+   extraction. The Tauri Mac window's chrome is gated on html.mac; a browser tab
+   gets html.browser, and vibrancy that needs a native window falls back to
+   opaque surfaces (html:not(.mac)). */
 
 /* ---------- fonts ---------- */
 
@@ -243,8 +242,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   flex: none;
   height: var(--h-titlebar);
   padding: 0 var(--sp-2);
-  /* The title sits a control-gap away from the navigation buttons. */
-  --title-gap: var(--sp-2);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
 }
@@ -257,7 +254,7 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   padding: 0 var(--sp-2);
 }
 
-.window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--title-gap, 0); }
+.window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--sp-2); }
 .save-state { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
 
 /* One toggle exists in each band; only the relevant one shows. */
@@ -281,10 +278,9 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   color: var(--label-2);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
-.icon-btn .icon svg { width: 16px; height: 16px; }
 .icon-btn:hover:not(:disabled) { background: var(--fill-2); color: var(--label); }
 .icon-btn:active:not(:disabled) { background: var(--fill-1); }
-.icon-btn:disabled { color: var(--label-3); cursor: default; }
+.icon-btn:disabled { color: var(--label-3); }
 .icon-btn.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 /* "Small" here is the in-pane toolbar size. Native pane toolbars (Preview,
@@ -295,7 +291,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   height: var(--h-control);
   border-radius: var(--r-control);
 }
-.icon-btn.small .icon svg { width: 16px; height: 16px; }
 
 .btn {
   display: inline-flex;
@@ -311,9 +306,8 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   white-space: nowrap;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
-.btn:hover:not(:disabled) { background: var(--fill-1); }
-.btn:active:not(:disabled) { background: var(--fill-1); }
-.btn:disabled { color: var(--label-3); cursor: default; }
+.btn:is(:hover, :active):not(:disabled) { background: var(--fill-1); }
+.btn:disabled { color: var(--label-3); }
 .btn[aria-pressed="true"] { background: var(--fill-1); color: var(--accent); }
 .btn .icon svg { width: 15px; height: 15px; }
 
@@ -332,7 +326,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   height: var(--h-control);
   padding: 0 10px;
   border-radius: var(--r-control);
-  font-size: var(--fs-control);
 }
 .btn.small .icon svg { width: 14px; height: 14px; }
 
@@ -380,7 +373,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 .segment:hover { color: var(--label); }
-.segment .icon svg { width: 15px; height: 15px; }
 .segment[aria-checked="true"] {
   background: var(--bg-content);
   color: var(--label);
@@ -489,7 +481,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* ---------- home ---------- */
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
+.home-titlebar { box-shadow: none; background: transparent; }
 .mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
@@ -612,7 +604,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
+.section-header.disclosure { margin-top: var(--sp-4); }   /* section-to-section gap */
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
@@ -797,7 +789,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border: 1px solid var(--separator);
   border-radius: var(--r-control);
   background: var(--bg-content);
-  box-shadow: none;
   z-index: 10;
   cursor: auto;
 }
@@ -1043,7 +1034,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- compile log ---------- */
 
-.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); }
+.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); animation: fade-in 0.14s ease-out; }
 .logs-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .logs-summary { display: flex; align-items: center; gap: var(--sp-2); }
 .logs-duration { color: var(--label-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
@@ -1147,11 +1138,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
+.settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow-wrap: anywhere; }   /* a long TeX path wraps */
 .settings-control { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; color: var(--label-2); }
 .settings-control .btn:not(:disabled) { color: var(--label); }
-/* A long TeX folder path wraps anywhere rather than widening the dialog. */
-.settings-hint { overflow-wrap: anywhere; }
 
 /* TeX folder chooser: drive chips, the current path, then a grouped list of
    folders in the recents' style. */
@@ -1260,7 +1249,6 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 @keyframes pop-in { from { opacity: 0; transform: scale(0.98) translateY(2px); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes fade-in { from { opacity: 0; } }
-.logs { animation: fade-in 0.14s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

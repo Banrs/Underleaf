@@ -7,20 +7,27 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 > scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
 > — so existing installs and projects keep working.
 
-Ships as a Tauri desktop app for Apple Silicon macOS and Windows 11: a Rust
-core with the system webview — no bundled browser, no localhost ports, and no
-HTTP client at all. Built with open-source components only.
+One Rust core, several clients:
+
+- **macOS app** — SwiftUI, in `apps/macos`.
+- **Windows app** — WinUI 3 in C#, in `apps/windows`.
+- **Browser version** — the `web/` UI served by `crates/texlocal-server` on
+  `127.0.0.1` only; never exposed to the network.
+- **Tauri desktop app** (`src-tauri`) — still ships until the native apps reach
+  parity, then gets retired.
+
+The native apps embed two web pages from `web/embed`: the CodeMirror editor
+(both) and the pdf.js viewer (Windows). [HANDOFF.md](HANDOFF.md) has the
+current status and architecture.
 
 ## Quick start
-
-Download the installer for your platform from
-[Releases](https://github.com/Banrs/Underleaf/releases), or build from source:
 
 ```sh
 git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 npm install
-npm run app          # desktop app against live code
+npm run serve        # browser version: prints a local URL with a sign-in token
+npm run app          # Tauri desktop app against live code
 ```
 
 You also need a TeX distribution — see [Requirements](#requirements).
@@ -28,113 +35,76 @@ You also need a TeX distribution — see [Requirements](#requirements).
 ## Features
 
 - **Projects** with templates (Article, Report, Beamer, Blank)
-- **File tree** with folders, rename/delete, drag-and-drop upload (single files or whole folders), ZIP export
-- **CodeMirror 6 editor** (JetBrains Mono): LaTeX syntax highlighting, autocomplete for ~130 commands and environments, live `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s, `⌘/` comment toggle
-- **Live equation preview**: a KaTeX-rendered popup at the cursor whenever it's inside `$…$`, `\[…\]`, or an equation/align/cases environment
-- **Auto-compile** (Overleaf-style): save-on-pause triggers a recompile; superseded runs are cancelled
-- **File outline** in the sidebar (sections/subsections, click to jump) and a cursor-tracking breadcrumb with word & line counts
-- **Project-wide search** in the sidebar with highlighted matches; jump targets flash in the editor
-- **Editor toolbar**: undo/redo, bold/italic/math, comment, and an Insert menu (figure, table, equation, lists, code block)
-- **Native OS spellcheck** in the editor (red squiggles + right-click suggestions from the system webview)
+- **File tree** with folders, rename/delete, drag-and-drop upload, ZIP export
+- **CodeMirror 6 editor**: LaTeX highlighting, autocomplete for ~130 commands and environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s
+- **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
+- **Source bar** (Overleaf-style): undo/redo, section level, bold/italic, inline and display math, a symbol palette, references, figures, tables and lists, with a location row (project › folders › file › section) under it
+- **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
+- **File outline** in the sidebar that follows the section on screen, plus word and line counts
+- **Project-wide search** with highlighted matches
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns
-- **Logs in the PDF pane** (Overleaf-style): badge on the toolbar, parsed errors click through to source, raw log view
-- **PDF preview**: trackpad pinch or ⌘-scroll zoom, zoom %, fit width/height, page tracking
-- **Find in the PDF** (`⌘⌥F`): searches the compiled document, highlights every hit over the page and steps through them with Enter / Shift-Enter — matches split across pdf.js text runs are found, while real line breaks remain boundaries
+- **Logs in the PDF pane**: a badge on the toolbar, parsed errors click through to source, raw log view
+- **PDF preview**: pinch or ⌘-scroll zoom, fit width/height, page tracking, and **Find in PDF** (`⌘⌥F`)
 - **SyncTeX both ways** via the arrows on the editor/PDF divider, or double-click the PDF
-- **Native menu bar** driven by one shared command model — menu items, keyboard shortcuts, and toolbar buttons stay in sync (titles, accelerators, enabled state)
-- **Deletes go to the Trash** (Recycle Bin on Windows), so removing a file or a whole project is recoverable
-- **Compile notifications**: when a compile finishes while you're in another window, the result arrives as a system notification — silent while TeXLocal has focus
-- **Settings** (`⌘,`): grouped System-Settings-style dialog — theme, PDF paper (white by default; dark inversion as a night-reading option), auto-compile, editor font size, interface scale, per-project TeX engine
-- **Interface** built from Apple's macOS UI kit values ([docs/design-tokens.md](docs/design-tokens.md)): 52px unified title bar, 256px vibrant sidebar, HIG type ramp and system colors; edge-to-edge by default with an optional Floating-panels layout. On Windows the same layout runs under a standard title bar.
-- Autosave, `⌘S` save / `⌘⏎` compile, `⌘F` find & replace, `⌘⇧F` find in project, `⌘/` comment, `⌘\` toggle sidebar, `⌘⇧\` toggle PDF, `⌘L` go to line, `⌘⌥F` find in PDF, `⌘,` settings
+- **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state)
+- **Deletes go to the Trash** (Recycle Bin on Windows)
+- **Settings** (`⌘,`): theme, PDF paper, auto-compile, word count, syntax colours, editor font and size, interface size, TeX folder, per-project TeX engine
 
 ## Requirements
 
-**To run the app:** macOS 12+ on Apple Silicon, or Windows 11 (x64), plus a TeX
-distribution providing `latexmk`, `pdflatex` and `synctex`:
+A TeX distribution providing `latexmk`, `pdflatex` and `synctex`:
 
 - **macOS** — `brew install --cask mactex-no-gui`
 - **Windows** — [MiKTeX](https://miktex.org) or [TeX Live](https://tug.org/texlive)
 
-The full distribution (~7 GB) is recommended so every package works offline
-forever. TeXLocal finds TeX on your `PATH` and also looks in the usual install
-locations (`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`,
-`C:\texlive\<year>`, MiKTeX). It reads them once at startup, so restart the app
-after installing TeX.
+TeXLocal finds TeX on your `PATH` and in the usual install locations
+(`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`,
+`C:\texlive\<year>`, MiKTeX), or in a folder you choose in Settings.
 
-**To build from source:** Node.js ≥ 22.12, Rust (stable), and your platform's
-Tauri prerequisites — Xcode command line tools on macOS, the WebView2 runtime
-(preinstalled on Windows 11) and MSVC build tools on Windows.
-
-## Run
-
-**Desktop app:** `npm run app` runs it against live code; `npm run package`
-produces installers in `target/release/bundle/`. There is no server and no
-open port — the UI calls Rust commands directly, and PDFs and project images
-are served over a custom `texlocal://` scheme.
-
-> Release builds are not code-signed. On macOS, right-click the app and choose
-> Open the first time; on Windows, choose "More info" → "Run anyway" if
-> SmartScreen appears. Distributing without those prompts needs an Apple
-> Developer ID (signing + notarization) and a Windows signing certificate.
+**To build from source:** Node.js ≥ 22.12 and Rust (stable). The Tauri app also
+needs the Tauri prerequisites; the macOS app needs Xcode; the Windows app needs
+.NET 10.
 
 Projects are plain folders in `~/TeXLocal` — override with
-`TEXLOCAL_DATA=/path`. Everything is just files on disk; no databases, no
-lock-in.
-
-> The desktop app uses `~/TeXLocal` (home folder) rather than
-> `~/Documents/TeXLocal` so it isn't blocked by macOS's Documents-folder
-> privacy prompt.
+`TEXLOCAL_DATA=/path`. No databases, no lock-in.
 
 ## Project structure
 
 ```
-crates/texlocal-core/  Projects, path safety, latexmk/SyncTeX, log parsing, ZIP export.
-                       No GUI dependencies, so it builds and tests anywhere.
-src-tauri/             The desktop shell: commands.rs (the command surface),
-                       protocol.rs (texlocal://), menu.rs, window.rs, state.rs
-web/src/               Frontend modules, bundled by esbuild into web/dist:
-                       main.js (bootstrap/routing) · bridge.js (host detection) ·
-                       commands.js (shared command model) · api.js (command client) ·
-                       home.js (project picker) · workspace.js (editor+PDF shell) · sidebar.js ·
-                       settings.js · logs.js · editor.js (CodeMirror) · pdfview.js (pdf.js) ·
-                       dom.js (dialogs/menus with focus semantics) · prefs.js (persisted settings) ·
-                       state.js · icons.js · latex-data.js
-docs/                  design-tokens.md (extracted Apple UI-kit values) ·
-                       roadmap.md · shell-and-design.md · windows.md
-build.mjs              esbuild bundler and shared asset copy
-scripts/               extract-icns.mjs (icon master for `tauri icon`)
-assets/                App icon source
+crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP
+                         export, and the JSON command service every host shares.
+crates/texlocal-ffi/     C ABI the native apps link (header in include/).
+crates/texlocal-server/  The browser version's local HTTP host.
+apps/macos/              SwiftUI app.
+apps/windows/            WinUI 3 app.
+src-tauri/               Tauri desktop shell (being retired).
+web/src/                 Frontend modules, bundled by esbuild into web/dist.
+web/embed/               Editor and PDF pages the native apps embed.
+docs/                    design-tokens.md (extracted Apple UI-kit values) ·
+                         roadmap.md · shell-and-design.md · windows.md
+build.mjs                esbuild bundler and shared asset copy
+scripts/                 Version check and icon extraction
 ```
-
-There is one implementation of everything. `web/src/bridge.js` is the single
-place that knows about the host, and `api.js` speaks only to Tauri commands —
-the app contains no HTTP client and no server.
 
 ## Development
 
 ```sh
 npm run build                 # bundle the frontend
-npm test                      # frontend/server tests (node --test)
-cargo test -p texlocal-core   # core logic tests — no webview needed
-cargo test --workspace        # everything, needs the Tauri build deps
+npm test                      # frontend tests (node --test)
+cargo test --workspace        # Rust tests
 ```
-
-Every pull request builds installers for Apple Silicon macOS and
-Windows and attaches them as artifacts, which is how a change gets tested on
-hardware CI can't assert against.
 
 To publish a release: bump the version in `package.json`, the workspace
 `Cargo.toml`, and `src-tauri/tauri.conf.json`, then push a matching `v*` tag.
-CI verifies all three versions before drafting the release and attaching the
-installers.
+CI checks the three agree before drafting the release.
 
 ## Security notes
 
-- The app opens no network ports at all and contains no HTTP client.
+- The browser version binds `127.0.0.1` only, signs in with a startup token
+  exchanged for an HttpOnly cookie, and rejects foreign Host and Origin headers.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
-- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). Enable per-project through Settings; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
+- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 
 ## License
 
-MIT. Built with [Tauri](https://tauri.app) (MIT/Apache-2.0), [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
+MIT. Built with [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [KaTeX](https://katex.org) (MIT), [Tauri](https://tauri.app) (MIT/Apache-2.0), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
