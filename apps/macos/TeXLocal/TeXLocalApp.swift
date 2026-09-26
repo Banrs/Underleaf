@@ -58,6 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+extension Binding where Value == Bool {
+    /// True while `item` holds something; set to false, it clears `item`.
+    init<Item: Sendable>(presenting item: Binding<Item?>) {
+        self.init(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
+}
+
 struct RootView: View {
     @Environment(AppModel.self) private var app
 
@@ -72,9 +79,9 @@ struct RootView: View {
         }
         // One minimum for the window whatever it shows, with room for every
         // column at its own: navigator 200, source and PDF together 441,
-        // inspector 220. A minimum that changed with the content — raised as a project
-        // opened — landed mid-layout on the split view, whose constraint
-        // passes then looped until AppKit threw.
+        // inspector 220. A minimum that changed with the content — raised as
+        // a project opened — landed mid-layout on the split view, whose
+        // constraint passes then looped until AppKit threw.
         .frame(minWidth: 960, minHeight: 600)
         .task {
             await app.refresh()
@@ -88,10 +95,7 @@ struct RootView: View {
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
         // The title says what happened, as the HIG asks; the app's name
         // told nothing.
-        .alert(app.alert ?? "", isPresented: Binding(
-            get: { app.alert != nil },
-            set: { if !$0 { app.alert = nil } }
-        )) {
+        .alert(app.alert ?? "", isPresented: Binding(presenting: $app.alert)) {
             Button("OK") {}
         }
     }

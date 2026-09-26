@@ -2,17 +2,15 @@
 
 Status as of 2026-09-26, on `main` (all earlier branches are merged and deleted).
 
-**Last session (2026-09-26): the macOS polish and a cleanup pass over it are both uncommitted in the working tree.** `main` has everything up to `4ae7f2b`. The Overleaf-style source bar, accessory-bar pane bars, the split sidebar and the scroll-following outline came first. The cleanup (macOS design pass against the UI kit, and a Rust optimisation pass, below) went on top. The ref `refs/cleanup/baseline` snapshots the tree before the cleanup, so `git diff refs/cleanup/baseline` shows the cleanup alone; delete it with `git update-ref -d refs/cleanup/baseline` once committed. `/Applications/TeXLocal.app` is still a Release build from before the cleanup. The old Tauri app is in the Trash.
+**Last session (2026-09-26, afternoon): everything is committed on `main`.** In order: the macOS polish and cleanup (`cd671bb`, `97ed2cb`); server hardening (`65f2077`); macOS crash hardening, preview-state fixes, Find Next / Find Previous and split shares (`486843b`); the web source bar, location row and docked outline (`89bf1f2`); a deflation of the Rust and web code (`6dcb95f`); the macOS 27 refresh with built-in controls and one sizing system (`3b2becc`); palette symbols wrapped in `$…$` outside math and host line colours (`e3fb56a`); then the Swift deflation. `/Applications/TeXLocal.app` is a Release build of that tree.
 
-All checks pass on the cleaned-up tree: the Debug build has no Swift warnings, 26 XCTests, `cargo fmt`, clippy `-D warnings`, `cargo test --workspace` and `npm test` (37). Not yet checked on screen (rendered frames don't show glass, vibrancy, selection or PDFKit pages):
-- the outline selection following the source as it scrolls;
-- the symbol palette in use;
-- the sidebar's glass and selection, and the accent colour in the embedded editor;
-- the Files list's Delete key, and that a single click in the Files list or outline keeps keyboard focus in the list.
+All checks pass: Debug build with no Swift warnings, 30 XCTests, `cargo fmt`, clippy `-D warnings`, `cargo test --workspace`, and `npm test` (52). The Windows changes (Find Next / Find Previous in `MenuCommand`, the menus and `Commands.cs`) were checked by reading only: dotnet isn't installed on the Mac, so CI's Windows build is their first compile.
+
+Crashes (18 reports, 25–26 Sep): 15 were one update-constraints loop that `d08f82b` (AppKit splits) fixed, and the editor view no longer adds constraints mid-layout; the startup-alert crash was already fixed; one was a debugger's leftover breakpoint. **Still open: an AppKit assertion leaving full screen** (`-[_NSFullScreenMenuBarCompanionController _relinquishTitlebar]`, 26 Sep 11:03, a window restored into full screen at launch). Not reproduced in many tries; if it recurs, break on `__assert_rtn` under lldb (developer mode is now on, so lldb attaches without a prompt).
 
 Next:
-- Bring the web version's editor toolbar and outline to the same Overleaf feature set, keeping it universal web design. The new editor operations are already shared.
 - The Windows app, which the owner is picking up from `main`.
+- The on-screen checks that need TeXLocal frontmost (below).
 
 ## Goal
 
@@ -48,6 +46,7 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
   - It binds `127.0.0.1` only.
   - The startup token is exchanged for an HttpOnly, SameSite=Strict cookie.
   - It rejects any Host header other than the bound address (DNS rebinding) and non-GET requests from a foreign Origin.
+  - Those checks and the cookie run on the request head, before any body is read (`http::serve`'s pre-body check); a refusal is followed by a lingering close so the client still reads the 401/403. A head must arrive within 10 s, Content-Length is strict (duplicates and signs get 400), and writes time out after 60 s.
   - **This is security-critical.** `-shell-escape` makes compiling equivalent to running code.
   - It has its own small HTTP/1.1 layer (`src/http.rs`) built on `httparse`, pinned to a GitHub tag. See the network note below.
 - **`web/src/bridge.js`** holds `httpBridge()`, the browser host.
@@ -70,6 +69,7 @@ The browser version (`web/`) is universal web design, not Mac- or Windows-styled
 - **The menu bar works like a standard web menu:** ARIA state, arrow keys and Tab, and a trigger that toggles its menu.
 - **Recent projects are real links.**
 - **The Tauri app keeps its Mac look (`html.mac`)** until it is retired.
+- **The source bar matches the Mac's** (`web/src/sourcebar.js`): the same groups and order, folding into ⋯ from the end, a location row under it, and a symbol palette whose symbols are wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in `web/src/editor.js`). Files sit over a docked File Outline (a listbox) with a resizable divider (`outlineHeight` pref); the outline follows the top visible line.
 
 ## Done and verified
 
@@ -82,7 +82,7 @@ The browser version (`web/`) is universal web design, not Mac- or Windows-styled
 | `45cfe04` | Embed pages |
 | `4a5a6cf` | macOS app, first draft |
 
-- `cargo fmt`, clippy and `cargo test --workspace` are clean, and `npm test` passes (37 tests).
+- `cargo fmt`, clippy and `cargo test --workspace` are clean, and `npm test` passes (52 tests).
 - The browser version works end to end in real Chrome, driven over CDP:
   - sign-in, the editor, a compile, the PDF render, the menu bar, and ⌘↩ compiling;
   - a foreign Origin or Host is refused with 403.
@@ -135,7 +135,8 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
     - link | reference | citation, figure | table, and bulleted | numbered;
     - a trailing ⋯ menu for the rest.
     Narrow panes fold groups into ⋯ from the end.
-  - The editor operations are in `web/src/editor.js`, used by the embed page: `setHeading`, `insertText`, `inline` (a `pre$0post` wrap in the line) and `displayMath`.
+  - The editor operations are in `web/src/editor.js`, used by the embed page: `setHeading`, `insertText`, `insertSymbol` (wraps in `$…$` outside math), `inline` (a `pre$0post` wrap in the line) and `displayMath`.
+  - Edit › Find › Find Next / Find Previous (⌘G, ⇧⌘G) step whichever find field has focus: the PDF's, the build log's, or the editor's (`findAgain` in `Commands.swift`).
   - PDF bar: Compile, then zoom as − / the scale as a percentage (a menu with Fit Width and presets) / +, a separator, then Share. Share uses `NSSharingServicePicker`, anchored to its button through `ViewAnchor`: `ShareLink` opened centred on the PDF.
   - Settings › General › Toolbar Size: Standard (stored as "compact") is regular controls in a 40 pt bar, the kit's Unified Compact toolbar; Large is extra-large controls with large symbols in 52 pt, the kit's Unified toolbar. The location row and status bar are 28 pt.
   - Settings: each tab is a grouped form at its content's height, so the window resizes per tab. Font Size is the system `Stepper(value:in:format:)`, whose editable value and arrows a grouped form lines up itself.
@@ -145,7 +146,9 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Menus: Edit › Spelling and Grammar (the stateless items only; the While Typing toggles need an AppKit-validated menu item to show their checkmarks), "Comment Selection", and Help › TeXLocal on GitHub. The app icon is a flat PNG set from `assets/TeXLocal.png`; a layered Icon Composer `.icon` is the macOS 26+ ideal.
   - A library folder that can't be opened shows an alert and quits. The alert is posted on the next main-queue turn: `Core.shared` is first made during SwiftUI's first scene update, where a modal alert aborted the app.
   - The start window: template cards (plain system buttons: pressed dimming and the keyboard focus ring are the system's), then recent projects as a sortable table.
-- Editor current line: `setAppearance` sends `current-line` (quaternary system fill) and `selection-match` host colours; `web/embed/editor.html` still has to use them for `.cm-activeLine`, `.cm-activeLineGutter` and `.cm-selectionMatch` under `:root[data-host]`.
+  - Editor current line and selection matches use the host's `current-line` (quaternary system fill) and `selection-match` colours; in dark mode other find matches take the host text colour so they stay readable.
+  - Splits keep each pane's share across window resizes (`splitView(_:resizeSubviewsWithOldSize:)`), so a small window no longer leaves the PDF at its minimum afterwards.
+  - "Preview Out of Date" is save-counted: it clears after the lost-edits alert when nothing was saved since the last good build, and stays set when a save lands during a build.
 - **Layout rules learnt the hard way:**
   - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
   - Every split is AppKit's `NSSplitView` (`SplitController.swift`; the bar components are in `PaneBars.swift`, the source's bars in `SourceBars.swift`): source | PDF, the editors over the panel, and the editors beside the inspector. Each pane is an `NSHostingView` made once (its views observe the models), with `sizingOptions = []` so SwiftUI's sizes stay out of Auto Layout; the delegate enforces minimums and maximums. A hidden pane is removed from the split, since AppKit kept room for a merely hidden one, and comes back at its previous size. Divider positions are autosaved.
@@ -165,12 +168,11 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - killing the editor's WebContent recovers the editor. With an unsaved edit it shows one lost-edits alert, and the file is untouched;
   - quitting straight after an edit saves the edit first and leaves no `latexmk`;
   - a copied `TeXLocal.app`, with the build moved away, opens and compiles a project.
-- **Found while checking:**
-  - After the lost-edits alert, the PDF still says "Preview Out of Date", though the file matches the PDF.
-  - One injected double-click on the "Method" heading went to line 28 (`\label`), where `synctex edit` gives line 24. Go to Source Position is correct, so this may be the injected events. Try a real double-click.
-- **Still to check by hand on a Mac:** a real double-click for inverse SyncTeX, find field keys, rename with undo history, drag-and-drop import, the first delete's Automation prompt.
+- **Also checked on screen (2026-09-26, afternoon):** the outline following the scroll, the symbol palette, sidebar glass and selection, the accent in the editor, the Files list's Delete key and focus, the find field's keys and ⌘G / ⇧⌘G, inverse SyncTeX with real double-clicks (the earlier wrong line came from injected clicks carrying a modifier flag), the lost-edits alert clearing the out-of-date label, full screen in and out, and quitting mid-compile.
+- **Still to check by hand on a Mac, with TeXLocal frontmost:** rename with undo history, drag-and-drop import, the first delete's Automation prompt (confirming a Move to Trash), the zoom menu's and find options' checkmarks, focus rings, Compile's accent tint, Issues selection with Return, and accessory-bar hover.
 - **Driving the app without taking focus:** Accessibility actions work while TeXLocal is in the background: AXPress on the pane-bar buttons, menu items through System Events, and alert buttons. Synthetic key and mouse events posted to its process are dropped unless it is the active app. Setting AX text in the CodeMirror editor is ignored.
-- **Looking at the app without Accessibility or Screen Recording** (Claude had neither on 2026-09-26): launch a Debug build directly (`TEXLOCAL_DATA=<scratch> …/TeXLocal.app/Contents/MacOS/TeXLocal -openProject <id>`; preferences can be overridden with launch arguments such as `-paneBarSize large`), attach `lldb --batch`, and in an Objective-C expression draw the largest visible window's theme frame with `cacheDisplayInRect:toBitmapImageRep:` into a PNG. Cast every message send (`(NSArray *)[(NSApplication *)[NSApplication sharedApplication] windows]`). This shows layout and sizes, but not glass, vibrancy, list selection or PDFKit pages.
+- **Claude's access on the owner's Mac (2026-09-26):** Screen Recording, Accessibility, Automation (System Events, Finder), App Management and developer mode (lldb attaches without a prompt) are all granted. When the screen locks, `screencapture` returns black frames; the owner runs `caffeinate -dimsu -t 21600` before leaving. When injecting CGEvents, clear the modifier flags or CodeMirror reads clicks as right-clicks. Before killing a WebContent process, check it belongs to TeXLocal.
+- **Looking at the app without Accessibility or Screen Recording:** launch a Debug build directly (`TEXLOCAL_DATA=<scratch> …/TeXLocal.app/Contents/MacOS/TeXLocal -openProject <id>`; preferences can be overridden with launch arguments such as `-paneBarSize large`), attach `lldb --batch`, and in an Objective-C expression draw the largest visible window's theme frame with `cacheDisplayInRect:toBitmapImageRep:` into a PNG. Cast every message send (`(NSArray *)[(NSApplication *)[NSApplication sharedApplication] windows]`). This shows layout and sizes, but not glass, vibrancy, list selection or PDFKit pages.
 
 ## The Windows app (`apps/windows`): run by hand on Windows 11, partly verified
 
@@ -192,6 +194,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Closing flushes first and then calls `kill_all`. A crashed editor page recovers.
   - Both macOS reviews' bug fixes are applied here too. The app uses `texlocal.rename` and the undo fallback from `web/src/embed/editor.js`.
   - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
+  - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`, unbuilt so far; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
 - **Windows design pass (Fluent 2):**
   - The Windows App SDK `TitleBar` control, over Mica, with back and pane buttons.
   - A card layer for the document area. Spacing on the 4 px grid, and theme resources only (no hard-coded colours).
@@ -255,7 +258,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The compile notification.
   - Nothing is written beside the exe.
 
-## Rust cleanup (2026-09-26, uncommitted)
+## Rust cleanup (2026-09-26, `97ed2cb`)
 
 Behaviour-preserving, with no public API, C ABI or server-check change:
 - The log parser uses 4 `LazyLock` regexes instead of 7, and is about 20% faster on a 16 MB log. CRLF logs (MiKTeX, Windows latexmk) no longer leave a `\r` inside messages.
@@ -269,8 +272,8 @@ Behaviour-preserving, with no public API, C ABI or server-check change:
 
 1. **Run both apps by hand** using the checklists above, and fix what they turn up.
 2. **Windows:** the items under "Not done yet" above.
-3. **Server hardening:** check Host, Origin and the cookie on the request head before reading a body of up to `MAX_BODY`. It needs a pre-body hook in `http::serve` and a lingering close, so the client still reads the 401.
-4. **Edit › Find Next / Find Previous (⌘G, ⇧⌘G)** on the Mac: CodeMirror has them, but the embed has no command for them yet, and `commandDefs` would need the entries too.
+3. **The full-screen assertion** (above), if it recurs.
+4. **Small follow-ups:** in the web version, `contextMenu` / `menuUnder` in `web/src/dom.js` place menus with unscaled rects, so under Interface Size ≠ 100% they may land offset (`popoverUnder` already converts); the web outline has no per-section folding; the server has no cap on concurrent connections (local only, so low value); a light One Dark variant for Syntax Colors. One `cargo test --workspace` run on 2026-09-26 had a single failing test that didn't recur in nine reruns (three under a parallel Xcode build); the name wasn't captured, so if a test flakes, note which (the server's timing tests are the likely suspects).
 5. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.
 
 ## Gotchas

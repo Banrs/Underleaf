@@ -119,16 +119,16 @@ enum MenuCommand: String, CaseIterable {
         var modifiers: EventModifiers = []
         for part in parts {
             switch part {
-            case "CmdOrCtrl", "Cmd", "Command": modifiers.insert(.command)
-            case "Ctrl", "Control": modifiers.insert(.control)
-            case "Alt", "Option": modifiers.insert(.option)
+            case "CmdOrCtrl": modifiers.insert(.command)
+            case "Ctrl": modifiers.insert(.control)
+            case "Alt": modifiers.insert(.option)
             case "Shift": modifiers.insert(.shift)
             default: return nil
             }
         }
         let equivalent: KeyEquivalent
         switch key {
-        case "Return", "Enter": equivalent = .return
+        case "Return": equivalent = .return
         case "Plus": equivalent = "="
         case "Minus": equivalent = "-"
         default:
@@ -205,7 +205,7 @@ extension AppModel {
     func perform(_ command: MenuCommand) {
         guard isEnabled(command) else { return }
         switch command {
-        case .projectNew: newProjectTemplate = "article"; showNewProject = true; return
+        case .projectNew: newProject(); return
         case .editUndo: undo(redo: false); return
         case .editRedo: undo(redo: true); return
         case .compileToggleAuto: autoCompile.toggle(); return
@@ -248,22 +248,20 @@ extension AppModel {
         }
     }
 
-    /// Undo and redo go to CodeMirror's own history while the editor has
-    /// focus, and down the responder chain — to a text field's — otherwise.
-    /// The standard items would ask WebKit's undo manager, which never sees
-    /// the changes CodeMirror makes itself (formatting, completions).
+    /// The first responder when it is a native text field's editor (the find
+    /// field, a rename, the project search, the build log), not the editor's.
+    private var nativeText: NSText? {
+        guard let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) else { return nil }
+        return text
+    }
+
+    /// A native text field keeps its own undo. Anything else — the editor, or
+    /// a click on a source bar button, which can take first responder from
+    /// the web view — goes to CodeMirror's history: the standard undo: would
+    /// reach WebKit's undo manager, which never sees CodeMirror's own changes
+    /// (formatting, completions) and reverted half of an insertion.
     private func undo(redo: Bool) {
-        // A native text field (the find field, a rename, the project search)
-        // keeps its own undo. Anything else — the editor, or a click on the
-        // source bar's pill, which can take first responder from the web
-        // view — goes to CodeMirror's history: the standard undo: would reach
-        // WebKit's undo manager, which never sees CodeMirror's own changes
-        // and reverted half of an insertion.
-        if let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) {
-            sendUndo(redo: redo)
-            return
-        }
-        guard project?.openPath != nil else { sendUndo(redo: redo); return }
+        guard nativeText == nil, project?.openPath != nil else { sendUndo(redo: redo); return }
         Task {
             // The page declines while one of its own fields, such as the
             // find panel's, has focus; that field's native undo takes it.
@@ -280,7 +278,7 @@ extension AppModel {
     /// the build log's find bar) or leaves it be, rather than moving the
     /// editor's search behind it.
     private func findAgain(_ delta: Int, in project: ProjectModel) {
-        if let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) {
+        if let text = nativeText {
             let owner = text.delegate as? NSView ?? text
             if let field = (owner as? NSTextField)?.delegate as? SearchField.Coordinator {
                 field.field.step?(delta)
@@ -441,10 +439,7 @@ struct AppCommands: Commands {
             Button("Stop") { app.project?.stopCompile() }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(app.project?.compiling != true)
-            Toggle(MenuCommand.compileToggleAuto.title, isOn: Binding(
-                get: { app.autoCompile },
-                set: { app.autoCompile = $0 }
-            ))
+            Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
             Picker("Engine", selection: Binding(
                 get: { app.project?.settings?.engine ?? "pdflatex" },
                 set: { engine in

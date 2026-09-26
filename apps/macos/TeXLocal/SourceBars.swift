@@ -1,13 +1,9 @@
 import SwiftUI
 
-/// The bar over the source: a LaTeX writer's tools, as Overleaf's editor
-/// toolbar has them, at the leading edge as Xcode places its editor's
-/// controls: history; the section level of the line; bold and italic; math
-/// and symbols; links, references and citations; figures and tables; lists;
-/// then the rest in a menu. Narrow panes fold groups into that menu from the
-/// end, as a toolbar overflows, then the section level and redo, so undo is
-/// never clipped. Commenting out is a code editor's tool; it stays in
-/// the Format menu (⌘/).
+/// The bar over the source: a LaTeX writer's tools, as Overleaf's toolbar
+/// has them, then the rest in a ⋯ menu. Narrow panes fold groups into that
+/// menu from the end, then the section level and redo, so undo is never
+/// clipped. Commenting out stays in the Format menu (⌘/).
 struct SourceBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -38,8 +34,7 @@ struct SourceBar: View {
     }
 
     /// The bar with the first `count` groups; the section level and redo
-    /// fold last, for a source pane at its narrowest (at the large size,
-    /// its buttons are 51 pt wide).
+    /// fold last, for a source pane at its narrowest.
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
         return HStack(spacing: BarMetrics.spacing) {
@@ -79,7 +74,7 @@ struct SourceBar: View {
                     .labelStyle(.iconOnly)
                     .help("Symbols")
                     .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
-                        SymbolPalette { project.format("text", $0) }
+                        SymbolPalette { project.format("symbol", $0) }
                     }
             }
             .fixedSize()
@@ -155,9 +150,8 @@ struct SourceBar: View {
 
 /// The line's section level, as a word processor shows its paragraph
 /// style; choosing one makes the line that heading, or plain text. The
-/// system's pop-up: it shows the level, checks it in its menu and names
-/// itself to VoiceOver. A view of its own, so a caret move redraws it and
-/// not the whole bar.
+/// system's pop-up, so it checks the level and names itself to VoiceOver.
+/// A view of its own, so a caret move redraws it and not the whole bar.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
 
@@ -200,9 +194,8 @@ let symbolGroups: [(String, [(String, String)])] = [
                           ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
 ]
 
-/// The symbol palette: one grid, so the columns line up across the kinds,
-/// each kind under its name; each symbol a flat button named by its command
-/// that highlights on hover, as the pane bars' do. The popover draws its
+/// The symbol palette: one grid, so the columns line up across the kinds;
+/// each symbol a flat button named by its command. The popover draws its
 /// own glass.
 private struct SymbolPalette: View {
     let insert: (String) -> Void
@@ -257,7 +250,7 @@ struct SymbolMenu: View {
             ForEach(symbolGroups, id: \.0) { title, symbols in
                 Menu(title) {
                     ForEach(symbols, id: \.1) { glyph, command in
-                        Button("\(glyph)   \(command)") { project?.format("text", command) }
+                        Button("\(glyph)   \(command)") { project?.format("symbol", command) }
                     }
                 }
             }
@@ -266,9 +259,9 @@ struct SymbolMenu: View {
 }
 
 /// Where the cursor is, as Xcode's jump bar shows it: the project, its
-/// folders, the file — a menu of the files beside it — and the section
-/// around the cursor, a menu of the file's sections. Narrow panes drop the
-/// project and folders first, then the section.
+/// folders, the file (a menu of its siblings) and the section (a menu of
+/// the file's sections). Narrow panes drop the project and folders, then
+/// the section.
 struct SourceLocation: View {
     let project: ProjectModel
 
@@ -376,23 +369,18 @@ private struct SectionCrumb: View {
     }
 }
 
-/// Find and replace in the source, as TextEdit's and Xcode's find bars
-/// have it: the system search field, its options in the field's own menu,
-/// previous and next, the match count and Done; under it the replacement
-/// and its actions. Text actions are push buttons, apart from the icon
-/// buttons. Narrow panes drop the count, then put Replace All in Replace's
-/// menu, then narrow the fields, so the fields and Done are never clipped. CodeMirror does the
-/// searching; its own panel stays hidden. Return steps to the next match
-/// (Shift-Return the previous) and Escape closes the bar, as in the PDF's.
+/// Find and replace in the source, as Xcode's find bar has it; CodeMirror
+/// does the searching, its own panel hidden. Text actions are push buttons.
+/// Narrow panes fold it so the fields and Done are never clipped.
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
         PaneBarRows {
             ViewThatFits(in: .horizontal) {
-                // Replace All folds into Replace's menu before the count
-                // goes, so a narrow bar still says how many matches there
-                // are (or that there are none), as Xcode's does.
+                // Replace All folds into Replace's menu, and the fields
+                // narrow, before the count goes: the minimum window still
+                // says "Not found".
                 rows(count: true, replaceMenu: false)
                 rows(count: true, replaceMenu: true)
                 rows(count: true, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
@@ -456,8 +444,6 @@ struct SourceFindBar: View {
         }
     }
 
-    /// How to match, each checked in the search field's menu, as Xcode's
-    /// find options are.
     private var options: [SearchOption] {
         [
             SearchOption(title: "Match Case", isOn: $project.findQuery.caseSensitive),

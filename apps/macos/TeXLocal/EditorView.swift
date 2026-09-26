@@ -45,8 +45,6 @@ struct EditorView: NSViewRepresentable {
     }
 }
 
-// ---------- the editor area ----------
-
 /// The editors: the source beside the PDF, a panel for the build that
 /// shows and hides below them (as VS Code's does), and a status bar along
 /// the foot.
@@ -119,11 +117,9 @@ private struct SourcePane: View {
     }
 }
 
-/// The status bar: how the build went (choose it for the panel's errors and
-/// warnings), the save state and where the cursor is, then the build panel's
-/// toggle at the trailing end. The bars' flat controls, at the secondary
-/// rows' size. The one place the build's summary shows: the panel's header
-/// leaves it out.
+/// The status bar: how the build went (choose it for the panel's issues),
+/// the save state and where the cursor is, then the build panel's toggle.
+/// The one place the build's summary shows.
 private struct StatusBar: View {
     let project: ProjectModel
     @AppStorage("showWordCount") private var showWordCount = true
@@ -164,7 +160,6 @@ private struct StatusBar: View {
     }
 
     /// Only the symbols carry colour; the words stay secondary.
-    @ViewBuilder
     private var buildStatus: some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             if project.compiling {

@@ -1,17 +1,8 @@
 import SwiftUI
 
-/// The build panel's tabs.
-enum PanelTab: String, CaseIterable, Identifiable {
-    case issues, log
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .issues: "Issues"
-        case .log: "Build Log"
-        }
-    }
+/// The build panel's tabs, by title.
+enum PanelTab: String, CaseIterable {
+    case issues = "Issues", log = "Build Log"
 }
 
 /// The build panel below the editors: the build's issues, or its whole log
@@ -44,7 +35,7 @@ struct PanelView: View {
     private var header: some View {
         Group {
             Picker("Build Panel", selection: $project.panelTab) {
-                ForEach(PanelTab.allCases) { Text($0.title).tag($0) }
+                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -216,7 +207,6 @@ private struct LogTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
-        view.isSelectable = true
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true

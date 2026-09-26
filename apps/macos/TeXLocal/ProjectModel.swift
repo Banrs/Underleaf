@@ -110,7 +110,11 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onScroll = { [weak self] line in self?.topLine = line }
-        editor.onCommand = { [weak self] id in self?.run(id) }
+        // A chord the editor handed back because the native menu owns it
+        // (`MenuCommand.editorHostKeys`).
+        editor.onCommand = { [weak self] id in
+            if let command = MenuCommand(rawValue: id) { self?.app?.perform(command) }
+        }
         editor.onFind = { [weak self] query in
             guard let self else { return }
             findQuery = query
@@ -120,8 +124,7 @@ final class ProjectModel {
         editor.onFindClosed = { [weak self] in self?.findShown = false }
         editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
         editor.onCrash = { [weak self] in
-            guard let self else { return }
-            if self.dirty || self.readingText { self.lostEdits = true }
+            if let self, dirty || readingText { lostEdits = true }
         }
         editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
@@ -160,6 +163,11 @@ final class ProjectModel {
         URL(fileURLWithPath: try await core.call("pdf_path", ["id": id], as: String.self))
     }
 
+    /// Where a project path is on disk.
+    private func fileURL(_ path: String) async -> URL? {
+        (try? await core.call("raw_path", ["id": id, "path": path], as: String.self)).map(URL.init(fileURLWithPath:))
+    }
+
     // ---------- editing ----------
 
     /// Open a file: text in the editor, anything else in its own app.
@@ -167,9 +175,7 @@ final class ProjectModel {
     /// stay in the list, as Xcode's navigator keeps them.
     func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         guard isTextFile(path) else {
-            if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
-                NSWorkspace.shared.open(URL(fileURLWithPath: abs))
-            }
+            if let url = await fileURL(path) { NSWorkspace.shared.open(url) }
             return
         }
         // Clicking one file and then another before the first has opened:
@@ -183,8 +189,7 @@ final class ProjectModel {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
                 guard generation == openGeneration else { return }
                 openPath = path
-                openURL = (try? await core.call("raw_path", ["id": id, "path": path], as: String.self))
-                    .map { URL(fileURLWithPath: $0) }
+                openURL = await fileURL(path)
                 analyze(file.text)
                 await editor.open(path: "\(id)/\(path)", text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
@@ -196,12 +201,9 @@ final class ProjectModel {
         if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
-    /// Select an entry in Finder.
     func showInFinder(_ path: String) {
         Task {
-            if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: abs)])
-            }
+            if let url = await fileURL(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
     }
 
@@ -392,15 +394,40 @@ final class ProjectModel {
         compileQueued = false
     }
 
-    func setEngine(_ engine: String) async {
+    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
+    /// killed and the compile returns failed.
+    func stopCompile() {
+        guard compiling else { return }
+        compileQueued = false
+        core.killAll()
+    }
+
+    // ---------- settings ----------
+
+    @discardableResult
+    private func patchSettings(_ patch: [String: Any]) async -> Bool {
         do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["engine": engine]], as: ProjectSettings.self)
-            // A new engine only means something once a build uses it, so it
-            // compiles whatever the auto-compile setting, as the web does.
-            await compile()
+            settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
+            return true
         } catch {
             report(error)
+            return false
         }
+    }
+
+    func setEngine(_ engine: String) async {
+        // A new engine only means something once a build uses it, so it
+        // compiles whatever the auto-compile setting, as the web does.
+        if await patchSettings(["engine": engine]) { await compile() }
+    }
+
+    func setShellEscape(_ on: Bool) async {
+        await patchSettings(["shellEscape": on])
+    }
+
+    func setMainFile(_ path: String) async {
+        guard path != settings?.mainFile else { return }
+        if await patchSettings(["mainFile": path]) { await mainFileChanged() }
     }
 
     // ---------- SyncTeX ----------
@@ -481,16 +508,6 @@ final class ProjectModel {
         }
     }
 
-    func setMainFile(_ path: String) async {
-        guard path != settings?.mainFile else { return }
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["mainFile": path]], as: ProjectSettings.self)
-            await mainFileChanged()
-        } catch {
-            report(error)
-        }
-    }
-
     /// The PDF is named after the main file, so a new main file means a new
     /// PDF: point Save PDF As at it, and build it, as the web does
     /// (sidebar.js `onMainFileChange`). The old one stays on screen until the
@@ -503,9 +520,9 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    func importFiles(_ urls: [URL], into dir: String = "") async {
+    func importFiles(_ urls: [URL]) async {
         do {
-            _ = try await core.call("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)], as: Saved.self)
+            try await core.perform("import_files", ["id": id, "dir": "", "paths": urls.map(\.path)])
         } catch {
             report(error)
         }
@@ -564,24 +581,6 @@ final class ProjectModel {
         }
     }
 
-    // ---------- compiling, continued ----------
-
-    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
-    /// killed and the compile returns failed.
-    func stopCompile() {
-        guard compiling else { return }
-        compileQueued = false
-        Core.shared.killAll()
-    }
-
-    func setShellEscape(_ on: Bool) async {
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["shellEscape": on]], as: ProjectSettings.self)
-        } catch {
-            report(error)
-        }
-    }
-
     // ---------- editor commands ----------
 
     func format(_ name: String, _ arg: String? = nil) {
@@ -598,8 +597,7 @@ final class ProjectModel {
         format(all ? "replaceAll" : "replaceNext")
     }
 
-    /// Done or Escape: the bar goes, its matches unmarked, and typing goes
-    /// back to the text.
+    /// Done or Escape: the matches are unmarked and typing goes back to the text.
     func closeFind() {
         findShown = false
         Task {
@@ -610,13 +608,6 @@ final class ProjectModel {
 
     func reveal(line: Int) {
         Task { await editor.reveal(line: line) }
-    }
-
-    /// A command the editor handed back because the native menu owns its
-    /// shortcut (see `MenuCommand.editorHostKeys`).
-    func run(_ commandID: String) {
-        guard let command = MenuCommand(rawValue: commandID) else { return }
-        app?.perform(command)
     }
 }
 

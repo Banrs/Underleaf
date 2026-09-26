@@ -154,31 +154,28 @@ final class PaneBarLayoutTests: XCTestCase {
         ])
         .buttonStyle(.accessoryBar)
         for size in [PaneSize.compact, .large] {
-            let height = self.size(of: two.controlSize(size.controlSize)).height
+            let height = NSHostingView(rootView: two.controlSize(size.controlSize)).fittingSize.height
             XCTAssertLessThanOrEqual(height, size.barHeight - 16, "\(size)")
             XCTAssertGreaterThanOrEqual(height, size.barHeight - 18, "\(size)")
         }
-    }
-
-    private func size(of view: some View) -> CGSize {
-        let host = NSHostingView(rootView: view)
-        return host.fittingSize
     }
 }
 
 @MainActor
 final class SplitLayoutTests: XCTestCase {
-    /// Source | PDF with the PDF dragged narrow, in a split `width` wide.
-    private func split(width: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
-        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: width, height: 400))
-        split.isVertical = true
+    /// Two panes in a split of `size`, the second dragged to `last` points.
+    private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
+                       last: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
+        let split = NSSplitView(frame: NSRect(origin: .zero, size: size))
+        split.isVertical = vertical
         split.dividerStyle = .thin
         let coordinator = SplitController.Coordinator()
-        coordinator.panes = [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }]
+        coordinator.panes = panes
         coordinator.views = [NSView(), NSView()]
         coordinator.views.forEach(split.addArrangedSubview)
         split.delegate = coordinator
-        split.setPosition(width - 200 - split.dividerThickness, ofDividerAt: 0)
+        let length = vertical ? size.width : size.height
+        split.setPosition(length - last - split.dividerThickness, ofDividerAt: 0)
         return (split, coordinator)
     }
 
@@ -189,7 +186,10 @@ final class SplitLayoutTests: XCTestCase {
     /// A pane squeezed to its minimum by a small window gets its share back
     /// as the window grows, rather than staying at the minimum.
     func testAPaneGetsItsShareBackAfterASmallWindow() throws {
-        let (split, coordinator) = split(width: 936)
+        // Source | PDF with the PDF dragged narrow.
+        let (split, coordinator) = split(NSSize(width: 936, height: 400),
+                                         [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
+                                         last: 200)
         XCTAssertEqual(widths(split), [735, 200])
         split.setFrameSize(NSSize(width: 300, height: 400))
         XCTAssertEqual(widths(split), [159, 140])
@@ -202,18 +202,10 @@ final class SplitLayoutTests: XCTestCase {
     /// A pane that keeps its size gives way beyond its largest share: the
     /// build panel in a small window leaves the editors the room.
     func testAPaneKeepsWithinItsLargestShare() {
-        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 400, height: 1000))
-        split.isVertical = false
-        split.dividerStyle = .thin
-        let coordinator = SplitController.Coordinator()
-        coordinator.panes = [
+        let (split, _) = split(NSSize(width: 400, height: 1000), vertical: false, [
             SplitPane(minimum: 120) { EmptyView() },
             SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
-        ]
-        coordinator.views = [NSView(), NSView()]
-        coordinator.views.forEach(split.addArrangedSubview)
-        split.delegate = coordinator
-        split.setPosition(1000 - 300 - split.dividerThickness, ofDividerAt: 0)
+        ], last: 300)
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
         split.setFrameSize(NSSize(width: 400, height: 500))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)

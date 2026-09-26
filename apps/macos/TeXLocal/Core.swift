@@ -73,22 +73,24 @@ final class Core {
         return await Task.detached { Core.run(handle, command, json) }.value
     }
 
-    func call<T: Decodable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
+    /// The command's result, nil when it gave none; its error thrown.
+    private func result<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
         let envelope = try JSONDecoder().decode(Envelope<T>.self, from: try await send(command, args))
         if let error = envelope.error {
             throw CoreError(message: error, status: envelope.status ?? 500)
         }
-        guard let ok = envelope.ok else {
+        return envelope.ok
+    }
+
+    func call<T: Decodable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
+        guard let ok = try await result(command, args, as: T.self) else {
             throw CoreError(message: "The core returned nothing for \(command)", status: 500)
         }
         return ok
     }
 
     func perform(_ command: String, _ args: [String: Any] = [:]) async throws {
-        let envelope = try JSONDecoder().decode(Envelope<Ignored>.self, from: try await send(command, args))
-        if let error = envelope.error {
-            throw CoreError(message: error, status: envelope.status ?? 500)
-        }
+        _ = try await result(command, args, as: Ignored.self)
     }
 
     /// Stop running compiles. Synchronous on purpose: it runs as the app quits.

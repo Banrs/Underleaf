@@ -27,15 +27,13 @@ struct HomeView: View {
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("New Project", systemImage: "plus") { newProject("article") }
+                Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .task(id: app.tex?.available) { await app.watchForTeX() }
-        .alert("Rename Project", isPresented: Binding(
-            get: { renaming != nil }, set: { if !$0 { renaming = nil } }
-        ), presenting: renaming) { project in
+        .alert("Rename Project", isPresented: Binding(presenting: $renaming), presenting: renaming) { project in
             TextField("Name", text: $newName)
             Button("Cancel", role: .cancel) {}
             Button("Rename") { Task { await app.rename(project, to: trimmedName) } }
@@ -44,7 +42,7 @@ struct HomeView: View {
         // `presenting`, so the title keeps its name while the dialog closes.
         .confirmationDialog(
             "Move “\(deleting?.name ?? "")” to the Trash?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            isPresented: Binding(presenting: $deleting),
             titleVisibility: .visible,
             presenting: deleting
         ) { project in
@@ -60,11 +58,6 @@ struct HomeView: View {
     /// so New, Recent, Name and the rows start on one line.
     private static let margin: CGFloat = 18
 
-    private func newProject(_ template: String) {
-        app.newProjectTemplate = template
-        app.showNewProject = true
-    }
-
     // ---------- new ----------
 
     private var templates: some View {
@@ -74,7 +67,7 @@ struct HomeView: View {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: Self.margin) {
                     ForEach(ProjectTemplate.all) { template in
-                        Button { newProject(template.id) } label: {
+                        Button { app.newProject(template.id) } label: {
                             TemplateCard(template: template)
                         }
                         // A plain system button: it dims while pressed and
@@ -125,7 +118,9 @@ struct HomeView: View {
                 if let id = ids.first { Task { await app.open(id) } }
             }
             // Delete, as Finder's ⌘⌫ and every list's Delete key do.
-            .onDeleteCommand { if let project = selected { deleting = project } }
+            .onDeleteCommand {
+                if let project = app.projects.first(where: { selection.contains($0.id) }) { deleting = project }
+            }
             .overlay {
                 if !query.isEmpty, shown.isEmpty {
                     ContentUnavailableView.search(text: query)
@@ -145,10 +140,6 @@ struct HomeView: View {
         let matching = query.isEmpty
             ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
         return matching.sorted(using: sortOrder)
-    }
-
-    private var selected: ProjectInfo? {
-        app.projects.first { selection.contains($0.id) }
     }
 
     private var texMissing: some View {
@@ -282,6 +273,8 @@ struct NewProjectSheet: View {
     @State private var name = ""
     @State private var template = "article"
 
+    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+
     var body: some View {
         // A sheet shows no navigation title, so the form's header names it.
         // The template arrives chosen (from a card, or "article" for ⌘N);
@@ -301,11 +294,11 @@ struct NewProjectSheet: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Create") {
-                    let name = name.trimmingCharacters(in: .whitespaces)
+                    let name = trimmed
                     dismiss()
                     Task { await app.create(name: name, template: template) }
                 }
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(trimmed.isEmpty)
             }
         }
     }

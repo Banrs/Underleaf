@@ -63,12 +63,10 @@ private struct GeneralSettings: View {
             }
         }
     }
-}
 
-extension GeneralSettings {
     /// latexmk's banner ("Latexmk, John Collins, 9 March 2026. Version 4.88")
     /// as "latexmk 4.88"; anything else as the core reported it.
-    fileprivate var texVersion: String {
+    private var texVersion: String {
         guard let version = app.tex?.version else { return "Found" }
         if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
         return version

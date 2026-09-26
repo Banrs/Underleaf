@@ -76,9 +76,8 @@ extension View {
 
 /// A pane's actions: the row under the window toolbar, in AppKit's
 /// accessory-bar controls, as Finder's and Mail's in-window bars have them:
-/// flat buttons that highlight on hover, a line between groups. Glass is for
-/// the toolbar and for controls that float over content; these bars sit
-/// above it.
+/// flat buttons that highlight on hover, a line between groups.
+/// Not glass: these bars sit above content, not over it.
 struct PaneBar<Content: View>: View {
     @AppStorage("paneBarSize") private var size = PaneSize.compact
     @ViewBuilder var content: Content
@@ -128,7 +127,6 @@ struct Segment: Identifiable {
     let id: String
     let title: String
     let systemImage: String
-    var help: String?
     var enabled = true
     let action: () -> Void
 }
@@ -151,7 +149,7 @@ struct ToolGroup: View {
             ForEach(items) { item in
                 Button(item.title, systemImage: item.systemImage, action: item.action)
                     .disabled(!item.enabled)
-                    .help(item.help ?? item.title)
+                    .help(item.title)
             }
         }
         .labelStyle(.iconOnly)

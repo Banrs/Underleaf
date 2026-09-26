@@ -86,7 +86,7 @@ private struct FilesList: View {
         .onDeleteCommand { if let selection, project.searchQuery.isEmpty { deleting = selection } }
         .confirmationDialog(
             "Move “\((deleting.map { ($0 as NSString).lastPathComponent }) ?? "")” to the Trash?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            isPresented: Binding(presenting: $deleting),
             titleVisibility: .visible,
             presenting: deleting
         ) { path in
@@ -124,10 +124,11 @@ private struct FilesList: View {
     }
 
     private func row(_ node: TreeNode) -> some View {
-        Label {
+        let isMain = node.path == project.settings?.mainFile
+        return Label {
             HStack {
                 Text(node.name)
-                if node.path == project.settings?.mainFile {
+                if isMain {
                     Spacer()
                     Image(systemName: "star.fill")
                         .foregroundStyle(.yellow)
@@ -140,7 +141,7 @@ private struct FilesList: View {
             Image(systemName: icon(for: node))
         }
         // The star's name too: the row's label replaces its children's.
-        .accessibilityLabel(node.path == project.settings?.mainFile ? "\(node.name), Main File" : node.name)
+        .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
@@ -172,8 +173,7 @@ private struct FilesList: View {
 private struct OutlineList: View {
     @Bindable var project: ProjectModel
     @State private var section: Int?
-    /// Sections folded, by level and title, so a fold survives edits that
-    /// renumber the headings.
+    /// Sections folded, by `OutlineRows.key`.
     @State private var collapsed: Set<String> = []
 
     var body: some View {

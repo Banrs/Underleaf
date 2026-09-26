@@ -15,9 +15,7 @@ struct PDFPane: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // The pane's own bars over it, stacked rather than overlaid: they are
-        // opaque, so a page scrolled beneath them was only hidden — its top
-        // and top margin sat behind them.
+        // Stacked, not overlaid: the bars are opaque, so a page under them was hidden.
         VStack(spacing: 0) {
             bar
             pages
@@ -38,16 +36,14 @@ struct PDFPane: View {
 
     @ViewBuilder
     private var pages: some View {
-        Group {
-            if project.pdfVersion > 0 {
-                PDFRepresentable(
-                    project: project, controller: controller,
-                    // "auto" follows the app's appearance (web/src/prefs.js).
-                    darkPaper: pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark)
-                )
-            } else {
-                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+        if project.pdfVersion > 0 {
+            PDFRepresentable(
+                project: project, controller: controller,
+                // "auto" follows the app's appearance (web/src/prefs.js).
+                darkPaper: pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark)
+            )
+        } else {
+            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -129,8 +125,7 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile at the leading edge; zoom, then Share, at the trailing, each
-    /// a group with the source bar's separator between them.
+    /// Compile at the leading edge; zoom, then Share, at the trailing.
     private func actions(compact: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.spacing) {
             compileControls(compact: compact)
@@ -139,13 +134,14 @@ struct PDFPane: View {
                 zoomControls
                 ToolSeparator()
             }
-            share
+            ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
+                .labelStyle(.iconOnly)
+                .fixedSize()
         }
     }
 
-    /// Overleaf's Recompile, over the PDF it makes: the pane's one
-    /// prominent control; while a build runs, a
-    /// spinner and Stop in its place.
+    /// Overleaf's Recompile, the pane's one prominent control; while a build
+    /// runs, a spinner and Stop in its place.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
@@ -171,13 +167,6 @@ struct PDFPane: View {
         }
     }
 
-    @ViewBuilder
-    private var share: some View {
-        ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
-            .labelStyle(.iconOnly)
-            .fixedSize()
-    }
-
     /// The page, and whether the PDF still matches the source.
     private var status: some View {
         Group {
@@ -189,7 +178,6 @@ struct PDFPane: View {
                     Image(systemName: freshness.systemImage)
                         .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                 }
-                .foregroundStyle(.secondary)
                 .help(freshness == .lastSuccessful
                       ? "The latest build failed; this is the last one that succeeded"
                       : "The preview doesn’t reflect the current source")
@@ -233,10 +221,8 @@ struct PDFPane: View {
     }
 
     /// The scale, a menu of ways to fit and preset scales, the one in use
-    /// checked. A menu rather than a pop-up, as the scale is any percentage,
-    /// not only a preset's; bordered, with the system's indicator, as the
-    /// source bar's Section Level is: the bars' values are bordered, their
-    /// actions flat.
+    /// checked. A menu rather than a pop-up, as the scale is any percentage;
+    /// bordered, as the bars' values are.
     private var zoomMenu: some View {
         Menu {
             // The fitting in use is checked, as Preview's is; while fitting,
@@ -278,8 +264,7 @@ struct PDFPane: View {
 
     private static let zoomPresets = [50, 75, 100, 125, 150, 200]
 
-    /// Zoom out, the scale, zoom in: one group, as Preview's zoom is — the
-    /// web's zoom control (workspace.js `zoomButton`).
+    /// Zoom out, the scale, zoom in: one group, as Preview's zoom is.
     private var zoomControls: some View {
         // Not the View menu's commands: their route (`requestPDF`) also
         // hides the panel.
@@ -329,14 +314,12 @@ struct SearchOption {
     let isOn: Binding<Bool>
 }
 
-/// A search field in which Return steps to the next match, Shift-Return to
-/// the previous one, and Escape closes the bar — keys a SwiftUI text field
-/// keeps to itself. Without `step` or `close`, those keys do what they
-/// usually do. `options` go in the field's own menu, under its magnifier,
-/// as Xcode's and Safari's find options do. Without its magnifier
-/// (`searches` false) it is the find bar's replace field: the search
-/// field's shape and height at every control size, which AppKit's plain
-/// text field keeps at the regular size; Return then calls `submit`.
+/// A search field in which Return steps to the next match (Shift-Return the
+/// previous), and Escape closes the bar: keys a SwiftUI text field keeps to
+/// itself; without `step` or `close` those keys do what they usually do.
+/// `options` go in the magnifier's menu. With `searches` false it is
+/// the replace field: a search field without its magnifier, since AppKit's
+/// plain text field stays at the regular height; Return calls `submit`.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
@@ -354,9 +337,7 @@ struct SearchField: NSViewRepresentable {
         /// The options' states the field's menu was last made with.
         var optionStates: [Bool]?
 
-        init(_ field: SearchField) {
-            self.field = field
-        }
+        init(_ field: SearchField) { self.field = field }
 
         // Typing, and the field's clear button, both send the action.
         @objc func search(_ sender: NSSearchField) {
@@ -416,13 +397,13 @@ struct SearchField: NSViewRepresentable {
         // field's does above it: an empty menu makes AppKit lay out the same
         // magnifier-with-menu button as the find field's options menu does.
         // After the size and the menu, which both set the image again.
-        if !searches, view.searchMenuTemplate == nil {
-            view.searchMenuTemplate = NSMenu(title: "")
-        }
-        if !searches, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
-            button.image = nil
-            button.alternateImage = nil
-            button.isEnabled = false
+        if !searches {
+            if view.searchMenuTemplate == nil { view.searchMenuTemplate = NSMenu(title: "") }
+            if let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
+                button.image = nil
+                button.alternateImage = nil
+                button.isEnabled = false
+            }
         }
         if view.stringValue != text { view.stringValue = text }
         // The field copies its menu, so it is made again when a state changes.
@@ -618,8 +599,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     final class Coordinator {
         var version = 0
         var highlightToken = 0
-        var pageObserver: NSObjectProtocol?
-        var scaleObserver: NSObjectProtocol?
+        var observers: [NSObjectProtocol] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -646,20 +626,18 @@ private struct PDFRepresentable: NSViewRepresentable {
             Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
         controller.view = view
-        context.coordinator.pageObserver = NotificationCenter.default.addObserver(
-            forName: .PDFViewPageChanged, object: view, queue: .main
-        ) { [controller] _ in
-            MainActor.assumeIsolated {
-                guard let view = controller.view, let document = view.document, let page = view.currentPage else { return }
-                controller.page = document.index(for: page) + 1
-                controller.pageCount = document.pageCount
-            }
-        }
-        context.coordinator.scaleObserver = NotificationCenter.default.addObserver(
-            forName: .PDFViewScaleChanged, object: view, queue: .main
-        ) { [controller] _ in
-            MainActor.assumeIsolated { controller.scaleChanged() }
-        }
+        context.coordinator.observers = [
+            NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [controller] _ in
+                MainActor.assumeIsolated {
+                    guard let view = controller.view, let document = view.document, let page = view.currentPage else { return }
+                    controller.page = document.index(for: page) + 1
+                    controller.pageCount = document.pageCount
+                }
+            },
+            NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: view, queue: .main) { [controller] _ in
+                MainActor.assumeIsolated { controller.scaleChanged() }
+            },
+        ]
         return view
     }
 
@@ -677,9 +655,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
-        for observer in [coordinator.pageObserver, coordinator.scaleObserver].compactMap({ $0 }) {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        coordinator.observers.forEach(NotificationCenter.default.removeObserver)
     }
 
     /// Load a rebuilt PDF where the reader was: same spot on the same page,
@@ -702,9 +678,8 @@ private struct PDFRepresentable: NSViewRepresentable {
         return true
     }
 
-    /// hyperref boxes every \ref and \cite in colour unless told not to.
-    /// pdf.js, which the browser and Windows draw with, leaves the boxes out,
-    /// so PDFKit does too. The links still work.
+    /// hyperref boxes every \ref and \cite in colour; pdf.js (browser,
+    /// Windows) leaves the boxes out, so PDFKit does too. The links still work.
     private func hideLinkBorders(_ document: PDFDocument) {
         for index in 0..<document.pageCount {
             for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {

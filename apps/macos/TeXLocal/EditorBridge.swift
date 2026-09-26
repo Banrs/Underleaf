@@ -255,18 +255,18 @@ struct FindQuery: Equatable {
     var regexp = false
     var wholeWord = false
 
-    init() {}
+    var dictionary: [String: Any] {
+        ["search": search, "replace": replace, "caseSensitive": caseSensitive, "regexp": regexp, "wholeWord": wholeWord]
+    }
+}
 
+extension FindQuery {
     init(_ spec: [String: Any]) {
         search = spec["search"] as? String ?? ""
         replace = spec["replace"] as? String ?? ""
         caseSensitive = spec["caseSensitive"] as? Bool ?? false
         regexp = spec["regexp"] as? Bool ?? false
         wholeWord = spec["wholeWord"] as? Bool ?? false
-    }
-
-    var dictionary: [String: Any] {
-        ["search": search, "replace": replace, "caseSensitive": caseSensitive, "regexp": regexp, "wholeWord": wholeWord]
     }
 }
 

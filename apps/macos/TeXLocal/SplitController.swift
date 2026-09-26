@@ -1,16 +1,15 @@
 import SwiftUI
 
-/// A pane of a `SplitController`: its view, its smallest (and largest)
-/// size, the largest share of the split it may take, the share it opens
-/// at, whether it keeps its size as the window resizes, and whether it
-/// shows.
+/// A pane of a `SplitController`.
 struct SplitPane {
     var minimum: CGFloat
     var maximum: CGFloat?
     /// At most this share of the split, so a pane that keeps its size gives
     /// way to the others in a small window.
     var maxFraction: CGFloat?
+    /// The share it opens at.
     var fraction: CGFloat?
+    /// Keeps its size as the window resizes.
     var keepsSize = false
     var shown = true
     let content: AnyView
@@ -75,7 +74,7 @@ struct SplitController: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.panes = panes
         for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() where (view.superview === split) != pane.shown {
-            let total = split.isVertical ? split.bounds.width : split.bounds.height
+            let total = split.length
             if pane.shown {
                 let before = coordinator.views[..<index].filter { $0.superview === split }.count
                 split.insertArrangedSubview(view, at: before)
@@ -129,8 +128,7 @@ struct SplitController: NSViewRepresentable {
         /// or its largest share, whichever is less, and never under its
         /// minimum.
         private func maximum(_ split: NSSplitView, _ pane: SplitPane) -> CGFloat {
-            let total = split.isVertical ? split.bounds.width : split.bounds.height
-            let share = pane.maxFraction.map { $0 * total } ?? .infinity
+            let share = pane.maxFraction.map { $0 * split.length } ?? .infinity
             return max(min(pane.maximum ?? .infinity, share), pane.minimum)
         }
 
@@ -139,14 +137,10 @@ struct SplitController: NSViewRepresentable {
             return split.isVertical ? (frame.minX, frame.maxX) : (frame.minY, frame.maxY)
         }
 
-        private func length(_ split: NSSplitView, _ view: NSView) -> CGFloat {
-            split.isVertical ? view.frame.width : view.frame.height
-        }
-
         /// Sizes set since the last resize — a drag, a pane shown or hidden,
         /// the autosave — are the ones to keep.
         private func takeSizes(_ split: NSSplitView) {
-            let current = split.arrangedSubviews.map { length(split, $0) }
+            let current = split.arrangedSubviews.map(split.length(of:))
             guard current.count != laidOut.count || zip(current, laidOut).contains(where: { abs($0 - $1) > 0.5 })
             else { return }
             wanted = [:]
@@ -169,14 +163,13 @@ struct SplitController: NSViewRepresentable {
             takeSizes(split)
             let shown = split.arrangedSubviews
             let places = shown.indices
-            let room = (split.isVertical ? split.bounds.width : split.bounds.height)
-                - split.dividerThickness * CGFloat(max(shown.count - 1, 0))
+            let room = split.length - split.dividerThickness * CGFloat(max(shown.count - 1, 0))
             let limits = places.map { place in
                 let pane = pane(split, place)
                 return (pane.minimum, maximum(split, pane), pane.keepsSize)
             }
             let want = places.map { place in
-                views.firstIndex(of: shown[place]).flatMap { wanted[$0] } ?? length(split, shown[place])
+                views.firstIndex(of: shown[place]).flatMap { wanted[$0] } ?? split.length(of: shown[place])
             }
             // Panes that keep their size have it; the rest share what is left.
             let kept = places.filter { limits[$0].2 }.map { want[$0] }.reduce(0, +)
@@ -201,16 +194,15 @@ struct SplitController: NSViewRepresentable {
             if let last = places.last { sizes[last] -= excess }
 
             var offset: CGFloat = 0
-            let total = split.isVertical ? split.bounds.width : split.bounds.height
             for place in places {
                 // The last to the end, whatever the rounding left.
-                let size = place == places.last ? total - offset : sizes[place].rounded()
+                let size = place == places.last ? split.length - offset : sizes[place].rounded()
                 shown[place].frame = split.isVertical
                     ? NSRect(x: offset, y: 0, width: size, height: split.bounds.height)
                     : NSRect(x: 0, y: offset, width: split.bounds.width, height: size)
                 offset += size + split.dividerThickness
             }
-            laidOut = shown.map { length(split, $0) }
+            laidOut = shown.map(split.length(of:))
         }
 
         /// A pane that keeps its size leaves a window resize to the others.
@@ -233,4 +225,10 @@ struct SplitController: NSViewRepresentable {
             return min(proposed, high)
         }
     }
+}
+
+private extension NSSplitView {
+    /// The split's length along its axis, and a pane's.
+    var length: CGFloat { isVertical ? bounds.width : bounds.height }
+    func length(of view: NSView) -> CGFloat { isVertical ? view.frame.width : view.frame.height }
 }

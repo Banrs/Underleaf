@@ -35,16 +35,23 @@ struct WorkspaceView: View {
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
-        .modifier(DocumentProxy(url: project.openURL))
-        .alert(promptTitle, isPresented: Binding(
-            get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
-        ), presenting: app.prompt) { prompt in
-            TextField(promptLabel(prompt), text: $promptText)
+        // The open file as the window's represented document (proxy icon and
+        // path menu), none rather than the disk's root while no file is open.
+        // From a background, so the workspace keeps its identity (and its
+        // panes) as the document comes and goes.
+        .background {
+            if let url = project.openURL { Color.clear.navigationDocument(url) }
+        }
+        .alert(app.prompt.map { texts($0).title } ?? "", isPresented: Binding(presenting: $app.prompt),
+               presenting: app.prompt) { prompt in
+            TextField(texts(prompt).field, text: $promptText)
             Button("Cancel", role: .cancel) {}
-            Button(promptAction(prompt)) { submit(prompt) }
+            Button(texts(prompt).action) { submit(prompt) }
                 .disabled(!isValid(prompt))
         }
-        .onChange(of: app.prompt?.id) { _, _ in promptText = promptDefault }
+        .onChange(of: app.prompt?.id) { _, _ in
+            promptText = if case .renameEntry(let path) = app.prompt { path } else { "" }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
             // This window's only: closing Settings is no reason to save.
             guard (note.object as? NSWindow) === app.editor.webView.window else { return }
@@ -64,11 +71,11 @@ struct WorkspaceView: View {
 
     // ---------- toolbar ----------
 
-    /// Back and the file as the window's title at the leading edge, and the panes'
-    /// toggles at the trailing. What acts on a pane sits over it instead:
-    /// editing over the source (EditorView's `SourceBar`), compiling and
-    /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
-    /// too.
+    /// Back and the file as the window's title at the leading edge, and the
+    /// panes' toggles at the trailing. What acts on a pane sits over it
+    /// instead: editing over the source (EditorView's `SourceBar`), compiling
+    /// and sharing over the PDF (PDFPane's bar). Every item is in the menu
+    /// bar too.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         // Back to the projects, as the web's and Windows' title bars lead
@@ -94,37 +101,13 @@ struct WorkspaceView: View {
 
     // ---------- prompts ----------
 
-    private var promptTitle: String {
-        switch app.prompt {
-        case .newFile: "New File"
-        case .newFolder: "New Folder"
-        case .gotoLine: "Go to Line"
-        case .renameEntry(let path): "Rename “\((path as NSString).lastPathComponent)”"
-        case nil: ""
-        }
-    }
-
-    private var promptDefault: String {
-        switch app.prompt {
-        case .renameEntry(let path): path
-        default: ""
-        }
-    }
-
-    private func promptLabel(_ prompt: Prompt) -> String {
+    /// The alert's title, its field's placeholder and its button.
+    private func texts(_ prompt: Prompt) -> (title: String, field: String, action: String) {
         switch prompt {
-        case .newFile: "Path, e.g. sections/intro.tex"
-        case .newFolder: "Path, e.g. figures"
-        case .gotoLine: "Line number"
-        case .renameEntry: "Path"
-        }
-    }
-
-    private func promptAction(_ prompt: Prompt) -> String {
-        switch prompt {
-        case .newFile, .newFolder: "Create"
-        case .gotoLine: "Go"
-        case .renameEntry: "Rename"
+        case .newFile: ("New File", "Path, e.g. sections/intro.tex", "Create")
+        case .newFolder: ("New Folder", "Path, e.g. figures", "Create")
+        case .gotoLine: ("Go to Line", "Line number", "Go")
+        case .renameEntry(let path): ("Rename “\((path as NSString).lastPathComponent)”", "Path", "Rename")
         }
     }
 
@@ -144,20 +127,6 @@ struct WorkspaceView: View {
             case .gotoLine: if let line = Int(text) { project.reveal(line: line) }
             case .renameEntry(let from): await project.renameEntry(from, to: text)
             }
-        }
-    }
-}
-
-/// The open file as the window's represented document (its proxy icon and
-/// path menu), and none while no file is open, rather than the disk's root.
-private struct DocumentProxy: ViewModifier {
-    let url: URL?
-
-    // From a background, so the workspace keeps its identity (and its
-    // panes) as the document comes and goes.
-    func body(content: Content) -> some View {
-        content.background {
-            if let url { Color.clear.navigationDocument(url) }
         }
     }
 }

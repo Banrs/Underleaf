@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Observation
 
 /// The library: projects on disk, TeX availability, and the open project.
 @MainActor @Observable
@@ -30,6 +29,12 @@ final class AppModel {
     }
     var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
         didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
+    }
+
+    /// ⌘N on the home screen, or a template's card.
+    func newProject(_ template: String = "article") {
+        newProjectTemplate = template
+        showNewProject = true
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
