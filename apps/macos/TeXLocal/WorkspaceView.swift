@@ -194,55 +194,6 @@ private struct InspectorToggle: View {
     }
 }
 
-/// The Format menu's LaTeX tools, as the source bar offers them: the line's
-/// section level, math and symbols, references, then what inserts a block.
-struct InsertMenuItems<InlineMath: View>: View {
-    let project: ProjectModel?
-    /// The menu bar's Inline Math item, with its shortcut.
-    let inlineMath: InlineMath
-
-    var body: some View {
-        Menu("Section Level") {
-            ForEach(headingLevels, id: \.1) { title, command in
-                Button(title) { project?.format("heading", command) }
-            }
-        }
-        inlineMath
-        Button("Display Math") { project?.format("displayMath") }
-        SymbolMenu(project: project)
-        Menu("Reference") {
-            ForEach(referenceTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("inline", template) }
-            }
-        }
-        Divider()
-        ForEach(insertTemplates, id: \.0) { label, template in
-            Button(label) { project?.format("insert", template) }
-        }
-        Menu("List") {
-            ForEach(listTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("insert", template) }
-            }
-        }
-    }
-}
-
-/// The engines a project can compile with, for the compile menu and Settings.
-let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
-
-/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
-/// "$0" marks where the cursor lands. The source bar finds them by title
-/// (`ProjectModel.insert`). Titles are menu items here, so title case
-/// without the web's parenthetical: "Aligned Equations" is the web's
-/// "Align (multi-line math)".
-let insertTemplates: [(String, String)] = [
-    ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-    ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-    ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    ("Aligned Equations", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
-]
-
 /// The trailing inspector: the project's build settings, then facts about
 /// the open file and the PDF — what the web kept in its settings popover and
 /// status line, gathered where a Mac app keeps them.

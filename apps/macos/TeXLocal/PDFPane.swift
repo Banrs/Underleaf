@@ -80,12 +80,8 @@ struct PDFPane: View {
             } actions: {
                 // Nothing to offer while the panel already shows.
                 if !project.showLogs {
-                    Button("Show Build Panel") {
-                        // The log when no error was parsed out of it.
-                        project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
-                        project.showLogs = true
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Button("Show Build Panel") { project.showBuildPanel() }
+                        .buttonStyle(.borderedProminent)
                 }
             }
         } else {
@@ -285,9 +281,7 @@ private struct PageRow: View {
     private func fix(_ freshness: PDFFreshness) {
         switch freshness {
         case .edited: app.perform(.compileRun)
-        case .lastSuccessful:
-            project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
-            project.showLogs = true
+        case .lastSuccessful: project.showBuildPanel()
         }
     }
 }

@@ -163,10 +163,7 @@ private struct StatusBar: View {
 
     private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            Button {
-                project.panelTab = .issues
-                project.showLogs = true
-            } label: {
+            Button { project.showBuildPanel() } label: {
                 buildStatus
             }
             .help("Show Issues")

@@ -33,6 +33,13 @@ final class ProjectModel {
     var showLogs = false
     /// Which of the panel's tabs is showing.
     var panelTab: PanelTab = .issues
+
+    /// The build panel on its issues, or on the log after a failed build
+    /// with no error parsed out of it: the log says what went wrong.
+    func showBuildPanel() {
+        panelTab = result?.ok == false && result?.errors.isEmpty == true ? .log : .issues
+        showLogs = true
+    }
     /// Remembered across projects and launches, like the web's.
     var showPDF = UserDefaults.standard.object(forKey: "showPDF") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showPDF, forKey: "showPDF") }
