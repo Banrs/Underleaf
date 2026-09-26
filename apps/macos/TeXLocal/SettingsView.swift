@@ -50,28 +50,27 @@ private struct GeneralSettings: View {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing.")
                 }
-                // Nothing to say until the status is in, rather than
-                // "Not Found" for a moment at launch.
-                LabeledContent {
-                    if let tex = app.tex {
-                        if tex.available { Text(texVersion) } else { GetMacTeXButton() }
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                } label: {
-                    Text("TeX Distribution")
-                    if app.tex?.available == false { Text("Not found. Install MacTeX, or choose the folder TeX is in.") }
-                }
-                // Where TeX is, for one the automatic search doesn't find
-                // (the browser's and Windows' Browse… and Use Automatic).
+                // One row: where TeX is (or Not Found, with where to get
+                // it), Choose… for a folder the automatic search misses, and
+                // Use Automatic once one is chosen. A spinner until the
+                // status is in, rather than "Not Found" for a moment at launch.
                 LabeledContent {
                     HStack {
                         if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
                         Button("Choose…") { choosingTeX = true }
                     }
                 } label: {
-                    Text("TeX Folder")
-                    Text(texFolder)
+                    Text("TeX")
+                    if let tex = app.tex {
+                        if tex.available {
+                            Text(tex.texDir ?? tex.found.map { "\($0), Automatic" } ?? "Automatic")
+                        } else {
+                            Text("Not Found")
+                            Link("Get MacTeX…", destination: macTeXURL)
+                        }
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                 }
             }
         }
@@ -89,14 +88,6 @@ private struct GeneralSettings: View {
         }
     }
 
-    /// As the web's Settings say it (web/src/settings.js `texGroup`).
-    private var texFolder: String {
-        guard let tex = app.tex else { return "" }
-        if let dir = tex.texDir { return tex.available ? "Using \(dir)" : "latexmk in \(dir) didn’t run" }
-        guard tex.available else { return "Automatic" }
-        return tex.found.map { "Found automatically in \($0)" } ?? "Found automatically"
-    }
-
     private func setTeXFolder(_ path: String?) {
         Task {
             do {
@@ -105,16 +96,6 @@ private struct GeneralSettings: View {
                 alert = AppAlert("Couldn’t Use “\(((path ?? "") as NSString).lastPathComponent)”", error)
             }
         }
-    }
-
-    /// The distribution ("TeX Live 2026"); else latexmk's banner
-    /// ("Latexmk, John Collins, 9 March 2026. Version 4.88") as
-    /// "latexmk 4.88"; anything else as the core reported it.
-    private var texVersion: String {
-        if let distribution = app.tex?.distribution { return distribution }
-        guard let version = app.tex?.version else { return "Found" }
-        if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
-        return version
     }
 }
 

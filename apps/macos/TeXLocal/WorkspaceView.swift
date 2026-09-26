@@ -241,7 +241,7 @@ struct InspectorView: View {
                 pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
                 toggleRow("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
                           project.settings?.shellEscape ?? false, set: project.setShellEscape)
-                toggleRow("Stop on First Error", "Ends the build at the first error, rather than compiling past it to show them all.",
+                toggleRow("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
                           project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
                 if let path = project.openPath {
                     separator
