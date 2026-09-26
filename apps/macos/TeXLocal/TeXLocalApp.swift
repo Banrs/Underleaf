@@ -82,7 +82,7 @@ struct RootView: View {
         // inspector 220. A minimum that changed with the content — raised as
         // a project opened — landed mid-layout on the split view, whose
         // constraint passes then looped until AppKit threw.
-        .frame(minWidth: 960, minHeight: 600)
+        .frame(minWidth: WindowMetrics.minimum.width, minHeight: WindowMetrics.contentMinHeight)
         .task {
             await app.refresh()
             // `open TeXLocal.app --args -openProject <id>` opens a project at
@@ -93,10 +93,23 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
-        // The title says what happened, as the HIG asks; the app's name
-        // told nothing.
-        .alert(app.alert ?? "", isPresented: Binding(presenting: $app.alert)) {
+        // The title says what happened, briefly, as the HIG asks; the
+        // detail is the message. `presenting`, so the text stays while the
+        // alert closes.
+        .alert(app.alert?.title ?? "", isPresented: Binding(presenting: $app.alert), presenting: app.alert) { _ in
             Button("OK") {}
+        } message: { alert in
+            Text(alert.message)
         }
     }
+}
+
+/// The window's one minimum size, 960 × 600 as a whole window. The content's
+/// minimum height leaves out the toolbar, which the window adds above it
+/// (the unified toolbar is 52 pt in both windows), so a 600 pt minimum on
+/// the content made the smallest window 652 pt tall.
+enum WindowMetrics {
+    static let minimum = CGSize(width: 960, height: 600)
+    static let toolbarHeight: CGFloat = 52
+    static var contentMinHeight: CGFloat { minimum.height - toolbarHeight }
 }

@@ -13,6 +13,9 @@ struct OutlineItem: Identifiable, Hashable {
     let level: Int
     let title: String
     let line: Int
+    /// A heading with an empty title, which `title` spells "(untitled)" as
+    /// the web does; `Outline.displayTitle` names it by its kind.
+    var isUntitled = false
 }
 
 /// Sectioning commands in a document, as the browser version's outline reads
@@ -41,7 +44,8 @@ enum Outline {
                     id: items.count,
                     level: levels.firstIndex(of: String(m.1)) ?? 2,
                     title: m.2.isEmpty ? "(untitled)" : String(m.2),
-                    line: lines
+                    line: lines,
+                    isUntitled: m.2.isEmpty
                 ))
             }
             words += lineWords(line)
@@ -61,8 +65,8 @@ enum Outline {
         }
     }
 
-    /// The outline as a tree by how the headings nest, for a sidebar with
-    /// disclosure triangles.
+    /// The outline as a tree by how the headings nest. The sidebar lists the
+    /// headings flat, indented by `depths`; only the tests use this now.
     static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
         let depths = depths(outline)
         var index = 0
@@ -82,7 +86,7 @@ enum Outline {
     /// An empty heading by its kind — "Untitled Subsection" — where the web
     /// writes "(untitled)". The kinds are the source bar's section levels.
     static func displayTitle(_ item: OutlineItem) -> String {
-        guard item.title == "(untitled)" else { return item.title }
+        guard item.isUntitled else { return item.title }
         let kind = headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "Section"
         return "Untitled " + kind
     }

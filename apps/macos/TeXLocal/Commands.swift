@@ -149,18 +149,11 @@ enum MenuCommand: String, CaseIterable {
     }
 }
 
-enum Prompt: Identifiable {
+/// A sheet the workspace asks for a value with.
+enum Prompt: String, Identifiable {
     case newFile, newFolder, gotoLine
-    case renameEntry(String)
 
-    var id: String {
-        switch self {
-        case .newFile: "newFile"
-        case .newFolder: "newFolder"
-        case .gotoLine: "gotoLine"
-        case .renameEntry(let path): "rename:\(path)"
-        }
-    }
+    var id: String { rawValue }
 }
 
 enum PDFAction {
@@ -256,7 +249,7 @@ extension AppModel {
     }
 
     /// A native text field keeps its own undo. Anything else — the editor, or
-    /// a click on a source bar button, which can take first responder from
+    /// a click on a toolbar button, which can take first responder from
     /// the web view — goes to CodeMirror's history: the standard undo: would
     /// reach WebKit's undo manager, which never sees CodeMirror's own changes
     /// (formatting, completions) and reverted half of an insertion.
@@ -412,9 +405,9 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .textFormatting) {
             item(.editBold)
             item(.editItalic)
-            item(.editMath)
             Divider()
-            InsertMenuItems(project: app.project)
+            // Inline Math beside Display Math, after the line's level.
+            InsertMenuItems(project: app.project, inlineMath: item(.editMath))
                 .disabled(app.project?.openPath?.hasSuffix(".tex") != true)
             Divider()
             item(.editComment)
@@ -427,6 +420,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(app.project == nil)
             item(.viewToggleLogs)
+            Button(app.showWordCount ? "Hide Word Count" : "Show Word Count") { app.showWordCount.toggle() }
+                .disabled(app.project == nil)
             Divider()
             item(.viewZoomIn)
             item(.viewZoomOut)

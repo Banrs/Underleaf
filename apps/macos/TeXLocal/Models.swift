@@ -26,6 +26,19 @@ struct TreeNode: Decodable, Identifiable {
 struct TexStatus: Decodable {
     let available: Bool
     let version: String?
+    /// The folder latexmk runs from.
+    var found: String?
+
+    /// The distribution latexmk belongs to, from the folder it runs from
+    /// with links followed (/Library/TeX/texbin is MacTeX's link into
+    /// /usr/local/texlive/2026/bin/…): "TeX Live 2026", "MiKTeX", or nil.
+    var distribution: String? {
+        guard let found else { return nil }
+        let path = URL(fileURLWithPath: found).resolvingSymlinksInPath().path
+        if let match = path.firstMatch(of: /texlive\/(\d{4})\//) { return "TeX Live \(match.1)" }
+        if path.localizedCaseInsensitiveContains("miktex") { return "MiKTeX" }
+        return nil
+    }
 }
 
 struct ProjectSettings: Decodable {

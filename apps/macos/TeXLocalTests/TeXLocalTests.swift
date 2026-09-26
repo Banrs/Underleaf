@@ -135,29 +135,122 @@ final class OutlineDisplayTests: XCTestCase {
     }
 }
 
-/// The pane bar's groups measured off screen, with no window shown.
+/// A bar's group measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
-    /// The UI kit's two toolbars: Unified Compact and Unified.
-    func testTheBarsAreTheKitsToolbarHeights() {
-        XCTAssertEqual(PaneSize.compact.barHeight, 40)
-        XCTAssertEqual(PaneSize.large.barHeight, 52)
-    }
-
-    /// Controls sit 8 pt from the bar's top and bottom, as in the kit. The
-    /// accessory-bar bezel measures 22 and 34 pt, 2 pt under the kit's 24
-    /// and 36, so the group keeps within 8 to 9 pt of each edge.
+    /// Controls sit 8 pt from the bar's top and bottom, as in the kit's
+    /// Unified Compact toolbar. The accessory-bar bezel measures 22 pt, 2 pt
+    /// under the kit's 24, so the group keeps within 8 to 9 pt of each edge.
     func testAGroupFitsItsBarWithTheKitsInsets() {
         let two = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
         .buttonStyle(.accessoryBar)
-        for size in [PaneSize.compact, .large] {
-            let height = NSHostingView(rootView: two.controlSize(size.controlSize)).fittingSize.height
-            XCTAssertLessThanOrEqual(height, size.barHeight - 16, "\(size)")
-            XCTAssertGreaterThanOrEqual(height, size.barHeight - 18, "\(size)")
+        .controlSize(BarMetrics.controlSize)
+        let height = NSHostingView(rootView: two).fittingSize.height
+        XCTAssertLessThanOrEqual(height, BarMetrics.barHeight - 16)
+        XCTAssertGreaterThanOrEqual(height, BarMetrics.barHeight - 18)
+    }
+}
+
+/// The controls floating over the PDF, measured off screen.
+@MainActor
+final class FloatingGlassTests: XCTestCase {
+    /// A capsule is the kit's XL toolbar pill, 36 pt, as the toolbar's
+    /// glass items beside it are: large controls with 4 pt of glass around.
+    func testACapsuleIsTheToolbarsHeight() {
+        let capsule = HStack(spacing: FloatingMetrics.itemSpacing) {
+            Button("Previous Page", systemImage: "chevron.up") {}.onGlass()
+            Text("Page 1 of 2")
+            Button("Next Page", systemImage: "chevron.down") {}.onGlass()
         }
+        .floatingGlass()
+        let height = NSHostingView(rootView: capsule).fittingSize.height
+        XCTAssertEqual(height, FloatingMetrics.height, accuracy: 1)
+    }
+}
+
+/// The open file's watcher: a change on disk, written in place or saved
+/// over it the way editors save (a new file renamed over the old), is told.
+@MainActor
+final class FileWatcherTests: XCTestCase {
+    func testChangesInPlaceAndByReplacementAreBothTold() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("main.tex")
+        try "one".write(to: url, atomically: false, encoding: .utf8)
+
+        var changes = 0
+        let watcher = FileWatcher(url: url) { changes += 1 }
+        try "two".write(to: url, atomically: false, encoding: .utf8)
+        try await waitUntil { changes > 0 }
+        let inPlace = changes
+        // Atomically: a new file renamed over the old one.
+        try "three".write(to: url, atomically: true, encoding: .utf8)
+        try await waitUntil { changes > inPlace }
+        // Still watching the file now at that path.
+        try await Task.sleep(for: .milliseconds(300))
+        let replaced = changes
+        try "four".write(to: url, atomically: false, encoding: .utf8)
+        try await waitUntil { changes > replaced }
+        _ = watcher
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<40 where !condition() {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(condition())
+    }
+}
+
+/// The window toolbar as AppKit is given it.
+@MainActor
+final class WorkspaceToolbarTests: XCTestCase {
+    /// The source's tools, then Compile, zoom and Share, then the panes'
+    /// toggles; the templates with buttons of their own are only in
+    /// Customize Toolbar…. The defaults, not the toolbar as shown, which
+    /// follows any customization saved in this app's preferences.
+    func testTheDefaultItemsAndTheirOrder() throws {
+        let app = AppModel()
+        let project = ProjectModel(id: "toolbar-test", editor: app.editor, app: app)
+        let root = NavigationStack {
+            Color.clear.toolbar(id: WorkspaceToolbar.id) { WorkspaceToolbar(app: app, project: project) }
+        }
+        .environment(app)
+        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
+        window.setContentSize(NSSize(width: 1600, height: 400))
+        window.orderFront(nil)
+        defer { window.close() }
+        var toolbar: NSToolbar?
+        for _ in 0..<50 where toolbar?.items.isEmpty != false {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+            toolbar = window.toolbar
+        }
+        let bar = try XCTUnwrap(toolbar)
+        XCTAssertEqual(bar.identifier, WorkspaceToolbar.id)
+        XCTAssertTrue(bar.allowsUserCustomization)
+        let delegate = try XCTUnwrap(bar.delegate)
+        let ours = { (ids: [NSToolbarItem.Identifier]) in
+            ids.compactMap { WorkspaceToolbar.Item(rawValue: $0.rawValue) }
+        }
+        // The items and the spaces: the flexible one puts the PDF's tools over the PDF;
+        // fixed ones keep Compile's tinted glass apart from zoom's, the zoom
+        // group's apart from Share's, and the panes' toggles apart from the
+        // PDF's tools.
+        let spaced = (delegate.toolbarDefaultItemIdentifiers?(bar) ?? []).map { id in
+            switch id {
+            case .flexibleSpace: "flexible"
+            case .space: "fixed"
+            default: id.rawValue
+            }
+        }
+        XCTAssertEqual(spaced, ["back", "undoRedo", "sectionLevel", "format", "symbols", "insert", "flexible",
+                                "fixed", "compile", "fixed", "zoom", "fixed", "share", "fixed", "pdf", "inspector"])
+        let allowed = Set(ours(delegate.toolbarAllowedItemIdentifiers?(bar) ?? []))
+        XCTAssertTrue(WorkspaceToolbar.hiddenByDefault.isSubset(of: allowed))
     }
 }
 

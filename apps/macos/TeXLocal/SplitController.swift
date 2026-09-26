@@ -12,16 +12,20 @@ struct SplitPane {
     /// Keeps its size as the window resizes.
     var keepsSize = false
     var shown = true
+    /// On edge-to-edge system glass, as an inspector sits beside the
+    /// content (`NSGlassEffectView`, the pane its content view).
+    var glass = false
     let content: AnyView
 
     init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
-         keepsSize: Bool = false, shown: Bool = true, @ViewBuilder content: () -> some View) {
+         keepsSize: Bool = false, shown: Bool = true, glass: Bool = false, @ViewBuilder content: () -> some View) {
         self.minimum = minimum
         self.maximum = maximum
         self.maxFraction = maxFraction
         self.fraction = fraction
         self.keepsSize = keepsSize
         self.shown = shown
+        self.glass = glass
         self.content = AnyView(content())
     }
 }
@@ -55,12 +59,22 @@ struct SplitController: NSViewRepresentable {
             // SwiftUI's sizes stay out of Auto Layout; the delegate keeps
             // each pane within its minimum and maximum instead.
             host.sizingOptions = []
+            let view: NSView
+            if pane.glass {
+                // The content inside the glass, never a sibling behind it.
+                let glass = NSGlassEffectView()
+                glass.cornerRadius = 0
+                glass.contentView = host
+                view = glass
+            } else {
+                view = host
+            }
             // Starting sizes in proportion, until the split has its own.
             let share = (pane.fraction ?? rest) * 1000
-            host.frame.size = axis == .horizontal
+            view.frame.size = axis == .horizontal
                 ? CGSize(width: share, height: 1000) : CGSize(width: 1000, height: share)
-            context.coordinator.views.append(host)
-            if pane.shown { split.addArrangedSubview(host) }
+            context.coordinator.views.append(view)
+            if pane.shown { split.addArrangedSubview(view) }
         }
         split.autosaveName = autosave
         return split

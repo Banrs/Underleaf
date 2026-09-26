@@ -1,158 +1,158 @@
 import SwiftUI
 
-/// The bar over the source: a LaTeX writer's tools, as Overleaf's toolbar
-/// has them, then the rest in a ⋯ menu. Narrow panes fold groups into that
-/// menu from the end, then the section level and redo, so undo is never
-/// clipped. Commenting out stays in the Format menu (⌘/).
-struct SourceBar: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
-    @State private var showSymbols = false
-
-    /// The groups that fold, in the order they fold back from.
-    private enum Tools: Int, CaseIterable { case format, math, references, figures, lists }
-
+/// The source's tools, as items of the window toolbar over the source (see
+/// `WorkspaceToolbar`): a LaTeX writer's tools, after Overleaf's toolbar.
+/// Each group is one customizable item; the system gives each its glass,
+/// sizes it and folds it into the toolbar's » menu when the window is
+/// narrow. Every one is also in the menu bar (Edit and Format). Commenting
+/// out is only in the Format menu (⌘/).
+enum SourceTools {
     /// The templates with a button of their own, by title and symbol.
-    private static let references = [("Link", "link"), ("Reference", "number"), ("Citation", "text.quote")]
-    private static let figures = [("Figure", "photo"), ("Table", "tablecells")]
-    private static let lists = [("Bulleted List", "list.bullet"), ("Numbered List", "list.number")]
+    static let references = [("Link", "link"), ("Reference", "number"), ("Citation", "text.quote")]
+    static let figures = [("Figure", "photo"), ("Table", "tablecells")]
+    static let lists = [("Bulleted List", "list.bullet"), ("Numbered List", "list.number")]
+}
+
+extension ProjectModel {
+    /// The source tools act on LaTeX: they are off for other files.
+    var editsLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+}
+
+/// A toolbar button for a menu command: its title, symbol and state.
+private struct CommandButton: View {
+    @Environment(AppModel.self) private var app
+    let command: MenuCommand
+    let systemImage: String
+
+    init(_ command: MenuCommand, _ systemImage: String) {
+        self.command = command
+        self.systemImage = systemImage
+    }
 
     var body: some View {
-        PaneBar {
-            ViewThatFits(in: .horizontal) {
-                tools(showing: 5)
-                tools(showing: 4)
-                tools(showing: 3)
-                tools(showing: 2)
-                tools(showing: 1)
-                tools(showing: 0)
-                tools(showing: 0, level: false)
-                tools(showing: 0, level: false, redo: false)
-            }
-            Spacer(minLength: 0)
+        Button(command.title, systemImage: systemImage) { app.perform(command) }
+            .disabled(!app.isEnabled(command))
+            .help(command.title)
+    }
+}
+
+/// Undo and redo, one group.
+struct UndoRedoTools: View {
+    var body: some View {
+        ControlGroup {
+            CommandButton(.editUndo, "arrow.uturn.backward")
+            CommandButton(.editRedo, "arrow.uturn.forward")
+        } label: {
+            Label("Undo and Redo", systemImage: "arrow.uturn.backward")
         }
     }
+}
 
-    /// The bar with the first `count` groups; the section level and redo
-    /// fold last, for a source pane at its narrowest.
-    private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
-        let shown = Tools.allCases.filter { $0.rawValue < count }
-        return HStack(spacing: BarMetrics.spacing) {
-            ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
-                + (redo || !isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
-            if isLaTeX {
-                if level {
-                    ToolSeparator()
-                    SectionLevelMenu(project: project)
+/// Bold, italic, inline and display math: one group, as Pages groups its
+/// text styles. One item rather than two side by side: adjacent groups'
+/// glass runs together into one shape.
+struct FormatTools: View {
+    let project: ProjectModel
+
+    var body: some View {
+        ControlGroup {
+            CommandButton(.editBold, "bold")
+            CommandButton(.editItalic, "italic")
+            CommandButton(.editMath, "x.squareroot")
+            Button("Display Math", systemImage: "sum") { project.format("displayMath") }
+                .help("Display Math")
+        } label: {
+            Label("Format", systemImage: "bold.italic.underline")
+        }
+        .disabled(!project.editsLaTeX)
+    }
+}
+
+/// The symbol palette, a popover from its own toolbar item.
+struct SymbolsTool: View {
+    let project: ProjectModel
+    @State private var showing = false
+
+    var body: some View {
+        Button("Symbols", systemImage: "pi") { showing = true }
+            .help("Symbols")
+            .disabled(!project.editsLaTeX)
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                SymbolPalette { project.format("symbol", $0) }
+            }
+    }
+}
+
+/// A group of templates with buttons of their own: links and references,
+/// figures and tables, or lists.
+struct TemplateTools: View {
+    enum Kind { case references, figures, lists }
+    let kind: Kind
+    let project: ProjectModel
+
+    var body: some View {
+        ControlGroup {
+            ForEach(items, id: \.0) { title, symbol in
+                Button(title, systemImage: symbol) {
+                    if kind == .references { project.inline(title) } else { project.insert(title) }
                 }
-                ForEach(shown, id: \.self) { group in
-                    ToolSeparator()
-                    tools(group)
-                }
-                ToolSeparator()
-                moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count }, level: !level, redo: !redo)
+                .help(title)
             }
+        } label: {
+            Label(label.0, systemImage: label.1)
         }
-        .fixedSize()
+        .disabled(!project.editsLaTeX)
     }
 
-    @ViewBuilder
-    private func tools(_ group: Tools) -> some View {
-        switch group {
-        case .format:
-            ToolGroup(items: [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)])
-        case .math:
-            HStack(spacing: 0) {
-                ToolGroup(items: [
-                    Segment(.editMath, "x.squareroot", app: app),
-                    Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
-                        project.format("displayMath")
-                    },
-                ])
-                // Its own button, so the popover points at it.
-                Button("Symbols", systemImage: "pi") { showSymbols = true }
-                    .labelStyle(.iconOnly)
-                    .help("Symbols")
-                    .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
-                        SymbolPalette { project.format("symbol", $0) }
-                    }
-            }
-            .fixedSize()
-        case .references:
-            ToolGroup(items: Self.references.map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.inline(title) }
-            })
-        case .figures, .lists:
-            ToolGroup(items: (group == .figures ? Self.figures : Self.lists).map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.insert(title) }
-            })
+    private var items: [(String, String)] {
+        switch kind {
+        case .references: SourceTools.references
+        case .figures: SourceTools.figures
+        case .lists: SourceTools.lists
         }
     }
 
-    /// The folded groups' tools, then what has no button of its own.
-    private func moreMenu(folded: [Tools], level: Bool, redo: Bool) -> some View {
+    private var label: (String, String) {
+        switch kind {
+        case .references: ("References", "number")
+        case .figures: ("Figure and Table", "photo")
+        case .lists: ("Lists", "list.bullet")
+        }
+    }
+}
+
+/// Every block and reference the source can insert, as Pages' Insert
+/// menu: whichever of the tools the toolbar shows, this has them all.
+struct InsertTool: View {
+    let project: ProjectModel
+
+    var body: some View {
         Menu {
-            if redo {
-                Button(MenuCommand.editRedo.title) { app.perform(.editRedo) }
-                    .disabled(!app.isEnabled(.editRedo))
-                Divider()
-            }
-            if level {
-                Menu("Section Level") {
-                    ForEach(headingLevels, id: \.1) { title, command in
-                        Button(title) { project.format("heading", command) }
-                    }
-                }
-                Divider()
-            }
-            ForEach(folded, id: \.self) { group in
-                switch group {
-                case .format:
-                    Button(MenuCommand.editBold.title) { app.perform(.editBold) }
-                    Button(MenuCommand.editItalic.title) { app.perform(.editItalic) }
-                case .math:
-                    Button(MenuCommand.editMath.title) { app.perform(.editMath) }
-                    Button("Display Math") { project.format("displayMath") }
-                    SymbolMenu(project: project)
-                case .references:
-                    ForEach(Self.references, id: \.0) { title, _ in
-                        Button(title) { project.inline(title) }
-                    }
-                case .figures, .lists:
-                    ForEach(group == .figures ? Self.figures : Self.lists, id: \.0) { title, _ in
-                        Button(title) { project.insert(title) }
-                    }
-                }
-                Divider()
-            }
-            ForEach(insertTemplates.filter { title, _ in !Self.figures.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("insert", template) }
-            }
-            ForEach(listTemplates.filter { title, _ in !Self.lists.contains { $0.0 == title } }, id: \.0) { title, template in
+            ForEach(insertTemplates, id: \.0) { title, template in
                 Button(title) { project.format("insert", template) }
             }
             Divider()
-            ForEach(referenceTemplates.filter { title, _ in !Self.references.contains { $0.0 == title } }, id: \.0) { title, template in
+            ForEach(listTemplates, id: \.0) { title, template in
+                Button(title) { project.format("insert", template) }
+            }
+            Divider()
+            ForEach(referenceTemplates, id: \.0) { title, template in
                 Button(title) { project.format("inline", template) }
             }
         } label: {
-            Label("More", systemImage: "ellipsis")
+            Label("Insert", systemImage: "plus")
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .labelStyle(.iconOnly)
-        .fixedSize()
-        .help("More")
+        .help("Insert")
+        .disabled(!project.editsLaTeX)
     }
-
-    private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
 }
 
 /// The line's section level, as a word processor shows its paragraph
 /// style; choosing one makes the line that heading, or plain text. The
-/// system's pop-up, so it checks the level and names itself to VoiceOver.
-/// A view of its own, so a caret move redraws it and not the whole bar.
-private struct SectionLevelMenu: View {
+/// system's pop-up, so it checks the level; its toolbar label doesn't reach
+/// VoiceOver (it read the pop-up's symbol name), so it is named here.
+/// A view of its own, so a caret move redraws it and not the whole toolbar.
+struct SectionLevelMenu: View {
     let project: ProjectModel
 
     var body: some View {
@@ -168,9 +168,10 @@ private struct SectionLevelMenu: View {
             }
         }
         .pickerStyle(.menu)
-        .labelsHidden()
         .fixedSize()
+        .accessibilityLabel("Section Level")
         .help("Section Level")
+        .disabled(!project.editsLaTeX)
     }
 }
 
@@ -203,9 +204,12 @@ private struct SymbolPalette: View {
 
     private static let columns = 10
 
-    /// A square cell a line of the glyphs' text style high, so every glyph,
-    /// narrow or wide, takes the same room.
-    private static var cell: CGFloat {
+    /// Each glyph a large (28 pt) accessory-bar button, the HIG's default
+    /// control size, rather than a line of the glyphs' text high; the
+    /// glyph in a column as wide as a line is high, so every glyph, narrow
+    /// or wide, takes the same room. The button's own padding makes the
+    /// hit area wider still.
+    private static var glyphWidth: CGFloat {
         let font = NSFont.preferredFont(forTextStyle: .title3)
         return (font.ascender - font.descender + font.leading).rounded(.up)
     }
@@ -227,7 +231,7 @@ private struct SymbolPalette: View {
                                 insert(command)
                                 dismiss()
                             } label: {
-                                Text(glyph).font(.title3).frame(width: Self.cell, height: Self.cell)
+                                Text(glyph).font(.title3).frame(width: Self.glyphWidth)
                             }
                             .help(command)
                             .accessibilityLabel(command)
@@ -237,11 +241,13 @@ private struct SymbolPalette: View {
             }
         }
         .buttonStyle(.accessoryBar)
+        // Set here: macOS 27 resets the control size in popovers.
+        .controlSize(.large)
         .padding()
     }
 }
 
-/// The palette as a menu, for the Format menu and the bar's overflow.
+/// The palette as a menu, for the Format menu.
 struct SymbolMenu: View {
     let project: ProjectModel?
 
@@ -387,18 +393,26 @@ struct SourceFindBar: View {
                 rows(count: false, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
                 rows(count: false, replaceMenu: true, fieldWidth: 0)
             }
+            .placingFields([0, 1]) { id in
+                if id == 0 {
+                    SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
+                                options: options, step: { project.findStep($0) }, close: { project.closeFind() })
+                } else {
+                    SearchField(text: $project.findQuery.replace, prompt: "Replace", searches: false,
+                                submit: { project.replace(all: false) }, close: { project.closeFind() })
+                }
+            }
         }
     }
 
-    /// The fields share the one flexible column, so they take what the
-    /// buttons leave and line up; the buttons' column keeps to the trailing
-    /// edge, Done ending the first row.
+    /// The fields' slots share the one flexible column, so they take what
+    /// the buttons leave and line up; the buttons' column keeps to the
+    /// trailing edge, Done ending the first row. The fields themselves are
+    /// drawn over the slots (`placingFields`), the same views in every layout.
     private func rows(count: Bool, replaceMenu: Bool, fieldWidth: CGFloat = BarMetrics.fieldWidth) -> some View {
         Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
             GridRow {
-                SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
-                            options: options, step: { project.findStep($0) }, close: { project.closeFind() })
-                    .frame(minWidth: fieldWidth, idealWidth: fieldWidth, maxWidth: .infinity)
+                FieldSlot(id: 0, minWidth: fieldWidth, idealWidth: fieldWidth)
                 HStack(spacing: BarMetrics.groupSpacing) {
                     ToolGroup(items: [
                         Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
@@ -418,9 +432,7 @@ struct SourceFindBar: View {
                 .gridColumnAlignment(.trailing)
             }
             GridRow {
-                SearchField(text: $project.findQuery.replace, prompt: "Replace", searches: false,
-                            submit: { project.replace(all: false) }, close: { project.closeFind() })
-                    .frame(minWidth: fieldWidth, idealWidth: fieldWidth, maxWidth: .infinity)
+                FieldSlot(id: 1, minWidth: fieldWidth, idealWidth: fieldWidth)
                 Group {
                     if replaceMenu {
                         // Replace, with Replace All in its menu.

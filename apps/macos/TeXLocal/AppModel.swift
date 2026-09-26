@@ -1,13 +1,29 @@
 import AppKit
 import SwiftUI
 
+/// What went wrong, as the HIG shapes an alert: a short, specific title
+/// (at most two lines) and the detail in the message.
+struct AppAlert: Sendable {
+    let title: String
+    let message: String
+
+    init(_ title: String, _ message: String) {
+        self.title = title
+        self.message = message
+    }
+
+    init(_ title: String, _ error: Error) {
+        self.init(title, error.localizedDescription)
+    }
+}
+
 /// The library: projects on disk, TeX availability, and the open project.
 @MainActor @Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
     var project: ProjectModel?
-    var alert: String?
+    var alert: AppAlert?
 
     // Requests from commands to the views that own the matching UI.
     var showNewProject = false
@@ -17,6 +33,15 @@ final class AppModel {
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
+    /// The open project's PDF view, for its pane and the window toolbar's
+    /// zoom; a new one for each project.
+    var pdf = PDFController()
+
+    init() {
+        // The pane bars' size setting (Settings › General › Toolbar Size)
+        // is gone with the pane bars: the window toolbar is the system's.
+        UserDefaults.standard.removeObject(forKey: "paneBarSize")
+    }
 
     // Settings the menus and models read, remembered across launches; held
     // here so they are observed. Settings the views alone read are
@@ -26,6 +51,10 @@ final class AppModel {
     }
     var autoCompile = UserDefaults.standard.object(forKey: "autoCompile") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
+    }
+    /// The status bar's word and line counts (View › Show Word Count).
+    var showWordCount = UserDefaults.standard.object(forKey: "showWordCount") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showWordCount, forKey: "showWordCount") }
     }
     var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
         didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
@@ -38,10 +67,11 @@ final class AppModel {
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
-    /// rather than whenever the pane next appears.
+    /// rather than whenever the pane next appears. Find floats over the
+    /// pages, so it leaves the build panel open.
     func requestPDF(_ action: PDFAction) {
         project?.showPDF = true
-        project?.showLogs = false
+        if action != .find { project?.showLogs = false }
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
@@ -56,7 +86,7 @@ final class AppModel {
             projects = try await core.call("list_projects", as: [ProjectInfo].self)
                 .sorted { $0.mtime > $1.mtime }
         } catch {
-            alert = error.localizedDescription
+            alert = AppAlert("Couldn’t Load Your Projects", error)
         }
         tex = try? await core.call("status", as: TexStatus.self)
     }
@@ -76,7 +106,7 @@ final class AppModel {
             await refresh()
             await open(info.id)
         } catch {
-            alert = error.localizedDescription
+            alert = AppAlert("Couldn’t Create “\(name)”", error)
         }
     }
 
@@ -84,7 +114,7 @@ final class AppModel {
         do {
             _ = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
         } catch {
-            alert = error.localizedDescription
+            alert = AppAlert("Couldn’t Rename “\(project.name)”", error)
         }
         await refresh()
     }
@@ -93,7 +123,7 @@ final class AppModel {
         do {
             try await core.perform("delete_project", ["id": project.id])
         } catch {
-            alert = error.localizedDescription
+            alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
         }
         await refresh()
     }
@@ -112,6 +142,7 @@ final class AppModel {
 
     func open(_ id: String) async {
         guard await close() else { return }
+        pdf = PDFController()
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
         await model.load()

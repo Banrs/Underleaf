@@ -3,8 +3,9 @@ import SwiftUI
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
 /// panels", "Interface size" and theme have no counterpart: macOS draws its
-/// own sidebar and toolbar, sizes its own text, and the app follows the
-/// system's appearance (HIG, Dark Mode).
+/// own sidebar and toolbar (View › Customize Toolbar… arranges it), sizes
+/// its own text, and the app follows the system's appearance (HIG, Dark
+/// Mode).
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -21,7 +22,7 @@ extension View {
     fileprivate func settingsPane() -> some View {
         formStyle(.grouped)
             .scrollDisabled(true)
-            .frame(width: 480)
+            .frame(width: 500)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -29,7 +30,6 @@ extension View {
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
     @AppStorage("pdfPaper") private var pdfPaper = "white"
-    @AppStorage("paneBarSize") private var paneBarSize = PaneSize.compact
 
     var body: some View {
         @Bindable var app = app
@@ -41,21 +41,13 @@ private struct GeneralSettings: View {
                     Text("Match Appearance").tag("auto")
                 } label: {
                     Text("Document Paper")
-                    Text("Dark paper inverts the rendered PDF for night reading")
-                }
-                Picker(selection: $paneBarSize) {
-                    // "Standard" keeps the stored value "compact".
-                    Text("Standard").tag(PaneSize.compact)
-                    Text("Large").tag(PaneSize.large)
-                } label: {
-                    Text("Toolbar Size")
-                    Text("The bars over the source, the PDF and the build panel")
+                    Text("Dark paper inverts the rendered PDF for night reading.")
                 }
             }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
-                    Text("Recompile shortly after you stop typing")
+                    Text("Recompile shortly after you stop typing.")
                 }
                 LabeledContent("TeX Distribution") {
                     Text(app.tex?.available == true ? texVersion : "Not found — compiling is off")
@@ -64,9 +56,11 @@ private struct GeneralSettings: View {
         }
     }
 
-    /// latexmk's banner ("Latexmk, John Collins, 9 March 2026. Version 4.88")
-    /// as "latexmk 4.88"; anything else as the core reported it.
+    /// The distribution ("TeX Live 2026"); else latexmk's banner
+    /// ("Latexmk, John Collins, 9 March 2026. Version 4.88") as
+    /// "latexmk 4.88"; anything else as the core reported it.
     private var texVersion: String {
+        if let distribution = app.tex?.distribution { return distribution }
         guard let version = app.tex?.version else { return "Found" }
         if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
         return version
@@ -77,7 +71,6 @@ private struct EditorSettings: View {
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
     @AppStorage("editorFontSize") private var fontSize = 13
-    @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         Form {
@@ -96,12 +89,6 @@ private struct EditorSettings: View {
                 Picker("Syntax Colors", selection: $palette) {
                     Text("Default").tag("onedark")
                     Text("Xcode").tag("xcode")
-                }
-            }
-            Section("Status Bar") {
-                Toggle(isOn: $showWordCount) {
-                    Text("Word Count")
-                    Text("Words and lines in the open file")
                 }
             }
         }

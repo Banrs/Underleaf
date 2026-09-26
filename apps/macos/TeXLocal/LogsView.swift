@@ -43,14 +43,16 @@ struct PanelView: View {
             .layoutPriority(1)
             Spacer(minLength: BarMetrics.groupSpacing)
             if project.panelTab == .issues {
-                Toggle(isOn: $showWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
+                // Only when there are warnings to hide.
+                if project.warningCount > 0 {
+                    Toggle(isOn: $showWarnings) {
+                        Label("Warnings", systemImage: "exclamationmark.triangle")
+                    }
+                    .toggleStyle(.button)
+                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                .toggleStyle(.button)
-                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-                .disabled(project.warningCount == 0)
             } else {
-                Button("Copy Log", systemImage: "doc.on.doc") {
+                Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
                 }
@@ -83,6 +85,7 @@ struct PanelView: View {
                 Text("Compile to see errors and warnings here.")
             } actions: {
                 Button("Compile") { app.perform(.compileRun) }
+                    .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun))
             }
         } else if items.isEmpty {
@@ -97,6 +100,7 @@ struct PanelView: View {
                     Text("The build log shows what went wrong.")
                 } actions: {
                     Button("Show Build Log") { project.panelTab = .log }
+                        .buttonStyle(.borderedProminent)
                 }
             } else {
                 ContentUnavailableView("No Issues", systemImage: "checkmark.circle")

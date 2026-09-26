@@ -88,16 +88,16 @@ private struct SourceAndPDF: View {
     }
 }
 
-/// The source's bars stacked over it, not overlaid: they are opaque, so
-/// text scrolled beneath them was only hidden. The find bar, while it
-/// shows, goes between them and the text, as TextEdit's and Xcode's do.
+/// The source under its location row, stacked, not overlaid: the row is
+/// opaque, so text scrolled beneath it was only hidden. The source's tools
+/// are the window toolbar's, over this pane. The find bar, while it shows,
+/// goes between the row and the text, as TextEdit's and Xcode's do.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         VStack(spacing: 0) {
-            SourceBar(project: project)
             SourceLocation(project: project)
             if project.findShown {
                 Divider()
@@ -119,33 +119,21 @@ private struct SourcePane: View {
 
 /// The status bar: how the build went (choose it for the panel's issues),
 /// the save state and where the cursor is, then the build panel's toggle.
-/// The one place the build's summary shows.
+/// The one place the build's summary shows. A narrow window drops whole
+/// items, never cutting one short: the engine first (the inspector and the
+/// Compile menu show it too), then the counts, then the save state.
 private struct StatusBar: View {
+    @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         @Bindable var project = project
         SecondaryBar(spacing: BarMetrics.itemSpacing) {
-            Button {
-                project.panelTab = .issues
-                project.showLogs = true
-            } label: {
-                buildStatus
-            }
-            .help("Show Issues")
-            .layoutPriority(1)
-            Text(project.status)
-            Spacer(minLength: BarMetrics.itemSpacing)
-            if project.openPath != nil {
-                Text("Line \(project.cursorLine)").monospacedDigit()
-                if showWordCount, let counts = project.counts {
-                    Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
-                        .monospacedDigit()
-                }
-            }
-            if let engine = project.settings?.engine {
-                Text(texEngines.first { $0.0 == engine }?.1 ?? engine)
+            ViewThatFits(in: .horizontal) {
+                items(save: true, counts: true, engine: true)
+                items(save: true, counts: true, engine: false)
+                items(save: true, counts: false, engine: false)
+                items(save: false, counts: false, engine: false)
             }
             ToolSeparator()
             Toggle(isOn: $project.showLogs) {
@@ -157,6 +145,40 @@ private struct StatusBar: View {
         }
         .buttonStyle(.accessoryBar)
         .foregroundStyle(.secondary)
+        // What the bar shows is chosen where it shows, as Pages' word count
+        // is (View › Show Word Count too), not in Settings.
+        .contextMenu {
+            Button(app.showWordCount ? "Hide Word Count" : "Show Word Count") { app.showWordCount.toggle() }
+        }
+    }
+
+    private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
+        HStack(spacing: BarMetrics.itemSpacing) {
+            Button {
+                project.panelTab = .issues
+                project.showLogs = true
+            } label: {
+                buildStatus
+            }
+            .help("Show Issues")
+            // While a build runs the build status says so; the save state
+            // would repeat it.
+            if save, !project.compiling {
+                Text(project.status)
+            }
+            Spacer(minLength: BarMetrics.itemSpacing)
+            if project.openPath != nil {
+                Text("Line \(project.cursorLine)").monospacedDigit()
+                if showCounts, app.showWordCount, let counts = project.counts {
+                    Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
+                        .monospacedDigit()
+                }
+            }
+            if showEngine, let engine = project.settings?.engine {
+                Text(texEngines.first { $0.0 == engine }?.1 ?? engine)
+            }
+        }
+        .lineLimit(1)
     }
 
     /// Only the symbols carry colour; the words stay secondary.

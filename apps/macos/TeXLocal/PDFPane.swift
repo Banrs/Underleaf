@@ -6,7 +6,6 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    @State private var controller = PDFController()
     @State private var findQuery = ""
     @State private var finding = false
     /// Bumped to put the cursor in the find field, its text selected.
@@ -14,12 +13,30 @@ struct PDFPane: View {
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @Environment(\.colorScheme) private var colorScheme
 
+    /// The app's, so the window toolbar's zoom acts on this view.
+    private var controller: PDFController { app.pdf }
+
     var body: some View {
-        // Stacked, not overlaid: the bars are opaque, so a page under them was hidden.
-        VStack(spacing: 0) {
-            bar
-            pages
-        }
+        // The pages run to the top of the pane; what acts on them floats
+        // over them on glass: find at the top, the page and freshness at
+        // the foot. Compile, zoom and Share are the window toolbar's.
+        // The capsules take the paper's appearance, not the window's: the
+        // glass shows the page through it, so on white paper in a dark
+        // window its labels are drawn dark, as over any light content.
+        pages
+            .overlay(alignment: .top) {
+                if finding, project.pdfVersion > 0 {
+                    findBar.padding(FloatingMetrics.margin)
+                        .environment(\.colorScheme, paperScheme)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if project.pdfVersion > 0 {
+                    PageControls(project: project, controller: controller)
+                        .padding(FloatingMetrics.margin)
+                        .environment(\.colorScheme, paperScheme)
+                }
+            }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -34,14 +51,15 @@ struct PDFPane: View {
         }
     }
 
+    /// "auto" follows the app's appearance (web/src/prefs.js).
+    private var darkPaper: Bool { pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark) }
+
+    private var paperScheme: ColorScheme { darkPaper ? .dark : .light }
+
     @ViewBuilder
     private var pages: some View {
         if project.pdfVersion > 0 {
-            PDFRepresentable(
-                project: project, controller: controller,
-                // "auto" follows the app's appearance (web/src/prefs.js).
-                darkPaper: pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark)
-            )
+            PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper)
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -57,7 +75,7 @@ struct PDFPane: View {
             } description: {
                 Text("Install MacTeX to compile. TeXLocal notices it once it’s there.")
             } actions: {
-                Link("Get MacTeX", destination: macTeXURL)
+                GetMacTeXButton(prominent: true)
             }
         } else if project.result?.ok == false {
             ContentUnavailableView {
@@ -72,6 +90,7 @@ struct PDFPane: View {
                         project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
                         project.showLogs = true
                     }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         } else {
@@ -80,7 +99,10 @@ struct PDFPane: View {
             } description: {
                 Text("Compile to preview your document.")
             } actions: {
+                // The empty state's one action, prominent. Content, not a
+                // floating control, so not glass.
                 Button("Compile") { app.perform(.compileRun) }
+                    .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun))
             }
         }
@@ -101,183 +123,59 @@ struct PDFPane: View {
         }
     }
 
-    /// Two rows lined up with the source's: actions — Compile, zoom, Share —
-    /// then where you are: the page, and whether it is current. Finding takes
-    /// the actions row, as Preview's find does.
-    private var bar: some View {
-        VStack(spacing: 0) {
-            PaneBar {
-                if finding {
-                    findControls
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        actions(compact: false, zoom: true)
-                        actions(compact: true, zoom: true)
-                        actions(compact: true, zoom: false)
-                    }
-                }
+    /// Find in PDF, floating over the top of the pages: the field, the
+    /// count, previous / next and Done, one glass capsule. A narrow pane
+    /// drops the count, then the arrows (Return and Shift-Return still
+    /// step), and narrows the field to what is left.
+    private var findBar: some View {
+        ViewThatFits(in: .horizontal) {
+            findControls(count: true, steps: true)
+            findControls(count: false, steps: true)
+            findControls(count: false, steps: false)
+        }
+        .placingFields([0]) { _ in
+            SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
+                .controlSize(FloatingMetrics.controlSize)
+        }
+        .task(id: findQuery) {
+            // Debounced like the web's, so typing doesn't search every prefix.
+            try? await Task.sleep(for: .milliseconds(200))
+            if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
+                controller.find(findQuery)
             }
-            SecondaryBar(spacing: BarMetrics.itemSpacing) {
-                status
-                Spacer(minLength: 0)
-            }
-            Divider()
         }
     }
 
-    /// Compile at the leading edge; zoom, then Share, at the trailing.
-    private func actions(compact: Bool, zoom: Bool) -> some View {
-        HStack(spacing: BarMetrics.spacing) {
-            compileControls(compact: compact)
-            Spacer(minLength: BarMetrics.groupSpacing)
-            if zoom {
-                zoomControls
-                ToolSeparator()
-            }
-            ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
-                .labelStyle(.iconOnly)
-                .fixedSize()
-        }
-    }
-
-    /// Overleaf's Recompile, the pane's one prominent control; while a build
-    /// runs, a spinner and Stop in its place.
-    @ViewBuilder
-    private func compileControls(compact: Bool) -> some View {
-        if project.compiling {
-            HStack(spacing: BarMetrics.groupSpacing) {
-                ProgressView().controlSize(.small)
-                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
-                    .labelStyle(.iconOnly)
-                    .help("Stop")
-            }
-            .fixedSize()
-        } else {
-            Button { app.perform(.compileRun) } label: {
-                if compact {
-                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
-                } else {
-                    Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .fixedSize()
-            .disabled(!app.isEnabled(.compileRun))
-            .help("Compile")
-        }
-    }
-
-    /// The page, and whether the PDF still matches the source.
-    private var status: some View {
-        Group {
-            if let freshness = project.pdfFreshness {
-                Label {
-                    Text(freshness.title)
-                } icon: {
-                    // A failed build's warning badge is the one colour here.
-                    Image(systemName: freshness.systemImage)
-                        .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                }
-                .help(freshness == .lastSuccessful
-                      ? "The latest build failed; this is the last one that succeeded"
-                      : "The preview doesn’t reflect the current source")
-            }
-            if controller.pageCount > 0 {
-                Text("Page \(controller.page) of \(controller.pageCount)")
+    private func findControls(count: Bool, steps: Bool) -> some View {
+        HStack(spacing: FloatingMetrics.itemSpacing) {
+            FieldSlot(id: 0, minWidth: steps ? BarMetrics.fieldMinWidth : 40, idealWidth: BarMetrics.fieldWidth,
+                      maxWidth: BarMetrics.fieldWidth + 40)
+            Group {
+                if count {
+                    Text(PDFFind.countLabel(
+                        query: controller.query, total: controller.matches.count,
+                        index: controller.matchIndex + 1, limited: controller.limited
+                    ))
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder
-    private var findControls: some View {
-        SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
-            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-            .task(id: findQuery) {
-                // Debounced like the web's, so typing doesn't search every prefix.
-                try? await Task.sleep(for: .milliseconds(200))
-                if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
-                    controller.find(findQuery)
                 }
+                if steps {
+                    Button("Previous Match", systemImage: "chevron.up") { controller.step(-1) }
+                        .onGlass()
+                        .help("Previous Match")
+                        .disabled(controller.matches.isEmpty)
+                    Button("Next Match", systemImage: "chevron.down") { controller.step(1) }
+                        .onGlass()
+                        .help("Next Match")
+                        .disabled(controller.matches.isEmpty)
+                }
+                Button("Done") { closeFind() }
+                    .onGlass()
+                    .labelStyle(.titleOnly)
             }
-        Text(PDFFind.countLabel(
-            query: controller.query, total: controller.matches.count,
-            index: controller.matchIndex + 1, limited: controller.limited
-        ))
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
-        .lineLimit(1)
-        ToolGroup(items: [
-            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
-                    enabled: !controller.matches.isEmpty) { controller.step(-1) },
-            Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
-                    enabled: !controller.matches.isEmpty) { controller.step(1) },
-        ])
-        // A text action, so a push button, apart from the icon buttons.
-        Button("Done") { closeFind() }
-            .buttonStyle(.bordered)
             .fixedSize()
-    }
-
-    /// The scale, a menu of ways to fit and preset scales, the one in use
-    /// checked. A menu rather than a pop-up, as the scale is any percentage;
-    /// bordered, as the bars' values are.
-    private var zoomMenu: some View {
-        Menu {
-            // The fitting in use is checked, as Preview's is; while fitting,
-            // no preset is, even at a preset's scale.
-            Picker("Fit", selection: Binding(
-                get: { controller.fit },
-                set: { fit in
-                    switch fit {
-                    case .width: controller.fitWidth()
-                    case .height: controller.fitHeight()
-                    case nil: break
-                    }
-                }
-            )) {
-                Text("Fit Width").tag(Optional(PDFController.Fit.width))
-                Text("Fit Height").tag(Optional(PDFController.Fit.height))
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            Divider()
-            Picker("Zoom", selection: Binding(
-                get: { controller.fit == nil ? Self.zoomPresets.first { "\($0)%" == controller.zoomLabel } : nil },
-                set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
-            )) {
-                ForEach(Self.zoomPresets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Text(controller.zoomLabel).monospacedDigit()
         }
-        .menuStyle(.button)
-        .buttonStyle(.bordered)
-        .fixedSize()
-        .help("Zoom")
-        .accessibilityLabel("Zoom")
-        .accessibilityValue(controller.zoomLabel)
-    }
-
-    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
-
-    /// Zoom out, the scale, zoom in: one group, as Preview's zoom is.
-    private var zoomControls: some View {
-        // Not the View menu's commands: their route (`requestPDF`) also
-        // hides the panel.
-        HStack(spacing: 0) {
-            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
-                .help("Zoom Out")
-            zoomMenu
-            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
-                .help("Zoom In")
-        }
-        .labelStyle(.iconOnly)
-        .fixedSize()
-        .disabled(project.pdfVersion == 0)
+        .floatingGlass(leadsWithField: true)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
@@ -287,6 +185,85 @@ struct PDFPane: View {
         findQuery = ""
         controller.find("")
     }
+}
+
+/// The foot of the PDF: whether it still matches the source, then the
+/// page with previous / next, each its own glass capsule floating over the
+/// pages, as the toolbar's items float over the window. The freshness is a
+/// button that does what fixes it: compile, or show the failed build's
+/// issues. A narrow pane shortens the page to "2 / 5" and the freshness to
+/// its symbol.
+private struct PageControls: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+    let controller: PDFController
+
+    var body: some View {
+        GlassEffectContainer(spacing: FloatingMetrics.blending) {
+            ViewThatFits(in: .horizontal) {
+                controls(long: true)
+                controls(long: false)
+            }
+        }
+    }
+
+    private func controls(long: Bool) -> some View {
+        HStack(spacing: FloatingMetrics.spacing) {
+            if let freshness = project.pdfFreshness {
+                Button { fix(freshness) } label: {
+                    Label {
+                        Text(freshness.title)
+                    } icon: {
+                        // A failed build's warning is the one colour here.
+                        Image(systemName: freshness.systemImage)
+                            .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    }
+                    .labelStyle(long ? AnyLabelStyle(.titleAndIcon) : AnyLabelStyle(.iconOnly))
+                }
+                .onGlass()
+                .help(freshness == .lastSuccessful
+                      ? "The latest build failed; this is the last one that succeeded. Show Issues"
+                      : "The preview doesn’t reflect the current source. Compile")
+                .fixedSize()
+                .floatingGlass()
+            }
+            if controller.pageCount > 0 {
+                HStack(spacing: FloatingMetrics.itemSpacing) {
+                    Button("Previous Page", systemImage: "chevron.up") { controller.view?.goToPreviousPage(nil) }
+                        .onGlass()
+                        .help("Previous Page")
+                        .disabled(controller.page <= 1)
+                    Text(long ? "Page \(controller.page) of \(controller.pageCount)" : "\(controller.page) / \(controller.pageCount)")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Button("Next Page", systemImage: "chevron.down") { controller.view?.goToNextPage(nil) }
+                        .onGlass()
+                        .help("Next Page")
+                        .disabled(controller.page >= controller.pageCount)
+                }
+                .fixedSize()
+                .floatingGlass()
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Page \(controller.page) of \(controller.pageCount)")
+            }
+        }
+    }
+
+    private func fix(_ freshness: PDFFreshness) {
+        switch freshness {
+        case .edited: app.perform(.compileRun)
+        case .lastSuccessful:
+            project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
+            project.showLogs = true
+        }
+    }
+}
+
+/// Either of two label styles, chosen at run time.
+struct AnyLabelStyle: LabelStyle {
+    private let make: (Configuration) -> AnyView
+    init(_ style: some LabelStyle) { make = { AnyView(style.makeBody(configuration: $0)) } }
+    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
 
 /// The find bar's rules, from the web's (web/src/findsession.js and
@@ -305,6 +282,50 @@ enum PDFFind {
         if query.isEmpty { return "" }
         if total == 0 { return "Not found" }
         return "\(index) of \(total)\(limited ? "+" : "")"
+    }
+}
+
+/// Where a find bar's field goes in whichever layout a `ViewThatFits` picks.
+/// The field itself is drawn once, over the bar (`placingFields`), not in
+/// each layout: a field in each would be a new `NSSearchField` whenever the
+/// bar refolded (the match count growing from "Not found" to "46 of 512"
+/// does it), and the one being typed in lost focus mid-word.
+struct FieldSlot: View {
+    let id: Int
+    var minWidth: CGFloat
+    var idealWidth: CGFloat
+    var maxWidth: CGFloat = .infinity
+    @Environment(\.controlSize) private var controlSize
+
+    var body: some View {
+        Color.clear
+            .frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth)
+            .frame(height: SearchField.height(controlSize))
+            .anchorPreference(key: FieldSlots.self, value: .bounds) { [id: $0] }
+    }
+}
+
+struct FieldSlots: PreferenceKey {
+    static let defaultValue: [Int: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+extension View {
+    /// Draws the fields `ids` names over their `FieldSlot`s, each always
+    /// the same view, so it keeps focus as the layout under it changes.
+    func placingFields(_ ids: [Int], @ViewBuilder field: @escaping (Int) -> some View) -> some View {
+        overlayPreferenceValue(FieldSlots.self) { slots in
+            GeometryReader { proxy in
+                ForEach(ids, id: \.self) { id in
+                    let rect = slots[id].map { proxy[$0] } ?? .zero
+                    field(id)
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                }
+            }
+        }
     }
 }
 
@@ -372,8 +393,48 @@ struct SearchField: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> NSSearchField {
+    /// The field's height at a control size, for the room a `FieldSlot`
+    /// keeps for it.
+    @MainActor static func height(_ size: ControlSize) -> CGFloat {
+        if let height = heights[size] { return height }
         let view = NSSearchField()
+        view.controlSize = NSControl.ControlSize(size)
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
+        let height = view.intrinsicContentSize.height
+        heights[size] = height
+        return height
+    }
+
+    @MainActor private static var heights: [ControlSize: CGFloat] = [:]
+
+    /// A search field that can be asked for focus before it is in a
+    /// window: a find bar shown by ⌘F is made in the same update that asks,
+    /// so it takes focus once it lands in its window.
+    final class FocusingSearchField: NSSearchField {
+        var wantsFocus = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if wantsFocus { takeFocus() }
+        }
+
+        /// Focus, its text selected, once in a window. After this turn:
+        /// the key press or menu item that asked is still being handled,
+        /// and the editor it came from would keep first responder.
+        func takeFocus() {
+            wantsFocus = true
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.wantsFocus, let window = self.window else { return }
+                self.wantsFocus = false
+                if window.firstResponder !== self.currentEditor() { window.makeFirstResponder(self) }
+                self.currentEditor()?.selectAll(nil)
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let view = FocusingSearchField()
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -422,8 +483,7 @@ struct SearchField: NSViewRepresentable {
         }
         if coordinator.focus != focus {
             coordinator.focus = focus
-            // Once the field is in its window. Taking focus selects the text.
-            Task { @MainActor in view.window?.makeFirstResponder(view) }
+            (view as? FocusingSearchField)?.takeFocus()
         }
     }
 }
@@ -618,7 +678,10 @@ private struct PDFRepresentable: NSViewRepresentable {
         // of the view on every resize, scrolling a page margin out of sight.
         if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
             scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+            // At the foot, room for the floating page controls, so the last
+            // page scrolls clear of them.
+            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0,
+                                                bottom: FloatingMetrics.height + 2 * FloatingMetrics.margin, right: 0)
         }
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
@@ -705,31 +768,108 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 }
 
-/// Shares the PDF with AppKit's picker, opened from the button itself.
-private struct ShareButton: View {
-    let url: URL?
-    @State private var anchor: NSView?
+/// Compile, the window's one prominent action (Overleaf's Recompile), over
+/// the PDF; while a build runs, Stop in its place.
+struct CompileTool: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
 
     var body: some View {
-        Button("Share PDF", systemImage: "square.and.arrow.up") {
-            guard let url, let anchor else { return }
-            NSSharingServicePicker(items: [url]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        if project.compiling {
+            // Prominent as Compile is, while stopping is the action: a plain
+            // button here joined its neighbours' glass (Symbols, the panes'
+            // toggles) in a narrow window, and the item changed its look
+            // under the pointer.
+            Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
+                .labelStyle(.titleAndIcon)
+                .buttonStyle(.borderedProminent)
+                .help("Stop Compiling")
+        } else {
+            Button(MenuCommand.compileRun.title, systemImage: "play.fill") { app.perform(.compileRun) }
+                .labelStyle(.titleAndIcon)
+                .buttonStyle(.borderedProminent)
+                .disabled(!app.isEnabled(.compileRun))
+                .help("Compile")
         }
-        .disabled(url == nil)
-        .background(ViewAnchor(view: $anchor))
-        .help("Share PDF")
     }
 }
 
-/// An AppKit view where a SwiftUI view is, for AppKit to anchor to.
-private struct ViewAnchor: NSViewRepresentable {
-    @Binding var view: NSView?
+/// Zoom out, the scale, zoom in: one group, as Preview's zoom is. The scale
+/// is a menu of ways to fit and preset scales, the one in use checked; a
+/// menu rather than a pop-up, as the scale is any percentage.
+struct ZoomTools: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
 
-    func makeNSView(context: Context) -> NSView {
-        let anchor = NSView()
-        Task { @MainActor in view = anchor }
-        return anchor
+    private static let presets = [50, 75, 100, 125, 150, 200]
+
+    var body: some View {
+        let controller = app.pdf
+        // Not the View menu's commands: their route (`requestPDF`) also
+        // hides the build panel.
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
+                .help("Zoom Out")
+            Menu {
+                // The fitting in use is checked, as Preview's is; while
+                // fitting, no preset is, even at a preset's scale.
+                Picker("Fit", selection: Binding(
+                    get: { controller.fit },
+                    set: { fit in
+                        switch fit {
+                        case .width: controller.fitWidth()
+                        case .height: controller.fitHeight()
+                        case nil: break
+                        }
+                    }
+                )) {
+                    Text("Fit Width").tag(Optional(PDFController.Fit.width))
+                    Text("Fit Height").tag(Optional(PDFController.Fit.height))
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                Divider()
+                Picker("Zoom", selection: Binding(
+                    get: { controller.fit == nil ? Self.presets.first { "\($0)%" == controller.zoomLabel } : nil },
+                    set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
+                )) {
+                    ForEach(Self.presets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                // As wide at 68% as at 400% (figure spaces are a digit
+                // wide), so the group keeps its width and Zoom Out stays
+                // under the pointer as the scale changes. The toolbar
+                // draws a menu's label as its title, so a frame wouldn't hold.
+                Text(String(repeating: "\u{2007}", count: max(0, 4 - controller.zoomLabel.count))
+                     + controller.zoomLabel)
+                    .monospacedDigit()
+            }
+            .help("Zoom")
+            .accessibilityLabel("Zoom")
+            .accessibilityValue(controller.zoomLabel)
+            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
+                .help("Zoom In")
+        } label: {
+            Label("Zoom", systemImage: "plus.magnifyingglass")
+        }
+        .disabled(project.pdfVersion == 0 || !project.showPDF)
     }
+}
 
-    func updateNSView(_ anchor: NSView, context: Context) {}
+/// The system's share item for the PDF.
+struct ShareTool: View {
+    let project: ProjectModel
+
+    var body: some View {
+        if project.pdfVersion > 0, let url = project.pdfURL {
+            ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }
+                .help("Share PDF")
+        } else {
+            Button("Share", systemImage: "square.and.arrow.up") {}
+                .help("Share PDF")
+                .disabled(true)
+        }
+    }
 }
