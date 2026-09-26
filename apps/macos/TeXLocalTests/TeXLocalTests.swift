@@ -469,8 +469,12 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
     }
 
-    func testTheSidebarToggleIsCommandBackslash() throws {
-        XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    /// Apple's chords where the shared table's differ (`MenuCommand.macAccel`).
+    func testTheViewMenuHasApplesChords() throws {
+        XCTAssertTrue(try XCTUnwrap(item("s", [.command, .control])).title.hasSuffix("Sidebar"))
+        XCTAssertEqual(try XCTUnwrap(item("0")).title, "Actual Size")
+        XCTAssertEqual(try XCTUnwrap(item("9")).title, "Fit Width")
+        XCTAssertEqual(try XCTUnwrap(item("9", [.command, .option])).title, "Fit Height")
     }
 
     func testTheBottomPanelIsTheBuildPanel() throws {

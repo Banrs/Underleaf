@@ -109,8 +109,22 @@ enum MenuCommand: String, CaseIterable {
         }
     }
 
+    /// The chord on the Mac: Apple's own where the shared table's differs,
+    /// as Windows and the browser keep theirs. ⌃⌘S shows and hides the
+    /// sidebar (HIG, The menu bar: View menu); ⌘0 is Actual Size, as in
+    /// Preview, Safari and Pages, so fitting takes Preview's Zoom to Fit
+    /// chord, ⌘9 (⌥⌘9 for the height, as ⌥ paired them before).
+    var macAccel: String? {
+        switch self {
+        case .viewToggleSidebar: "Ctrl+CmdOrCtrl+S"
+        case .viewFitWidth: "CmdOrCtrl+9"
+        case .viewFitHeight: "CmdOrCtrl+Alt+9"
+        default: accel
+        }
+    }
+
     var shortcut: KeyboardShortcut? {
-        accel.flatMap(Self.shortcut(for:))
+        macAccel.flatMap(Self.shortcut(for:))
     }
 
     /// "CmdOrCtrl+Shift+Z" → ⇧⌘Z.
@@ -144,7 +158,7 @@ enum MenuCommand: String, CaseIterable {
     static var editorHostKeys: [(id: String, accel: String)] {
         let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
         return allCases.compactMap { c in
-            guard !editorOwned.contains(c), let accel = c.accel else { return nil }
+            guard !editorOwned.contains(c), let accel = c.macAccel else { return nil }
             return (c.rawValue, accel)
         }
     }
@@ -436,6 +450,7 @@ struct AppCommands: Commands {
             item(.viewZoomIn)
             item(.viewZoomOut)
             Button("Actual Size") { app.requestPDF(.actualSize) }
+                .keyboardShortcut("0")
                 .disabled(app.project == nil)
             item(.viewFitWidth)
             item(.viewFitHeight)
