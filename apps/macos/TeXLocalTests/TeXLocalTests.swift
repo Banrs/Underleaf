@@ -224,10 +224,23 @@ final class FileWatcherTests: XCTestCase {
 
 @MainActor
 final class SplitLayoutTests: XCTestCase {
-    /// Two panes in a split of `size`, the second dragged to `last` points.
+    /// The window holding the test's split (a view doesn't keep its window).
+    private var window: NSWindow?
+
+    /// Two panes in a split of `size` in a window, as the app has it, the
+    /// second dragged to `last` points.
+    ///
+    /// The window sizes the split once it has its delegate, which lays the
+    /// panes out before the drag, as in the app. macOS 26's `setPosition`
+    /// doesn't lay out panes added since the last layout (27's does), so a
+    /// split never sized constrained the drag against empty frames there.
     private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
                        last: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
-        let split = NSSplitView(frame: NSRect(origin: .zero, size: size))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 1200),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        self.window = window
+        let split = NSSplitView()
         split.isVertical = vertical
         split.dividerStyle = .thin
         let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
@@ -235,9 +248,27 @@ final class SplitLayoutTests: XCTestCase {
         coordinator.views = [NSView(), NSView()]
         coordinator.views.forEach(split.addArrangedSubview)
         split.delegate = coordinator
+        window.contentView?.addSubview(split)
+        resize(split, to: size)
+        // Laid out before the drag: the panes fill the split.
         let length = vertical ? size.width : size.height
+        let end = split.arrangedSubviews[1].frame
+        XCTAssertEqual(vertical ? end.maxX : end.maxY, length)
         split.setPosition(length - last - split.dividerThickness, ofDividerAt: 0)
+        layOut(split)
         return (split, coordinator)
+    }
+
+    /// The window resizing the split: its new frame, then a layout pass.
+    private func resize(_ split: NSSplitView, to size: NSSize) {
+        split.setFrameSize(size)
+        layOut(split)
+    }
+
+    /// The window's layout pass, which lays the split out again: the
+    /// panes stay as they were.
+    private func layOut(_ split: NSSplitView) {
+        split.window?.layoutIfNeeded()
     }
 
     private func widths(_ split: NSSplitView) -> [CGFloat] {
@@ -252,11 +283,11 @@ final class SplitLayoutTests: XCTestCase {
                                          [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
                                          last: 200)
         XCTAssertEqual(widths(split), [735, 200])
-        split.setFrameSize(NSSize(width: 300, height: 400))
+        resize(split, to: NSSize(width: 300, height: 400))
         XCTAssertEqual(widths(split), [159, 140])
         // Hidden now, it would come back at the share it had, not squeezed.
         XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
-        split.setFrameSize(NSSize(width: 936, height: 400))
+        resize(split, to: NSSize(width: 936, height: 400))
         XCTAssertEqual(widths(split), [735, 200])
     }
 
@@ -268,9 +299,9 @@ final class SplitLayoutTests: XCTestCase {
             SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
         ], last: 300)
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
-        split.setFrameSize(NSSize(width: 400, height: 500))
+        resize(split, to: NSSize(width: 400, height: 500))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
-        split.setFrameSize(NSSize(width: 400, height: 1000))
+        resize(split, to: NSSize(width: 400, height: 1000))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
     }
 
@@ -288,14 +319,16 @@ final class SplitLayoutTests: XCTestCase {
         folded[1].collapsed = 28
         coordinator.panes = folded
         coordinator.fold(split, 1, to: 28)
+        layOut(split)
         XCTAssertEqual(split.arrangedSubviews.map(\.frame.height), [571, 28])
         XCTAssertEqual(coordinator.splitView(split, effectiveRect: NSRect(x: 0, y: 571, width: 250, height: 1),
                                              forDrawnRect: .zero, ofDividerAt: 0), .zero)
-        split.setFrameSize(NSSize(width: 250, height: 800))
+        resize(split, to: NSSize(width: 250, height: 800))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 28)
-        split.setFrameSize(NSSize(width: 250, height: 600))
+        resize(split, to: NSSize(width: 250, height: 600))
         coordinator.panes = panes
         coordinator.fold(split, 1, to: nil)
+        layOut(split)
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 240)
     }
 }
