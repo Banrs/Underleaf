@@ -437,6 +437,58 @@ fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
 }
 
 #[test]
+fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
+    let data = data_dir();
+    let root = project(data.path(), "dated-zip");
+    fs::create_dir_all(root.join("figs")).unwrap();
+    for litter in [
+        ".DS_Store",
+        "figs/.DS_Store",
+        "figs/Thumbs.db",
+        "Desktop.ini",
+    ] {
+        fs::write(root.join(litter), "x").unwrap();
+    }
+    fs::write(root.join(".latexmkrc"), "$pdf_mode = 1;").unwrap();
+    let dest = data.path().join("out.zip");
+    export_zip(&root, &dest).unwrap();
+
+    let names = zip_names(&dest);
+    assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
+    for litter in ["DS_Store", "Thumbs.db", "Desktop.ini"] {
+        assert!(!names.iter().any(|n| n.contains(litter)), "{names:?}");
+    }
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let dated = archive
+        .by_name("main.tex")
+        .unwrap()
+        .last_modified()
+        .unwrap();
+    let modified = fs::metadata(root.join("main.tex"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let local = chrono::DateTime::<chrono::Local>::from(modified);
+    use chrono::{Datelike, Timelike};
+    assert_eq!(
+        (
+            dated.year(),
+            dated.month(),
+            dated.day(),
+            dated.hour(),
+            dated.minute()
+        ),
+        (
+            local.year() as u16,
+            local.month() as u8,
+            local.day() as u8,
+            local.hour() as u8,
+            local.minute() as u8
+        )
+    );
+}
+
+#[test]
 fn search_is_case_insensitive_in_both_folding_branches() {
     let data = data_dir();
     let root = project(data.path(), "search");
