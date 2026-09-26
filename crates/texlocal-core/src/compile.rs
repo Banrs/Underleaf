@@ -190,7 +190,10 @@ async fn terminate_pid_tree(pid: u32) {
 
 fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::process::Command {
     let mut std_cmd = std::process::Command::new(program);
-    std_cmd.env("PATH", path_env);
+    // TeX Live's engines read texmf.cnf's variables from the environment
+    // first. Unwrapped, the log keeps each message and path on one line;
+    // wrapped at the default 79 columns, words and paths split mid-way.
+    std_cmd.env("PATH", path_env).env("max_print_line", "10000");
     if let Some(dir) = cwd {
         std_cmd.current_dir(dir);
     }
