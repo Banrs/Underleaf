@@ -46,6 +46,19 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
   - The page posts `ready`, `changed`, `cursor` and `command` messages back.
   - The host passes its menu accelerators to `setHostKeys`, so chords that CodeMirror would otherwise capture (for example Mod-Enter) reach the native menu.
 
+## Web design direction
+
+The browser version (`web/`) is universal web design, not Mac- or Windows-styled. It should feel familiar to both, the way Google Docs, Overleaf and VS Code for the web do. As of 2026-09-26:
+- **Shortcut labels are platform-correct:** ⌘ glyphs on the Mac, Ctrl+Enter elsewhere. Chords the browser keeps for itself (new window, tab or incognito) aren't advertised. Off the Mac, Go to PDF Position has no shortcut, because it would collide with Compile's Ctrl+Enter, as in the Windows app.
+- **Text contrast meets WCAG AA.** Primary buttons fill with `--accent-fill`, and status text uses `--red-text`, `--orange-text` and `--green-text`.
+- **In the browser (`html.browser`):**
+  - menus, toasts and dialogs are opaque, raised surfaces with a neutral hover;
+  - type is 14 px;
+  - Interface Size is hidden, since the browser zooms the page itself.
+- **The menu bar works like a standard web menu:** ARIA state, arrow keys and Tab, and a trigger that toggles its menu.
+- **Recent projects are real links.**
+- **The Tauri app keeps its Mac look (`html.mac`)** until it is retired.
+
 ## Done and verified
 
 | Commit | Contents |
@@ -99,10 +112,11 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The start window: template cards, then recent projects as a sortable table.
 - **Layout rules learnt the hard way:**
   - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
-  - The inspector is a SwiftUI pane of the detail, not `.inspector`: that made a third AppKit split column whose minimums looped the same way.
-  - The editor/PDF and panel splits are SwiftUI (`SplitPair`), not `HSplitView`/`VSplitView`, for the same reason.
+  - Every split is AppKit's `NSSplitView` (`SplitController` in EditorView.swift): source | PDF, the editors over the panel, and the editors beside the inspector. Each pane is an `NSHostingView` made once (its views observe the models), with `sizingOptions = []` so SwiftUI's sizes stay out of Auto Layout; the delegate enforces minimums and maximums. A hidden pane is removed from the split, since AppKit kept room for a merely hidden one, and comes back at its previous size. Divider positions are autosaved.
+  - SwiftUI's split views don't work in this window (2026-09-26). `.inspector` crashed on window resize with the same loop. `HSplitView` and `VSplitView` laid the PDF out under the inspector, and a pane shown after launch opened at zero size. `NSSplitViewController` blurred the pane bars with the toolbar's scroll-edge effect.
+  - Menu clicks through System Events do update the window in the background. An earlier "frozen window" came from pane views built from values rather than views that observe the models.
   - Bars are stacked above their content, not attached with `safeAreaBar`: they are opaque, so content under them was only hidden.
-  - An overlaid `Divider()` inside an `HStack` turns vertical. Use `Hairline`.
+  - Separators are stock `Divider()`s placed as siblings in a `VStack`. An overlaid `Divider()` takes its parent's layout context, so inside an `HStack` it turns vertical.
   - PDFKit re-anchors page one's top to the view on every resize while fitting the width, so the gap above page one is a scroll-view content inset.
 - **Parity and review fixes:** every command in `commandDefs`, and the settings with a native meaning. Saves run one at a time; quit waits for a save in flight; compiles queue; a WebContent crash recovers the editor; overlapping file opens can no longer save one file's text into another; undo and redo always reach CodeMirror's history.
 - **Tests:** 22 XCTests, including the outline tree and the pane bar groups' height at each toolbar size. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
