@@ -3,9 +3,8 @@ import SwiftUI
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
 /// panels", "Interface size" and theme have no counterpart: macOS draws its
-/// own sidebar and toolbar (View › Customize Toolbar… arranges it), sizes
-/// its own text, and the app follows the system's appearance (HIG, Dark
-/// Mode).
+/// own sidebar and toolbar, sizes its own text, and the app follows the
+/// system's appearance (HIG, Dark Mode).
 struct SettingsView: View {
     var body: some View {
         TabView {
