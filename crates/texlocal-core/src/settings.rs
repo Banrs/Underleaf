@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::atomic;
 use crate::compile::engine_flags;
 use crate::error::CoreError;
 use crate::paths::safe_rel_file;
@@ -110,7 +111,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     merged.extend(validated);
     let text =
         serde_json::to_string_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
-    fs::write(root.join(SETTINGS_FILE), text)?;
+    atomic::write(&root.join(SETTINGS_FILE), text.as_bytes())?;
     // What was just written, without reading it back.
     Ok(lenient(&merged))
 }

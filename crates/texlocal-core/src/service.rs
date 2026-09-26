@@ -15,7 +15,7 @@ use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexS
 use crate::projects::{self, FileStamp, ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
 use crate::settings::{self, Settings};
 use crate::synctex::{self, ForwardLoc, InverseLoc};
-use crate::{paths, CoreError};
+use crate::{atomic, paths, CoreError};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
@@ -66,12 +66,12 @@ fn upload_rel(dir: &str, name: &str) -> String {
     }
 }
 
-/// Write a file, creating the folders it sits in.
+/// Write a file whole, creating the folders it sits in.
 fn write_creating(abs: &Path, contents: impl AsRef<[u8]>) -> Result<(), CoreError> {
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    Ok(std::fs::write(abs, contents)?)
+    Ok(atomic::write(abs, contents.as_ref())?)
 }
 
 fn too_large() -> CoreError {
@@ -188,7 +188,10 @@ impl Service {
             }
         };
         let text = json!({ "texDir": chosen.map(|d| d.to_string_lossy().into_owned()) });
-        std::fs::write(self.data_dir.join(APP_SETTINGS_FILE), text.to_string())?;
+        atomic::write(
+            &self.data_dir.join(APP_SETTINGS_FILE),
+            text.to_string().as_bytes(),
+        )?;
         Ok(self.status().await)
     }
 

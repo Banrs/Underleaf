@@ -5,22 +5,20 @@
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use crate::atomic::{create_temp, replace};
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
-    let (temp_path, file) = create_sibling_temp(dest)?;
+    let (temp_path, file) = create_temp(dest)?;
 
     let result = (|| -> Result<(), CoreError> {
         // The folder the archive is written into, resolved the way the walk
@@ -37,72 +35,12 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         };
         export.add_dir(root, &root_canonical, "")?;
         export.writer.finish()?.sync_all()?;
-        Ok(replace_completed(&temp_path, dest)?)
+        Ok(replace(&temp_path, dest)?)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
     result
-}
-
-/// A fresh hidden name beside `dest`, ending in `.{ext}`.
-fn sibling(dest: &Path, ext: &str) -> PathBuf {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    let name = dest
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_else(|| "archive.zip".into());
-    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(".{name}.texlocal-{}-{n}.{ext}", std::process::id()))
-}
-
-fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
-    for _ in 0..100 {
-        let candidate = sibling(dest, "tmp");
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((candidate, file)),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "could not allocate a temporary ZIP path",
-    ))
-}
-
-fn replace_completed(temp: &Path, dest: &Path) -> io::Result<()> {
-    match fs::rename(temp, dest) {
-        Ok(()) => Ok(()),
-        #[cfg(windows)]
-        Err(err)
-            if dest.exists()
-                && matches!(
-                    err.kind(),
-                    io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
-                ) =>
-        {
-            let backup = sibling(dest, "bak");
-            fs::rename(dest, &backup)?;
-            match fs::rename(temp, dest) {
-                Ok(()) => {
-                    let _ = fs::remove_file(backup);
-                    Ok(())
-                }
-                Err(replace_err) => {
-                    // Best effort rollback; return the replacement error because
-                    // it describes why the requested archive was not installed.
-                    let _ = fs::rename(&backup, dest);
-                    Err(replace_err)
-                }
-            }
-        }
-        Err(err) => Err(err),
-    }
 }
 
 /// The parts of an export that do not change as the walk descends: where the
