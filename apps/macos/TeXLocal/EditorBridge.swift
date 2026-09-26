@@ -301,14 +301,8 @@ struct FindMatches: Equatable {
     var total = 0
     var limited = false
 
-    /// "3 of 12", "12 matches" when none is selected, "Not found", or
-    /// nothing before a search.
     func label(for query: String) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return "Not found" }
-        let count = "\(total)\(limited ? "+" : "")"
-        if index > 0 { return "\(index) of \(count)" }
-        return total == 1 && !limited ? "1 match" : "\(count) matches"
+        findCountLabel(query: query, total: total, index: index, limited: limited)
     }
 }
 

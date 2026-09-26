@@ -360,10 +360,10 @@ final class RenameTests: XCTestCase {
 
 final class PDFFindTests: XCTestCase {
     func testTheCountReadsAsTheWebsDoes() {
-        XCTAssertEqual(PDFFind.countLabel(query: "", total: 0, index: 1, limited: false), "")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 0, index: 1, limited: false), "Not found")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 12, index: 3, limited: false), "3 of 12")
-        XCTAssertEqual(PDFFind.countLabel(query: "e", total: 5000, index: 1, limited: true), "1 of 5000+")
+        XCTAssertEqual(findCountLabel(query: "", total: 0, index: 1, limited: false), "")
+        XCTAssertEqual(findCountLabel(query: "x", total: 0, index: 1, limited: false), "Not found")
+        XCTAssertEqual(findCountLabel(query: "x", total: 12, index: 3, limited: false), "3 of 12")
+        XCTAssertEqual(findCountLabel(query: "e", total: 5000, index: 1, limited: true), "1 of 5000+")
     }
 
     func testQueriesAreTrimmedAndCapped() {
