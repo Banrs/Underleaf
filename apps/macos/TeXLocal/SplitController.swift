@@ -64,15 +64,17 @@ struct SplitController: NSViewRepresentable {
             // SwiftUI's sizes stay out of Auto Layout; the delegate keeps
             // each pane within its minimum and maximum instead.
             host.sizingOptions = []
+            let clip = PaneClip(content: host, vertical: split.isVertical)
+            context.coordinator.clips.append(clip)
             let view: NSView
             if pane.glass {
                 // The content inside the glass, never a sibling behind it.
                 let glass = NSGlassEffectView()
                 glass.cornerRadius = 0
-                glass.contentView = host
+                glass.contentView = clip
                 view = glass
             } else {
-                view = host
+                view = clip
             }
             // Starting sizes in proportion, until the split has its own.
             let share = (pane.fraction ?? rest) * 1000
@@ -121,7 +123,12 @@ struct SplitController: NSViewRepresentable {
                     let size = pane.collapsed
                         ?? coordinator.hidden[index].map { pane.keepsSize ? $0 : $0 * total }
                         ?? (pane.fraction ?? 0.5) * total
-                    coordinator.slide(split, divider: place - 1, to: total - size - split.dividerThickness)
+                    // Laid out at the size it opens to, and slid in whole.
+                    let clip = coordinator.clips[index]
+                    clip.pinned = size
+                    coordinator.slide(split, divider: place - 1, to: total - size - split.dividerThickness) {
+                        clip.pinned = nil
+                    }
                 }
             } else {
                 coordinator.hidden[index] = coordinator.share(split, of: index)
@@ -134,7 +141,11 @@ struct SplitController: NSViewRepresentable {
                     continue
                 }
                 coordinator.hiding.insert(index)
+                // Slid out whole, at the size it had.
+                let clip = coordinator.clips[index]
+                clip.pinned = split.length(of: view)
                 coordinator.slide(split, divider: place - 1, to: closed) {
+                    clip.pinned = nil
                     // Shown again while it closed: it stays.
                     guard coordinator.hiding.remove(index) != nil else { return }
                     remove()
@@ -160,6 +171,8 @@ struct SplitController: NSViewRepresentable {
         let autosave: String
         var panes: [SplitPane] = []
         var views: [NSView] = []
+        /// Each pane's content, by index, inside its view.
+        var clips: [PaneClip] = []
         /// Hidden panes' shares of the split, or sizes for a pane that keeps
         /// its size, by index.
         var hidden: [Int: CGFloat] = [:]
@@ -174,6 +187,11 @@ struct SplitController: NSViewRepresentable {
         var hiding: Set<Int> = []
         /// A divider moving: the limits stand aside until it arrives.
         private var sliding: (timer: Timer, finish: () -> Void)?
+        /// A divider set where a slide puts it, at once: the limits stand
+        /// aside for that too, so a pane opens from nothing, not its
+        /// minimum.
+        private var placing = false
+        private var free: Bool { sliding != nil || placing }
 
         init(autosave: String) {
             self.autosave = autosave
@@ -189,7 +207,9 @@ struct SplitController: NSViewRepresentable {
             let from = span(split, divider).1
             let finish = { [weak self, weak split] in
                 self?.sliding = nil
+                self?.placing = true
                 split?.setPosition(position, ofDividerAt: divider)
+                self?.placing = false
                 done()
             }
             guard animated, abs(position - from) > 1, split.window?.isVisible == true,
@@ -292,7 +312,9 @@ struct SplitController: NSViewRepresentable {
             let room = split.length - split.dividerThickness * CGFloat(max(shown.count - 1, 0))
             let limits = places.map { place in
                 let pane = pane(split, place)
-                return (minimum(pane), maximum(split, pane), pane.keepsSize || pane.collapsed != nil)
+                // A pane sliding open or shut passes under its minimum.
+                return (free ? 0 : minimum(pane), maximum(split, pane),
+                        pane.keepsSize || pane.collapsed != nil)
             }
             let want = places.map { place in
                 views.firstIndex(of: shown[place]).flatMap { wanted[$0] } ?? split.length(of: shown[place])
@@ -341,14 +363,14 @@ struct SplitController: NSViewRepresentable {
         func splitView(_ split: NSSplitView, effectiveRect proposed: NSRect, forDrawnRect drawn: NSRect,
                        ofDividerAt place: Int) -> NSRect {
             let beside = [place, place + 1].filter(split.arrangedSubviews.indices.contains)
-            return sliding != nil || beside.contains { pane(split, $0).collapsed != nil } ? .zero : proposed
+            return free || beside.contains { pane(split, $0).collapsed != nil } ? .zero : proposed
         }
 
         // The divider's position is where the pane before it ends; the pane
         // after it starts a divider's thickness later.
         func splitView(_ split: NSSplitView, constrainMinCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            if sliding != nil { return proposed }
+            if free { return proposed }
             let low = max(span(split, place).0 + minimum(pane(split, place)),
                           span(split, place + 1).1 - maximum(split, pane(split, place + 1)) - split.dividerThickness)
             return max(proposed, low)
@@ -356,11 +378,47 @@ struct SplitController: NSViewRepresentable {
 
         func splitView(_ split: NSSplitView, constrainMaxCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            if sliding != nil { return proposed }
+            if free { return proposed }
             let high = min(span(split, place + 1).1 - minimum(pane(split, place + 1)) - split.dividerThickness,
                            span(split, place).0 + maximum(split, pane(split, place)))
             return min(proposed, high)
         }
+    }
+}
+
+/// A pane's content, laid out at `pinned` along the split while the pane
+/// slides open or shut, so it slides in and out whole rather than
+/// rewrapping at every width, as the system's inspectors and sidebars do;
+/// clipped where the pane ends. Otherwise the pane's size.
+final class PaneClip: NSView {
+    let content: NSView
+    let vertical: Bool
+    var pinned: CGFloat? { didSet { needsLayout = true } }
+
+    init(content: NSView, vertical: Bool) {
+        self.content = content
+        self.vertical = vertical
+        super.init(frame: .zero)
+        clipsToBounds = true
+        addSubview(content)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Top-down, so a pane below a divider keeps its top edge on it.
+    override var isFlipped: Bool { true }
+
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let pinned = pinned ?? 0
+        content.frame = vertical
+            ? NSRect(x: 0, y: 0, width: max(bounds.width, pinned), height: bounds.height)
+            : NSRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, pinned))
     }
 }
 
