@@ -39,7 +39,8 @@ struct SourceBar: View {
     /// fold last, for a source pane at its narrowest.
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
-        return HStack(spacing: BarMetrics.spacing) {
+        // A group's room either side of each line, as every bar has it.
+        return HStack(spacing: BarMetrics.groupSpacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
                 + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
             if project.isLaTeX {

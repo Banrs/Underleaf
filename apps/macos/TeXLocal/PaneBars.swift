@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The one set of metrics every in-window bar shares, from the kit's
 /// toolbars: 8 pt around the controls, the controls of a group abutting,
-/// 8 pt between groups, and 16 pt separator lines. One size, the
+/// 8 pt between groups and either side of a separator line, and 16 pt
+/// separator lines. One size, the
 /// standard one: the bars under the window toolbar (the source's and the
 /// PDF's actions, the find bar, the build panel's header) and the
 /// secondary rows.
@@ -19,6 +20,8 @@ enum BarMetrics {
     /// The secondary rows (the location rows, the status bar): small
     /// controls (20 pt) with 4 pt above and below.
     static var secondaryBarHeight: CGFloat { controlHeight(Typography.secondaryControlSize) + 2 * spacing }
+    /// Between groups, and either side of every `ToolSeparator`: SwiftUI's
+    /// own spacing beside a Divider on macOS, the kit's toolbar group gap.
     static let groupSpacing: CGFloat = 8
     static let separatorHeight: CGFloat = 16
     /// Between the separate items of a secondary row's text (the status
@@ -157,7 +160,7 @@ struct ToolGroup: View {
     }
 }
 
-/// The line between a bar's groups.
+/// The line between a bar's groups, `BarMetrics.groupSpacing` either side.
 struct ToolSeparator: View {
     var body: some View {
         Divider().frame(height: BarMetrics.separatorHeight)
