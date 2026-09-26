@@ -40,7 +40,7 @@ WinUI has no code-editor control. Windows' built-in PDF API renders pages as ima
 - **`crates/texlocal-core/src/serve.rs`** handles the `__pdf` and `__raw` routes, byte ranges and MIME types. The Tauri protocol handler and the server both use it.
 - **`crates/texlocal-ffi`** is the C ABI the native apps link.
   - The functions are `tl_open`, `tl_call` (JSON in and out, blocking), `tl_free` and `tl_close`.
-  - Native-only commands: `pdf_path`, `raw_path`, `export_zip`, `import_files` and `kill_all`.
+  - Native-only commands: `pdf_path`, `raw_path`, `project_root`, `export_zip`, `import_files`, `import_project` and `kill_all`.
   - The header and Swift module map live in `include/`.
 - **`crates/texlocal-server`** is the browser host. Start it with `npm run serve`.
   - It binds `127.0.0.1` only.

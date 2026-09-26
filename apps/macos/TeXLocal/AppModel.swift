@@ -143,96 +143,16 @@ final class AppModel {
 
     /// File › Open…: a folder, a .tex file or a .zip from anywhere, made a
     /// project in the library and opened. The original stays where it is.
+    /// The core copies it in (off the main actor, as every core call runs)
+    /// and removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL) async {
-        // What it brings, before the project is made: one that can't be read
-        // leaves nothing behind.
-        let items: [URL], cleanup: () -> Void
         do {
-            (items, cleanup) = try Self.contents(of: url)
+            let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
+            await refresh()
+            await open(info.id)
         } catch {
             alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
-            return
         }
-        defer { cleanup() }
-        let base = url.deletingPathExtension().lastPathComponent
-        var made: ProjectInfo?
-        var failure: Error?
-        // A taken name gets a number, as Finder's copies do.
-        for n in 1...50 where made == nil {
-            do {
-                made = try await core.call("create_project", ["name": n == 1 ? base : "\(base) \(n)", "template": "blank"],
-                                           as: ProjectInfo.self)
-            } catch {
-                failure = error
-            }
-        }
-        guard let info = made else {
-            alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", failure ?? CoreError(message: "No free name", status: 500))
-            return
-        }
-        do {
-            guard let root = await root(of: info) else { throw CoreError(message: "The new project has no folder", status: 500) }
-            let fm = FileManager.default
-            let isTeX = { (item: URL) in item.pathExtension.lowercased() == "tex" }
-            // The template's main.tex gives way to what came in, if any TeX did.
-            if items.contains(where: isTeX) { try? fm.removeItem(at: root.appendingPathComponent("main.tex")) }
-            for item in items {
-                let dest = root.appendingPathComponent(item.lastPathComponent)
-                if !fm.fileExists(atPath: dest.path) { try fm.copyItem(at: item, to: dest) }
-            }
-            // The main file: the chosen .tex, else main.tex, else the first
-            // that starts a document.
-            let names = items.filter(isTeX).map(\.lastPathComponent).sorted()
-            let main = isTeX(url) ? url.lastPathComponent
-                : names.first { $0.lowercased() == "main.tex" }
-                ?? names.first { (try? String(contentsOf: root.appendingPathComponent($0), encoding: .utf8))?
-                    .contains("\\documentclass") == true }
-                ?? names.first
-            if let main, main != info.mainFile {
-                try await core.perform("set_settings", ["id": info.id, "patch": ["mainFile": main]])
-            }
-        } catch {
-            alert = AppAlert("Couldn’t Copy All of “\(url.lastPathComponent)”", error)
-        }
-        await refresh()
-        await open(info.id)
-    }
-
-    /// What a chosen item brings: a folder's visible contents, a zip's
-    /// (its one top folder's, if it has one), or the file itself; and how
-    /// to tidy up after copying them.
-    private static func contents(of url: URL) throws -> ([URL], () -> Void) {
-        let fm = FileManager.default
-        let visible = { (dir: URL) in
-            try fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
-                .filter { $0.lastPathComponent != "__MACOSX" }
-        }
-        if url.hasDirectoryPath { return (try visible(url), {}) }
-        guard url.pathExtension.lowercased() == "zip" else { return ([url], {}) }
-        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let cleanup: () -> Void = { try? fm.removeItem(at: temp) }
-        let ditto = Process()
-        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        ditto.arguments = ["-x", "-k", url.path, temp.path]
-        try ditto.run()
-        ditto.waitUntilExit()
-        guard ditto.terminationStatus == 0 else {
-            cleanup()
-            throw CoreError(message: "The zip couldn’t be opened", status: 500)
-        }
-        var items = try visible(temp)
-        if items.count == 1, items[0].hasDirectoryPath { items = try visible(items[0]) }
-        return (items, cleanup)
-    }
-
-    /// A project's folder: its main file's path, less the main file's own
-    /// components.
-    private func root(of project: ProjectInfo) async -> URL? {
-        guard let abs = try? await core.call("raw_path", ["id": project.id, "path": project.mainFile], as: String.self)
-        else { return nil }
-        var root = URL(fileURLWithPath: abs)
-        for _ in project.mainFile.split(separator: "/") { root.deleteLastPathComponent() }
-        return root
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
@@ -257,8 +177,8 @@ final class AppModel {
     /// Select the project's folder in Finder.
     func revealProject(_ project: ProjectInfo) {
         Task {
-            guard let root = await root(of: project) else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([root])
+            guard let root = try? await core.call("project_root", ["id": project.id], as: String.self) else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root)])
         }
     }
 

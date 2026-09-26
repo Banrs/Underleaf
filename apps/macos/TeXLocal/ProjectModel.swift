@@ -66,6 +66,10 @@ final class ProjectModel {
     /// Bumped to put the cursor in the find field, its text selected.
     var findFocus = 0
 
+    /// Files an import would put over ones already here, while the
+    /// workspace asks Replace, Keep Both or Stop.
+    var importClash: ImportClash?
+
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
 
@@ -648,10 +652,16 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    /// Copies files in, at the top of the project or into `dir`.
-    func importFiles(_ urls: [URL], into dir: String = "") async {
+    /// Copies files in, at the top of the project or into `dir`. Files
+    /// whose names are taken there are asked about first, as Finder asks
+    /// (`importClash`), then copied again with the answer: "replace" (the
+    /// old ones go to the Trash) or "keepBoth" ("a 2.png").
+    func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
+        var args: [String: Any] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
+        args["conflict"] = conflict
         do {
-            try await core.perform("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)])
+            let clashes = try await core.call("import_files", args, as: Imported.self).existing.map(\.path)
+            if conflict == nil, !clashes.isEmpty { importClash = ImportClash(urls: urls, dir: dir, names: clashes) }
         } catch {
             report(error, "Couldn’t Add the Files")
         }
@@ -760,6 +770,33 @@ final class FileWatcher {
         source.setCancelHandler { close(fd) }
         self.source = source
         source.resume()
+    }
+}
+
+/// An import whose names are taken where it goes, as Finder words the
+/// question it asks.
+struct ImportClash {
+    let urls: [URL]
+    let dir: String
+    /// The taken names, as the project has them.
+    let names: [String]
+
+    var title: String {
+        guard names.count == 1, let name = names.first else {
+            return "\(names.count) items with these names already exist in this location."
+        }
+        return "An item named “\((name as NSString).lastPathComponent)” already exists in this location."
+    }
+
+    var message: String {
+        let replace = names.count == 1
+            ? "Do you want to replace it with the one you’re copying? The one here goes to the Trash."
+            : "Do you want to replace them with the ones you’re copying? The ones here go to the Trash."
+        guard names.count > 1 else { return replace }
+        // A few by name, so a folder's worth doesn't fill the alert.
+        let shown = names.prefix(3).map { "“\($0)”" }
+        let more = names.count > shown.count ? ["\(names.count - shown.count) more"] : []
+        return (shown + more).formatted(.list(type: .and)) + ". " + replace
     }
 }
 

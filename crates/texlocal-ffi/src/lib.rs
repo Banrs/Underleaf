@@ -28,6 +28,7 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
     Some(match command {
         "pdf_path" => (|| service.pdf_path(&s("id")?))().map(path),
         "raw_path" => (|| service.raw_path(&s("id")?, &s("path")?))().map(path),
+        "project_root" => (|| service.project_root(&s("id")?))().map(path),
         "export_zip" => (|| {
             let root = service.project_root(&s("id")?)?;
             zipexport::export_zip(&root, Path::new(&s("dest")?))?;

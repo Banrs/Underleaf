@@ -113,6 +113,8 @@ fn native_only_commands_resolve_absolute_paths() {
         Some(json!({ "id": "P", "path": "../../x" })),
     );
     assert_eq!(escape["status"], 400);
+    let root = call(handle, "project_root", Some(json!({ "id": "P" })));
+    assert!(root["ok"].as_str().unwrap().ends_with("P"));
 
     let dest = dir.path().join("out.zip");
     let exported = call(

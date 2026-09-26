@@ -70,6 +70,17 @@ struct WorkspaceView: View {
             case .gotoLine: GoToLineSheet(project: project)
             }
         }
+        // An import onto names already here: Finder's question and answers,
+        // Replace the default.
+        .alert(project.importClash?.title ?? "", isPresented: Binding(presenting: $project.importClash),
+               presenting: project.importClash) { clash in
+            Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
+                .keyboardShortcut(.defaultAction)
+            Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
+            Button("Stop", role: .cancel) {}
+        } message: { clash in
+            Text(clash.message)
+        }
         // The open file changed on disk while it has edits here.
         .alert(project.diskConflict.map { "“\(($0 as NSString).lastPathComponent)” Changed on Disk" } ?? "",
                isPresented: Binding(presenting: $project.diskConflict), presenting: project.diskConflict) { _ in

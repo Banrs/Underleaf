@@ -120,6 +120,16 @@ struct InverseLoc: Decodable {
     let line: Int
 }
 
+/// `import_files`' result: the incoming paths that already exist here.
+/// Asked nothing about them, it writes nothing.
+struct Imported: Decodable {
+    struct Clash: Decodable {
+        let path: String
+    }
+
+    let existing: [Clash]
+}
+
 /// `rename_entry`'s result: both paths normalised.
 struct RenameResult: Decodable {
     let from: String
