@@ -213,8 +213,8 @@ struct PDFPane: View {
             SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
                 .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
             FindSteps(enabled: !controller.matches.isEmpty, step: controller.step)
-            FindCount(label: findCountLabel(query: controller.query, total: controller.matches.count,
-                                            index: controller.matchIndex + 1, limited: controller.limited))
+            FindCount(label: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
+                                         limited: controller.limited).label(for: controller.query))
             Button("Done") { closeFind() }
                 .buttonStyle(.bordered)
         }

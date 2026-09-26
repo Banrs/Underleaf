@@ -16,16 +16,17 @@ struct OutlineItem: Identifiable, Hashable {
     /// A heading with an empty title, which `title` spells "(untitled)" as
     /// the web does; `Outline.displayTitle` names it by its kind.
     var isUntitled = false
+
+    /// Its kind ("Subsection"), one of the source bar's section levels.
+    var kind: String { headingLevels.indices.contains(level + 1) ? headingLevels[level + 1].0 : "Section" }
 }
 
 /// Sectioning commands in a document, as the browser version's outline reads
 /// them (web/src/state.js `SECTION_RE`), and the word count read alongside.
 enum Outline {
-    private static let levels = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph"]
-
-    static func parse(_ text: String) -> [OutlineItem] {
-        analyze(text).outline
-    }
+    /// The sectioning commands, outermost first: the section levels less
+    /// Normal Text.
+    private static let levels = headingLevels.dropFirst().map(\.1)
 
     /// The outline, words and lines in one pass (web/src/state.js
     /// `analyzeDoc`). Lines break where CodeMirror breaks them — at CR LF, CR
@@ -96,11 +97,9 @@ enum Outline {
     }
 
     /// An empty heading by its kind — "Untitled Subsection" — where the web
-    /// writes "(untitled)". The kinds are the source bar's section levels.
+    /// writes "(untitled)".
     static func displayTitle(_ item: OutlineItem) -> String {
-        guard item.isUntitled else { return item.title }
-        let kind = headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "Section"
-        return "Untitled " + kind
+        item.isUntitled ? "Untitled \(item.kind)" : item.title
     }
 
     /// The headings that enclose a line, outermost first: the breadcrumb

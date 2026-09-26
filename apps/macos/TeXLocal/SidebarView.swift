@@ -383,7 +383,7 @@ private struct HeadingRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
-        .accessibilityValue(headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "")
+        .accessibilityValue(item.kind)
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

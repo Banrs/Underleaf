@@ -67,9 +67,9 @@ private struct GeneralSettings: View {
 }
 
 private struct EditorSettings: View {
-    @AppStorage("editorPalette") private var palette = "onedark"
-    @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 13
+    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
 
     var body: some View {
         Form {

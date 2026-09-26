@@ -177,17 +177,6 @@ struct FindSteps: View {
     }
 }
 
-/// A find bar's count: "3 of 12", "12 matches" when none is selected
-/// (`index` 0; it counts from 1), "1 of 5000+" past a cap, "Not found", or
-/// nothing before a search.
-func findCountLabel(query: String, total: Int, index: Int, limited: Bool) -> String {
-    if query.isEmpty { return "" }
-    if total == 0 { return "Not found" }
-    let count = "\(total)\(limited ? "+" : "")"
-    if index > 0 { return "\(index) of \(count)" }
-    return total == 1 && !limited ? "1 match" : "\(count) matches"
-}
-
 /// A find bar's match count, left out when the bar hasn't the room.
 struct FindCount: View {
     let label: String

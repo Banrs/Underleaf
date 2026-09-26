@@ -6,21 +6,14 @@ import WebKit
 struct EditorView: View {
     let bridge: EditorBridge
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("editorPalette") private var palette = "onedark"
-    @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 13
+    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @FocusState private var focused: Bool
 
-    private struct Appearance: Hashable {
-        let theme: String
-        let palette: String
-        let font: String
-        let fontSize: Int
-    }
-
     var body: some View {
-        let appearance = Appearance(theme: colorScheme == .dark ? "dark" : "light",
-                                    palette: palette, font: font, fontSize: fontSize)
+        let appearance = EditorAppearance(theme: colorScheme == .dark ? "dark" : "light",
+                                          palette: palette, font: font, fontSize: fontSize)
         WebView(bridge.page)
             // The page draws the text's surface itself.
             .webViewContentBackground(.hidden)
@@ -30,10 +23,7 @@ struct EditorView: View {
             .webViewLinkPreviews(.disabled)
             .focused($focused)
             .onChange(of: bridge.focusRequest) { focused = true }
-            .task(id: appearance) {
-                await bridge.setAppearance(theme: appearance.theme, palette: appearance.palette,
-                                           font: appearance.font, fontSize: appearance.fontSize)
-            }
+            .task(id: appearance) { await bridge.setAppearance(appearance) }
     }
 }
 
