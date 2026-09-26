@@ -259,18 +259,15 @@ struct SegmentedControl: NSViewRepresentable {
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
         context.coordinator.segments = segments
         control.segmentCount = segments.count
-        var widths: [CGFloat] = []
         for (index, segment) in segments.enumerated() {
             let image = segment.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: segment.help) }
             control.setImage(image, forSegment: index)
             control.setLabel(segment.label ?? "", forSegment: index)
             control.setToolTip(segment.help, forSegment: index)
             control.setEnabled(segment.enabled && context.environment.isEnabled, forSegment: index)
-            let width = Self.width(label: segment.widest ?? segment.label, image: image, font: control.font)
-            control.setWidth(width, forSegment: index)
-            widths.append(width)
+            control.setWidth(Self.width(label: segment.widest ?? segment.label, symbol: segment.symbol, image: image,
+                                        font: control.font), forSegment: index)
         }
-        context.coordinator.widths = widths
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
@@ -278,28 +275,33 @@ struct SegmentedControl: NSViewRepresentable {
     }
 
     /// The width AppKit gives a segment with this content on its own: a
-    /// one-segment control is its segment's width.
-    private static func width(label: String?, image: NSImage?, font: NSFont?) -> CGFloat {
+    /// one-segment control is its segment's width. Measured once per
+    /// content, as the scale's label changes with every pinch.
+    private static func width(label: String?, symbol: String?, image: NSImage?, font: NSFont?) -> CGFloat {
+        let key = "\(label ?? "")|\(symbol ?? "")"
+        if let width = widths[key] { return width }
         let probe = NSSegmentedControl()
         probe.segmentCount = 1
         probe.font = font
         probe.setLabel(label ?? "", forSegment: 0)
         probe.setImage(image, forSegment: 0)
+        widths[key] = probe.intrinsicContentSize.width
         return probe.intrinsicContentSize.width
     }
+
+    private static var widths: [String: CGFloat] = [:]
 
     @MainActor
     final class Coordinator: NSObject {
         var segments: [Segment] = []
-        var widths: [CGFloat] = []
 
         @objc func clicked(_ control: NSSegmentedControl) {
             let index = control.selectedSegment
             guard segments.indices.contains(index) else { return }
             // The control is as wide as its segments, so each starts where
             // the ones before it end.
-            let x = widths.prefix(index).reduce(0, +)
-            let rect = NSRect(x: x, y: 0, width: widths[index], height: control.bounds.height)
+            let x = (0..<index).map(control.width(forSegment:)).reduce(0, +)
+            let rect = NSRect(x: x, y: 0, width: control.width(forSegment: index), height: control.bounds.height)
             let segment = segments[index]
             if segment.menu.isEmpty {
                 segment.action(control, rect)
