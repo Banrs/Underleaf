@@ -29,23 +29,6 @@ struct NavigatorView: View {
         ])
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
         .searchFocused($searchFocused)
-        // Adding files, over the sidebar it adds to, as Notes' New Folder
-        // is: on the toolbar's glass, and gone with the sidebar (a sidebar's
-        // items otherwise move into the window's toolbar as it hides).
-        .toolbar {
-            if app.sidebarVisible {
-                ToolbarItem {
-                    Menu("Add Files", systemImage: "plus") {
-                        Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                        Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
-                        Divider()
-                        Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
-                    }
-                    .menuIndicator(.hidden)
-                    .help("Add Files")
-                }
-            }
-        }
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
     }
 
@@ -67,6 +50,8 @@ private struct FilesList: View {
     @State private var renaming: String?
     @State private var newName = ""
     @FocusState private var renameFocused: Bool
+    /// The open folders, by path.
+    @State private var expanded: Set<String> = []
 
     var body: some View {
         // Two lists rather than one whose sections change shape: the
@@ -96,9 +81,7 @@ private struct FilesList: View {
     private var files: some View {
         List(selection: $selection) {
             Section {
-                OutlineGroup(project.tree, children: \.children) { node in
-                    row(node).tag(node.path)
-                }
+                rows(project.tree)
             } header: {
                 Text("Files")
             }
@@ -113,6 +96,11 @@ private struct FilesList: View {
                 Divider()
                 Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
             }
+        } primaryAction: { paths in
+            // Double-click or Return on a folder opens or closes it, as
+            // Xcode's navigator does; a file is open once it's chosen.
+            guard let path = paths.first, isFolder(path, in: project.tree) else { return }
+            if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
             if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
@@ -155,6 +143,31 @@ private struct FilesList: View {
                 }
             }
         }
+    }
+
+    /// The tree as the sidebar shows one: native disclosure triangles on
+    /// the folders, each open or closed as `expanded` has it.
+    private func rows(_ nodes: [TreeNode]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expanded.contains(node.path) },
+                    set: { open in
+                        if open { expanded.insert(node.path) } else { expanded.remove(node.path) }
+                    }
+                )) {
+                    rows(children)
+                } label: {
+                    row(node).tag(node.path)
+                }
+            } else {
+                row(node).tag(node.path)
+            }
+        })
+    }
+
+    private func isFolder(_ path: String, in nodes: [TreeNode]) -> Bool {
+        nodes.contains { $0.path == path ? $0.isDirectory : isFolder(path, in: $0.children ?? []) }
     }
 
     private func row(_ node: TreeNode) -> some View {

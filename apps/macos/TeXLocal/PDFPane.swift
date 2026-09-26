@@ -131,17 +131,13 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile at the leading edge; zoom, then Share, at the trailing: all
-    /// bordered, so one height, set apart by space rather than a line.
+    /// Compile at the leading edge, zoom at the trailing. Share is the
+    /// window toolbar's.
     private func actions(compact: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             compileControls(compact: compact)
             Spacer(minLength: 0)
             if zoom { zoomControls }
-            ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.bordered)
-                .fixedSize()
         }
     }
 
@@ -205,11 +201,7 @@ struct PDFPane: View {
                 }
                 .pickerStyle(.inline)
             } label: {
-                // As wide at 68% as at 400% (figure spaces are a digit
-                // wide), so the group keeps its width and Zoom Out stays
-                // under the pointer as the scale changes.
-                Text(String(repeating: "\u{2007}", count: max(0, 4 - controller.zoomLabel.count)) + controller.zoomLabel)
-                    .monospacedDigit()
+                Text(controller.zoomLabel).monospacedDigit()
             }
             .help("Zoom")
             .accessibilityLabel("Zoom")
@@ -752,33 +744,4 @@ private struct PDFRepresentable: NSViewRepresentable {
             page.removeAnnotation(mark)
         }
     }
-}
-
-/// Shares the PDF with AppKit's picker, opened from the button itself.
-private struct ShareButton: View {
-    let url: URL?
-    @State private var anchor: NSView?
-
-    var body: some View {
-        Button("Share PDF", systemImage: "square.and.arrow.up") {
-            guard let url, let anchor else { return }
-            NSSharingServicePicker(items: [url]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-        }
-        .disabled(url == nil)
-        .background(ViewAnchor(view: $anchor))
-        .help("Share PDF")
-    }
-}
-
-/// An AppKit view where a SwiftUI view is, for AppKit to anchor to.
-private struct ViewAnchor: NSViewRepresentable {
-    @Binding var view: NSView?
-
-    func makeNSView(context: Context) -> NSView {
-        let anchor = NSView()
-        Task { @MainActor in view = anchor }
-        return anchor
-    }
-
-    func updateNSView(_ anchor: NSView, context: Context) {}
 }

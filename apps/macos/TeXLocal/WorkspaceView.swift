@@ -92,10 +92,18 @@ struct WorkspaceView: View {
             .help("Back to Projects")
         }
 
-        // Two pieces of glass, as they are two functions: adjacent plain
-        // buttons would share one.
-        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
+        // Share on its own glass, as Pages' and Preview's is; then the two
+        // panes' toggles sharing one piece, as related buttons do. The PDF
+        // is what this window makes, so its toolbar shares it.
+        ToolbarItem(placement: .primaryAction) {
+            ShareLink(items: project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []) {
+                Label("Share PDF", systemImage: "square.and.arrow.up")
+            }
+            .disabled(project.pdfVersion == 0)
+            .help("Share PDF")
+        }
         ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
         ToolbarItem(placement: .primaryAction) { InspectorToggle() }
     }
 }
