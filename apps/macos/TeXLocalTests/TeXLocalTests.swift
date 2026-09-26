@@ -355,8 +355,10 @@ final class CommandTests: XCTestCase {
     }
 
     func testEveryAcceleratorParses() {
-        for command in MenuCommand.allCases where command.accel != nil {
-            XCTAssertNotNil(command.shortcut, command.rawValue)
+        for command in MenuCommand.allCases {
+            for accel in [command.accel, command.macAccel].compactMap(\.self) {
+                XCTAssertNotNil(MenuCommand.shortcut(for: accel), command.rawValue)
+            }
         }
     }
 
@@ -447,6 +449,14 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(item("0")).title, "Actual Size")
         XCTAssertEqual(try XCTUnwrap(item("9")).title, "Fit Width")
         XCTAssertEqual(try XCTUnwrap(item("9", [.command, .option])).title, "Fit Height")
+    }
+
+    /// TextEdit's and Xcode's: ⌘F Find…, ⌥⌘F Find and Replace…; Find in
+    /// PDF… has no chord of its own.
+    func testFindHasApplesChords() throws {
+        XCTAssertEqual(try XCTUnwrap(item("f")).title, "Find…")
+        XCTAssertEqual(try XCTUnwrap(item("f", [.command, .option])).title, "Find and Replace…")
+        XCTAssertEqual(items().first { $0.title == "Find in PDF…" }?.keyEquivalent, "")
     }
 
     func testTheBottomPanelIsTheBuildPanel() throws {

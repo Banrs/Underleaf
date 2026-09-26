@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -53,7 +54,7 @@ enum MenuCommand: String, CaseIterable {
         case .pdfSave: "Save PDF As…"
         case .editUndo: "Undo"
         case .editRedo: "Redo"
-        case .editFind: "Find and Replace…"
+        case .editFind: "Find…"
         case .editFindNext: "Find Next"
         case .editFindPrevious: "Find Previous"
         case .editBold: "Bold"
@@ -113,15 +114,22 @@ enum MenuCommand: String, CaseIterable {
     /// as Windows and the browser keep theirs. ⌃⌘S shows and hides the
     /// sidebar (HIG, The menu bar: View menu); ⌘0 is Actual Size, as in
     /// Preview, Safari and Pages, so fitting takes Preview's Zoom to Fit
-    /// chord, ⌘9 (⌥⌘9 for the height, as ⌥ paired them before).
+    /// chord, ⌘9 (⌥⌘9 for the height, as ⌥ paired them before). ⌥⌘F is
+    /// Find and Replace…, as in TextEdit and Xcode, so Find in PDF… has no
+    /// chord: ⌘F finds in the PDF when it has the keyboard.
     var macAccel: String? {
         switch self {
         case .viewToggleSidebar: "Ctrl+CmdOrCtrl+S"
         case .viewFitWidth: "CmdOrCtrl+9"
         case .viewFitHeight: "CmdOrCtrl+Alt+9"
+        case .pdfFind: nil
         default: accel
         }
     }
+
+    /// Edit › Find › Find and Replace…: the Mac's own, so not in the shared
+    /// table, which has one Find.
+    static let findAndReplace = (id: "edit.findAndReplace", accel: "CmdOrCtrl+Alt+F")
 
     var shortcut: KeyboardShortcut? {
         macAccel.flatMap(Self.shortcut(for:))
@@ -160,7 +168,7 @@ enum MenuCommand: String, CaseIterable {
         return allCases.compactMap { c in
             guard !editorOwned.contains(c), let accel = c.macAccel else { return nil }
             return (c.rawValue, accel)
-        }
+        } + [findAndReplace]
     }
 }
 
@@ -180,7 +188,8 @@ extension AppModel {
         switch command {
         // Undo and redo also serve text fields outside the editor.
         case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
-        case .fileSave, .editFind, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .editFind: project.map { $0.editsText || $0.pdfVersion > 0 } ?? false
+        case .fileSave, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
@@ -230,7 +239,10 @@ extension AppModel {
             }
         case .editUndo: undo(redo: false)
         case .editRedo: undo(redo: true)
-        case .editFind: project?.format("find")
+        case .editFind:
+            // Find goes to the pane with the keyboard, as Apple's Find goes
+            // to the first responder; the editor takes its own ⌘F first.
+            if project?.editsText == true, !pdfHasFocus { project?.format("find") } else { requestPDF(.find) }
         case .editFindNext: findAgain(1)
         case .editFindPrevious: findAgain(-1)
         case .editBold: project?.format("bold")
@@ -251,6 +263,21 @@ extension AppModel {
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }
+    }
+
+    /// Whether the keyboard is in the PDF pane: its pages or its find bar.
+    /// The nearest view around the first responder that holds either
+    /// pane's content (each pane is hosted on its own) says which.
+    private var pdfHasFocus: Bool {
+        guard let view = NSApp.keyWindow?.firstResponder as? NSView else { return false }
+        func holds<T: NSView>(_ type: T.Type, _ view: NSView) -> Bool {
+            view is T || view.subviews.contains { holds(type, $0) }
+        }
+        for ancestor in sequence(first: view, next: \.superview) {
+            let pdf = holds(PDFView.self, ancestor), web = holds(WKWebView.self, ancestor)
+            if pdf || web { return pdf && !web }
+        }
+        return false
     }
 
     /// The first responder when it is a native text field's editor (the find
@@ -375,10 +402,15 @@ struct AppCommands: Commands {
                 .disabled(app.project?.pdfVersion ?? 0 == 0)
         }
         CommandGroup(replacing: .textEditing) {
+            // TextEdit's and Xcode's Find menu, then the searches of their own.
             Menu("Find") {
                 item(.editFind)
+                Button("Find and Replace…") { app.project?.findAndReplace() }
+                    .keyboardShortcut(MenuCommand.shortcut(for: MenuCommand.findAndReplace.accel))
+                    .disabled(app.project?.editsText != true)
                 item(.editFindNext)
                 item(.editFindPrevious)
+                Divider()
                 item(.projectSearch)
                 item(.pdfFind)
             }

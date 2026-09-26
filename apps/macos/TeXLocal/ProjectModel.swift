@@ -56,15 +56,20 @@ final class ProjectModel {
     private var watcher: FileWatcher?
     private var diskCheck: Task<Void, Never>?
 
-    /// The source's find bar (Edit › Find and Replace…): CodeMirror's
+    /// The source's find bar (Edit › Find): CodeMirror's
     /// search, driven from native fields, searched for as the query changes.
     var findShown = false
     var findQuery = FindQuery() {
         didSet { if findQuery != oldValue { Task { await editor.setFind(findQuery) } } }
     }
     var findMatches = FindMatches()
-    /// Bumped to put the cursor in the find field, its text selected.
+    /// Bumped to put the cursor in the find field, its text selected, or
+    /// in the replace field; both back to 0 as the bar closes, so a bar
+    /// made for one doesn't hand the other focus.
     var findFocus = 0
+    var replaceFocus = 0
+    /// Find and Replace… asked for the bar: it opens on the replace field.
+    private var replacing = false
 
     /// Files an import would put over ones already here, while the
     /// workspace asks Replace, Keep Both or Stop.
@@ -143,15 +148,20 @@ final class ProjectModel {
         // A chord the editor handed back because the native menu owns it
         // (`MenuCommand.editorHostKeys`).
         editor.onCommand = { [weak self] id in
-            if let command = MenuCommand(rawValue: id) { self?.app?.perform(command) }
+            if id == MenuCommand.findAndReplace.id {
+                self?.findAndReplace()
+            } else if let command = MenuCommand(rawValue: id) {
+                self?.app?.perform(command)
+            }
         }
         editor.onFind = { [weak self] query in
             guard let self else { return }
             findQuery = query
             findShown = true
-            findFocus += 1
+            if replacing { replaceFocus += 1 } else { findFocus += 1 }
+            replacing = false
         }
-        editor.onFindClosed = { [weak self] in self?.findShown = false }
+        editor.onFindClosed = { [weak self] in self?.findClosed() }
         editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
         editor.onCrash = { [weak self] in
             if let self, dirty || readingText { lostEdits = true }
@@ -719,9 +729,22 @@ final class ProjectModel {
         format(all ? "replaceAll" : "replaceNext")
     }
 
+    /// Find and Replace… (⌥⌘F): the find bar, the caret in Replace.
+    func findAndReplace() {
+        guard editsText else { return }
+        replacing = true
+        format("find")
+    }
+
+    private func findClosed() {
+        findShown = false
+        findFocus = 0
+        replaceFocus = 0
+    }
+
     /// Done or Escape: the matches are unmarked and typing goes back to the text.
     func closeFind() {
-        findShown = false
+        findClosed()
         Task {
             await editor.closeFind()
             editor.focus()

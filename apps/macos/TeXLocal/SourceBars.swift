@@ -383,6 +383,7 @@ private struct SectionMenuItems: View {
 /// Replace All folds into Replace's menu.
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
+    @FocusState private var replaceFocused: Bool
 
     var body: some View {
         // Two rows of a pane bar's controls, inset as its one row is.
@@ -405,6 +406,11 @@ struct SourceFindBar: View {
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { project.replace(all: false) }
                     .onExitCommand { project.closeFind() }
+                    .focused($replaceFocused)
+                    // Find and Replace…, as the bar opens or while it shows.
+                    .task(id: project.replaceFocus) {
+                        if project.replaceFocus > 0 { replaceFocused = true }
+                    }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: BarMetrics.spacing) {
                         Button("Replace") { project.replace(all: false) }
