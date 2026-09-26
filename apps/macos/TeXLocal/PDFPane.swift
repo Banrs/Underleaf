@@ -131,44 +131,33 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile, then Share, at the leading edge, as Overleaf keeps its
-    /// download beside Recompile: two push buttons, one family. Zoom at the
-    /// trailing edge. (Save PDF As… is the File menu's.)
+    /// Compile at the leading edge, zoom at the trailing.
     private func actions(compact: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             compileControls(compact: compact)
-            ShareLink(items: project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []) {
-                Label("Share PDF", systemImage: "square.and.arrow.up")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .fixedSize()
-            .disabled(project.pdfVersion == 0)
-            .help("Share PDF")
             Spacer(minLength: 0)
             if zoom { zoomControls }
         }
     }
 
     /// Overleaf's Recompile, the pane's one prominent control; while a build
-    /// runs, a spinner and Stop in its place.
+    /// runs, Stop in its place, the system's spinner as its icon. Nothing
+    /// follows it in the bar, so the swap moves nothing. Share PDF and Save
+    /// PDF As… are the File menu's.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
-            HStack(spacing: BarMetrics.groupSpacing) {
-                ProgressView().controlSize(.small)
-                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
-                    .labelStyle(.iconOnly)
-                    .help("Stop")
+            Button { project.stopCompile() } label: {
+                let stop = Label { Text("Stop") } icon: { ProgressView().controlSize(.small) }
+                if compact { stop.labelStyle(.iconOnly) } else { stop.labelStyle(.titleAndIcon) }
             }
+            .buttonStyle(.bordered)
             .fixedSize()
+            .help("Stop")
         } else {
             Button { app.perform(.compileRun) } label: {
-                if compact {
-                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
-                } else {
-                    Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
-                }
+                let compile = Label("Compile", systemImage: "play.fill")
+                if compact { compile.labelStyle(.iconOnly) } else { compile.labelStyle(.titleAndIcon) }
             }
             .buttonStyle(.borderedProminent)
             .fixedSize()
