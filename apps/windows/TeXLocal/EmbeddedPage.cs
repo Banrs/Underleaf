@@ -10,15 +10,18 @@ namespace TeXLocal;
 /// One of the web pages the app embeds (web/embed/*.html) in a WebView2:
 /// the host calls methods on the page's <c>window.texlocal</c>, and the page
 /// posts <c>{ type, ... }</c> messages back. Calls wait until the page has
-/// said it is ready, and survive a crash of the page's renderer.
+/// said it is ready, and survive a crash of the page's renderer or of the
+/// whole browser process.
 /// </summary>
 internal sealed class EmbeddedPage
 {
     /// <summary>The bundled web\ folder next to the exe, served on its own origin.</summary>
     public const string AppHost = "app.texlocal";
 
-    private readonly WebView2 view;
+    private WebView2 view;
+    private readonly string page;
     private readonly Action<string, JsonElement> onMessage;
+    private readonly Action<CoreWebView2>? configure;
     private TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool started;
     private bool loadedOnce;
@@ -37,10 +40,21 @@ internal sealed class EmbeddedPage
     /// <summary>How many times the renderer has failed, to tell a lost answer from an empty one.</summary>
     public int Crashes { get; private set; }
 
-    public EmbeddedPage(WebView2 view, string page, Action<string, JsonElement> onMessage)
+    /// <param name="configure">Sets up each new CoreWebView2 before the page loads in it.</param>
+    public EmbeddedPage(WebView2 view, string page, Action<string, JsonElement> onMessage, Action<CoreWebView2>? configure = null)
     {
         this.view = view;
+        this.page = page;
         this.onMessage = onMessage;
+        this.configure = configure;
+        Attach(view);
+    }
+
+    /// <summary>The page's WebView2; a new one after the browser process died.</summary>
+    public WebView2 View => view;
+
+    private void Attach(WebView2 view)
+    {
         // The page is drawn on the window's own surface (the layer over Mica),
         // not on a panel of its own: no seam, and it follows the theme.
         view.DefaultBackgroundColor = Microsoft.UI.Colors.Transparent;
@@ -50,19 +64,12 @@ internal sealed class EmbeddedPage
             if (!started)
             {
                 started = true;
-                await StartAsync(page);
+                await StartAsync();
             }
         };
     }
 
-    /// <summary>The page's WebView2, once the page is ready.</summary>
-    public async Task<CoreWebView2> WebAsync()
-    {
-        await ready.Task;
-        return view.CoreWebView2;
-    }
-
-    private async Task StartAsync(string page)
+    private async Task StartAsync()
     {
         await view.EnsureCoreWebView2Async();
         var web = view.CoreWebView2;
@@ -109,23 +116,46 @@ internal sealed class EmbeddedPage
         await web.AddScriptToExecuteOnDocumentCreatedAsync(
             "addEventListener('DOMContentLoaded', () => document.head.insertAdjacentHTML('beforeend', " +
             "'<style>html, body, .cm-editor { background: transparent !important; }</style>'))");
-        // A crashed renderer leaves a blank view; load the page again. Calls
-        // made meanwhile wait for it, and Reloaded tells the owner to restore
-        // what only it knows (the open document).
+        // A crashed renderer leaves a blank view; load the page again. The
+        // browser process takes every view with it, and a WebView2 can't be
+        // started twice, so a new one takes its place. Calls made meanwhile
+        // wait, and Reloaded tells the owner to restore what only it knows
+        // (the open document).
         web.ProcessFailed += (_, e) =>
         {
-            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited)
+            var browser = e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited;
+            if (!browser && e.ProcessFailedKind != CoreWebView2ProcessFailedKind.RenderProcessExited)
             {
-                if (ready.Task.IsCompleted)
-                {
-                    ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                }
-                Crashes++;
-                Crashed?.Invoke();
+                return;
+            }
+            if (ready.Task.IsCompleted)
+            {
+                ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            Crashes++;
+            Crashed?.Invoke();
+            if (browser)
+            {
+                Replace();
+            }
+            else
+            {
                 web.Reload();
             }
         };
+        configure?.Invoke(web);
         web.Navigate($"https://{AppHost}/embed/{page}");
+    }
+
+    private void Replace()
+    {
+        var old = view;
+        var children = ((Panel)old.Parent).Children;
+        view = new WebView2 { Visibility = old.Visibility };
+        started = false;
+        Attach(view);
+        children[children.IndexOf(old)] = view;
+        old.Close();
     }
 
     /// <summary>

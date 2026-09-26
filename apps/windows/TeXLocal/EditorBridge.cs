@@ -11,8 +11,9 @@ namespace TeXLocal;
 /// </summary>
 internal sealed class EditorBridge
 {
-    public WebView2 View { get; } = new();
     private readonly EmbeddedPage page;
+
+    public WebView2 View => page.View;
 
     public Action? Changed { get; set; }
     public Action<int>? CursorMoved { get; set; }
@@ -39,7 +40,7 @@ internal sealed class EditorBridge
 
     public EditorBridge()
     {
-        page = new EmbeddedPage(View, "editor.html", OnMessage);
+        page = new EmbeddedPage(new WebView2(), "editor.html", OnMessage);
         // Handed back, or Ctrl+Enter would insert a line; they arrive as Command.
         _ = page.SetHostKeysAsync(MenuCommands.HostKeys);
     }

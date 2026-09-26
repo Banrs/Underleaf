@@ -21,7 +21,6 @@ public sealed partial class PdfPane : UserControl
 
     private readonly EmbeddedPage page;
     private string? pdfPath;
-    private bool serving;
 
     // Typing waits this long before searching, as the Mac's find does: every
     // keystroke searching every page would only be superseded by the next.
@@ -49,7 +48,13 @@ public sealed partial class PdfPane : UserControl
         findDelay.Interval = TimeSpan.FromMilliseconds(200);
         findDelay.IsRepeating = false;
         findDelay.Tick += (_, _) => Search();
-        page = new EmbeddedPage(View, "pdf.html", OnMessage);
+        // Served from here rather than through a folder mapping, which would
+        // tie the page to one project's folder.
+        page = new EmbeddedPage(View, "pdf.html", OnMessage, web =>
+        {
+            web.AddWebResourceRequestedFilter($"https://{ProjectHost}/*", CoreWebView2WebResourceContext.All);
+            web.WebResourceRequested += (_, e) => e.Response = PdfResponse(web.Environment);
+        });
         _ = page.SetHostKeysAsync(MenuCommands.ClaimedChords);
     }
 
@@ -103,17 +108,7 @@ public sealed partial class PdfPane : UserControl
         {
             EndFind();
         }
-        var web = await page.WebAsync();
         this.pdfPath = pdfPath;
-        if (!serving)
-        {
-            // Served from here rather than through a folder mapping: WebView2
-            // applies a mapping only to pages loaded after it, and this page
-            // loaded long before the first PDF.
-            serving = true;
-            web.AddWebResourceRequestedFilter($"https://{ProjectHost}/*", CoreWebView2WebResourceContext.All);
-            web.WebResourceRequested += (_, e) => e.Response = PdfResponse(web.Environment);
-        }
         // The version defeats the cache: the file keeps its name across builds.
         var url = $"https://{ProjectHost}/{Uri.EscapeDataString(Path.GetFileName(pdfPath))}?v={version}";
         await page.RunStickyAsync("load", $"texlocal.load({L(url)})");
@@ -153,7 +148,7 @@ public sealed partial class PdfPane : UserControl
 
     private void ShowDocument(bool shown)
     {
-        View.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+        page.View.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         Empty.Visibility = shown ? Visibility.Collapsed : Visibility.Visible;
         ZoomOutButton.IsEnabled = ZoomInButton.IsEnabled = ZoomLevel.IsEnabled = ShareButton.IsEnabled = shown;
         SetToolTip(ShareButton, shown ? "Share the PDF" : "Compile to share the PDF");
