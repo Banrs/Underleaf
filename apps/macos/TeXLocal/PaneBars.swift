@@ -47,22 +47,6 @@ enum BarMetrics {
     private static var heights: [ControlSize: CGFloat] = [:]
 }
 
-/// Controls that float over a pane's content (Find in PDF): a Liquid
-/// Glass capsule, as the toolbar's items are, at the window toolbar's
-/// size, so the two read as one control layer. The kit's XL toolbar pill:
-/// large (28 pt) controls with 4 pt of glass around them, 36 pt.
-enum FloatingMetrics {
-    static let controlSize: ControlSize = .large
-    static let padding: CGFloat = 4
-    /// From the capsule's ends to the first and last control: the
-    /// borderless buttons draw no bezel of their own to pad them.
-    static let inset: CGFloat = 12
-    /// Apart from the pane's edges.
-    static let margin: CGFloat = 12
-    /// Between the controls in one capsule.
-    static let itemSpacing: CGFloat = 12
-}
-
 /// The app's text roles, each one of the system's text styles, so the
 /// same role reads the same everywhere. SF Pro throughout; monospaced text
 /// (the build log) is SF Mono at the size of the role it plays.
@@ -83,27 +67,6 @@ enum Typography {
 }
 
 extension View {
-    /// One floating capsule of system glass holding a few controls. The
-    /// buttons in it are borderless (the glass is their container, as a
-    /// toolbar item's is), each in the primary colour (`onGlass()`). Regular glass, not interactive: its buttons respond, the
-    /// capsule doesn't; and no `glassEffectUnion`, whose merged
-    /// interactive glass glitched icons on hover.
-    ///
-    /// `leadsWithField`: a search field first, 4 pt from the capsule's
-    /// end, so its own capsule sits concentric in the glass.
-    func floatingGlass(leadsWithField: Bool = false) -> some View {
-        buttonStyle(.borderless)
-            .labelStyle(.iconOnly)
-            .controlSize(FloatingMetrics.controlSize)
-            .lineLimit(1)
-            .padding(.vertical, FloatingMetrics.padding)
-            .padding(.leading, leadsWithField ? FloatingMetrics.padding : FloatingMetrics.inset)
-            .padding(.trailing, FloatingMetrics.inset)
-            .glassEffect(.regular, in: .capsule)
-    }
-}
-
-extension View {
     /// A pane bar's controls: AppKit's accessory-bar buttons at the bar's
     /// size, on the chrome's background, inset from the pane's edges.
     fileprivate func paneBarControls() -> some View {
@@ -113,21 +76,6 @@ extension View {
             .padding(.horizontal, BarMetrics.inset)
             .frame(maxWidth: .infinity)
             .background(BarMetrics.background)
-    }
-}
-
-extension Button {
-    /// A button on floating glass in the primary colour, as the toolbar's
-    /// glass items are, and dimmed while disabled: borderless and
-    /// accessory-bar buttons draw secondary, which read as disabled on glass.
-    func onGlass() -> some View { modifier(OnGlass()) }
-}
-
-private struct OnGlass: ViewModifier {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func body(content: Content) -> some View {
-        content.foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
     }
 }
 

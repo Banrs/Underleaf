@@ -170,21 +170,17 @@ final class PaneBarLayoutTests: XCTestCase {
     }
 }
 
-/// The controls floating over the PDF, measured off screen.
+/// A find bar, measured off screen.
 @MainActor
-final class FloatingGlassTests: XCTestCase {
-    /// Find in PDF's capsule is the kit's XL toolbar pill, 36 pt, as the
-    /// toolbar's glass items beside it are: its large search field with 4 pt
-    /// of glass around, no height set.
-    func testACapsuleIsTheToolbarsHeight() {
-        let capsule = HStack(spacing: FloatingMetrics.itemSpacing) {
+final class FindBarTests: XCTestCase {
+    /// Its field and buttons fit a pane bar, so it is the bars' height.
+    func testAFindBarIsABarsHeight() {
+        let bar = PaneBar {
             SearchField(text: .constant(""), prompt: "Find in PDF").frame(width: 160)
-            Button("Next Match", systemImage: "chevron.down") {}.onGlass()
-            Button("Done") {}.onGlass().labelStyle(.titleOnly)
+            FindSteps(enabled: true) { _ in }
+            Button("Done") {}.buttonStyle(.bordered)
         }
-        .floatingGlass(leadsWithField: true)
-        let height = NSHostingView(rootView: capsule).fittingSize.height
-        XCTAssertEqual(height, 36, accuracy: 1)
+        XCTAssertEqual(NSHostingView(rootView: bar).fittingSize.height, BarMetrics.barHeight)
     }
 }
 

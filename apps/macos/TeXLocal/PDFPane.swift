@@ -18,25 +18,21 @@ struct PDFPane: View {
         // The pane's actions (Compile, zoom, Share) in a bar stacked over
         // the pages, then the page and whether the preview is current in a
         // secondary row, as the source has its bar and location row: the
-        // two panes' rows and hairlines line up. Find floats over the pages
-        // on glass, taking the paper's appearance rather than the window's
-        // (the glass shows the page through it, so on white paper in a dark
-        // window its labels are drawn dark, as over any light content).
+        // two panes' rows and hairlines line up. The find bar, while it
+        // shows, goes under them, as the source's does.
         VStack(spacing: 0) {
             bar
             Divider()
             PageRow(project: project, controller: controller)
+            if finding, project.pdfVersion > 0 {
+                Divider()
+                findBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             Divider()
             pages
-                .overlay(alignment: .top) {
-                    if finding, project.pdfVersion > 0 {
-                        findBar.padding(FloatingMetrics.margin)
-                            .environment(\.colorScheme, paperScheme)
-                            .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
-                    }
-                }
-                .animation(.snappy(duration: 0.25), value: finding)
         }
+        .animation(.snappy(duration: 0.25), value: finding)
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -53,8 +49,6 @@ struct PDFPane: View {
 
     /// "auto" follows the app's appearance (web/src/prefs.js).
     private var darkPaper: Bool { pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark) }
-
-    private var paperScheme: ColorScheme { darkPaper ? .dark : .light }
 
     @ViewBuilder
     private var pages: some View {
@@ -230,19 +224,20 @@ struct PDFPane: View {
 
     private static let zoomPresets = [50, 75, 100, 125, 150, 200]
 
-    /// Find in PDF, floating over the top of the pages: the field, the
-    /// count, previous / next and Done, one glass capsule. A narrow pane
-    /// drops the count, then the arrows (Return and Shift-Return still
-    /// step), and narrows the field to what is left.
+    /// Find in PDF, as the source's find bar is: the field, previous / next,
+    /// the count (while there is room) and Done. Return and Shift-Return
+    /// step, Escape closes.
     private var findBar: some View {
-        ViewThatFits(in: .horizontal) {
-            findControls(count: true, steps: true)
-            findControls(count: false, steps: true)
-            findControls(count: false, steps: false)
-        }
-        .placingFields([0]) { _ in
+        PaneBar {
             SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
-                .controlSize(FloatingMetrics.controlSize)
+                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+            FindSteps(enabled: !controller.matches.isEmpty, step: controller.step)
+            FindCount(label: PDFFind.countLabel(
+                query: controller.query, total: controller.matches.count,
+                index: controller.matchIndex + 1, limited: controller.limited
+            ))
+            Button("Done") { closeFind() }
+                .buttonStyle(.bordered)
         }
         .task(id: findQuery) {
             // Debounced like the web's, so typing doesn't search every prefix.
@@ -251,38 +246,6 @@ struct PDFPane: View {
                 controller.find(findQuery)
             }
         }
-    }
-
-    private func findControls(count: Bool, steps: Bool) -> some View {
-        HStack(spacing: FloatingMetrics.itemSpacing) {
-            FieldSlot(id: 0, minWidth: steps ? BarMetrics.fieldMinWidth : 40, idealWidth: BarMetrics.fieldWidth,
-                      maxWidth: BarMetrics.fieldWidth + 40)
-            Group {
-                if count {
-                    Text(PDFFind.countLabel(
-                        query: controller.query, total: controller.matches.count,
-                        index: controller.matchIndex + 1, limited: controller.limited
-                    ))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                }
-                if steps {
-                    Button("Previous Match", systemImage: "chevron.up") { controller.step(-1) }
-                        .onGlass()
-                        .help("Previous Match")
-                        .disabled(controller.matches.isEmpty)
-                    Button("Next Match", systemImage: "chevron.down") { controller.step(1) }
-                        .onGlass()
-                        .help("Next Match")
-                        .disabled(controller.matches.isEmpty)
-                }
-                Button("Done") { closeFind() }
-                    .onGlass()
-                    .labelStyle(.titleOnly)
-            }
-            .fixedSize()
-        }
-        .floatingGlass(leadsWithField: true)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
@@ -344,13 +307,6 @@ private struct PageRow: View {
     }
 }
 
-/// Either of two label styles, chosen at run time.
-struct AnyLabelStyle: LabelStyle {
-    private let make: (Configuration) -> AnyView
-    init(_ style: some LabelStyle) { make = { AnyView(style.makeBody(configuration: $0)) } }
-    func makeBody(configuration: Configuration) -> some View { make(configuration) }
-}
-
 /// The find bar's rules, from the web's (web/src/findsession.js and
 /// workspace.js `showCount`).
 enum PDFFind {
@@ -370,46 +326,30 @@ enum PDFFind {
     }
 }
 
-/// Where a find bar's field goes in whichever layout a `ViewThatFits` picks.
-/// The field itself is drawn once, over the bar (`placingFields`), not in
-/// each layout: a field in each would be a new `NSSearchField` whenever the
-/// bar refolded (the match count growing from "Not found" to "46 of 512"
-/// does it), and the one being typed in lost focus mid-word.
-struct FieldSlot: View {
-    let id: Int
-    var minWidth: CGFloat
-    var idealWidth: CGFloat
-    var maxWidth: CGFloat = .infinity
-    @Environment(\.controlSize) private var controlSize
+/// A find bar's previous / next.
+struct FindSteps: View {
+    let enabled: Bool
+    let step: (Int) -> Void
 
     var body: some View {
-        Color.clear
-            .frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth)
-            .frame(height: SearchField.height(controlSize))
-            .anchorPreference(key: FieldSlots.self, value: .bounds) { [id: $0] }
+        ToolGroup(items: [
+            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up", enabled: enabled) { step(-1) },
+            Segment(id: "next", title: "Next Match", systemImage: "chevron.down", enabled: enabled) { step(1) },
+        ])
     }
 }
 
-struct FieldSlots: PreferenceKey {
-    static let defaultValue: [Int: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
+/// A find bar's match count, left out when the bar hasn't the room.
+struct FindCount: View {
+    let label: String
 
-extension View {
-    /// Draws the fields `ids` names over their `FieldSlot`s, each always
-    /// the same view, so it keeps focus as the layout under it changes.
-    func placingFields(_ ids: [Int], @ViewBuilder field: @escaping (Int) -> some View) -> some View {
-        overlayPreferenceValue(FieldSlots.self) { slots in
-            GeometryReader { proxy in
-                ForEach(ids, id: \.self) { id in
-                    let rect = slots[id].map { proxy[$0] } ?? .zero
-                    field(id)
-                        .frame(width: rect.width, height: rect.height)
-                        .offset(x: rect.minX, y: rect.minY)
-                }
-            }
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .fixedSize()
+            EmptyView()
         }
     }
 }
@@ -420,20 +360,16 @@ struct SearchOption {
     let isOn: Binding<Bool>
 }
 
-/// A search field in which Return steps to the next match (Shift-Return the
-/// previous), and Escape closes the bar: keys a SwiftUI text field keeps to
-/// itself; without `step` or `close` those keys do what they usually do.
-/// `options` go in the magnifier's menu. With `searches` false it is
-/// the replace field: a search field without its magnifier, since AppKit's
-/// plain text field stays at the regular height; Return calls `submit`.
+/// AppKit's search field, which SwiftUI has only as `.searchable`, in the
+/// toolbar or sidebar. Return steps to the next match (Shift-Return the
+/// previous) and Escape closes the bar; without `step` or `close` those
+/// keys do what they usually do. `options` go in the magnifier's menu.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
-    var searches = true
     var focus = 0
     var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
-    var submit: (@MainActor () -> Void)?
     var close: (@MainActor () -> Void)?
 
     @MainActor
@@ -458,13 +394,8 @@ struct SearchField: NSViewRepresentable {
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
-                if let step = field.step {
-                    step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
-                } else if let submit = field.submit {
-                    submit()
-                } else {
-                    return false
-                }
+                guard let step = field.step else { return false }
+                step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
                 guard let close = field.close else { return false }
@@ -477,20 +408,6 @@ struct SearchField: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    /// The field's height at a control size, for the room a `FieldSlot`
-    /// keeps for it.
-    @MainActor static func height(_ size: ControlSize) -> CGFloat {
-        if let height = heights[size] { return height }
-        let view = NSSearchField()
-        view.controlSize = NSControl.ControlSize(size)
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
-        let height = view.intrinsicContentSize.height
-        heights[size] = height
-        return height
-    }
-
-    @MainActor private static var heights: [ControlSize: CGFloat] = [:]
 
     /// A search field that can be asked for focus before it is in a
     /// window: a find bar shown by ⌘F is made in the same update that asks,
@@ -539,18 +456,6 @@ struct SearchField: NSViewRepresentable {
         view.placeholderString = prompt
         view.controlSize = NSControl.ControlSize(context.environment.controlSize)
         view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
-        // No magnifier, but its room kept, so the text starts where the find
-        // field's does above it: an empty menu makes AppKit lay out the same
-        // magnifier-with-menu button as the find field's options menu does.
-        // After the size and the menu, which both set the image again.
-        if !searches {
-            if view.searchMenuTemplate == nil { view.searchMenuTemplate = NSMenu(title: "") }
-            if let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
-                button.image = nil
-                button.alternateImage = nil
-                button.isEnabled = false
-            }
-        }
         if view.stringValue != text { view.stringValue = text }
         // The field copies its menu, so it is made again when a state changes.
         let states = options.map(\.isOn.wrappedValue)

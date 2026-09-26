@@ -32,20 +32,8 @@ struct HomeView: View {
                 Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
             }
-            // Apart, or + and the field share one glass piece.
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            // The kit's toolbar search: about 180 pt at the trailing edge.
-            // SwiftUI's `.searchable` grew to half the window beside a
-            // lone +, and neither its width nor `searchToolbarBehavior
-            // (.minimize)` can be set on macOS. The toolbar draws the
-            // field on its own glass capsule, as the kit's search is.
-            ToolbarItem(placement: .primaryAction) {
-                SearchField(text: $query, prompt: "Search Projects")
-                    // The toolbar's 36 pt, as the + beside it.
-                    .controlSize(.extraLarge)
-                    .frame(width: Self.searchWidth)
-            }
         }
+        .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .task(id: app.tex?.available) { await app.watchForTeX() }
         // `presenting`, so the title keeps its name while the dialog closes.
         .confirmationDialog(
@@ -67,7 +55,6 @@ struct HomeView: View {
     /// macOS 27. The section titles and template cards take the same edge,
     /// so New, Recent, Name and the rows start on one line.
     private static let margin: CGFloat = 18
-    private static let searchWidth: CGFloat = 180
 
     // ---------- new ----------
 
@@ -76,12 +63,12 @@ struct HomeView: View {
             Text("New")
                 .font(Typography.sectionTitle)
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: TemplateCard.spacing) {
+                HStack(alignment: .top) {
                     ForEach(ProjectTemplate.all) { template in
                         Button { app.newProject(template.id) } label: {
                             TemplateCard(template: template)
                         }
-                        .buttonStyle(CardButtonStyle())
+                        .buttonStyle(.plain)
                         .help("New \(template.title) Project")
                     }
                 }
@@ -248,22 +235,24 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
-/// A template's card, as the kit's group box: a drawing of its first page,
-/// then its name, on a faint fill with continuous corners.
+/// A template's card, in the system's group box: a drawing of its first
+/// page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
     /// A drawing of a Letter page: the thumbnail's size and its corners.
     private static let page = CGSize(width: 120, height: 156)
     private static let corner: CGFloat = 6
-    /// The kit's group box: 12 pt corners, 12 pt around its content here
-    /// (the kit's 20 made the row wider than the window's minimum), cards
-    /// 12 pt apart.
-    static let radius: CGFloat = 12
-    static let padding: CGFloat = 12
-    static let spacing: CGFloat = 12
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        GroupBox {
+            content
+        }
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
             PagePreview(page: template.page)
                 .frame(width: Self.page.width, height: Self.page.height)
@@ -285,35 +274,6 @@ private struct TemplateCard: View {
                     .lineLimit(2, reservesSpace: true)
                     .frame(width: Self.page.width, alignment: .leading)
             }
-        }
-        .padding(Self.padding)
-        .contentShape(.rect(cornerRadius: Self.radius, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// The template cards' look: the kit's group box, its fill a step
-/// stronger under the pointer and again while pressed, and the system's
-/// focus ring.
-private struct CardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Card(configuration: configuration)
-    }
-
-    private struct Card: View {
-        let configuration: Configuration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .background(fill, in: .rect(cornerRadius: TemplateCard.radius, style: .continuous))
-                .onHover { hovering = $0 }
-        }
-
-        private var fill: AnyShapeStyle {
-            if configuration.isPressed { AnyShapeStyle(.fill.secondary) }
-            else if hovering { AnyShapeStyle(.fill.tertiary) }
-            else { AnyShapeStyle(.fill.quinary) }
         }
     }
 }

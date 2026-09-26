@@ -379,64 +379,37 @@ private struct SectionCrumb: View {
 
 /// Find and replace in the source, as Xcode's find bar has it; CodeMirror
 /// does the searching, its own panel hidden. Text actions are push buttons.
-/// Narrow panes fold it so the fields and Done are never clipped.
+/// One layout: in a narrow pane the fields narrow, the count goes and
+/// Replace All folds into Replace's menu.
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
         PaneBarRows {
-            ViewThatFits(in: .horizontal) {
-                // Replace All folds into Replace's menu, and the fields
-                // narrow, before the count goes: the minimum window still
-                // says "Not found".
-                rows(count: true, replaceMenu: false)
-                rows(count: true, replaceMenu: true)
-                rows(count: true, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
-                rows(count: false, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
-                rows(count: false, replaceMenu: true, fieldWidth: 0)
-            }
-            .placingFields([0, 1]) { id in
-                if id == 0 {
+            Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
+                GridRow {
                     SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
                                 options: options, step: { project.findStep($0) }, close: { project.closeFind() })
-                } else {
-                    SearchField(text: $project.findQuery.replace, prompt: "Replace", searches: false,
-                                submit: { project.replace(all: false) }, close: { project.closeFind() })
-                }
-            }
-        }
-    }
-
-    /// The fields' slots share the one flexible column, so they take what
-    /// the buttons leave and line up; the buttons' column keeps to the
-    /// trailing edge, Done ending the first row. The fields themselves are
-    /// drawn over the slots (`placingFields`), the same views in every layout.
-    private func rows(count: Bool, replaceMenu: Bool, fieldWidth: CGFloat = BarMetrics.fieldWidth) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
-            GridRow {
-                FieldSlot(id: 0, minWidth: fieldWidth, idealWidth: fieldWidth)
-                HStack(spacing: BarMetrics.groupSpacing) {
-                    ToolGroup(items: [
-                        Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
-                                enabled: project.findMatches.total > 0) { project.findStep(-1) },
-                        Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
-                                enabled: project.findMatches.total > 0) { project.findStep(1) },
-                    ])
-                    if count {
-                        Text(project.findMatches.label(for: project.findQuery.search))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                        .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+                    HStack(spacing: BarMetrics.groupSpacing) {
+                        FindSteps(enabled: project.findMatches.total > 0) { project.findStep($0) }
+                        FindCount(label: project.findMatches.label(for: project.findQuery.search))
+                        Button("Done") { project.closeFind() }
+                            .buttonStyle(.bordered)
                     }
-                    Button("Done") { project.closeFind() }
-                        .buttonStyle(.bordered)
+                    .gridColumnAlignment(.trailing)
                 }
-                .fixedSize()
-                .gridColumnAlignment(.trailing)
-            }
-            GridRow {
-                FieldSlot(id: 1, minWidth: fieldWidth, idealWidth: fieldWidth)
-                Group {
-                    if replaceMenu {
+                GridRow {
+                    TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { project.replace(all: false) }
+                        .onExitCommand { project.closeFind() }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: BarMetrics.spacing) {
+                            Button("Replace") { project.replace(all: false) }
+                            Button("Replace All") { project.replace(all: true) }
+                        }
                         // Replace, with Replace All in its menu.
                         Menu("Replace") {
                             Button("Replace All") { project.replace(all: true) }
@@ -444,16 +417,10 @@ struct SourceFindBar: View {
                             project.replace(all: false)
                         }
                         .menuStyle(.button)
-                    } else {
-                        HStack(spacing: BarMetrics.spacing) {
-                            Button("Replace") { project.replace(all: false) }
-                            Button("Replace All") { project.replace(all: true) }
-                        }
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(project.findMatches.total == 0)
                 }
-                .buttonStyle(.bordered)
-                .fixedSize()
-                .disabled(project.findMatches.total == 0)
             }
         }
     }
