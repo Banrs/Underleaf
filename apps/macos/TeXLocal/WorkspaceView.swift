@@ -243,66 +243,103 @@ struct InspectorView: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        Form {
-            Section("Project") {
-                Picker("Main File", selection: Binding(
-                    get: { project.settings?.mainFile ?? "" },
-                    set: { path in Task { await project.setMainFile(path) } }
-                )) {
-                    ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
+        // Label-and-value rows straight on the pane's glass, as Xcode's
+        // inspector has them: a bold title per section, a hairline between
+        // sections, labels right-aligned in one column. Grouped boxes read
+        // as a layer of their own on glass.
+        ScrollView {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: BarMetrics.groupSpacing,
+                 verticalSpacing: BarMetrics.groupSpacing) {
+                header("Project")
+                GridRow {
+                    label("Main File")
+                    Picker("Main File", selection: Binding(
+                        get: { project.settings?.mainFile ?? "" },
+                        set: { path in Task { await project.setMainFile(path) } }
+                    )) {
+                        ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                Picker("Engine", selection: Binding(
-                    get: { project.settings?.engine ?? "pdflatex" },
-                    set: { engine in Task { await project.setEngine(engine) } }
-                )) {
-                    ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+                GridRow {
+                    label("Engine")
+                    Picker("Engine", selection: Binding(
+                        get: { project.settings?.engine ?? "pdflatex" },
+                        set: { engine in Task { await project.setEngine(engine) } }
+                    )) {
+                        ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                Toggle(isOn: Binding(
-                    get: { project.settings?.shellEscape ?? false },
-                    set: { on in Task { await project.setShellEscape(on) } }
-                )) {
-                    Text("Shell Escape")
-                    Text("Lets packages such as minted run programs. Only for projects you trust.")
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Toggle(isOn: Binding(
+                        get: { project.settings?.shellEscape ?? false },
+                        set: { on in Task { await project.setShellEscape(on) } }
+                    )) {
+                        Text("Shell Escape")
+                        Text("Lets packages such as minted run programs. Only for projects you trust.")
+                    }
                 }
-            }
-            .disabled(project.settings == nil)
-
-            if let path = project.openPath {
-                Section("Document") {
-                    LabeledContent("Name", value: (path as NSString).lastPathComponent)
-                    LabeledContent("Folder", value: folder(of: path))
+                if let path = project.openPath {
+                    separator
+                    header("Document")
+                    row("Name", (path as NSString).lastPathComponent)
+                    row("Folder", folder(of: path))
                     if let counts = project.counts {
-                        LabeledContent("Words", value: counts.words.formatted())
-                        LabeledContent("Lines", value: counts.lines.formatted())
+                        row("Words", counts.words.formatted())
+                        row("Lines", counts.lines.formatted())
                     }
                     if !project.outline.isEmpty {
-                        LabeledContent("Sections", value: project.outline.count.formatted())
+                        row("Sections", project.outline.count.formatted())
                     }
                 }
-            }
-
-            Section("Build") {
+                separator
+                header("Build")
                 if let result = project.result {
-                    LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
-                    LabeledContent("Duration") {
-                        Text(result.durationText).monospacedDigit()
-                    }
-                    LabeledContent("Errors", value: project.errorCount.formatted())
-                    LabeledContent("Warnings", value: project.warningCount.formatted())
+                    row("Last Build", result.ok ? "Succeeded" : "Failed")
+                    row("Duration", result.durationText)
+                    row("Errors", project.errorCount.formatted())
+                    row("Warnings", project.warningCount.formatted())
                 } else {
                     // The status bar's phrase, shortened to fit beside its
                     // label in a narrow inspector.
-                    LabeledContent("Last Build", value: project.pdfVersion > 0 ? "None Yet" : "None")
+                    row("Last Build", project.pdfVersion > 0 ? "None Yet" : "None")
                 }
                 if let freshness = project.pdfFreshness {
-                    Label(freshness.title, systemImage: freshness.systemImage)
-                        .foregroundStyle(.secondary)
+                    GridRow {
+                        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        Label(freshness.title, systemImage: freshness.systemImage)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .disabled(project.settings == nil)
+            .monospacedDigit()
+            .padding(BarMetrics.inset * 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .formStyle(.grouped)
-        // The pane's glass shows through, as an inspector's does.
-        .scrollContentBackground(.hidden)
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title).font(.headline).gridCellColumns(2)
+    }
+
+    private var separator: some View {
+        Divider().gridCellColumns(2).padding(.vertical, BarMetrics.spacing)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+    }
+
+    private func row(_ name: String, _ value: String) -> some View {
+        GridRow {
+            label(name)
+            Text(value).textSelection(.enabled)
+        }
     }
 
     private func folder(of path: String) -> String {

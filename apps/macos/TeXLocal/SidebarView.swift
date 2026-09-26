@@ -26,6 +26,20 @@ struct NavigatorView: View {
         ])
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
         .searchFocused($searchFocused)
+        // Adding files, over the sidebar it adds to, as Notes' New Folder
+        // is: on the toolbar's glass, and gone with the sidebar.
+        .toolbar {
+            ToolbarItem {
+                Menu("Add Files", systemImage: "plus") {
+                    Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
+                    Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                    Divider()
+                    Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+                }
+                .menuIndicator(.hidden)
+                .help("Add Files")
+            }
+        }
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
     }
 
@@ -307,10 +321,12 @@ private struct OutlineHeader: View {
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
             Spacer(minLength: BarMetrics.spacing)
-            Button(collapsed ? "Show File Outline" : "Hide File Outline",
-                   systemImage: collapsed ? "chevron.right" : "chevron.down") { collapsed.toggle() }
+            // One chevron that turns with the slide, as a disclosure does.
+            Button { toggle() } label: {
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+            }
                 .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
                 .controlSize(.small)
                 .foregroundStyle(.secondary)
                 .help(collapsed ? "Show File Outline" : "Hide File Outline")
@@ -322,7 +338,11 @@ private struct OutlineHeader: View {
         .padding(.trailing, Self.trailing)
         .frame(height: Self.height)
         .contentShape(.rect)
-        .onTapGesture { collapsed.toggle() }
+        .onTapGesture { toggle() }
+    }
+
+    private func toggle() {
+        withAnimation(.snappy(duration: 0.25)) { collapsed.toggle() }
     }
 
     /// The Files header's title and accessory insets, so the two headers

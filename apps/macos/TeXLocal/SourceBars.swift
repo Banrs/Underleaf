@@ -326,7 +326,8 @@ struct SourceLocation: View {
             Label(name, systemImage: "doc.text").labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        // A quiet fill under the pointer, as Xcode's jump bar has.
+        .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help(path)
     }
@@ -370,7 +371,7 @@ private struct SectionCrumb: View {
             .labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help("Go to a Section")
     }

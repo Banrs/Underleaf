@@ -139,12 +139,15 @@ private struct StatusBar: View {
                 items(save: false, counts: false, engine: false)
             }
             ToolSeparator()
-            Toggle(isOn: $project.showLogs) {
+            // Tinted while the panel shows, as Xcode's bottom-bar toggles
+            // are, rather than an "on" bezel.
+            Button { project.showLogs.toggle() } label: {
                 Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
-            .toggleStyle(.button)
             .labelStyle(.iconOnly)
+            .foregroundStyle(project.showLogs ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
+            .accessibilityValue(project.showLogs ? "Shown" : "Hidden")
         }
         .buttonStyle(.accessoryBar)
         .foregroundStyle(.secondary)
