@@ -70,6 +70,8 @@ The browser version (`web/`) is universal web design, not Mac- or Windows-styled
 - **Recent projects are real links.**
 - **The Tauri app keeps its Mac look (`html.mac`)** until it is retired.
 - **The source bar matches the Mac's** (`web/src/sourcebar.js`): the same groups and order, folding into ⋯ from the end, a location row under it, and a symbol palette whose symbols are wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in `web/src/editor.js`). Files sit over a docked File Outline (a listbox) with a resizable divider (`outlineHeight` pref); the outline follows the top visible line.
+- **Builds (2026-09-27):** Compile is Stop while a build runs (`stop_compile`, and anything queued goes too); a stopped build reads Build stopped with no toast. A build's PDF shows whenever it wrote one, errors or not, with the count on the log button; the log takes the PDF's place only when a failed build left no PDF. An issue the core couldn't place has no location and no jump. Settings › Project › Stop on first error.
+- **Uploads:** names already taken are asked about once per upload (`clashQuestion`, the Mac's words): Replace (the old ones to the Trash, `X-Replace` on just those files), Keep Both (`keepBoth` in `web/src/api.js`, as the core's) or Stop. A dropped folder leaves its hidden entries and `__MACOSX` behind, as the core's own import does.
 
 ## Done and verified
 
@@ -203,7 +205,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - **`TeXLocal.Core`** has no WinUI. It holds:
     - `Core.cs`: `[LibraryImport]` over the FFI, with every call off the UI thread;
     - the data shapes, and `MenuCommand` (the ids and shortcuts from `commandDefs`);
-    - the outline parser, `ProjectPaths` (moving the open file's path on a rename) and `Preferences` (JSON under `%LOCALAPPDATA%\TeXLocal`).
+    - the outline's types and breadcrumb (the outline, words and lines themselves come from the core's `analyze`; the C# port is gone, 2026-09-27), `ProjectPaths` (moving the open file's path on a rename) and `Preferences` (JSON under `%LOCALAPPDATA%\TeXLocal`).
   - **`TeXLocal.Tests`** (xUnit): the FFI round trip, the shortcut table checked against `workspace.js`, and the pure logic.
   - **`TeXLocal`:** the WinUI 3 app.
     - It is unpackaged and x64. .NET 10 and Windows App SDK 2.5.1 are both bundled, so users install neither.
@@ -215,6 +217,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Done: menus, toolbar, sidebar (tree, search, outline), autosave and the compile queue, compile and log, PDF find and zoom, SyncTeX, import and export.
   - Also done: word count and the breadcrumb in a status bar, interface size, PDF paper, numpad shortcuts, and dropping files onto a tree folder to import into it.
   - Closing flushes first and then calls `kill_all`. A crashed editor page recovers.
+  - Wired to the core's 2026-09-27 changes, unbuilt so far (as the Mac and the web): Compile is Stop while a build runs (`stop_compile`); a stopped build reads Build stopped and sends no notification; a build's PDF shows whenever it wrote one, errors or not, the log taking its place only when a failed build left none; Settings › Stop on first error (per project); an import onto names already taken asks once, in a ContentDialog: Replace (to the Recycle Bin), Keep both or Stop. The Insert menu names its blocks by id (`block` on the editor page; the LaTeX is in `web/src/latex-data.js` `BLOCK_TEMPLATES` alone).
   - Both macOS reviews' bug fixes are applied here too. The app uses `texlocal.rename` and the undo fallback from `web/src/embed/editor.js`.
   - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
   - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`, unbuilt so far; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
@@ -267,7 +270,8 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Editor size and Windows text size scale the editor, and CodeMirror still measures correctly.
   - Dark paper.
   - The status bar.
-  - Drag-and-drop onto a folder.
+  - Drag-and-drop onto a folder, and onto a name already there (the Replace / Keep both / Stop dialog).
+  - Compile turning into Stop and back, and Stop ending a long build (Build stopped in the log's header).
   - Saving and closing:
     - typing while a save is in progress loses nothing;
     - after a main-file change, the old PDF stays until the new one builds;

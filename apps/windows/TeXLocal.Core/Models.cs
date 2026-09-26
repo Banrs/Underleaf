@@ -17,20 +17,31 @@ public sealed record TreeNode(string Type, string Name, string Path, IReadOnlyLi
 /// <summary>TexDir is the folder the user chose (null: found automatically); Found is where latexmk runs from.</summary>
 public sealed record TexStatus(bool Available, string? Version, string? TexDir = null, string? Found = null);
 
-public sealed record ProjectSettings(string MainFile, string Engine, bool ShellEscape);
+/// <summary>StopOnFirstError halts a build at its first error; by default it compiles past them.</summary>
+public sealed record ProjectSettings(string MainFile, string Engine, bool ShellEscape, bool StopOnFirstError);
 
 public sealed record LogItem(string Type, string? File, int? Line, string Message)
 {
     public bool IsError => Type == "error";
 }
 
+/// <summary>
+/// A build's outcome. Pdf is set whenever this build wrote one, errors or
+/// not, since builds compile past them; Stopped when Stop, a newer build or
+/// quitting ended it.
+/// </summary>
 public sealed record CompileResult(
     bool Ok,
     long DurationMs,
     string? Pdf,
     IReadOnlyList<LogItem> Errors,
     IReadOnlyList<LogItem> Warnings,
-    string Log);
+    string Log,
+    bool Stopped)
+{
+    /// <summary>Failed by itself: a stopped build isn't a failure.</summary>
+    public bool Failed => !Ok && !Stopped;
+}
 
 public sealed record Symbols(IReadOnlyList<string> Citations, IReadOnlyList<string> Labels);
 
@@ -50,7 +61,13 @@ public sealed record ForwardLoc(double Page, double? H, double? V, double? Width
 
 public sealed record InverseLoc(string File, int Line);
 
-public sealed record ImportResult(IReadOnlyList<string> Saved);
+/// <summary>
+/// import_files' result. Asked nothing about names already taken, it
+/// writes nothing and lists them in Existing, each with its Keep Both name.
+/// </summary>
+public sealed record ImportResult(IReadOnlyList<string> Saved, IReadOnlyList<ImportClash> Existing);
+
+public sealed record ImportClash(string Path, string KeepBoth);
 
 /// <summary>rename_entry's result: both paths as the core normalised them.</summary>
 public sealed record RenameResult(string From, string To, string MainFile);

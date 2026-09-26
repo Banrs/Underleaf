@@ -24,19 +24,18 @@ public sealed partial class LogsView : UserControl
         Issues.ItemsSource = rows;
         NoIssues.Text = result is null ? "Not compiled yet"
             : rows.Count > 0 ? ""
-            : result.Ok ? "No issues"
-            // TeX stopped without an error the log parser recognises (a
-            // missing format, a crash): the raw log is the only explanation.
+            : !result.Failed ? "No issues"
+            // The core names a cause for every failure; this is a fallback.
             : "The compile failed without a recognisable error. See the raw log for TeX’s own output.";
         RawText.Text = result?.Log ?? "";
         SuccessIcon.Visibility = result is { Ok: true } ? Visibility.Visible : Visibility.Collapsed;
-        FailureIcon.Visibility = result is { Ok: false } ? Visibility.Visible : Visibility.Collapsed;
+        FailureIcon.Visibility = result is { Failed: true } ? Visibility.Visible : Visibility.Collapsed;
         if (result is null)
         {
             OutcomeText.Text = DurationText.Text = "";
             return;
         }
-        OutcomeText.Text = result.Ok ? "Compiled" : "Failed";
+        OutcomeText.Text = result.Stopped ? "Build stopped" : result.Ok ? "Compiled" : "Failed";
         DurationText.Text = $"{result.DurationMs / 1000.0:0.0}s";
     }
 

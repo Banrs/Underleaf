@@ -421,6 +421,10 @@ public sealed partial class MainWindow : Window
         Close();
     }
 
+    /// <summary>Replace, Keep both or Stop, for an import onto names already taken.</summary>
+    internal Task<string?> AskImportClashAsync(IReadOnlyList<ImportClash> clashes) =>
+        Dialogs.ImportClashAsync(Root.XamlRoot, clashes);
+
     /// <summary>A compile that ends while the window is in the background says so.</summary>
     internal void NotifyCompiled(CompileResult result)
     {

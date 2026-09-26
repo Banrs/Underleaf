@@ -7,8 +7,8 @@ namespace TeXLocal;
 
 /// <summary>
 /// Settings as a page in the Windows 11 style: grouped cards, each applied
-/// the moment it changes. The engine belongs to the open project; the rest
-/// to the app.
+/// the moment it changes. The engine and Stop on first error belong to the
+/// open project; the rest to the app.
 /// </summary>
 public sealed partial class SettingsView : UserControl
 {
@@ -54,6 +54,8 @@ public sealed partial class SettingsView : UserControl
         EngineDescription.Text = project is null
             ? "Open a project to choose the engine it compiles with"
             : $"The engine {project.Id} compiles with";
+        StopOnFirstErrorSwitch.IsEnabled = project is not null;
+        StopOnFirstErrorSwitch.IsOn = project?.Settings?.StopOnFirstError ?? false;
 
         var tex = Main.Tex;
         TexDescription.Text = tex switch
@@ -107,6 +109,16 @@ public sealed partial class SettingsView : UserControl
         if (!rendering && Main.Project is { } project)
         {
             _ = project.SetEngineAsync(Engines[Math.Max(0, EngineBox.SelectedIndex)]);
+        }
+    }
+
+    /// <summary>Saved to the project; a save that fails puts the switch back.</summary>
+    private async void OnStopOnFirstErrorToggled(object sender, RoutedEventArgs e)
+    {
+        if (!rendering && Main.Project is { } project)
+        {
+            await project.SetStopOnFirstErrorAsync(StopOnFirstErrorSwitch.IsOn);
+            Render();
         }
     }
 

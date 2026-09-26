@@ -181,10 +181,13 @@ public sealed partial class WorkspaceView : UserControl
         }
         Main.UpdateTitle();
 
-        CompileButton.IsEnabled = p.TexAvailable && !p.Compiling;
+        // While a build runs, the button stops it, the ring saying it runs.
+        CompileButton.IsEnabled = p.TexAvailable;
         CompileProgress.IsActive = p.Compiling;
         CompileIcon.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
-        SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
+        CompileLabel.Text = p.Compiling ? "Stop" : "Compile";
+        AutomationProperties.SetName(CompileButton, p.Compiling ? "Stop the build" : "Compile");
+        SetToolTip(CompileButton, !p.TexAvailable ? "Install TeX to compile" : p.Compiling ? "Stop the build" : "Compile (Ctrl+Enter)");
         var engine = p.Settings?.Engine ?? "pdflatex";
         EnginePdf.IsChecked = engine == "pdflatex";
         EngineXe.IsChecked = engine == "xelatex";
@@ -384,7 +387,17 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnMath(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditMath);
 
-    private void OnCompile(SplitButton sender, SplitButtonClickEventArgs args) => Main.Perform(MenuCommand.CompileRun);
+    private void OnCompile(SplitButton sender, SplitButtonClickEventArgs args)
+    {
+        if (project is { Compiling: true } p)
+        {
+            _ = p.StopCompileAsync();
+        }
+        else
+        {
+            Main.Perform(MenuCommand.CompileRun);
+        }
+    }
 
     private void OnEngine(object sender, RoutedEventArgs e)
     {

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- The app's logic without its UI: the Rust core through its C ABI, the
-       core's JSON shapes, the command table and the outline parser. No WinUI
+       core's JSON shapes, the command table and the outline's types. No WinUI
        here, so the tests load it without a window. -->
   <PropertyGroup>
     <RootNamespace>TeXLocal</RootNamespace>

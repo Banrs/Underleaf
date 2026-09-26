@@ -76,6 +76,48 @@ internal static class Dialogs
         return await ShowAsync(dialog, root) == ContentDialogResult.Primary;
     }
 
+    /// <summary>
+    /// Names an import would take, asked about once for them all, in the
+    /// Mac's words: "replace", "keepBoth", or null to stop.
+    /// </summary>
+    public static async Task<string?> ImportClashAsync(XamlRoot root, IReadOnlyList<ImportClash> clashes)
+    {
+        var names = clashes.Select(c => c.Path).ToList();
+        var one = names.Count == 1;
+        var replace = one
+            ? "Do you want to replace it with the one you’re copying? The one here will be moved to the Recycle Bin."
+            : "Do you want to replace them with the ones you’re copying? The ones here will be moved to the Recycle Bin.";
+        // A few by name, so a folder's worth doesn't fill the dialog.
+        var shown = names.Take(3).Select(n => $"“{n}”").ToList();
+        if (names.Count > shown.Count)
+        {
+            shown.Add($"{names.Count - shown.Count} more");
+        }
+        var list = shown.Count switch
+        {
+            1 => shown[0],
+            2 => $"{shown[0]} and {shown[1]}",
+            _ => $"{string.Join(", ", shown[..^1])}, and {shown[^1]}",
+        };
+        var dialog = new ContentDialog
+        {
+            Title = one
+                ? $"An item named “{names[0][(names[0].LastIndexOf('/') + 1)..]}” already exists here"
+                : $"{names.Count} items with these names already exist here",
+            Content = new TextBlock { Text = one ? replace : $"{list}. {replace}", TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = "Replace",
+            SecondaryButtonText = "Keep both",
+            CloseButtonText = "Stop",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        return await ShowAsync(dialog, root) switch
+        {
+            ContentDialogResult.Primary => "replace",
+            ContentDialogResult.Secondary => "keepBoth",
+            _ => null,
+        };
+    }
+
     private static readonly (string Id, string Label)[] Templates =
     [
         ("article", "Article"), ("report", "Report"), ("beamer", "Beamer slides"), ("blank", "Blank"),

@@ -1,5 +1,6 @@
 namespace TeXLocal.Tests;
 
+[Collection("Rust core")]
 public sealed class CoreTests
 {
     [Fact]
@@ -34,10 +35,21 @@ public sealed class CoreTests
 
             var drop = Directory.CreateTempSubdirectory("texlocal-drop-").FullName;
             File.WriteAllText(Path.Combine(drop, "notes.tex"), "n");
-            var imported = await core.CallAsync<ImportResult>(
-                "import_files", new { id = info.Id, dir = "in", paths = new[] { Path.Combine(drop, "notes.tex") } });
+            var notes = new[] { Path.Combine(drop, "notes.tex") };
+            var imported = await core.CallAsync<ImportResult>("import_files", new { id = info.Id, dir = "in", paths = notes });
             Assert.Equal("in/notes.tex", Assert.Single(imported.Saved));
+            // Again: the name is taken, so nothing is written until the app answers.
+            var clash = await core.CallAsync<ImportResult>(
+                "import_files", new { id = info.Id, dir = "in", paths = notes, conflict = (string?)null });
+            Assert.Empty(clash.Saved);
+            Assert.Equal(new ImportClash("notes.tex", "notes 2.tex"), Assert.Single(clash.Existing));
+            var kept = await core.CallAsync<ImportResult>(
+                "import_files", new { id = info.Id, dir = "in", paths = notes, conflict = "keepBoth" });
+            Assert.Equal("in/notes 2.tex", Assert.Single(kept.Saved));
             Directory.Delete(drop, recursive: true);
+
+            // A project build that isn't running has nothing to stop.
+            Assert.False(await core.CallAsync<bool>("stop_compile", new { id = info.Id }));
 
             var zip = Path.Combine(data, "out.zip");
             await core.PerformAsync("export_zip", new { id = info.Id, dest = zip });

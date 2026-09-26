@@ -88,8 +88,8 @@ internal sealed class ProjectModel : INotifyPropertyChanged
 
     /// <summary>
     /// The PDF on screen, and a counter bumped whenever a new one is on disk.
-    /// Only a successful build moves it, so a new main file keeps showing the
-    /// last PDF until its own exists.
+    /// Only a build that wrote one moves it, so a new main file keeps showing
+    /// the last PDF until its own exists.
     /// </summary>
     public string? PdfPath { get; private set; }
     public int PdfVersion { get => pdfVersion; private set => Set(ref pdfVersion, value); }
@@ -276,14 +276,38 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         OpenPath = path;
         CursorLine = 1;
-        Analyze(path, file.Text);
+        _ = AnalyzeAsync(path, file.Text);
         await editor.OpenAsync($"{Id}/{path}", file.Text);
         return true;
     }
 
-    /// <summary>The outline, breadcrumb and word count; as in the web, only a .tex file has them.</summary>
-    private void Analyze(string path, string text) =>
-        Stats = path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) ? Outline.Analyze(text) : null;
+    private int analysis;
+
+    /// <summary>
+    /// The outline, breadcrumb and word count, from the core; as in the web,
+    /// only a .tex file has them. The latest reading of the open file wins.
+    /// </summary>
+    private async Task AnalyzeAsync(string path, string text)
+    {
+        var request = ++analysis;
+        DocumentStats? stats = null;
+        if (path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                stats = await Outline.AnalyzeAsync(core, text);
+            }
+            catch (CoreException)
+            {
+                // The outline and counts stay as they were; the next save reads again.
+                return;
+            }
+        }
+        if (request == analysis && path == OpenPath)
+        {
+            Stats = stats;
+        }
+    }
 
     // Whether unsaved edits were in the editor page when its renderer died.
     private bool lostInCrash;
@@ -385,7 +409,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             await core.PerformAsync("write_file", new { id = Id, path, text });
             if (path == OpenPath)
             {
-                Analyze(path, text);
+                _ = AnalyzeAsync(path, text);
             }
             await RefreshSymbolsAsync();
             return true;
@@ -444,6 +468,8 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     // ---------- compile ----------
 
     private bool compileQueued;
+    // Stop was pressed before the build it stops had started (while saving).
+    private bool stopRequested;
 
     private Task CompileIfAutoAsync() => AutoCompile ? CompileAsync(auto: true) : Task.CompletedTask;
 
@@ -466,11 +492,12 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         // Busy from the first moment, so a second request queues rather than
         // starting a parallel compile while this one saves.
         Compiling = true;
+        stopRequested = false;
         var saved = false;
         try
         {
             saved = await FlushAsync();
-            if (!saved)
+            if (!saved || stopRequested)
             {
                 return;
             }
@@ -480,13 +507,21 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 return;
             }
             Result = result;
-            if (result.Ok && await CompiledPdfAsync() is { } pdf)
+            // Builds compile past their errors, as Overleaf's do: whenever
+            // this one wrote a PDF it shows, with the count on the log
+            // button. The log takes its place only when a failed build left
+            // nothing to show.
+            if (result.Pdf is not null && await CompiledPdfAsync() is { } pdf)
             {
                 PdfPath = pdf;
                 PdfVersion++;
             }
-            ShowLogs = !result.Ok;
-            app.NotifyCompiled(result);
+            ShowLogs = result.Failed && result.Pdf is null;
+            // Whoever stopped a build knows.
+            if (!result.Stopped)
+            {
+                app.NotifyCompiled(result);
+            }
         }
         catch (CoreException e)
         {
@@ -513,6 +548,28 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Stop this project's build, and any queued behind it: the compile then
+    /// reports itself stopped.
+    /// </summary>
+    public async Task StopCompileAsync()
+    {
+        if (!Compiling)
+        {
+            return;
+        }
+        compileQueued = false;
+        stopRequested = true;
+        try
+        {
+            await core.PerformAsync("stop_compile", new { id = Id });
+        }
+        catch (CoreException e)
+        {
+            Report(e);
+        }
+    }
+
     public async Task SetEngineAsync(string engine)
     {
         if (engine == Settings?.Engine)
@@ -524,6 +581,23 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { engine } });
             // A new engine only means something once a build uses it.
             await CompileAsync(auto: true);
+        }
+        catch (CoreException e)
+        {
+            Report(e);
+        }
+    }
+
+    /// <summary>Halt builds at the first error, or (by default) compile past them.</summary>
+    public async Task SetStopOnFirstErrorAsync(bool on)
+    {
+        if (on == Settings?.StopOnFirstError)
+        {
+            return;
+        }
+        try
+        {
+            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { stopOnFirstError = on } });
         }
         catch (CoreException e)
         {
@@ -671,12 +745,25 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Copy files and folders from elsewhere into the project, at the root or into a folder.</summary>
-    public async Task ImportFilesAsync(IReadOnlyList<string> paths, string dir = "")
+    /// <summary>
+    /// Copy files and folders from elsewhere into the project, at the root or
+    /// into a folder. Names already taken there are asked about once for the
+    /// whole import, as on the Mac, then it runs again with the answer:
+    /// "replace" (the old ones go to the Recycle Bin) or "keepBoth" ("a 2.png").
+    /// </summary>
+    public async Task ImportFilesAsync(IReadOnlyList<string> paths, string dir = "", string? conflict = null)
     {
         try
         {
-            await core.CallAsync<ImportResult>("import_files", new { id = Id, dir, paths });
+            var imported = await core.CallAsync<ImportResult>("import_files", new { id = Id, dir, paths, conflict });
+            if (conflict is null && imported.Existing.Count > 0)
+            {
+                if (await app.AskImportClashAsync(imported.Existing) is { } answer)
+                {
+                    await ImportFilesAsync(paths, dir, answer);
+                }
+                return;
+            }
             await ReloadTreeAsync();
             await RefreshSymbolsAsync();
         }

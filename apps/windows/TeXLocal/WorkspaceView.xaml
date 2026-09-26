@@ -85,7 +85,7 @@
                 <AppBarSeparator />
                 <!-- Compile is the primary action; the engine and auto-compile
                      live in its menu, the way a split button carries a default
-                     and its options. -->
+                     and its options. While a build runs it is Stop. -->
                 <AppBarElementContainer VerticalAlignment="Center" Margin="4,0">
                     <SplitButton x:Name="CompileButton" Click="OnCompile" AccessKey="R"
                                  AutomationProperties.Name="Compile" ToolTipService.ToolTip="Compile (Ctrl+Enter)">
@@ -97,7 +97,7 @@
                             <FontIcon x:Name="CompileIcon" Glyph="&#xE768;" FontSize="16" />
                             <ProgressRing x:Name="CompileProgress" Width="16" Height="16" IsActive="False"
                                           AutomationProperties.Name="Compiling" />
-                            <TextBlock Grid.Column="1" Text="Compile" />
+                            <TextBlock x:Name="CompileLabel" Grid.Column="1" Text="Compile" />
                         </Grid>
                         <SplitButton.Flyout>
                             <MenuFlyout Placement="BottomEdgeAlignedRight">
