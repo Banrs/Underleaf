@@ -41,7 +41,7 @@ struct PanelView: View {
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
-            Spacer(minLength: BarMetrics.groupSpacing)
+            Spacer(minLength: 0)
             if project.panelTab == .issues {
                 // Only when there are warnings to hide.
                 if project.warningCount > 0 {

@@ -88,7 +88,9 @@ struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: BarMetrics.spacing) { content }
+        // Each child a group of its own (a group's controls abut), so
+        // groups apart, as the source's find bar spaces them.
+        HStack(spacing: BarMetrics.groupSpacing) { content }
             .frame(height: BarMetrics.barHeight)
             .paneBarControls()
     }
