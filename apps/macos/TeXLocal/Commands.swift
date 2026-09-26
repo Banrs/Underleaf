@@ -428,7 +428,7 @@ struct AppCommands: Commands {
             Divider()
             // Inline Math beside Display Math, after the line's level.
             InsertMenuItems(project: app.project, inlineMath: item(.editMath))
-                .disabled(app.project?.openPath?.hasSuffix(".tex") != true)
+                .disabled(app.project?.isLaTeX != true)
             Divider()
             item(.editComment)
         }
@@ -438,7 +438,7 @@ struct AppCommands: Commands {
             // The sidebar's outline section, folded from its header too; here
             // it is a keyboard's and VoiceOver's way to it.
             Button(outlineCollapsed ? "Show File Outline" : "Hide File Outline") { outlineCollapsed.toggle() }
-                .disabled(app.project?.openPath?.hasSuffix(".tex") != true || !app.sidebarVisible)
+                .disabled(app.project?.isLaTeX != true || !app.sidebarVisible)
             item(.viewTogglePdf)
             Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .option])

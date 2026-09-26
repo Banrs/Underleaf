@@ -10,22 +10,24 @@ struct SourceBar: View {
     @State private var showSymbols = false
 
     /// The groups that fold, in the order they fold back from.
-    private enum Tools: Int, CaseIterable { case format, math, references, figures, lists }
+    private enum Tools: Int, CaseIterable {
+        case format, math, references, figures, lists
 
-    /// The templates with a button of their own, by title and symbol.
-    private static let references = [("Link", "link"), ("Reference", "number"), ("Citation", "text.quote")]
-    private static let figures = [("Figure", "photo"), ("Table", "tablecells")]
-    private static let lists = [("Bulleted List", "list.bullet"), ("Numbered List", "list.number")]
+        /// The templates whose buttons the group holds: those with a symbol.
+        var templates: [Template] {
+            switch self {
+            case .format, .math: []
+            case .references: referenceTemplates
+            case .figures: insertTemplates
+            case .lists: listTemplates
+            }
+        }
+    }
 
     var body: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
-                tools(showing: 5)
-                tools(showing: 4)
-                tools(showing: 3)
-                tools(showing: 2)
-                tools(showing: 1)
-                tools(showing: 0)
+                ForEach((0...Tools.allCases.count).reversed(), id: \.self) { tools(showing: $0) }
                 tools(showing: 0, level: false)
                 tools(showing: 0, level: false, redo: false)
             }
@@ -39,8 +41,8 @@ struct SourceBar: View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
         return HStack(spacing: BarMetrics.spacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
-                + (redo || !isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
-            if isLaTeX {
+                + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
+            if project.isLaTeX {
                 if level {
                     ToolSeparator()
                     SectionLevelMenu(project: project)
@@ -78,13 +80,9 @@ struct SourceBar: View {
                     }
             }
             .fixedSize()
-        case .references:
-            ToolGroup(items: Self.references.map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.inline(title) }
-            })
-        case .figures, .lists:
-            ToolGroup(items: (group == .figures ? Self.figures : Self.lists).map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.insert(title) }
+        case .references, .figures, .lists:
+            ToolGroup(items: group.templates.compactMap { template in
+                template.symbol.map { Segment(id: template.title, title: template.title, systemImage: $0) { project.insert(template) } }
             })
         }
     }
@@ -110,27 +108,14 @@ struct SourceBar: View {
                     Button(MenuCommand.editMath.title) { app.perform(.editMath) }
                     Button("Display Math") { project.format("displayMath") }
                     SymbolMenu(project: project)
-                case .references:
-                    ForEach(Self.references, id: \.0) { title, _ in
-                        Button(title) { project.inline(title) }
-                    }
-                case .figures, .lists:
-                    ForEach(group == .figures ? Self.figures : Self.lists, id: \.0) { title, _ in
-                        Button(title) { project.insert(title) }
-                    }
+                case .references, .figures, .lists:
+                    items(group.templates.filter { $0.symbol != nil })
                 }
                 Divider()
             }
-            ForEach(insertTemplates.filter { title, _ in !Self.figures.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("insert", template) }
-            }
-            ForEach(listTemplates.filter { title, _ in !Self.lists.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("insert", template) }
-            }
+            items((insertTemplates + listTemplates).filter { $0.symbol == nil })
             Divider()
-            ForEach(referenceTemplates.filter { title, _ in !Self.references.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("inline", template) }
-            }
+            items(referenceTemplates.filter { $0.symbol == nil })
         } label: {
             Label("More", systemImage: "ellipsis")
         }
@@ -141,7 +126,11 @@ struct SourceBar: View {
         .help("More")
     }
 
-    private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
+    private func items(_ templates: [Template]) -> some View {
+        ForEach(templates, id: \.title) { template in
+            Button(template.title) { project.insert(template) }
+        }
+    }
 }
 
 /// The line's section level, as a word processor shows its paragraph
@@ -171,26 +160,6 @@ private struct SectionLevelMenu: View {
         .help("Section Level")
     }
 }
-
-/// Symbols by kind, each inserted as its command: the palette LaTeX editors
-/// keep beside the source (TeXstudio, TeXShop, Overleaf).
-let symbolGroups: [(String, [(String, String)])] = [
-    ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
-               ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
-               ("μ", "\\mu"), ("ν", "\\nu"), ("ξ", "\\xi"), ("π", "\\pi"), ("ρ", "\\rho"), ("σ", "\\sigma"),
-               ("τ", "\\tau"), ("φ", "\\phi"), ("χ", "\\chi"), ("ψ", "\\psi"), ("ω", "\\omega"),
-               ("Γ", "\\Gamma"), ("Δ", "\\Delta"), ("Θ", "\\Theta"), ("Λ", "\\Lambda"), ("Π", "\\Pi"),
-               ("Σ", "\\Sigma"), ("Φ", "\\Phi"), ("Ψ", "\\Psi"), ("Ω", "\\Omega")]),
-    ("Operators", [("±", "\\pm"), ("×", "\\times"), ("÷", "\\div"), ("·", "\\cdot"), ("∑", "\\sum"),
-                   ("∏", "\\prod"), ("∫", "\\int"), ("∮", "\\oint"), ("√", "\\sqrt{}"), ("∂", "\\partial"),
-                   ("∇", "\\nabla"), ("∞", "\\infty"), ("∘", "\\circ"), ("⊗", "\\otimes"), ("⊕", "\\oplus")]),
-    ("Relations", [("≤", "\\leq"), ("≥", "\\geq"), ("≠", "\\neq"), ("≈", "\\approx"), ("≡", "\\equiv"),
-                   ("∼", "\\sim"), ("∝", "\\propto"), ("∈", "\\in"), ("∉", "\\notin"), ("⊂", "\\subset"),
-                   ("⊆", "\\subseteq"), ("∪", "\\cup"), ("∩", "\\cap"), ("∅", "\\emptyset")]),
-    ("Arrows and Logic", [("→", "\\rightarrow"), ("←", "\\leftarrow"), ("↔", "\\leftrightarrow"),
-                          ("⇒", "\\Rightarrow"), ("⇐", "\\Leftarrow"), ("⇔", "\\Leftrightarrow"), ("↦", "\\mapsto"),
-                          ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
-]
 
 /// The symbol palette: one grid, so the columns line up across the kinds;
 /// each symbol a flat button named by its command. The popover draws its
@@ -477,70 +446,15 @@ struct InsertMenuItems<InlineMath: View>: View {
         inlineMath
         Button("Display Math") { project?.format("displayMath") }
         SymbolMenu(project: project)
-        Menu("Reference") {
-            ForEach(referenceTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("inline", template) }
-            }
-        }
+        Menu("Reference") { items(referenceTemplates) }
         Divider()
-        ForEach(insertTemplates, id: \.0) { label, template in
-            Button(label) { project?.format("insert", template) }
-        }
-        Menu("List") {
-            ForEach(listTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("insert", template) }
-            }
-        }
-    }
-}
-
-/// The engines a project can compile with, for the compile menu and Settings.
-let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
-
-/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
-/// "$0" marks where the cursor lands. The source bar finds them by title
-/// (`ProjectModel.insert`). Titles are menu items here, so title case
-/// without the web's parenthetical: "Aligned Equations" is the web's
-/// "Align (multi-line math)".
-let insertTemplates: [(String, String)] = [
-    ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-    ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-    ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    ("Aligned Equations", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
-]
-
-/// The section levels, as the line's style: plain text, then the
-/// sectioning commands in the order the web's outline ranks them.
-let headingLevels: [(String, String)] = [
-    ("Normal Text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
-    ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
-]
-
-/// Cross-references, citations and links; each opens completion inside
-/// its braces.
-let referenceTemplates: [(String, String)] = [
-    ("Reference", "\\ref{$0}"), ("Equation Reference", "\\eqref{$0}"), ("Citation", "\\cite{$0}"),
-    ("Label", "\\label{$0}"), ("Link", "\\href{$0}{}"), ("URL", "\\url{$0}"),
-]
-
-/// The lists: web/src/sourcebar.js `LIST_TEMPLATES`.
-let listTemplates: [(String, String)] = [
-    ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-    ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-    ("Description List", "\\begin{description}\n  \\item[$0] \n\\end{description}\n"),
-]
-
-extension ProjectModel {
-    /// A block from `insertTemplates` or `listTemplates`, by its title.
-    func insert(_ title: String) {
-        if let template = (insertTemplates + listTemplates).first(where: { $0.0 == title })?.1 {
-            format("insert", template)
-        }
+        items(insertTemplates)
+        Menu("List") { items(listTemplates) }
     }
 
-    /// A template from `referenceTemplates` around the selection, by its title.
-    func inline(_ title: String) {
-        if let template = referenceTemplates.first(where: { $0.0 == title })?.1 { format("inline", template) }
+    private func items(_ templates: [Template]) -> some View {
+        ForEach(templates, id: \.title) { template in
+            Button(template.title) { project?.insert(template) }
+        }
     }
 }

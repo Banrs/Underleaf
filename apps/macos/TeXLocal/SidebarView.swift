@@ -34,7 +34,7 @@ struct NavigatorView: View {
 
     /// Search results take the whole sidebar.
     private var showsOutline: Bool {
-        project.searchQuery.isEmpty && project.openPath?.hasSuffix(".tex") == true
+        project.searchQuery.isEmpty && project.isLaTeX
     }
 }
 

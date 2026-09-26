@@ -98,6 +98,9 @@ final class ProjectModel {
         self.app = app
     }
 
+    /// The open file is LaTeX: it has an outline, counts and the LaTeX tools.
+    var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
 
@@ -316,7 +319,7 @@ final class ProjectModel {
     /// The outline, location row and word count read the open document; as in
     /// the web, only a .tex file has them.
     private func analyze(_ text: String) {
-        guard openPath?.hasSuffix(".tex") == true else {
+        guard isLaTeX else {
             outline = []
             counts = nil
             return
