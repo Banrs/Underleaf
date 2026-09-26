@@ -93,7 +93,8 @@ private struct FilesList: View {
             if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) || isPreviewFile(path) {
+            if let path, path != project.openPath,
+               project.tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) {
                 Task { await project.open(path, focus: false) }
             }
         }

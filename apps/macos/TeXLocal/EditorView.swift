@@ -72,7 +72,8 @@ private struct SourceAndPDF: View {
 
 /// The source's bars stacked over it, not overlaid: they are opaque, so
 /// text scrolled beneath them was only hidden. The find bar, while it
-/// shows, goes between them and the text, as TextEdit's and Xcode's do.
+/// shows, goes between them and the text, as TextEdit's and Xcode's do. A
+/// file that isn't text has no formatting bar, only its location row.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -80,8 +81,10 @@ private struct SourcePane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SourceBar(project: project)
-            Divider()
+            if project.openPath == nil || project.editsText {
+                SourceBar(project: project)
+                Divider()
+            }
             SourceLocation(project: project)
             if project.findShown {
                 Divider()
@@ -108,11 +111,13 @@ private struct SourcePane: View {
 /// An image or a PDF figure in place of the editor, as the web previews
 /// one: fitted to the pane but never enlarged past its own size, as Xcode
 /// shows an image. A PDF is a page, so on white paper as the PDF pane's.
+/// Any other file, or one that can't be read as an image, is No Preview,
+/// with the way to open it in its own app.
 private struct FilePreview: View {
     let url: URL
 
     var body: some View {
-        if let image = NSImage(contentsOf: url) {
+        if isPreviewFile(url.path), let image = NSImage(contentsOf: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
@@ -122,9 +127,14 @@ private struct FilePreview: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityLabel(url.lastPathComponent)
         } else {
-            ContentUnavailableView("No Preview", systemImage: "photo",
-                                   description: Text("“\(url.lastPathComponent)” couldn’t be read as an image."))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView {
+                Label("No Preview", systemImage: fileSymbol(url.path))
+            } description: {
+                Text(url.lastPathComponent)
+            } actions: {
+                Button("Open in Default App") { NSWorkspace.shared.open(url) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

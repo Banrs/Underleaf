@@ -210,21 +210,17 @@ final class ProjectModel {
 
     // ---------- editing ----------
 
-    /// Open a file: text in the editor, an image or PDF figure in a preview
-    /// in its place (as the web previews one), anything else in its own
-    /// app. Choosing in a sidebar list passes `focus: false`, so the arrow
-    /// keys stay in the list, as Xcode's navigator keeps them.
+    /// Open a file: text in the editor; anything else in its place, as the
+    /// web shows it: an image or PDF figure previewed, other files as No
+    /// Preview. Choosing in a sidebar list passes `focus: false`, so the
+    /// arrow keys stay in the list, as Xcode's navigator keeps them.
     func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
-        guard isTextFile(path) || isPreviewFile(path) else {
-            if let url = await fileURL(path) { NSWorkspace.shared.open(url) }
-            return
-        }
         // Clicking one file and then another before the first has opened:
         // only the latest carries on, so the editor can't end up showing one
         // file while `openPath` — where autosave writes — names the other.
         openGeneration += 1
         let generation = openGeneration
-        if path != openPath, isPreviewFile(path) {
+        if path != openPath, !isTextFile(path) {
             guard await saveEdits(), generation == openGeneration else { return }
             openPath = path
             openURL = await fileURL(path)

@@ -165,8 +165,8 @@ func fileSymbol(_ path: String, directory: Bool = false) -> String {
 }
 
 /// The files previewed in the source pane: images (web/src/state.js
-/// `IMAGE_FILE`, SVG among them) and PDF figures. Anything else opens in
-/// its own app.
+/// `IMAGE_FILE`, SVG among them) and PDF figures. Any other file that isn't
+/// text shows No Preview there, with Open in Default App.
 func isPreviewFile(_ path: String) -> Bool {
     ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "pdf"].contains((path as NSString).pathExtension.lowercased())
 }
