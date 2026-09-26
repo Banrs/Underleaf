@@ -307,7 +307,7 @@ struct SourceLocation: View {
     }
 
     private var chevron: some View {
-        Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+        Image(systemName: "chevron.compact.forward").foregroundStyle(.tertiary)
     }
 
     private func crumb(_ title: String, _ systemImage: String) -> some View {

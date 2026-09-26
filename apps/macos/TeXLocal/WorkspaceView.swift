@@ -190,7 +190,7 @@ private struct InspectorToggle: View {
 
     var body: some View {
         let title = app.showInspector ? "Hide Inspector" : "Show Inspector"
-        Button(title, systemImage: "sidebar.right") { app.showInspector.toggle() }
+        Button(title, systemImage: "sidebar.trailing") { app.showInspector.toggle() }
             .help(title)
     }
 }
