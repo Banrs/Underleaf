@@ -30,17 +30,20 @@ struct NavigatorView: View {
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
         .searchFocused($searchFocused)
         // Adding files, over the sidebar it adds to, as Notes' New Folder
-        // is: on the toolbar's glass, and gone with the sidebar.
+        // is: on the toolbar's glass, and gone with the sidebar (a sidebar's
+        // items otherwise move into the window's toolbar as it hides).
         .toolbar {
-            ToolbarItem {
-                Menu("Add Files", systemImage: "plus") {
-                    Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                    Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
-                    Divider()
-                    Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+            if app.sidebarVisible {
+                ToolbarItem {
+                    Menu("Add Files", systemImage: "plus") {
+                        Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
+                        Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                        Divider()
+                        Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+                    }
+                    .menuIndicator(.hidden)
+                    .help("Add Files")
                 }
-                .menuIndicator(.hidden)
-                .help("Add Files")
             }
         }
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
