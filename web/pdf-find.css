@@ -23,7 +23,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--orange);
+  color: var(--orange-text);
   font-size: var(--fs-small);
   line-height: var(--lh-small);
 }

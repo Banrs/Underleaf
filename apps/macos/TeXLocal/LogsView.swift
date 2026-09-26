@@ -1,22 +1,15 @@
 import SwiftUI
 
-/// The panel's tabs.
-enum PanelTab: String, CaseIterable, Identifiable {
-    case issues, log
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .issues: "Issues"
-        case .log: "Build Log"
-        }
-    }
+/// The build panel's tabs, by title.
+enum PanelTab: String, CaseIterable {
+    case issues = "Issues", log = "Build Log"
 }
 
-/// The panel below the editors, shown and hidden as VS Code's is: the
-/// build's issues, or its whole log (web/src/logs.js `renderLogs`).
+/// The build panel below the editors: the build's issues, or its whole log
+/// (web/src/logs.js `renderLogs`). The status bar's toggle and View › Hide
+/// Build Panel close it, as Xcode's debug area has no close button of its own.
 struct PanelView: View {
+    @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
@@ -24,6 +17,7 @@ struct PanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneBar { header }
+            Divider()
             Group {
                 switch project.panelTab {
                 case .issues: issues
@@ -31,75 +25,44 @@ struct PanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Content, on the text's surface as the source is.
+            .background(Color(nsColor: .textBackgroundColor))
         }
-        .background(.background)
     }
 
+    /// The tabs, then what acts on the one showing. The build's summary is
+    /// the status bar's, directly below, so it isn't repeated here.
     private var header: some View {
         Group {
-            Picker("Panel", selection: $project.panelTab) {
-                ForEach(PanelTab.allCases) { Text($0.title).tag($0) }
+            Picker("Build Panel", selection: $project.panelTab) {
+                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
-            summary
-            Spacer(minLength: 8)
+            Spacer(minLength: BarMetrics.groupSpacing)
             if project.panelTab == .issues {
-                Toggle(isOn: $showWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
+                // Only when there are warnings to hide.
+                if project.warningCount > 0 {
+                    Toggle(isOn: $showWarnings) {
+                        Label("Warnings", systemImage: "exclamationmark.triangle")
+                    }
+                    .toggleStyle(.button)
+                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                .toggleStyle(.button)
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-                .disabled(project.warningCount == 0)
             } else {
-                Button("Copy Log", systemImage: "doc.on.doc") {
+                Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
                 }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
                 .help("Copy Log")
                 .disabled(project.result?.log.isEmpty ?? true)
             }
-            TextField("Filter", text: $filter, prompt: Text("Filter"))
-                .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 60, maxWidth: 180)
-            Button("Hide Panel", systemImage: "xmark") { project.showLogs = false }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .help("Hide Panel (⇧⌘L)")
-                .layoutPriority(1)
+            SearchField(text: $filter, prompt: "Filter")
+                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
         }
-    }
-
-    @ViewBuilder
-    private var summary: some View {
-        if let result = project.result {
-            HStack(spacing: 8) {
-                if project.errorCount > 0 {
-                    Label("\(project.errorCount) \(project.errorCount == 1 ? "error" : "errors")",
-                          systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
-                } else {
-                    Label("Compiled", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                if project.warningCount > 0 {
-                    Label("\(project.warningCount) \(project.warningCount == 1 ? "warning" : "warnings")",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
-                Text("\(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            .labelStyle(.titleAndIcon)
-        } else {
-            Text("Not compiled yet").foregroundStyle(.secondary)
-        }
+        .labelStyle(.iconOnly)
     }
 
     private var items: [LogItem] {
@@ -114,19 +77,36 @@ struct PanelView: View {
     @ViewBuilder
     private var issues: some View {
         if project.result == nil {
-            ContentUnavailableView("Not Compiled Yet", systemImage: "hammer",
-                                   description: Text("Compile to see errors and warnings here."))
+            // A PDF from an earlier session may be on screen; its build's
+            // issues weren't kept, so don't claim there was never one.
+            ContentUnavailableView {
+                Label(project.noBuildTitle, systemImage: "hammer")
+            } description: {
+                Text("Compile to see errors and warnings here.")
+            } actions: {
+                Button("Compile") { app.perform(.compileRun) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!app.isEnabled(.compileRun))
+            }
         } else if items.isEmpty {
-            if filter.isEmpty {
-                ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
-            } else {
+            if !filter.isEmpty {
                 ContentUnavailableView.search(text: filter)
+            } else if project.result?.ok == false {
+                // The build failed on something the log's parser didn't
+                // pick out as an error: the log itself says what.
+                ContentUnavailableView {
+                    Label("Build Failed", systemImage: "xmark.octagon")
+                } description: {
+                    Text("The build log shows what went wrong.")
+                } actions: {
+                    Button("Show Build Log") { project.panelTab = .log }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
             }
         } else {
-            // By position: LaTeX repeats identical warnings, which would
-            // share an id built from their contents.
-            List(Array(items.enumerated()), id: \.offset) { _, item in IssueRow(item: item, project: project) }
-                .listStyle(.inset)
+            IssueList(items: items, project: project)
         }
     }
 
@@ -146,6 +126,77 @@ struct PanelView: View {
     }
 }
 
+/// The errors and warnings as a list with the system's selection: a click
+/// selects, a double-click or Return opens the line — in the main file when
+/// the log names none, as the web's does.
+private struct IssueList: View {
+    let items: [LogItem]
+    let project: ProjectModel
+    @State private var selection: Int?
+
+    var body: some View {
+        // By position: LaTeX repeats identical warnings, which would share
+        // an id built from their contents.
+        List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
+            IssueRow(item: item, location: location(of: item))
+        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .contextMenu(forSelectionType: Int.self) { rows in
+            if let row = rows.first {
+                if file(of: items[row]) != nil {
+                    Button("Go to Line") { open(items[row]) }
+                }
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(items[row].message, forType: .string)
+                }
+            }
+        } primaryAction: { rows in
+            if let row = rows.first { open(items[row]) }
+        }
+        .onChange(of: items.count) { _, _ in selection = nil }
+    }
+
+    private func open(_ item: LogItem) {
+        if let file = file(of: item) { Task { await project.open(file, line: item.line) } }
+    }
+
+    private func file(of item: LogItem) -> String? {
+        item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
+    }
+
+    /// Where a row opens, so every row that goes somewhere says where.
+    private func location(of item: LogItem) -> String? {
+        file(of: item).map { file in item.line.map { "\(file):\($0)" } ?? file }
+    }
+}
+
+/// An error or warning: its message, and where it is when the log says.
+private struct IssueRow: View {
+    let item: LogItem
+    /// "file:line", the main file's when the log names none.
+    let location: String?
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.message).lineLimit(3)
+                if let location {
+                    Text(location)
+                        .font(Typography.secondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } icon: {
+            Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(item.isError ? .red : .orange)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
+    }
+}
+
 /// The build log in AppKit's text view: native scrolling and selection, the
 /// system find bar (⌘F), and fast with the megabyte logs LaTeX writes, which
 /// a SwiftUI Text laid out whole on every change.
@@ -160,12 +211,11 @@ private struct LogTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
-        view.isSelectable = true
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         view.textContainerInset = NSSize(width: 8, height: 8)
-        view.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        view.font = Typography.secondaryMono
         view.textColor = .labelColor
         return scroll
     }

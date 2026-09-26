@@ -129,35 +129,191 @@ final class OutlineDisplayTests: XCTestCase {
         XCTAssertNil(tree[2].children)
     }
 
+    /// A fold is keyed by the heading's level, title and which of its
+    /// namesakes it is, so headings added above leave it where it was.
+    func testFoldKeysSurviveRenumbering() {
+        let text = "\\section{A}\n\\subsection{Results}\n\\section{B}\n\\subsection{Results}"
+        let keys = Outline.foldKeys(Outline.parse(text))
+        XCTAssertEqual(keys, ["2:A#1", "3:Results#1", "2:B#1", "3:Results#2"])
+        let later = Outline.foldKeys(Outline.parse("\\section{New}\n\\subsection{Other}\n" + text))
+        XCTAssertEqual(Array(later.dropFirst(2)), keys)
+    }
+
     func testEmptyHeadingsAreNamedByKind() {
         let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
     }
 }
 
-/// The pane bar's glass groups measured off screen, with no window shown.
+/// The pane bar's groups measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
-    func testAGroupIsLaidOutAsTheKitsToolbarGroup() {
-        let action = {}
-        let two = GlassGroup(items: [
-            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: action),
-            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: action),
-        ])
-        let split = GlassGroup(groups: [
-            [Segment(id: "b", title: "Bold", systemImage: "bold", action: action),
-             Segment(id: "i", title: "Italic", systemImage: "italic", action: action)],
-            [Segment(id: "m", title: "Math", systemImage: "x.squareroot", action: action)],
-        ])
-        // The kit's Large Over-glass segmented control: Duo 68 x 28, Trio
-        // 102 x 28 — 34 pt segments, separators on the boundaries.
-        XCTAssertEqual(size(of: two), CGSize(width: 68, height: 28))
-        XCTAssertEqual(size(of: split), CGSize(width: 102, height: 28))
+    /// The UI kit's Unified Compact toolbar, the bars' one size.
+    func testTheBarIsTheKitsCompactToolbarHeight() {
+        XCTAssertEqual(BarMetrics.barHeight, 40)
+        XCTAssertEqual(BarMetrics.controlSize, .regular)
     }
 
-    private func size(of view: some View) -> CGSize {
-        let host = NSHostingView(rootView: view)
-        return host.fittingSize
+    /// Controls sit 8 pt from the bar's top and bottom, as in the kit's
+    /// Unified Compact toolbar. The accessory-bar bezel measures 22 pt, 2 pt
+    /// under the kit's 24, so the group keeps within 8 to 9 pt of each edge.
+    func testAGroupFitsItsBarWithTheKitsInsets() {
+        let two = ToolGroup(items: [
+            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
+            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
+        ])
+        .buttonStyle(.accessoryBar)
+        .controlSize(BarMetrics.controlSize)
+        let height = NSHostingView(rootView: two).fittingSize.height
+        XCTAssertLessThanOrEqual(height, BarMetrics.barHeight - 16)
+        XCTAssertGreaterThanOrEqual(height, BarMetrics.barHeight - 18)
+    }
+}
+
+/// The controls floating over the PDF, measured off screen.
+@MainActor
+final class FloatingGlassTests: XCTestCase {
+    /// A capsule is the kit's XL toolbar pill, 36 pt, as the toolbar's
+    /// glass items beside it are: large controls with 4 pt of glass around.
+    func testACapsuleIsTheToolbarsHeight() {
+        let capsule = HStack(spacing: FloatingMetrics.itemSpacing) {
+            Button("Previous Page", systemImage: "chevron.up") {}.onGlass()
+            Text("Page 1 of 2")
+            Button("Next Page", systemImage: "chevron.down") {}.onGlass()
+        }
+        .floatingGlass()
+        let height = NSHostingView(rootView: capsule).fittingSize.height
+        XCTAssertEqual(height, FloatingMetrics.height, accuracy: 1)
+    }
+}
+
+/// The open file's watcher: a change on disk, written in place or saved
+/// over it the way editors save (a new file renamed over the old), is told.
+@MainActor
+final class FileWatcherTests: XCTestCase {
+    func testChangesInPlaceAndByReplacementAreBothTold() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("main.tex")
+        try "one".write(to: url, atomically: false, encoding: .utf8)
+
+        var changes = 0
+        let watcher = FileWatcher(url: url) { changes += 1 }
+        try "two".write(to: url, atomically: false, encoding: .utf8)
+        try await waitUntil { changes > 0 }
+        let inPlace = changes
+        // Atomically: a new file renamed over the old one.
+        try "three".write(to: url, atomically: true, encoding: .utf8)
+        try await waitUntil { changes > inPlace }
+        // Still watching the file now at that path.
+        try await Task.sleep(for: .milliseconds(300))
+        let replaced = changes
+        try "four".write(to: url, atomically: false, encoding: .utf8)
+        try await waitUntil { changes > replaced }
+        _ = watcher
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<40 where !condition() {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(condition())
+    }
+}
+
+@MainActor
+final class SplitLayoutTests: XCTestCase {
+    /// Two panes in a split of `size`, the second dragged to `last` points.
+    private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
+                       last: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
+        let split = NSSplitView(frame: NSRect(origin: .zero, size: size))
+        split.isVertical = vertical
+        split.dividerStyle = .thin
+        let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
+        coordinator.panes = panes
+        coordinator.views = [NSView(), NSView()]
+        coordinator.views.forEach(split.addArrangedSubview)
+        split.delegate = coordinator
+        let length = vertical ? size.width : size.height
+        split.setPosition(length - last - split.dividerThickness, ofDividerAt: 0)
+        return (split, coordinator)
+    }
+
+    private func widths(_ split: NSSplitView) -> [CGFloat] {
+        split.arrangedSubviews.map(\.frame.width)
+    }
+
+    /// A pane squeezed to its minimum by a small window gets its share back
+    /// as the window grows, rather than staying at the minimum.
+    func testAPaneGetsItsShareBackAfterASmallWindow() throws {
+        // Source | PDF with the PDF dragged narrow.
+        let (split, coordinator) = split(NSSize(width: 936, height: 400),
+                                         [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
+                                         last: 200)
+        XCTAssertEqual(widths(split), [735, 200])
+        split.setFrameSize(NSSize(width: 300, height: 400))
+        XCTAssertEqual(widths(split), [159, 140])
+        // Hidden now, it would come back at the share it had, not squeezed.
+        XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
+        split.setFrameSize(NSSize(width: 936, height: 400))
+        XCTAssertEqual(widths(split), [735, 200])
+    }
+
+    /// A pane that keeps its size gives way beyond its largest share: the
+    /// build panel in a small window leaves the editors the room.
+    func testAPaneKeepsWithinItsLargestShare() {
+        let (split, _) = split(NSSize(width: 400, height: 1000), vertical: false, [
+            SplitPane(minimum: 120) { EmptyView() },
+            SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
+        ], last: 300)
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
+        split.setFrameSize(NSSize(width: 400, height: 500))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
+        split.setFrameSize(NSSize(width: 400, height: 1000))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
+    }
+
+    /// The sidebar's outline folded to its header: the files take the
+    /// room, the header stays as the window resizes, its divider doesn't
+    /// drag, and unfolding brings back the height it had.
+    func testAFoldedPaneKeepsItsHeaderAndUnfoldsToItsHeight() {
+        let panes = [
+            SplitPane(minimum: 100) { EmptyView() },
+            SplitPane(minimum: 80, fraction: 0.45, keepsSize: true) { EmptyView() },
+        ]
+        let (split, coordinator) = split(NSSize(width: 250, height: 600), vertical: false, panes, last: 240)
+        defer { UserDefaults.standard.removeObject(forKey: "\(coordinator.autosave) Unfolded 1") }
+        var folded = panes
+        folded[1].collapsed = 28
+        coordinator.panes = folded
+        coordinator.fold(split, 1, to: 28)
+        XCTAssertEqual(split.arrangedSubviews.map(\.frame.height), [571, 28])
+        XCTAssertEqual(coordinator.splitView(split, effectiveRect: NSRect(x: 0, y: 571, width: 250, height: 1),
+                                             forDrawnRect: .zero, ofDividerAt: 0), .zero)
+        split.setFrameSize(NSSize(width: 250, height: 800))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 28)
+        split.setFrameSize(NSSize(width: 250, height: 600))
+        coordinator.panes = panes
+        coordinator.fold(split, 1, to: nil)
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 240)
+    }
+}
+
+final class CompileResultTests: XCTestCase {
+    func testTheSourceFindCountReadsAsXcodesDoes() {
+        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
+        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
+        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
+        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
+        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
+        XCTAssertEqual(FindMatches().label(for: ""), "")
+    }
+
+    func testDurationsReadTheSameEverywhere() throws {
+        let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
+        let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
+        XCTAssertEqual(result.durationText, "1.2 s")
     }
 }
 
@@ -208,17 +364,21 @@ final class CommandTests: XCTestCase {
         XCTAssertTrue(ids.contains("edit.gotoLine"))
         XCTAssertTrue(ids.contains("view.zoomIn"))
         XCTAssertFalse(ids.contains("edit.find"))
+        XCTAssertFalse(ids.contains("edit.findNext"))
+        XCTAssertFalse(ids.contains("edit.findPrevious"))
         XCTAssertFalse(ids.contains("edit.comment"))
         XCTAssertFalse(ids.contains("edit.undo"))
         XCTAssertFalse(ids.contains("edit.redo"))
     }
 
-    /// A file of the repository this test was built from.
-    private func repo(_ path: String) -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(path)
+    /// web/src/workspace.js as the test scheme's pre-action copies it into
+    /// the scratch folder. The tests run inside TeXLocal.app, and reading the
+    /// repository in ~/Documents from there asks macOS for Documents access
+    /// again after every re-signing build, blocking the read until someone
+    /// answers the prompt or it times out.
+    private func webWorkspace() throws -> URL {
+        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        return URL(fileURLWithPath: data).appendingPathComponent("workspace.js")
     }
 
     /// The web's commands with no place in the Mac menus: Settings…, which the
@@ -228,7 +388,7 @@ final class CommandTests: XCTestCase {
 
     /// The menu has every other command the web declares, with the same chord.
     func testTheMenuHasEveryWebCommand() throws {
-        let source = try String(contentsOf: repo("web/src/workspace.js"), encoding: .utf8)
+        let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
         var ids: Set<String> = []
         for line in source.split(separator: "\n") {
             guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
@@ -274,8 +434,25 @@ final class MenuBarTests: XCTestCase {
         XCTAssertNotEqual(try XCTUnwrap(item("z", [.command, .shift])).action, Selector(("redo:")))
     }
 
+    func testFindNextAndPreviousAreCommandG() throws {
+        XCTAssertEqual(try XCTUnwrap(item("g")).title, "Find Next")
+        XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
+    }
+
     func testTheSidebarToggleIsCommandBackslash() throws {
         XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    }
+
+    func testTheBottomPanelIsTheBuildPanel() throws {
+        let title = try XCTUnwrap(item("l", [.command, .shift])).title
+        XCTAssertTrue(["Show Build Panel", "Hide Build Panel"].contains(title), title)
+    }
+
+    /// Replacing the text-editing group must keep the spelling commands the
+    /// editor's WebKit spell checking answers to.
+    func testSpellingIsInTheEditMenu() {
+        XCTAssertNotNil(item(";"), "Check Document Now ⌘;")
+        XCTAssertNotNil(item(":"), "Show Spelling and Grammar ⌘:")
     }
 }
 

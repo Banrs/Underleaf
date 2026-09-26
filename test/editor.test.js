@@ -5,7 +5,7 @@ import { CompletionContext } from '@codemirror/autocomplete';
 
 globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
-const { latexCompletions, mathPreviewField } = await import('../web/src/editor.js');
+const { latexCompletions, mathPreviewField, headingLine } = await import('../web/src/editor.js');
 
 const complete = (doc) => {
   const source = latexCompletions(() => ({ citations: ['knuth84'], labels: ['sec:intro'] }));
@@ -32,4 +32,15 @@ test('moving within an unchanged equation keeps the same preview tooltip', () =>
   assert.equal(state.field(mathPreviewField), first);
   state = state.update({ changes: { from: 5, insert: 'c' } }).state;
   assert.notEqual(state.field(mathPreviewField), first);
+});
+
+test('a heading changes level wherever the outline finds it', () => {
+  const as = (line, command) => headingLine(line, command).text;
+  assert.equal(as('\\section[Short]{A Long Title}', 'subsection'), '\\subsection[Short]{A Long Title}');
+  assert.equal(as('\\section[Short]{A Long Title}', ''), 'A Long Title');
+  assert.equal(as('Intro text \\section{X} more', 'chapter'), 'Intro text \\chapter{X} more');
+  assert.equal(as('Intro text \\section{X}', ''), 'Intro text X');
+  assert.equal(as('  \\section*{A {b} c} % note', 'part'), '  \\part*{A {b} c} % note');
+  assert.equal(as('  Plain words', 'section'), '  \\section{Plain words}');
+  assert.deepEqual(headingLine('\\section[S]{T} x', 'paragraph'), { text: '\\paragraph[S]{T} x', cursor: '\\paragraph[S]{T'.length });
 });

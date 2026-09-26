@@ -9,7 +9,7 @@ export const ENVIRONMENTS = [
   'algorithm', 'algorithmic', 'tikzpicture', 'thebibliography', 'titlepage', 'appendix',
 ];
 
-// [name, detail, snippet] — snippet uses ${} for cursor placeholders
+// [name, detail, snippet]; #{…} marks a snippet field
 export const COMMANDS = [
   ['\\documentclass', 'class', '\\documentclass{#{article}}'],
   ['\\usepackage', 'package', '\\usepackage{#{}}'],

@@ -8,7 +8,7 @@
 
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use texlocal_core::service::{Service, UploadSpec};
@@ -26,16 +26,15 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
     let s = |key: &str| {
         args.get(key)
             .and_then(Value::as_str)
-            .map(str::to_owned)
             .ok_or_else(|| CoreError::bad_request(format!("Invalid argument `{key}`")))
     };
     let path = |p: PathBuf| json!(p.to_string_lossy());
     Some(match command {
-        "pdf_path" => s("id").and_then(|id| service.pdf_path(&id)).map(path),
-        "raw_path" => (|| service.raw_path(&s("id")?, &s("path")?))().map(path),
+        "pdf_path" => s("id").and_then(|id| service.pdf_path(id)).map(path),
+        "raw_path" => (|| service.raw_path(s("id")?, s("path")?))().map(path),
         "export_zip" => (|| {
-            let root = service.project_root(&s("id")?)?;
-            zipexport::export_zip(&root, PathBuf::from(s("dest")?).as_path())?;
+            let root = service.project_root(s("id")?)?;
+            zipexport::export_zip(&root, Path::new(s("dest")?))?;
             Ok(Value::Null)
         })(),
         // On quit, while a compile call may still be in flight — which rules
@@ -48,33 +47,30 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
         "import_files" => (|| {
             let id = s("id")?;
             let dir = args.get("dir").and_then(Value::as_str).unwrap_or_default();
-            let mut files = Vec::new();
+            let mut specs = Vec::new();
+            let mut sources = Vec::new();
             for p in args
                 .get("paths")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
             {
-                let abs = PathBuf::from(p.as_str().unwrap_or_default());
-                let name = abs.file_name().map(|n| n.to_string_lossy().into_owned());
+                let abs = Path::new(
+                    p.as_str()
+                        .ok_or_else(|| CoreError::bad_request("Invalid argument `paths`"))?,
+                );
+                let name = abs.file_name().unwrap_or_default().to_string_lossy();
                 // A dropped link is followed: dropping it names the file or
                 // folder it points at.
-                let meta = std::fs::metadata(&abs)?;
-                collect(&abs, name.unwrap_or_default(), meta, &mut files)?;
+                let meta = std::fs::metadata(abs)?;
+                collect(abs, name.into_owned(), meta, &mut specs, &mut sources)?;
             }
             // The same validate-then-write rule as a browser upload: a bad
             // path or oversize file fails the drop before anything lands.
-            let specs: Vec<UploadSpec> = files
-                .iter()
-                .map(|(rel, _, size)| UploadSpec {
-                    path: rel.clone(),
-                    size: *size,
-                })
-                .collect();
-            service.validate_uploads(&id, dir, &specs)?;
+            service.validate_uploads(id, dir, &specs)?;
             let mut saved = Vec::new();
-            for (rel, abs, _) in &files {
-                saved.push(service.upload_file(&id, dir, rel, &std::fs::read(abs)?)?);
+            for (spec, abs) in specs.iter().zip(&sources) {
+                saved.push(service.upload_file(id, dir, &spec.path, &std::fs::read(abs)?)?);
             }
             Ok(json!({ "saved": saved }))
         })(),
@@ -83,17 +79,23 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
 }
 
 /// Files under a dropped path, with project-relative names that keep a
-/// dropped folder's own name. Symlinks inside a dropped folder are skipped,
-/// not followed: a drop imports what was dropped, never what a link inside it
-/// points at.
+/// dropped folder's own name, and where to read each. Symlinks inside a
+/// dropped folder are skipped, not followed: a drop imports what was dropped,
+/// never what a link inside it points at.
 fn collect(
-    abs: &std::path::Path,
+    abs: &Path,
     rel: String,
     meta: std::fs::Metadata,
-    out: &mut Vec<(String, PathBuf, usize)>,
+    specs: &mut Vec<UploadSpec>,
+    sources: &mut Vec<PathBuf>,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
-        out.push((rel, abs.to_path_buf(), meta.len() as usize));
+        specs.push(UploadSpec {
+            path: rel,
+            // Saturating, so a size past usize still fails the upload limit.
+            size: usize::try_from(meta.len()).unwrap_or(usize::MAX),
+        });
+        sources.push(abs.to_path_buf());
     } else if meta.is_dir() {
         for entry in std::fs::read_dir(abs)? {
             let entry = entry?;
@@ -103,24 +105,22 @@ fn collect(
                 &entry.path(),
                 format!("{rel}/{name}"),
                 entry.metadata()?,
-                out,
+                specs,
+                sources,
             )?;
         }
     }
     Ok(())
 }
 
-fn envelope(result: Result<Value, CoreError>) -> String {
-    match result {
+/// The result as a JSON envelope the host frees with `tl_free`.
+fn reply(result: Result<Value, CoreError>) -> *mut c_char {
+    let envelope = match result {
         Ok(value) => json!({ "ok": value }),
         Err(err) => json!({ "error": err.message, "status": err.status }),
-    }
-    .to_string()
-}
-
-fn into_c(text: String) -> *mut c_char {
+    };
     // JSON escapes NUL inside strings, so serialized output never contains one.
-    CString::new(text)
+    CString::new(envelope.to_string())
         .expect("JSON has no interior NUL")
         .into_raw()
 }
@@ -128,10 +128,7 @@ fn into_c(text: String) -> *mut c_char {
 /// # Safety
 /// `ptr` is null or a NUL-terminated string valid for the call.
 unsafe fn str_arg<'a>(ptr: *const c_char) -> Option<&'a str> {
-    if ptr.is_null() {
-        return None;
-    }
-    CStr::from_ptr(ptr).to_str().ok()
+    (!ptr.is_null()).then(|| CStr::from_ptr(ptr).to_str().ok())?
 }
 
 /// Open the service over `data_dir` (null for the default library). Returns
@@ -177,9 +174,9 @@ pub unsafe extern "C" fn tl_call(
     args_json: *const c_char,
 ) -> *mut c_char {
     let Some(handle) = handle.as_ref() else {
-        return into_c(envelope(Err(CoreError::bad_request("No handle"))));
+        return reply(Err(CoreError::bad_request("No handle")));
     };
-    let result = (|| {
+    reply((|| {
         let command = str_arg(command).ok_or_else(|| CoreError::bad_request("Invalid command"))?;
         let args: Value = match str_arg(args_json) {
             Some(text) => serde_json::from_str(text)
@@ -189,14 +186,11 @@ pub unsafe extern "C" fn tl_call(
         };
         let service = &handle.service;
         catch_unwind(AssertUnwindSafe(|| {
-            match native_call(service, command, &args) {
-                Some(result) => result,
-                None => handle.runtime.block_on(service.call(command, &args)),
-            }
+            native_call(service, command, &args)
+                .unwrap_or_else(|| handle.runtime.block_on(service.call(command, &args)))
         }))
         .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")))
-    })();
-    into_c(envelope(result))
+    })())
 }
 
 /// Free a string `tl_call` returned. Null is ignored.

@@ -31,6 +31,16 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // devicePixelRatio alone holds 77% of the detail the page is displayed at.
 const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
 
+// A text-layer span's natural width, measured on a canvas rather than read back
+// from the DOM: no layout per span, and it works while the pane is hidden (the
+// find bar rebuilds text layers behind the log), where offsetWidth reads 0.
+let measureCtx;
+function textWidth(str, size, family) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  measureCtx.font = `${size} ${family}`;
+  return measureCtx.measureText(str).width;
+}
+
 export class PdfViewer {
   constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
     this.scrollEl = scrollEl;
@@ -53,7 +63,7 @@ export class PdfViewer {
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
     this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
-    this._find = null;            // { query, matches, byPage, index, limited }
+    this._find = null;            // { matches, byPage, index, limited }
     this._findSession = new FindSession();
     this._highlightGeneration = 0;
     // Per page, either { promise } while extraction is running or
@@ -63,13 +73,10 @@ export class PdfViewer {
     this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
     this._resizePreview = null;   // { anchor, y } while the pane resizes, see #previewResize
-    this._padL = 0;               // scroller padding, cached by #metrics
-    this._padT = 0;
-    this._padR = 0;
-    this._padB = 0;
+    this._padL = this._padT = this._padR = this._padB = 0;   // scroller padding, cached by #metrics
 
-    // Scrolling now has to drive painting, since only the pages near the viewport
-    // hold pixels. Debounced so a flick doesn't queue a paint for every page it
+    // Scrolling drives painting, since only the pages near the viewport hold
+    // pixels. Debounced so a flick doesn't queue a paint for every page it
     // passes over.
     scrollEl.addEventListener('scroll', () => {
       this.#reportPage();
@@ -162,11 +169,9 @@ export class PdfViewer {
     try {
       const doc = await task.promise;
       if (superseded()) return false;
-      // Fetch every page proxy once, up front and in parallel. A render pass
-      // used to await getPage() per page — one serialized worker round-trip
-      // each — on every zoom step; with the proxies in hand the shell-building
-      // loop is synchronous. pdf.js caches proxies on the document, so this
-      // holds no pixels, just page dictionaries.
+      // Every page proxy once, up front and in parallel, so a render pass never
+      // awaits a worker round-trip per page. They hold no pixels, just page
+      // dictionaries.
       const proxies = await Promise.all(
         Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)));
       if (superseded()) return false;
@@ -261,9 +266,7 @@ export class PdfViewer {
     this._anchor = null;
     const prev = this.pages;
 
-    // Build the page shells (one scale for the whole pass). The proxies were
-    // fetched at load time, so this loop never awaits — a zoom step lays out a
-    // 200-page document without 200 worker round-trips.
+    // Build the page shells (one scale for the whole pass) without awaiting.
     const pagesEl = document.createElement('div');
     pagesEl.className = 'pdf-pages';
     const pages = [];
@@ -343,10 +346,6 @@ export class PdfViewer {
 
   // ---------- painting ----------
 
-  // Pages within this many viewport heights of the scroll position hold a painted
-  // backing store; the rest are released. Painting the whole document is what
-  // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
-  // enough to stall the compositor for seconds per zoom step.
   // Every page's box, read once per render — the single source for all of them.
   // Reading them live is what cost: currentPage() runs on every scroll event and
   // scanned all pages, and #reportPage writes the page indicator just before, so
@@ -365,9 +364,9 @@ export class PdfViewer {
     }
   }
 
-  // A new pass lays out blank shells, so every recompile, zoom step, pinch
-  // settle and divider release used to flash the viewport white until the
-  // repaint landed. Instead the previous pass's pixels for the same page stay
+  // A new pass lays out blank shells, which would flash the viewport white on
+  // every recompile, zoom step, pinch settle and divider release. Instead the
+  // previous pass's pixels for the same page stay
   // on top, stretched to the new size — exactly what the pinch and resize
   // previews already show — until this pass paints underneath them. The canvas
   // pdf.js draws into stays attached and visible, as it must.
@@ -386,6 +385,10 @@ export class PdfViewer {
     p.held = null;
   }
 
+  // Pages within a few viewport heights of the scroll position hold a painted
+  // backing store; the rest are released. Painting the whole document is what
+  // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
+  // enough to stall the compositor for seconds per zoom step.
   #nearPages() {
     const top = this.scrollEl.scrollTop - this._padT;
     const vh = this.scrollEl.clientHeight;
@@ -655,17 +658,14 @@ export class PdfViewer {
     const highlightGeneration = this._highlightGeneration;
     if (p._textBuild?.generation === highlightGeneration) return p._textBuild.promise;
 
-    const build = {};
-    build.generation = highlightGeneration;
+    const stale = () => seq !== this.seq
+      || highlightGeneration !== this._highlightGeneration
+      || !p._painted
+      || !this.pages.includes(p);
+    const build = { generation: highlightGeneration };
     build.promise = (async () => {
       const data = await this.#pageTextData(p);
-      if (
-        !data
-        || seq !== this.seq
-        || highlightGeneration !== this._highlightGeneration
-        || !p._painted
-        || !this.pages.includes(p)
-      ) return false;
+      if (!data || stale()) return false;
 
       const vt = p.viewport.transform;
       const frag = document.createDocumentFragment();
@@ -695,15 +695,16 @@ export class PdfViewer {
         span.style.top = `${top - fontH}px`;
         span.style.fontSize = `${fontH}px`;
         span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
+        // The fallback font's natural width never matches the PDF's, so find
+        // highlights and selections would drift along the line: stretch the
+        // span to the width the PDF gives it.
+        const natural = textWidth(item.str, span.style.fontSize, span.style.fontFamily);
+        const target = item.width * p.viewport.scale;
+        if (natural && target) span.style.transform = `scaleX(${target / natural})`;
         frag.appendChild(span);
       }
 
-      if (
-        seq !== this.seq
-        || highlightGeneration !== this._highlightGeneration
-        || !p._painted
-        || !this.pages.includes(p)
-      ) return false;
+      if (stale()) return false;
       p.textLayer.replaceChildren(frag);
       return true;
     })().finally(() => {
@@ -781,7 +782,7 @@ export class PdfViewer {
     }
 
     if (stale()) return this.#findStatus();
-    this._find = { query: q, matches, byPage, index: 0, limited };
+    this._find = { matches, byPage, index: 0, limited };
     this.#revealMatch();
     await this.#refreshHighlights();
     return this.#findStatus();
@@ -826,11 +827,7 @@ export class PdfViewer {
 
   currentScale() { return this.pages[0]?.scale ?? 1; }
 
-  async zoomBy(factor) {
-    this._anchor ??= this.#centerAnchor();
-    this.scale = clamp(this.currentScale() * factor, MIN_SCALE, MAX_SCALE);
-    await this.render();
-  }
+  zoomBy(factor) { return this.setScale(this.currentScale() * factor); }
 
   async setScale(scale) {
     this._anchor ??= this.#centerAnchor();
@@ -838,16 +835,20 @@ export class PdfViewer {
     await this.render();
   }
 
-  async fitWidth() { this.scale = null; this.fitMode = 'width'; this.lastFitW = this.scrollEl.clientWidth; await this.render(); }
-  async fitHeight() { this.scale = null; this.fitMode = 'height'; this.lastFitW = this.scrollEl.clientWidth; await this.render(); }
+  fitWidth() { return this.#fit('width'); }
+  fitHeight() { return this.#fit('height'); }
+
+  async #fit(mode) {
+    this.scale = null;
+    this.fitMode = mode;
+    this.lastFitW = this.scrollEl.clientWidth;
+    await this.render();
+  }
 
   // ---------- live pane resize ----------
-  // While a divider is dragged, the pane width changes continuously. Re-rendering
-  // on each frame is expensive and flickers (it swaps in blank pages and resets
-  // scroll). Instead, cheaply CSS-scale the already-rendered pages to track the
-  // new width 1:1 with the pointer, and do a single sharp re-render on release.
-  // In fixed-zoom mode (scale !== null) a pane resize doesn't change page size,
-  // so we do nothing.
+  // While a divider is dragged, CSS-scale the rendered pages to track the width
+  // and re-render once on release; re-rendering per frame is expensive and
+  // flickers. A fixed zoom does not depend on the pane width.
 
   beginLiveResize() {
     this._resizing = true;
@@ -867,9 +868,8 @@ export class PdfViewer {
   endLiveResize() {
     if (!this._resizing) return;
     this._resizing = false;
-    // Don't clear the preview transform here — render()'s double-buffered swap
-    // replaces the old (scaled) pages once the new ones are painted, so there's no
-    // snap-back flash. In fixed-zoom mode no transform was ever applied.
+    // The preview transform stays until render() swaps the pages, so there is
+    // no snap-back flash.
     if (this.scale === null && this.doc) this.fitWidth();
   }
 
@@ -944,9 +944,11 @@ export class PdfViewer {
     // No text on this page (e.g. a figure-only page): fall back to a point in
     // the text column at the viewport top.
     const yPts = Math.max(5, (this.#viewMark() - p.top) / p.scale);
-    const pageHeightPts = p.viewport.height / p.scale;
-    const pageWidthPts = p.viewport.width / p.scale;
-    return { page: p.n, x: Math.round(pageWidthPts / 2.5), y: Math.round(Math.min(yPts, pageHeightPts - 5)) };
+    return {
+      page: p.n,
+      x: Math.round(p.viewport.width / p.scale / 2.5),
+      y: Math.round(Math.min(yPts, p.viewport.height / p.scale - 5)),
+    };
   }
 
   // loc: { page, h, v, width, height } in TeX points, origin top-left, v = baseline
@@ -954,15 +956,16 @@ export class PdfViewer {
     const p = this.pages[loc.page - 1];
     if (!p) return;
     const s = p.scale;
+    const height = loc.height ?? 12;
+    const top = Math.max(0, ((loc.v ?? 0) - height) * s - 2);
     const flash = document.createElement('div');
     flash.className = 'sync-flash';
-    const h = (loc.height ?? 12) * s;
     flash.style.left = `${Math.max(0, (loc.h ?? 0) * s - 2)}px`;
-    flash.style.top = `${Math.max(0, ((loc.v ?? 0) - (loc.height ?? 12)) * s - 2)}px`;
+    flash.style.top = `${top}px`;
     flash.style.width = `${Math.max(24, (loc.width ?? 0) * s) + 4}px`;
-    flash.style.height = `${h + 4}px`;
+    flash.style.height = `${height * s + 4}px`;
     p.wrap.appendChild(flash);
-    const targetTop = this._padT + p.top + parseFloat(flash.style.top) - this.scrollEl.clientHeight / 2.5;
+    const targetTop = this._padT + p.top + top - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
     setTimeout(() => flash.remove(), 2400);
   }

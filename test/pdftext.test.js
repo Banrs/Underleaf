@@ -41,3 +41,10 @@ test('overlapping candidates advance past the previous match', () => {
 test('an empty query matches nothing', () => {
   assert.deepEqual(matchRanges('anything', ''), []);
 });
+
+test('matching stops at its requested limit', () => {
+  assert.deepEqual(matchRanges('aaaaaa', 'a', 3), [
+    { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 },
+  ]);
+  assert.deepEqual(matchRanges('aaaa', 'a', 0), []);
+});

@@ -1,7 +1,7 @@
-//! Path safety — the security boundary, and the only one.
-//! User paths are normalized lexically first, then the
-//! nearest existing ancestor is resolved so symlinked files and directories
-//! cannot redirect an operation outside the project.
+//! Path safety — the security boundary, and the only one. User paths are
+//! normalized lexically first, then the nearest existing ancestor is resolved
+//! so symlinked files and directories cannot redirect an operation outside the
+//! project.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,17 +40,15 @@ fn invalid_windows_segment(segment: &str) -> bool {
     matches!(
         stem.as_str(),
         "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) || stem.strip_prefix("COM").is_some_and(|n| {
-        matches!(
-            n,
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-        )
-    }) || stem.strip_prefix("LPT").is_some_and(|n| {
-        matches!(
-            n,
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-        )
-    })
+    ) || stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|n| {
+            matches!(
+                n,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
 }
 
 fn validate_platform_segment(segment: &str, error: &str) -> Result<(), CoreError> {
@@ -62,22 +60,14 @@ fn validate_platform_segment(segment: &str, error: &str) -> Result<(), CoreError
     Ok(())
 }
 
-fn component_eq(a: &str, b: &str) -> bool {
-    // The protected settings name is ASCII and commonly lives on
-    // case-insensitive Windows and macOS volumes. Reserving its case aliases on
-    // every platform is conservative and keeps the boundary independent of the
-    // host volume's case-sensitivity setting.
-    a.eq_ignore_ascii_case(b)
-}
-
 /// Split a relative path into normalized segments, accepting either separator.
 /// `.` segments drop out; `..` pops — popping past the start is an escape.
 /// Returns an empty vec for inputs that normalize to the base itself.
-fn normalize_segments(rel: &str, escape_err: &str) -> Result<Vec<String>, CoreError> {
+fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>, CoreError> {
     if is_absolute_like(rel) {
         return Err(CoreError::bad_request(escape_err));
     }
-    let mut segments: Vec<String> = Vec::new();
+    let mut segments = Vec::new();
     for seg in rel.split(['/', '\\']) {
         match seg {
             "" | "." => {}
@@ -88,7 +78,7 @@ fn normalize_segments(rel: &str, escape_err: &str) -> Result<Vec<String>, CoreEr
             }
             _ => {
                 validate_platform_segment(seg, escape_err)?;
-                segments.push(seg.to_string());
+                segments.push(seg);
             }
         }
     }
@@ -118,7 +108,7 @@ fn ensure_existing_ancestor_within(
     }
 
     let resolved = fs::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
-    if resolved != canonical_root && !resolved.starts_with(&canonical_root) {
+    if !resolved.starts_with(&canonical_root) {
         return Err(CoreError::bad_request(escape_err));
     }
     Ok(())
@@ -145,9 +135,10 @@ pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
 
 /// Normalized project-relative segments for a user-supplied path, with the
 /// reserved-settings-file rule: `.texlocal.json` at the project root is only
-/// writable through write_settings, which validates each key. Windows path
-/// aliases are compared case-insensitively.
-fn safe_segments(rel: &str) -> Result<Vec<String>, CoreError> {
+/// writable through write_settings, which validates each key. Its case
+/// aliases are reserved on every platform, since Windows and macOS volumes are
+/// usually case-insensitive and the boundary must not depend on the volume.
+fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
     }
@@ -155,18 +146,23 @@ fn safe_segments(rel: &str) -> Result<Vec<String>, CoreError> {
     if segments.is_empty() {
         return Err(CoreError::bad_request("Path escapes project"));
     }
-    if segments.len() == 1 && component_eq(&segments[0], SETTINGS_FILE) {
+    if segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE) {
         return Err(CoreError::bad_request("Reserved file"));
     }
     Ok(segments)
 }
 
-/// Absolute path for a user-supplied relative path inside a project.
-pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+/// `segments` joined onto `root`, provided no existing link leads out of it.
+fn join_within(root: &Path, segments: &[&str]) -> Result<PathBuf, CoreError> {
     let mut abs = root.to_path_buf();
-    abs.extend(safe_segments(rel)?);
+    abs.extend(segments);
     ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
     Ok(abs)
+}
+
+/// Absolute path for a user-supplied relative path inside a project.
+pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+    join_within(root, &safe_segments(rel)?)
 }
 
 /// The normalized forward-slash spelling of a user-supplied project path, for
@@ -187,13 +183,11 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
             "Path segments cannot start with \"-\"",
         ));
     }
-    let mut abs = root.to_path_buf();
-    abs.extend(&segments);
-    ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
+    join_within(root, &segments)?;
     Ok(segments.join("/"))
 }
 
-/// Project-name sanitization. (projects.js `sanitizeName`)
+/// Project-name sanitization.
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     const STRIP: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
     let clean: String = name
@@ -211,7 +205,7 @@ pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
 
 /// Lexically normalize an absolute path (resolve `.` and `..` without touching
 /// the filesystem), for mapping tool output back into a project.
-pub fn normalize_abs(path: &Path) -> PathBuf {
+fn normalize_abs(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = PathBuf::new();
     for c in path.components() {
@@ -227,17 +221,10 @@ pub fn normalize_abs(path: &Path) -> PathBuf {
 }
 
 /// The forward-slash relative path of `abs` inside `root`, or None if it lies
-/// outside. Both are normalized lexically first.
+/// outside or is the root itself. Both are normalized lexically first.
 pub fn rel_to_root(root: &Path, abs: &Path) -> Option<String> {
     let abs = normalize_abs(abs);
-    let root = normalize_abs(root);
-    let rel = abs.strip_prefix(&root).ok()?;
-    let parts: Vec<String> = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    if parts.is_empty() {
-        return None;
-    }
-    Some(parts.join("/"))
+    let rel = abs.strip_prefix(normalize_abs(root)).ok()?;
+    let parts: Vec<_> = rel.iter().map(|part| part.to_string_lossy()).collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
 }

@@ -11,9 +11,11 @@ final class ProjectModel {
     var tree: [TreeNode] = []
     var openPath: String?
     var outline: [OutlineItem] = []
-    /// Words and lines in the open .tex file, for the word-count pill.
+    /// Words and lines in the open .tex file, for the status bar.
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
+    /// The line at the top of the source as it scrolls: what the outline follows.
+    var topLine = 1
 
     var dirty = false
     var saving = false
@@ -38,6 +40,24 @@ final class ProjectModel {
 
     /// The open file on disk, for the window's document icon.
     var openURL: URL?
+    /// The open file changed on disk while it had edits here: the path,
+    /// for the alert that asks which to keep.
+    var diskConflict: String?
+    /// The open file's text as last read from or written to disk, so a
+    /// change on disk is told from this app's own saves.
+    private var diskText: String?
+    private var watcher: FileWatcher?
+    private var diskCheck: Task<Void, Never>?
+
+    /// The source's find bar (Edit › Find and Replace…): CodeMirror's
+    /// search, driven from native fields, searched for as the query changes.
+    var findShown = false
+    var findQuery = FindQuery() {
+        didSet { if findQuery != oldValue { Task { await editor.setFind(findQuery) } } }
+    }
+    var findMatches = FindMatches()
+    /// Bumped to put the cursor in the find field, its text selected.
+    var findFocus = 0
 
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
@@ -60,6 +80,10 @@ final class ProjectModel {
     private var readingText = false
     /// The editor's web process died holding edits not yet on disk.
     private var lostEdits = false
+    /// Writes that reached the disk, and how many of them the PDF on screen
+    /// was built from: equal, the files on disk are the PDF's.
+    private var writes = 0
+    private var builtWrites = 0
 
     init(id: String, editor: EditorBridge, app: AppModel) {
         self.id = id
@@ -69,6 +93,12 @@ final class ProjectModel {
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
+
+    /// The one name for "no build yet", shared by the status bar, the
+    /// inspector and the Issues tab so they can't drift: a PDF built before
+    /// the project was opened (this run of the app or an earlier one) may be
+    /// on screen, but its build's issues weren't kept.
+    var noBuildTitle: String { pdfVersion > 0 ? "Not Built Since Opening" : "Not Compiled" }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
 
@@ -79,29 +109,46 @@ final class ProjectModel {
         return "Saved"
     }
 
-    private func report(_ error: Error) {
-        app?.alert = error.localizedDescription
+    /// An alert titled with what couldn't be done, the error its message.
+    private func report(_ error: Error, _ title: String) {
+        app?.alert = AppAlert(title, error)
     }
+
+    /// A project path's last component, for alert titles.
+    private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
     // ---------- loading ----------
 
     func load() async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
-        editor.onCommand = { [weak self] id in self?.run(id) }
-        editor.onCrash = { [weak self] in
+        editor.onScroll = { [weak self] line in self?.topLine = line }
+        // A chord the editor handed back because the native menu owns it
+        // (`MenuCommand.editorHostKeys`).
+        editor.onCommand = { [weak self] id in
+            if let command = MenuCommand(rawValue: id) { self?.app?.perform(command) }
+        }
+        editor.onFind = { [weak self] query in
             guard let self else { return }
-            if self.dirty || self.readingText { self.lostEdits = true }
+            findQuery = query
+            findShown = true
+            findFocus += 1
+        }
+        editor.onFindClosed = { [weak self] in self?.findShown = false }
+        editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
+        editor.onCrash = { [weak self] in
+            if let self, dirty || readingText { lostEdits = true }
         }
         editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
+        await editor.useHostFind()
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
             await refreshSymbols()
             if let main = settings?.mainFile { await open(main) }
         } catch {
-            report(error)
+            report(error, "Couldn’t Open “\(id)”")
         }
         pdfURL = try? await pdfPath()
         if let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) {
@@ -115,7 +162,7 @@ final class ProjectModel {
         do {
             tree = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
         } catch {
-            report(error)
+            report(error, "Couldn’t Read the Project’s Files")
         }
     }
 
@@ -129,14 +176,19 @@ final class ProjectModel {
         URL(fileURLWithPath: try await core.call("pdf_path", ["id": id], as: String.self))
     }
 
+    /// Where a project path is on disk.
+    private func fileURL(_ path: String) async -> URL? {
+        (try? await core.call("raw_path", ["id": id, "path": path], as: String.self)).map(URL.init(fileURLWithPath:))
+    }
+
     // ---------- editing ----------
 
     /// Open a file: text in the editor, anything else in its own app.
-    func open(_ path: String, line: Int? = nil) async {
+    /// Choosing in a sidebar list passes `focus: false`, so the arrow keys
+    /// stay in the list, as Xcode's navigator keeps them.
+    func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         guard isTextFile(path) else {
-            if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
-                NSWorkspace.shared.open(URL(fileURLWithPath: abs))
-            }
+            if let url = await fileURL(path) { NSWorkspace.shared.open(url) }
             return
         }
         // Clicking one file and then another before the first has opened:
@@ -150,17 +202,24 @@ final class ProjectModel {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
                 guard generation == openGeneration else { return }
                 openPath = path
-                openURL = (try? await core.call("raw_path", ["id": id, "path": path], as: String.self))
-                    .map { URL(fileURLWithPath: $0) }
+                openURL = await fileURL(path)
+                diskText = file.text
+                watchOpenFile()
                 analyze(file.text)
-                await editor.open(path: "\(id)/\(path)", text: file.text)
+                await editor.open(path: "\(id)/\(path)", text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
             } catch {
-                report(error)
+                report(error, "Couldn’t Open “\(name(path))”")
                 return
             }
         }
-        if let line, generation == openGeneration { await editor.reveal(line: line) }
+        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+    }
+
+    func showInFinder(_ path: String) {
+        Task {
+            if let url = await fileURL(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
     }
 
     private func edited() {
@@ -190,6 +249,8 @@ final class ProjectModel {
 
     private func write() async -> Bool {
         guard dirty, let path = openPath else { return true }
+        // Not over another app's change until asked which to keep.
+        guard diskConflict == nil else { return false }
         saving = true
         defer { saving = false }
         // Before the text is read: an edit that arrives while it is read or
@@ -204,17 +265,21 @@ final class ProjectModel {
             // restart says so. Nothing is left to save.
             if lostEdits || editor.crashes != crashes { return true }
             dirty = true
-            app?.alert = "The editor’s text could not be read, so \(path) was not saved."
+            app?.alert = AppAlert("“\(name(path))” Wasn’t Saved",
+                                  "The editor’s text couldn’t be read. Your changes are still in the editor, and TeXLocal saves them again after your next edit.")
             return false
         }
         do {
+            // Before the write, whose own change notice then matches it.
+            diskText = text
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
+            writes += 1
             analyze(text)
             await refreshSymbols()
             return true
         } catch {
             dirty = true
-            report(error)
+            report(error, "“\(name(path))” Wasn’t Saved")
             return false
         }
     }
@@ -228,13 +293,20 @@ final class ProjectModel {
         saveTask?.cancel()
         dirty = false
         openPath = nil
+        // A save in flight read its text before the crash and still lands:
+        // it counts once it has.
+        _ = await lastSave?.value
+        // The editor shows the file as it is on disk again, which is what
+        // the PDF was built from unless a save has landed since.
+        if pdfFreshness == .edited, writes == builtWrites { pdfFreshness = nil }
         await open(path)
         if lost {
-            app?.alert = "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost."
+            app?.alert = AppAlert("Unsaved Changes Were Lost",
+                                  "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost.")
         }
     }
 
-    /// The outline, breadcrumb and word count read the open document; as in
+    /// The outline, location row and word count read the open document; as in
     /// the web, only a .tex file has them.
     private func analyze(_ text: String) {
         guard openPath?.hasSuffix(".tex") == true else {
@@ -245,14 +317,6 @@ final class ProjectModel {
         let doc = Outline.analyze(text)
         outline = doc.outline
         counts = (doc.words, doc.lines)
-    }
-
-    /// File › section › subsection at the cursor (web/src/workspace.js
-    /// `renderCrumbs`). The file by its path in the project, so two
-    /// `intro.tex` in different folders read apart.
-    var breadcrumb: [String] {
-        guard let path = openPath else { return [] }
-        return [path] + Outline.chain(outline, at: cursorLine).map(\.title)
     }
 
     /// Save now, cancelling the pending autosave — before a file switch, a
@@ -279,6 +343,79 @@ final class ProjectModel {
         return true
     }
 
+    // ---------- changes on disk ----------
+
+    /// Watch the open file, so a change made by another app (an editor, a
+    /// sync, git) shows here rather than being saved over.
+    private func watchOpenFile() {
+        guard let url = openURL else {
+            watcher = nil
+            return
+        }
+        watcher = FileWatcher(url: url) { [weak self] in self?.scheduleDiskCheck() }
+    }
+
+    /// Changes come in bursts (a write, then its size and date): read once
+    /// they settle.
+    private func scheduleDiskCheck() {
+        diskCheck?.cancel()
+        diskCheck = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            await self?.checkDisk()
+        }
+    }
+
+    /// Nothing unsaved: the editor takes the text on disk. Unsaved edits:
+    /// ask which to keep.
+    private func checkDisk() async {
+        guard let path = openPath, !closed,
+              let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
+              path == openPath, file.text != diskText
+        else { return }
+        diskText = file.text
+        // The PDF no longer matches what is on disk.
+        writes += 1
+        if pdfVersion > 0 { pdfFreshness = .edited }
+        if dirty || saving {
+            saveTask?.cancel()
+            diskConflict = path
+        } else {
+            await showDiskText(file.text, of: path)
+            if autoCompile { await compile(auto: true) }
+        }
+    }
+
+    /// The editor shows the file as it is on disk, at the same place.
+    private func showDiskText(_ text: String, of path: String) async {
+        let top = topLine
+        await editor.open(path: "\(id)/\(path)", text: text, focus: false)
+        analyze(text)
+        await editor.reveal(line: top, atTop: true, focus: false)
+        cursorLine = await editor.currentLine()
+    }
+
+    /// Revert: the edits here give way to the file on disk.
+    func revertToDisk() async {
+        diskConflict = nil
+        guard let path = openPath, let text = diskText else { return }
+        saveTask?.cancel()
+        _ = await lastSave?.value
+        await showDiskText(text, of: path)
+        // Written back, in case a save that was already under way when the
+        // change came wrote these edits over it.
+        dirty = true
+        guard await save() else { return }
+        if autoCompile { await compile(auto: true) }
+    }
+
+    /// Keep editing: the next save writes these edits over the other app's.
+    func keepEdits() {
+        diskConflict = nil
+        // The autosave held off while asking.
+        Task { await saveEdits() }
+    }
+
     // ---------- compile ----------
 
     /// Build the PDF. Asked while a build runs, it queues one to follow, so
@@ -294,6 +431,7 @@ final class ProjectModel {
         // Before the save, so a second request queues instead of racing this one.
         compiling = true
         let saved = await flush()
+        let built = writes
         if saved {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
@@ -305,15 +443,17 @@ final class ProjectModel {
                 if result.ok {
                     pdfURL = try await pdfPath()
                     pdfVersion += 1
-                    // Edits made while it built still aren't in it.
-                    pdfFreshness = dirty ? .edited : nil
+                    builtWrites = built
+                    // Edits made while it built still aren't in it, nor may
+                    // a save that landed meanwhile be.
+                    pdfFreshness = dirty || writes != built ? .edited : nil
                 } else {
                     if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
                     if !result.errors.isEmpty { panelTab = .issues; showLogs = true }
                 }
                 notify(result)
             } catch {
-                if !auto, !closed { report(error) }
+                if !auto, !closed { report(error, "Couldn’t Compile") }
             }
         }
         compiling = false
@@ -326,12 +466,13 @@ final class ProjectModel {
     private func notify(_ result: CompileResult) {
         guard !NSApp.isActive else { return }
         let content = UNMutableNotificationContent()
-        content.title = "TeXLocal"
+        // macOS already names the app; the title says which project.
+        content.title = id
         content.body = switch (result.ok, result.errors.count) {
-        case (true, _): String(format: "Compiled in %.1fs", Double(result.durationMs) / 1000)
-        case (false, 0): "Compile failed"
-        case (false, 1): "Compile failed — 1 error"
-        case (false, let n): "Compile failed — \(n) errors"
+        case (true, _): "Compiled in \(result.durationText)"
+        case (false, 0): "Build failed"
+        case (false, 1): "Build failed with 1 error"
+        case (false, let n): "Build failed with \(n) errors"
         }
         let center = UNUserNotificationCenter.current()
         Task {
@@ -345,17 +486,44 @@ final class ProjectModel {
     func close() {
         closed = true
         compileQueued = false
+        watcher = nil
+        diskCheck?.cancel()
+    }
+
+    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
+    /// killed and the compile returns failed.
+    func stopCompile() {
+        guard compiling else { return }
+        compileQueued = false
+        core.killAll()
+    }
+
+    // ---------- settings ----------
+
+    @discardableResult
+    private func patchSettings(_ patch: [String: Any]) async -> Bool {
+        do {
+            settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
+            return true
+        } catch {
+            report(error, "Couldn’t Change the Project’s Settings")
+            return false
+        }
     }
 
     func setEngine(_ engine: String) async {
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["engine": engine]], as: ProjectSettings.self)
-            // A new engine only means something once a build uses it, so it
-            // compiles whatever the auto-compile setting, as the web does.
-            await compile()
-        } catch {
-            report(error)
-        }
+        // A new engine only means something once a build uses it, so it
+        // compiles whatever the auto-compile setting, as the web does.
+        if await patchSettings(["engine": engine]) { await compile() }
+    }
+
+    func setShellEscape(_ on: Bool) async {
+        await patchSettings(["shellEscape": on])
+    }
+
+    func setMainFile(_ path: String) async {
+        guard path != settings?.mainFile else { return }
+        if await patchSettings(["mainFile": path]) { await mainFileChanged() }
     }
 
     // ---------- SyncTeX ----------
@@ -371,7 +539,7 @@ final class ProjectModel {
             showLogs = false
             showPDF = true
         } catch {
-            report(error)
+            report(error, "Couldn’t Find This Line in the PDF")
         }
     }
 
@@ -381,7 +549,7 @@ final class ProjectModel {
             await open(loc.file, line: loc.line)
             editor.focus()
         } catch {
-            report(error)
+            report(error, "Couldn’t Find This Spot in the Source")
         }
     }
 
@@ -393,7 +561,7 @@ final class ProjectModel {
             await reloadTree()
             if !directory { await open(path) }
         } catch {
-            report(error)
+            report(error, "Couldn’t Create “\(name(path))”")
         }
     }
 
@@ -406,13 +574,18 @@ final class ProjectModel {
             // The open file moves with its folder too. The editor keeps its
             // text; only where it is saved changes, so the next save cannot
             // bring the old path back.
+            let wasOpen = openPath
             openPath = openPath.map { remapPath($0, from: result.from, to: result.to) }
+            if let openPath, openPath != wasOpen {
+                openURL = await fileURL(openPath)
+                watchOpenFile()
+            }
             let main = settings?.mainFile
             settings = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
             if settings?.mainFile != main { await mainFileChanged() }
         } catch {
-            report(error)
+            report(error, "Couldn’t Rename “\(name(from))”")
         }
     }
 
@@ -426,23 +599,14 @@ final class ProjectModel {
             await editor.forget(path: "\(id)/\(path)")
             if let open = openPath, open == path || open.hasPrefix(path + "/") {
                 openPath = nil
+                watcher = nil
                 dirty = false
                 outline = []
                 counts = nil
             }
             await reloadTree()
         } catch {
-            report(error)
-        }
-    }
-
-    func setMainFile(_ path: String) async {
-        guard path != settings?.mainFile else { return }
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["mainFile": path]], as: ProjectSettings.self)
-            await mainFileChanged()
-        } catch {
-            report(error)
+            report(error, "Couldn’t Move “\(name(path))” to the Trash")
         }
     }
 
@@ -458,11 +622,11 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    func importFiles(_ urls: [URL], into dir: String = "") async {
+    func importFiles(_ urls: [URL]) async {
         do {
-            _ = try await core.call("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)], as: Saved.self)
+            try await core.perform("import_files", ["id": id, "dir": "", "paths": urls.map(\.path)])
         } catch {
-            report(error)
+            report(error, "Couldn’t Add the Files")
         }
         // After a failure too: the files copied before it are there.
         await reloadTree()
@@ -473,25 +637,32 @@ final class ProjectModel {
     func exportZip(to url: URL) async {
         do {
             try await core.perform("export_zip", ["id": id, "dest": url.path])
-            NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            report(error)
+            report(error, "Couldn’t Export “\(id)”")
         }
     }
 
     func savePDF(to url: URL) async {
         guard let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) else {
-            app?.alert = "Compile first to produce a PDF."
+            app?.alert = AppAlert("No PDF to Save", "Compile the project first to make its PDF.")
             return
         }
+        let files = FileManager.default
         do {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
+            guard files.fileExists(atPath: url.path) else {
+                try files.copyItem(at: pdfURL, to: url)
+                return
             }
-            try FileManager.default.copyItem(at: pdfURL, to: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            // A copy beside it first, swapped in whole: a failed copy leaves
+            // the file being replaced as it was.
+            let scratch = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                        appropriateFor: url, create: true)
+            defer { try? files.removeItem(at: scratch) }
+            let copy = scratch.appendingPathComponent(url.lastPathComponent)
+            try files.copyItem(at: pdfURL, to: copy)
+            _ = try files.replaceItemAt(url, withItemAt: copy)
         } catch {
-            report(error)
+            report(error, "Couldn’t Save the PDF")
         }
     }
 
@@ -512,39 +683,79 @@ final class ProjectModel {
         }
     }
 
-    // ---------- compiling, continued ----------
-
-    /// Stop the build in progress (Xcode's Stop, ⌘.): its process group is
-    /// killed and the compile returns failed.
-    func stopCompile() {
-        guard compiling else { return }
-        compileQueued = false
-        Core.shared.killAll()
-    }
-
-    func setShellEscape(_ on: Bool) async {
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": ["shellEscape": on]], as: ProjectSettings.self)
-        } catch {
-            report(error)
-        }
-    }
-
     // ---------- editor commands ----------
 
     func format(_ name: String, _ arg: String? = nil) {
         Task { await editor.command(name, arg) }
     }
 
+    /// The find bar's next or previous match (⌘G, Return, the arrows).
+    func findStep(_ delta: Int) {
+        format(delta > 0 ? "findNext" : "findPrevious")
+    }
+
+    /// Replace the selected match and go to the next, or replace them all.
+    func replace(all: Bool) {
+        format(all ? "replaceAll" : "replaceNext")
+    }
+
+    /// Done or Escape: the matches are unmarked and typing goes back to the text.
+    func closeFind() {
+        findShown = false
+        Task {
+            await editor.closeFind()
+            editor.focus()
+        }
+    }
+
     func reveal(line: Int) {
         Task { await editor.reveal(line: line) }
     }
+}
 
-    /// A command the editor handed back because the native menu owns its
-    /// shortcut (see `MenuCommand.editorHostKeys`).
-    func run(_ commandID: String) {
-        guard let command = MenuCommand(rawValue: commandID) else { return }
-        app?.perform(command)
+/// Tells when a file changes on disk: written, or replaced (as editors
+/// save, writing a new file and renaming it over the old one), in which
+/// case it follows the new file at the same path.
+@MainActor
+final class FileWatcher {
+    private let url: URL
+    private let changed: @MainActor () -> Void
+    private var source: DispatchSourceFileSystemObject?
+
+    init(url: URL, changed: @escaping @MainActor () -> Void) {
+        self.url = url
+        self.changed = changed
+        start()
+    }
+
+    isolated deinit {
+        source?.cancel()
+    }
+
+    private func start() {
+        let fd = open(url.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write, .extend, .delete, .rename], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let source = self.source else { return }
+                if !source.data.isDisjoint(with: [.delete, .rename]) {
+                    // The path now names another file (or none yet): watch
+                    // that once it is there.
+                    source.cancel()
+                    self.source = nil
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .milliseconds(100))
+                        self?.start()
+                    }
+                }
+                self.changed()
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        self.source = source
+        source.resume()
     }
 }
 
@@ -565,7 +776,7 @@ enum PDFFreshness {
     var systemImage: String {
         switch self {
         case .edited: "clock.arrow.circlepath"
-        case .lastSuccessful: "exclamationmark.triangle"
+        case .lastSuccessful: "exclamationmark.triangle.fill"
         }
     }
 }

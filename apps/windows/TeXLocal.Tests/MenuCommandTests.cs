@@ -146,6 +146,8 @@ public sealed partial class MenuCommandTests
         Assert.Contains("sync.inverse", ids);
         Assert.DoesNotContain("edit.find", ids);
         Assert.DoesNotContain("edit.comment", ids);
+        Assert.DoesNotContain("edit.findNext", ids);
+        Assert.False(MenuCommand.EditFindPrevious.ClaimsChord());
         Assert.DoesNotContain("edit.undo", ids);
         Assert.DoesNotContain("project.close", ids);
         // Stop and full screen reach the host from inside the editor too.

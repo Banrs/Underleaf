@@ -2,71 +2,65 @@ import SwiftUI
 
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
-/// panels" and "Interface size" have no counterpart: macOS draws its own
-/// sidebar and toolbar, and sizes its own text.
+/// panels", "Interface size" and theme have no counterpart: macOS draws its
+/// own sidebar and toolbar (View › Customize Toolbar… arranges it), sizes
+/// its own text, and the app follows the system's appearance (HIG, Dark
+/// Mode).
 struct SettingsView: View {
     var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") { GeneralSettings() }
-            Tab("Editor", systemImage: "character.cursor.ibeam") { EditorSettings() }
+            Tab("General", systemImage: "gearshape") { GeneralSettings().settingsPane() }
+            Tab("Editor", systemImage: "character.cursor.ibeam") { EditorSettings().settingsPane() }
         }
-        .frame(width: 480)
+    }
+}
+
+extension View {
+    /// A pane of the Settings window: a grouped form at its content's
+    /// height, so the window fits each tab as it switches, as the system's
+    /// own settings windows do.
+    fileprivate func settingsPane() -> some View {
+        formStyle(.grouped)
+            .scrollDisabled(true)
+            .frame(width: 500)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage("appearance") private var appearance = "system"
     @AppStorage("pdfPaper") private var pdfPaper = "white"
 
     var body: some View {
         @Bindable var app = app
         Form {
             Section("Appearance") {
-                Picker("Theme", selection: $appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
                 Picker(selection: $pdfPaper) {
                     Text("White").tag("white")
                     Text("Dark").tag("dark")
-                    Text("Match Theme").tag("auto")
+                    Text("Match Appearance").tag("auto")
                 } label: {
                     Text("Document Paper")
-                    Text("Dark paper inverts the rendered PDF for night reading")
+                    Text("Dark paper inverts the rendered PDF for night reading.")
                 }
             }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
-                    Text("Recompile shortly after you stop typing")
-                }
-                if let project = app.project {
-                    Picker(selection: Binding(
-                        get: { project.settings?.engine ?? "pdflatex" },
-                        set: { engine in Task { await project.setEngine(engine) } }
-                    )) {
-                        ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-                    } label: {
-                        Text("Engine")
-                        Text("For \u{201C}\(project.id)\u{201D}")
-                    }
+                    Text("Recompile shortly after you stop typing.")
                 }
                 LabeledContent("TeX Distribution") {
                     Text(app.tex?.available == true ? texVersion : "Not found — compiling is off")
                 }
             }
         }
-        .formStyle(.grouped)
-        .onChange(of: appearance) { _, value in applyAppearance(value) }
     }
-}
 
-extension GeneralSettings {
-    /// latexmk's banner ("Latexmk, John Collins, 9 March 2026. Version 4.88")
-    /// as "latexmk 4.88"; anything else as the core reported it.
-    fileprivate var texVersion: String {
+    /// The distribution ("TeX Live 2026"); else latexmk's banner
+    /// ("Latexmk, John Collins, 9 March 2026. Version 4.88") as
+    /// "latexmk 4.88"; anything else as the core reported it.
+    private var texVersion: String {
+        if let distribution = app.tex?.distribution { return distribution }
         guard let version = app.tex?.version else { return "Found" }
         if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
         return version
@@ -77,7 +71,6 @@ private struct EditorSettings: View {
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
     @AppStorage("editorFontSize") private var fontSize = 13
-    @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         Form {
@@ -86,31 +79,28 @@ private struct EditorSettings: View {
                     Text("System Monospaced").tag("system")
                     Text("JetBrains Mono").tag("jetbrains")
                 }
-                Stepper(value: $fontSize, in: 10...28) {
-                    LabeledContent("Font Size", value: "\(fontSize) pt")
-                }
+                // The system's stepper with its editable value, as a grouped
+                // form lays it out: type a size or step to it, lined up with
+                // the other rows' controls.
+                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                // "onedark" is the editor's own colours: One Dark in dark
+                // mode and CodeMirror's default in light, so it isn't named
+                // for one of them.
                 Picker("Syntax Colors", selection: $palette) {
-                    Text("One Dark").tag("onedark")
+                    Text("Default").tag("onedark")
                     Text("Xcode").tag("xcode")
                 }
             }
-            Section("Status") {
-                Toggle(isOn: $showWordCount) {
-                    Text("Word Count")
-                    Text("Show words and lines in the status bar")
-                }
-            }
         }
-        .formStyle(.grouped)
     }
-}
 
-/// "system" follows macOS; the others pin the app's appearance.
-@MainActor
-func applyAppearance(_ value: String) {
-    NSApp.appearance = switch value {
-    case "light": NSAppearance(named: .aqua)
-    case "dark": NSAppearance(named: .darkAqua)
-    default: nil
+    private static let sizes: ClosedRange<Double> = 10...28
+
+    /// A typed size, whole and kept within the sizes the stepper offers.
+    /// Double, as the stepper's formatted value takes only floating point.
+    private var size: Binding<Double> {
+        Binding(get: { Double(fontSize) }, set: {
+            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        })
     }
 }

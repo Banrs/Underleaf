@@ -3,10 +3,8 @@
 // serves them — the desktop's texlocal:// scheme and the browser server — so
 // the route table and the sandbox rule exist once.
 
-use std::io::SeekFrom;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::service::Service;
 use crate::CoreError;
@@ -43,11 +41,11 @@ pub fn mime_for(path: &Path) -> &'static str {
     {
         Some("html") => "text/html",
         Some("css") => "text/css",
-        Some("js") | Some("mjs") => "text/javascript",
-        Some("map") | Some("json") => "application/json",
+        Some("js" | "mjs") => "text/javascript",
+        Some("map" | "json") => "application/json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("jpg" | "jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("bmp") => "image/bmp",
@@ -101,19 +99,26 @@ pub fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, Unsatis
 }
 
 pub async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
+    // One trip to the blocking pool per request. tokio::fs::File makes one per
+    // operation (open, seek, each read) and copies through its own buffer;
+    // pdf.js fetches a large PDF as many small ranges.
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || read_range_blocking(&path, range))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+fn read_range_blocking(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
+    // fs::read sizes its buffer from the file's length up front.
     let Some((start, end)) = range else {
-        // One trip to the blocking pool, into a buffer sized from the file's
-        // length. File::read_to_end grows its Vec from 32 bytes and makes a
-        // trip per read, so a multi-MB PDF took ~20 of them and several copies.
-        return tokio::fs::read(path).await;
+        return std::fs::read(path);
     };
-    let mut file = tokio::fs::File::open(path).await?;
-    file.seek(SeekFrom::Start(start)).await?;
-    let count = end - start + 1;
-    let size = usize::try_from(count)
+    let size = usize::try_from(end - start + 1)
         .map_err(|_| std::io::Error::other("requested range is too large"))?;
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(start))?;
     let mut bytes = vec![0; size];
-    file.read_exact(&mut bytes).await?;
+    file.read_exact(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -145,8 +150,15 @@ mod tests {
         std::fs::write(&path, &data).unwrap();
         let whole = read_file_range(&path, None).await.unwrap();
         let part = read_file_range(&path, Some((10, 19))).await.unwrap();
+        let last = read_file_range(&path, Some((99_999, 99_999)))
+            .await
+            .unwrap();
+        let past_end = read_file_range(&path, Some((99_990, 100_009))).await;
         std::fs::remove_file(&path).unwrap();
         assert_eq!(whole, data);
         assert_eq!(part, data[10..20]);
+        assert_eq!(last, data[99_999..]);
+        // A file that shrank after its length was read: an error, not padding.
+        assert!(past_end.is_err());
     }
 }

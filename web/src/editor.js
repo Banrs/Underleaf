@@ -8,7 +8,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from
 import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
+import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, findPrevious } from '@codemirror/search';
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
@@ -141,7 +141,12 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 
 const MATH_ENVS = 'equation|align|gather|multline|eqnarray|alignat|flalign|cases|split';
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
-const DISPLAY_RE = [/\$\$([\s\S]*?)\$\$/g, /\\\[([\s\S]*?)\\\]/g];
+// Display math: a math environment, $$…$$ or \[…\], each with how to read it.
+const BLOCKS = [
+  [ENV_RE, (m) => texForPreview(m[1], m[3])],
+  [/\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
+  [/\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
+];
 
 // KaTeX-friendly cleanup: drop labels/numbering, map env content to aligned/cases.
 function texForPreview(env, body) {
@@ -161,18 +166,11 @@ function mathAtCursor(state) {
   const text = state.doc.sliceString(from, Math.min(state.doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
-  ENV_RE.lastIndex = 0;
-  for (let m; (m = ENV_RE.exec(text)); ) {
-    if (rel >= m.index && rel <= m.index + m[0].length) {
-      return { from: from + m.index, tex: texForPreview(m[1], m[3]), display: true };
-    }
-    if (m.index > rel) break;
-  }
-  for (const re of DISPLAY_RE) {
+  for (const [re, tex] of BLOCKS) {
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
       if (rel >= m.index && rel <= m.index + m[0].length) {
-        return { from: from + m.index, tex: texForPreview(null, m[1]), display: true };
+        return { from: from + m.index, tex: tex(m), display: true };
       }
       if (m.index > rel) break;
     }
@@ -198,7 +196,7 @@ function mathAtCursor(state) {
 
 function mathTooltip(state, prev = null) {
   const m = mathAtCursor(state);
-  if (!m || !m.tex) return null;
+  if (!m?.tex) return null;
   // The tooltip manager keys its views by `create`, so a fresh object rebuilds
   // the DOM and reruns KaTeX. Moving within an unchanged equation keeps it.
   if (prev && prev.pos === m.from && prev.tex === m.tex && prev.display === m.display) return prev;
@@ -235,6 +233,139 @@ export const mathPreviewField = StateField.define({
 });
 // Hide the preview when the editor loses focus (e.g. clicking into the PDF).
 const mathPreviewFocus = EditorView.focusChangeEffect.of((_state, focusing) => editorFocusEff.of(focusing));
+
+// ---------- math mode ----------
+// Whether a position of a LaTeX source is in math mode, so a symbol from the
+// palette goes in as \alpha in math and as $\alpha$ in text. The stex mode's
+// syntax tree only knows $, $$, \( and \[, not math environments, so this
+// reads the text before the position as TeX would: $…$, $$…$$, \(…\), \[…\]
+// and the math environments (starred too) open math; \text{…} and its kin
+// return to text inside it; escapes (\$, \%, \\) are not delimiters; comments
+// and verbatim are skipped; and a blank line ends an unclosed $ or \[, as
+// the paragraph it cannot span. Only the text before the position counts,
+// so `$|$` (an empty pair, the caret between) is math.
+
+const MATH_ENVIRONMENTS = new Set([
+  'equation', 'align', 'gather', 'multline', 'eqnarray', 'alignat', 'flalign', 'xalignat', 'xxalignat',
+  'math', 'displaymath', 'dmath', 'dgroup', 'darray',
+].flatMap((e) => [e, `${e}*`]));
+const VERBATIM_ENVIRONMENTS = new Set(['verbatim', 'verbatim*', 'Verbatim', 'Verbatim*', 'lstlisting', 'minted', 'comment']);
+// Commands whose braced argument is text, even in math.
+const TEXT_COMMANDS = new Set([
+  'text', 'textrm', 'textit', 'textbf', 'textsf', 'texttt', 'textup', 'textsl', 'textsc', 'textmd', 'textnormal',
+  'mbox', 'hbox', 'fbox', 'intertext', 'shortintertext',
+]);
+
+export function mathModeAt(text, pos = text.length) {
+  const src = text.slice(0, pos);
+  const n = src.length;
+  // Open groups, innermost last: { math, end }, where `end` is what closes
+  // it: '$', '$$', '\\)', '\\]', '}' or 'env:<name>'.
+  const stack = [];
+  const math = () => (stack.length ? stack[stack.length - 1].math : false);
+  const top = () => stack[stack.length - 1]?.end;
+  let textArg = false; // the next { opens a text argument (\text{)
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    if (c === '%') {
+      const eol = src.indexOf('\n', i);
+      if (eol === -1) break;
+      i = eol; // the newline itself is read next, for the blank-line rule
+      continue;
+    }
+    if (c === '\n') {
+      // A blank line (only spaces between) ends a paragraph, which inline
+      // and display delimiters cannot span: drop them, and all inside them.
+      let j = i + 1;
+      while (j < n && (src[j] === ' ' || src[j] === '\t' || src[j] === '\r')) j++;
+      if (src[j] === '\n') {
+        const k = stack.findIndex((f) => f.end === '$' || f.end === '$$' || f.end === '\\)' || f.end === '\\]');
+        if (k !== -1) stack.length = k;
+        textArg = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '$') {
+      if (top() === '$') { stack.pop(); i += 1; }
+      else if (top() === '$$') { stack.pop(); i += src[i + 1] === '$' ? 2 : 1; }
+      else if (math()) i += 1; // a stray $ in an environment's math
+      else if (src[i + 1] === '$') { stack.push({ math: true, end: '$$' }); i += 2; }
+      else { stack.push({ math: true, end: '$' }); i += 1; }
+      textArg = false;
+      continue;
+    }
+    if (c === '{') {
+      stack.push({ math: textArg ? false : math(), end: '}' });
+      textArg = false;
+      i += 1;
+      continue;
+    }
+    if (c === '}') {
+      // The innermost open brace, and anything unclosed inside it.
+      const k = stack.findLastIndex((f) => f.end === '}');
+      if (k !== -1) stack.length = k;
+      i += 1;
+      continue;
+    }
+    if (c !== '\\') {
+      if (textArg && !/\s/.test(c)) textArg = false;
+      i += 1;
+      continue;
+    }
+    // A control symbol: \( \) \[ \] open and close math; any other (\$, \%,
+    // \\, \{) is an escape and nothing more.
+    const d = src[i + 1];
+    if (d === undefined) break;
+    if (!/[A-Za-z]/.test(d)) {
+      if (d === '(' || d === '[') { if (!math()) stack.push({ math: true, end: `\\${d === '(' ? ')' : ']'}` }); }
+      else if (d === ')' || d === ']') {
+        const k = stack.findLastIndex((f) => f.end === `\\${d}`);
+        if (k !== -1) stack.length = k;
+      }
+      textArg = false;
+      i += 2;
+      continue;
+    }
+    // A control word.
+    let j = i + 1;
+    while (j < n && /[A-Za-z]/.test(src[j])) j++;
+    const name = src.slice(i + 1, j);
+    i = j;
+    textArg = false;
+    if (name === 'verb') {
+      if (src[i] === '*') i += 1;
+      const delim = src[i];
+      if (delim === undefined) break;
+      const close = src.indexOf(delim, i + 1);
+      if (close === -1) return false; // inside \verb|…
+      i = close + 1;
+      continue;
+    }
+    if (name === 'begin' || name === 'end') {
+      const m = /^\s*\{([^{}]*)\}/.exec(src.slice(i, i + 64));
+      if (!m) continue;
+      const env = m[1].trim();
+      i += m[0].length;
+      if (name === 'begin') {
+        if (VERBATIM_ENVIRONMENTS.has(env)) {
+          const close = src.indexOf(`\\end{${env}}`, i);
+          if (close === -1) return false; // inside verbatim
+          i = close + `\\end{${env}}`.length;
+        } else {
+          stack.push({ math: MATH_ENVIRONMENTS.has(env) || math(), end: `env:${env}` });
+        }
+      } else {
+        const k = stack.findLastIndex((f) => f.end === `env:${env}`);
+        if (k !== -1) stack.length = k;
+      }
+      continue;
+    }
+    if (TEXT_COMMANDS.has(name) && math()) textArg = true;
+  }
+  return math();
+}
 
 // Toggle "%" line comments on the selected lines (LaTeX has no block comments).
 function toggleLatexComment(view) {
@@ -310,11 +441,34 @@ export function latexCompletions(getSymbols) {
   };
 }
 
+// A line as a heading of `command` (`section` etc.), or as plain text given
+// none, and where the caret goes: after the title. A heading is found where
+// the outline finds one (state.js SECTION_RE): anywhere on the line, with
+// an optional short title, which it keeps; otherwise the line is the title.
+export function headingLine(line, command) {
+  const m = /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(\[[^\]]*\])?\s*\{/.exec(line);
+  let before = /^\s*/.exec(line)[0];
+  let title = line.trim();
+  let rest = '';
+  if (m) {
+    before = line.slice(0, m.index);
+    // The title runs to the brace that closes the command's.
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < line.length && depth; i++) depth += { '{': 1, '}': -1 }[line[i]] ?? 0;
+    title = line.slice(m.index + m[0].length, depth ? line.length : i - 1);
+    rest = depth ? '' : line.slice(i);
+  }
+  if (!command) return { text: `${before}${title}${rest}`, cursor: before.length + title.length + rest.length };
+  const head = `${before}\\${command}${m?.[2] ?? ''}${m?.[3] ?? ''}{`;
+  return { text: `${head}${title}}${rest}`, cursor: head.length + title.length };
+}
+
 // `restore` (a previously captured EditorState) takes precedence over
 // `content`: it carries the document, selection, and undo history of an
 // earlier session with the same file. Its embedded listener closures only
 // touch stable module-level state, so reattaching them is safe.
-export function createEditor({ parent, content, restore, onChange, onCursor, dark, getSymbols }) {
+export function createEditor({ parent, content, restore, onChange, onCursor, onScroll, dark, getSymbols }) {
   const state = restore ?? EditorState.create({
     doc: content,
     extensions: [
@@ -354,6 +508,21 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
   const view = new EditorView({ state, parent });
   // A restored state carries the theme it was cached under, which may be stale.
   if (restore) view.dispatch({ effects: themeCompartment.reconfigure(themeFor(dark)) });
+  // The line at the top of the view, as the reader moves through the file:
+  // an outline follows where you are reading, as Overleaf's does. The first
+  // line at least half showing: a jump to a heading leaves a sliver of the
+  // line above it in view, and that line would name the section before.
+  if (onScroll) {
+    let frame = 0;
+    const report = () => {
+      frame = 0;
+      if (!view.dom.isConnected) return;
+      const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
+      onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(top + view.defaultLineHeight / 2).from).number);
+    };
+    view.scrollDOM.addEventListener('scroll', () => { frame ||= requestAnimationFrame(report); }, { passive: true });
+    frame = requestAnimationFrame(report);
+  }
 
   return {
     getContent: () => view.state.doc.toString(),
@@ -368,13 +537,16 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
     setTheme(isDark) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },
-    gotoLine(line) {
+    // `atTop` puts the line at the top of the view, as an outline's jump to
+    // a heading does; otherwise it is centred, with context above it.
+    // `focus` false leaves keyboard focus where it is (a native sidebar).
+    gotoLine(line, atTop = false, focus = true) {
       const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
       view.dispatch({
         selection: { anchor: l.from },
-        effects: [EditorView.scrollIntoView(l.from, { y: 'center' }), setJumpFlash.of(l.from)],
+        effects: [EditorView.scrollIntoView(l.from, { y: atTop ? 'start' : 'center' }), setJumpFlash.of(l.from)],
       });
-      view.focus();
+      if (focus) view.focus();
       clearTimeout(this._flashTimer);
       this._flashTimer = setTimeout(() => {
         if (view.dom.isConnected) view.dispatch({ effects: setJumpFlash.of(null) });
@@ -396,6 +568,29 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
       });
       view.focus();
     },
+    // Replace the selection with text, in the line: a symbol, say.
+    insertText(text) {
+      const { from, to } = view.state.selection.main;
+      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
+      view.focus();
+    },
+    // A math symbol from the palette (\alpha) in place of the selection: as
+    // it is in math, and as $\alpha$ in text, where the bare command would
+    // stop the build. The caret goes after it either way.
+    insertSymbol(command) {
+      const { from } = view.state.selection.main;
+      this.insertText(mathModeAt(view.state.sliceDoc(0, from)) ? command : `$${command}$`);
+    },
+    // Make the cursor's line a heading (`\section` etc.), or plain text given
+    // no command, as a word processor's paragraph style does: an
+    // existing heading changes level and keeps its title, and a line of text
+    // becomes the title.
+    setHeading(command) {
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const { text, cursor } = headingLine(line.text, command);
+      view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: line.from + cursor } });
+      view.focus();
+    },
     // Insert a multi-line template at the cursor; "$0" marks the cursor spot.
     insertTemplate(template) {
       const { from, to } = view.state.selection.main;
@@ -408,6 +603,10 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
       view.focus();
     },
     openSearch: () => openSearchPanel(view),
+    // The next or previous match of the find panel's query; with no query
+    // yet, CodeMirror opens the panel instead.
+    findNext: () => findNext(view),
+    findPrevious: () => findPrevious(view),
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };

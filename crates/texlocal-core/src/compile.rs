@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
@@ -19,7 +19,7 @@ use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
 use crate::BUILD_DIR;
 
-pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
+const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT: usize = 1_000_000;
 /// How long a finished child's pipes are read before giving up on them.
@@ -29,7 +29,7 @@ const LOG_TAIL: usize = 200_000;
 /// most; one that loops on `\message` until the timeout can reach gigabytes.
 const LOG_READ_MAX: u64 = 16 * 1024 * 1024;
 
-fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
     match engine {
         "pdflatex" => Some(&["-pdf"]),
         "xelatex" => Some(&["-xelatex"]),
@@ -49,8 +49,7 @@ fn four_digit_years(dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    years.sort();
-    years.reverse();
+    years.sort_unstable_by(|a, b| b.cmp(a));
     years
 }
 
@@ -158,21 +157,25 @@ pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- process plumbing ----------
 
+#[cfg(windows)]
+fn taskkill(pid: u32) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new("taskkill");
+    command
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x0800_0000);
+    command
+}
+
 /// Synchronous shutdown kill. On Windows this waits for taskkill because the
 /// app process is about to exit and cannot leave a console helper behind.
-pub(crate) fn kill_pid_tree(pid: u32) {
+fn kill_pid_tree(pid: u32) {
     #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000)
-            .status();
-    }
+    let _ = taskkill(pid).status();
 }
 
 /// Async equivalent used while the application remains live. Waiting for the
@@ -180,18 +183,9 @@ pub(crate) fn kill_pid_tree(pid: u32) {
 /// while descendants of the previous latexmk still own and write build files.
 async fn terminate_pid_tree(pid: u32) {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
+    kill_pid_tree(pid);
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("taskkill");
-        command
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000);
-        let _ = tokio::process::Command::from(command).status().await;
-    }
+    let _ = tokio::process::Command::from(taskkill(pid)).status().await;
 }
 
 fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::process::Command {
@@ -218,15 +212,21 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::pro
     cmd
 }
 
-/// Drain a child stream to EOF, keeping at most `cap` bytes. Draining past the
-/// cap matters: stopping reads would block the child on a full pipe.
-async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize) -> String {
-    let mut kept: Vec<u8> = Vec::new();
+/// Drain a child stream to EOF into `kept`, keeping at most `cap` bytes.
+/// Draining past the cap matters: stopping reads would block the child on a
+/// full pipe. The buffer is shared so that what was read survives the task
+/// being cancelled (see `drive`).
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+    kept: Arc<Mutex<Vec<u8>>>,
+) {
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
+                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
                 if kept.len() < cap {
                     let take = n.min(cap - kept.len());
                     kept.extend_from_slice(&chunk[..take]);
@@ -234,7 +234,11 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize)
             }
         }
     }
-    String::from_utf8_lossy(&kept).into_owned()
+}
+
+fn take_text(buffer: &Mutex<Vec<u8>>) -> String {
+    let bytes = std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
+    crate::lossy_string(bytes)
 }
 
 pub(crate) struct RunOutput {
@@ -252,16 +256,13 @@ pub(crate) async fn run(
 ) -> RunOutput {
     let mut cmd = base_command(program, cwd, path_env);
     cmd.args(args);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => {
-            return RunOutput {
-                code: -1,
-                stdout: String::new(),
-            }
-        }
+    let Ok(mut child) = cmd.spawn() else {
+        return RunOutput {
+            code: -1,
+            stdout: String::new(),
+        };
     };
-    let (code, stdout, _stderr) = drive(&mut child, timeout).await;
+    let (code, stdout, _) = drive(&mut child, timeout).await;
     RunOutput { code, stdout }
 }
 
@@ -272,13 +273,17 @@ pub(crate) async fn run(
 async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, String, String) {
     let pid = child.id();
     let deadline = tokio::time::Instant::now() + timeout;
+    let out_buf = Arc::new(Mutex::new(Vec::new()));
+    let err_buf = Arc::new(Mutex::new(Vec::new()));
     let mut out_task = tokio::spawn(read_capped(
         child.stdout.take().expect("stdout piped"),
         MAX_OUTPUT,
+        out_buf.clone(),
     ));
     let mut err_task = tokio::spawn(read_capped(
         child.stderr.take().expect("stderr piped"),
         MAX_OUTPUT,
+        err_buf.clone(),
     ));
 
     let status = tokio::select! {
@@ -290,24 +295,28 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
         }
     };
     // Once the child is gone, everything it wrote is already in the pipes, so
-    // a short grace reads it all. Waiting longer only waits on a descendant
-    // that outlived it (a shell-escape `&`, a latexmkrc previewer) and
-    // inherited the pipes, which may never close them. If even the grace runs
-    // out, what was read is lost; the log file is the primary record.
+    // a short grace reads it all. Waiting longer only waits on a process that
+    // holds the pipes open without writing: a descendant that outlived it (a
+    // shell-escape `&`, a latexmkrc previewer), or — where pipes can't be
+    // created close-on-exec atomically, as on macOS — a process spawned
+    // elsewhere at that instant that inherited them. When the grace runs out
+    // the readers stop, and what they read by then is kept.
     let drain_until = tokio::time::Instant::now() + DRAIN_GRACE;
-    let (stdout, stderr) = match tokio::time::timeout_at(drain_until, async {
-        ((&mut out_task).await, (&mut err_task).await)
+    if tokio::time::timeout_at(drain_until, async {
+        let _ = (&mut out_task).await;
+        let _ = (&mut err_task).await;
     })
     .await
+    .is_err()
     {
-        Ok((out, err)) => (out.unwrap_or_default(), err.unwrap_or_default()),
-        Err(_) => {
-            out_task.abort();
-            err_task.abort();
-            (String::new(), String::new())
-        }
-    };
-    (status.and_then(|s| s.code()).unwrap_or(-1), stdout, stderr)
+        out_task.abort();
+        err_task.abort();
+    }
+    (
+        status.and_then(|s| s.code()).unwrap_or(-1),
+        take_text(&out_buf),
+        take_text(&err_buf),
+    )
 }
 
 // ---------- availability ----------
@@ -375,47 +384,80 @@ struct RunningEntry {
     done: Arc<Notify>,
 }
 
-struct CompletionGuard(Arc<Notify>);
-
-impl Drop for CompletionGuard {
-    fn drop(&mut self) {
-        // notify_one stores a permit when the successor has not begun waiting
-        // yet, so a very fast completion cannot be missed.
-        self.0.notify_one();
-    }
-}
+type Registry = HashMap<PathBuf, RunningEntry>;
 
 /// One compile per project, supersede-kill semantics, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
-    running: Mutex<HashMap<PathBuf, RunningEntry>>,
+    running: Mutex<Registry>,
     next_token: AtomicU64,
     pub path_env: Option<String>,
     pub timeout: Option<Duration>,
 }
 
-/// One compile run's identity: known together, read again only in finish(), so
-/// it travels as one value rather than eight arguments.
-#[derive(Clone, Copy)]
-struct CompileRun<'a> {
+/// A compile's entry in the registry, and the child it spawned. Dropping it,
+/// on every exit path, removes the entry if it is still this run's, drops the
+/// child, then wakes the successor waiting on it. A run dropped before its
+/// child settled (the compile future was cancelled) kills the tree first,
+/// while latexmk still lives: kill_on_drop reaches only latexmk, and Windows'
+/// taskkill /T finds the engine only under a living parent.
+struct Registration<'a> {
+    manager: &'a CompileManager,
     root: &'a Path,
+    token: u64,
+    done: Arc<Notify>,
+    child: Option<tokio::process::Child>,
+    settled: bool,
+}
+
+impl Registration<'_> {
+    fn is_current(&self, running: &Registry) -> bool {
+        running.get(self.root).map(|entry| entry.token) == Some(self.token)
+    }
+}
+
+impl Drop for Registration<'_> {
+    fn drop(&mut self) {
+        let mut running = self.manager.running();
+        if self.is_current(&running) {
+            let pid = running.remove(self.root).and_then(|entry| entry.pid);
+            if let Some(pid) = pid.filter(|_| !self.settled) {
+                kill_pid_tree(pid);
+            }
+        }
+        drop(running);
+        self.child = None;
+        // notify_one stores a permit when the successor has not begun waiting
+        // yet, so a very fast completion cannot be missed.
+        self.done.notify_one();
+    }
+}
+
+/// What finish() needs to know about one compile run.
+struct CompileRun<'a> {
     main_rel: &'a str,
+    base: String,
+    outdir: PathBuf,
+    log_path: PathBuf,
     log_before: Option<SystemTime>,
     started_at: SystemTime,
-    request_started: std::time::Instant,
+    request_started: Instant,
 }
 
 impl CompileManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     fn path(&self, tex_dir: Option<&Path>) -> String {
         self.path_env.clone().unwrap_or_else(|| tex_path(tex_dir))
     }
 
+    /// The registry holds plain data that no panic leaves half-written, so a
+    /// poisoned lock is still usable — and kill_all runs at quit, from
+    /// `tl_close` too, where a panic would abort the host.
+    fn running(&self) -> MutexGuard<'_, Registry> {
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn kill_all(&self) {
-        let mut running = self.running.lock().unwrap();
+        let mut running = self.running();
         for entry in running.values() {
             if let Some(pid) = entry.pid {
                 kill_pid_tree(pid);
@@ -424,14 +466,29 @@ impl CompileManager {
         running.clear();
     }
 
-    fn clear_if_current(&self, root: &Path, token: u64) {
-        let mut running = self.running.lock().unwrap();
-        if running.get(root).map(|entry| entry.token) == Some(token) {
-            running.remove(root);
-        }
+    fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Option<RunningEntry>) {
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        let done = Arc::new(Notify::new());
+        let previous = self.running().insert(
+            root.to_path_buf(),
+            RunningEntry {
+                token,
+                pid: None,
+                done: Arc::clone(&done),
+            },
+        );
+        let registration = Registration {
+            manager: self,
+            root,
+            token,
+            done,
+            child: None,
+            settled: false,
+        };
+        (registration, previous)
     }
 
-    fn superseded(start: std::time::Instant) -> CompileResult {
+    fn superseded(start: Instant) -> CompileResult {
         CompileResult {
             ok: false,
             duration_ms: start.elapsed().as_millis() as u64,
@@ -448,15 +505,21 @@ impl CompileManager {
         overrides: &CompileOverrides,
         tex_dir: Option<&Path>,
     ) -> Result<CompileResult, CoreError> {
-        let request_started = std::time::Instant::now();
+        let request_started = Instant::now();
         let settings = read_settings(root);
-        let engine = overrides.engine.clone().unwrap_or(settings.engine);
-        let main_file = overrides.main_file.clone().unwrap_or(settings.main_file);
+        let engine = overrides
+            .engine
+            .as_deref()
+            .unwrap_or(settings.engine.as_str());
+        let main_file = overrides
+            .main_file
+            .as_deref()
+            .unwrap_or(settings.main_file.as_str());
         let shell_escape = overrides.shell_escape.unwrap_or(settings.shell_escape);
 
-        let flags = engine_flags(&engine)
+        let flags = engine_flags(engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
-        let main_rel = safe_rel_file(root, &main_file)?;
+        let main_rel = safe_rel_file(root, main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"
@@ -485,17 +548,7 @@ impl CompileManager {
         }
         args.push(&main_arg);
 
-        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
-        let done = Arc::new(Notify::new());
-        let _completion = CompletionGuard(Arc::clone(&done));
-        let previous = self.running.lock().unwrap().insert(
-            root.to_path_buf(),
-            RunningEntry {
-                token,
-                pid: None,
-                done,
-            },
-        );
+        let (mut registration, previous) = self.register(root);
 
         // A replacement must not touch the same build directory until the
         // predecessor has fully settled: process tree gone, child reaped, and
@@ -508,109 +561,90 @@ impl CompileManager {
             previous.done.notified().await;
         }
 
-        if self
-            .running
-            .lock()
-            .unwrap()
-            .get(root)
-            .map(|entry| entry.token)
-            != Some(token)
-        {
+        if !registration.is_current(&self.running()) {
             return Ok(Self::superseded(request_started));
         }
 
         // Capture log identity after the predecessor has stopped, otherwise its
         // final write can be mistaken for output from this generation.
-        let run = CompileRun {
-            root,
-            main_rel: &main_rel,
-            log_before: std::fs::metadata(
-                outdir.join(format!("{}.log", main_base_name(&main_rel))),
-            )
+        let base = main_base_name(&main_rel);
+        let log_path = outdir.join(format!("{base}.log"));
+        let log_before = std::fs::metadata(&log_path)
             .and_then(|meta| meta.modified())
-            .ok(),
+            .ok();
+        let run = CompileRun {
+            main_rel: &main_rel,
+            base,
+            outdir,
+            log_path,
+            log_before,
             started_at: SystemTime::now(),
             request_started,
         };
 
         let mut cmd = base_command("latexmk", Some(root), &self.path(tex_dir));
         cmd.args(&args);
-        let spawn_result = {
+        let spawned = {
             // Hold the registry lock across synchronous spawn + PID publication.
             // A successor therefore sees either no child or the actual PID,
             // never an unkillable gap between the two.
-            let mut running = self.running.lock().unwrap();
-            if running.get(root).map(|entry| entry.token) != Some(token) {
-                None
-            } else {
-                match cmd.spawn() {
-                    Ok(child) => {
-                        running.get_mut(root).expect("token checked").pid = child.id();
-                        Some(Ok(child))
-                    }
-                    Err(err) => Some(Err(err)),
+            let mut running = self.running();
+            match running.get_mut(root) {
+                Some(entry) if entry.token == registration.token => {
+                    Some(cmd.spawn().inspect(|child| entry.pid = child.id()))
                 }
+                _ => None,
             }
         };
 
-        let mut child = match spawn_result {
+        let child = match spawned {
             None => return Ok(Self::superseded(request_started)),
-            Some(Err(err)) => {
-                let result = self.finish(&run, -1, err.to_string());
-                self.clear_if_current(root, token);
-                return Ok(result);
-            }
-            Some(Ok(child)) => child,
+            Some(Err(err)) => return Ok(finish(&run, -1, err.to_string())),
+            Some(Ok(child)) => registration.child.insert(child),
         };
         let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-        let (code, mut output, stderr) = drive(&mut child, timeout).await;
+        let (code, mut output, stderr) = drive(child, timeout).await;
+        registration.settled = true;
         output.push_str(&stderr);
-
-        let result = self.finish(&run, code, output);
-        self.clear_if_current(root, token);
-        Ok(result)
+        Ok(finish(&run, code, output))
     }
+}
 
-    fn finish(&self, run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
-        let CompileRun {
-            root,
-            main_rel,
-            log_before,
-            started_at,
-            request_started: start_instant,
-        } = *run;
-        let base = main_base_name(main_rel);
-        let outdir = root.join(BUILD_DIR);
-        let log_path = outdir.join(format!("{base}.log"));
-
-        let mut log = fallback_output;
-        if let Ok(meta) = std::fs::metadata(&log_path) {
-            let modified = meta.modified().ok();
-            let rewritten = modified != log_before;
-            let after_start = modified.map(|mtime| mtime >= started_at).unwrap_or(false);
-            if rewritten || after_start {
-                if let Ok(bytes) = read_tail(&log_path, LOG_READ_MAX) {
-                    log = String::from_utf8_lossy(&bytes).into_owned();
-                }
+fn finish(run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
+    let mut log = fallback_output;
+    if let Ok(meta) = std::fs::metadata(&run.log_path) {
+        let modified = meta.modified().ok();
+        let rewritten = modified != run.log_before;
+        let after_start = modified.is_some_and(|mtime| mtime >= run.started_at);
+        if rewritten || after_start {
+            if let Ok(bytes) = read_tail(&run.log_path, LOG_READ_MAX) {
+                log = crate::lossy_string(bytes);
             }
         }
+    }
 
-        let issues = parse_log(&log, main_rel);
-        let pdf_exists = outdir.join(format!("{base}.pdf")).exists();
-        let ok = code == 0 && pdf_exists;
-        let (errors, warnings): (Vec<_>, Vec<_>) =
-            issues.into_iter().partition(|item| item.kind == "error");
+    let (errors, warnings): (Vec<_>, Vec<_>) = parse_log(&log, run.main_rel)
+        .into_iter()
+        .partition(|item| item.kind == "error");
+    let ok = code == 0 && run.outdir.join(format!("{}.pdf", run.base)).exists();
+    if !ok {
+        // latexmk's record of the run. After a fatal TeX error it holds the
+        // truncated .aux's state, so bibtex fails on it ("no \citation") and
+        // every later run stops at "gave an error in previous invocation",
+        // even with -g and the source fixed. Without it the next run starts
+        // afresh.
+        let _ = std::fs::remove_file(run.outdir.join(format!("{}.fdb_latexmk", run.base)));
+    }
 
-        CompileResult {
-            ok,
-            duration_ms: start_instant.elapsed().as_millis() as u64,
-            // Never advertise a pre-existing PDF for a failed run. The UI keeps
-            // its old preview visible but does not reload it as fresh output.
-            pdf: ok.then(|| format!("{BUILD_DIR}/{base}.pdf")),
-            errors,
-            warnings,
-            log: tail(&log, LOG_TAIL).to_string(),
-        }
+    CompileResult {
+        ok,
+        duration_ms: run.request_started.elapsed().as_millis() as u64,
+        // Never advertise a pre-existing PDF for a failed run. The UI keeps
+        // its old preview visible but does not reload it as fresh output.
+        pdf: ok.then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
+        errors,
+        warnings,
+        log: tail(log, LOG_TAIL),
     }
 }
 
@@ -633,8 +667,9 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The last `max` bytes of `s`, moved forward to a char boundary.
-fn tail(s: &str, max: usize) -> &str {
+/// The last `max` bytes of `s`, moved forward to a char boundary. A log
+/// that fits, the usual case, is returned without a copy.
+fn tail(s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
@@ -642,7 +677,7 @@ fn tail(s: &str, max: usize) -> &str {
     while !s.is_char_boundary(start) {
         start += 1;
     }
-    &s[start..]
+    s[start..].to_string()
 }
 
 #[cfg(test)]

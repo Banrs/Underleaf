@@ -17,6 +17,7 @@ const PROJECT_DEFAULTS = () => ({
   logShowRaw: false,
   outline: [],
   cursorLine: 1,
+  topLine: 1,
   searchQuery: '',
 });
 
@@ -34,6 +35,8 @@ export function resetProjectState() {
 
 // Shared between the editor pane (preview) and the sidebar (file icons).
 export const IMAGE_FILE = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
+// The files the editor opens as text.
+export const TEXT_FILE = /\.(tex|bib|cls|sty|bst|txt|md|csv|tsv|json|yaml|yml|lua|py|r|dat|def|clo|tikz)$/i;
 
 // ---------- document outline ----------
 
@@ -75,4 +78,13 @@ export function outlineChain(line) {
     stack.push(entry);
   }
   return stack;
+}
+
+// The outline entry a line is in: the last heading at or above it, or -1
+// above the first. Given the editor's top line, it is the section on screen,
+// which the outline's selection follows as the source scrolls.
+export function sectionIndexAt(outline, line) {
+  let found = -1;
+  for (let i = 0; i < outline.length && outline[i].line <= line; i++) found = i;
+  return found;
 }

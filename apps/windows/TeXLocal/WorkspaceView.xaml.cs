@@ -68,7 +68,7 @@ public sealed partial class WorkspaceView : UserControl
         ("Edit", [
             MenuCommand.EditUndo, MenuCommand.EditRedo, null,
             MenuCommand.EditCut, MenuCommand.EditCopy, MenuCommand.EditPaste, MenuCommand.EditSelectAll, null,
-            MenuCommand.EditFind, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine,
+            MenuCommand.EditFind, MenuCommand.EditFindNext, MenuCommand.EditFindPrevious, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine,
         ]),
         // Where Windows text apps keep styling, and what the source bar's
         // Heading, Reference and Insert menus hold.

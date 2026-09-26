@@ -28,7 +28,6 @@ test('PDF search normalises whitespace, case, and unbounded input', () => {
   assert.equal(normalizeFindQuery(null), '');
 });
 
-
 test('PDF highlights index matches by text item without rescanning the page', () => {
   const a = { start: 1, end: 4 };
   const b = { start: 4, end: 8 };

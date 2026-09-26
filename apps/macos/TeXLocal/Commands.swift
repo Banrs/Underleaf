@@ -19,6 +19,8 @@ enum MenuCommand: String, CaseIterable {
     case editUndo = "edit.undo"
     case editRedo = "edit.redo"
     case editFind = "edit.find"
+    case editFindNext = "edit.findNext"
+    case editFindPrevious = "edit.findPrevious"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
     case editMath = "edit.math"
@@ -42,7 +44,7 @@ enum MenuCommand: String, CaseIterable {
         case .projectNew: "New Project…"
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
-        case .projectSearch: "Find in Project"
+        case .projectSearch: "Find in Project…"
         case .fileNew: "New File…"
         case .fileNewFolder: "New Folder…"
         case .fileUpload: "Add Files…"
@@ -50,16 +52,18 @@ enum MenuCommand: String, CaseIterable {
         case .pdfSave: "Save PDF As…"
         case .editUndo: "Undo"
         case .editRedo: "Redo"
-        case .editFind: "Find & Replace"
+        case .editFind: "Find and Replace…"
+        case .editFindNext: "Find Next"
+        case .editFindPrevious: "Find Previous"
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
-        case .editComment: "Toggle Comment"
+        case .editComment: "Comment Selection"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
         case .viewToggleSidebar: "Hide Sidebar"
         case .viewTogglePdf: "Hide PDF"
-        case .viewToggleLogs: "Build Log"
+        case .viewToggleLogs: "Build Panel"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
         case .viewFitWidth: "Fit Width"
@@ -82,6 +86,8 @@ enum MenuCommand: String, CaseIterable {
         case .editUndo: "CmdOrCtrl+Z"
         case .editRedo: "CmdOrCtrl+Shift+Z"
         case .editFind: "CmdOrCtrl+F"
+        case .editFindNext: "CmdOrCtrl+G"
+        case .editFindPrevious: "CmdOrCtrl+Shift+G"
         case .editBold: "CmdOrCtrl+B"
         case .editItalic: "CmdOrCtrl+I"
         case .editMath: "CmdOrCtrl+Shift+M"
@@ -113,16 +119,16 @@ enum MenuCommand: String, CaseIterable {
         var modifiers: EventModifiers = []
         for part in parts {
             switch part {
-            case "CmdOrCtrl", "Cmd", "Command": modifiers.insert(.command)
-            case "Ctrl", "Control": modifiers.insert(.control)
-            case "Alt", "Option": modifiers.insert(.option)
+            case "CmdOrCtrl": modifiers.insert(.command)
+            case "Ctrl": modifiers.insert(.control)
+            case "Alt": modifiers.insert(.option)
             case "Shift": modifiers.insert(.shift)
             default: return nil
             }
         }
         let equivalent: KeyEquivalent
         switch key {
-        case "Return", "Enter": equivalent = .return
+        case "Return": equivalent = .return
         case "Plus": equivalent = "="
         case "Minus": equivalent = "-"
         default:
@@ -135,7 +141,7 @@ enum MenuCommand: String, CaseIterable {
     /// Chords the editor page gives back to the menu. Undo, redo, find and
     /// comment stay with the editor, which implements them itself.
     static var editorHostKeys: [(id: String, accel: String)] {
-        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editComment]
+        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
         return allCases.compactMap { c in
             guard !editorOwned.contains(c), let accel = c.accel else { return nil }
             return (c.rawValue, accel)
@@ -143,24 +149,15 @@ enum MenuCommand: String, CaseIterable {
     }
 }
 
-enum Prompt: Identifiable {
+/// A sheet the workspace asks for a value with.
+enum Prompt: String, Identifiable {
     case newFile, newFolder, gotoLine
-    case renameEntry(String)
-    case renameProject(ProjectInfo)
 
-    var id: String {
-        switch self {
-        case .newFile: "newFile"
-        case .newFolder: "newFolder"
-        case .gotoLine: "gotoLine"
-        case .renameEntry(let path): "rename:\(path)"
-        case .renameProject(let p): "renameProject:\(p.id)"
-        }
-    }
+    var id: String { rawValue }
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, fitWidth, fitHeight, find, inverseFromView
+    case zoomIn, zoomOut, fitWidth, fitHeight, find, inverseFromView, print
 }
 
 extension AppModel {
@@ -168,7 +165,7 @@ extension AppModel {
         switch command {
         // Undo and redo also serve text fields outside the editor.
         case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
-        case .fileSave, .editFind, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .fileSave, .editFind, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.openPath != nil
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
@@ -183,6 +180,7 @@ extension AppModel {
         switch command {
         case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
+        case .viewToggleLogs: project?.showLogs == true ? "Hide Build Panel" : "Show Build Panel"
         default: command.title
         }
     }
@@ -200,7 +198,7 @@ extension AppModel {
     func perform(_ command: MenuCommand) {
         guard isEnabled(command) else { return }
         switch command {
-        case .projectNew: newProjectTemplate = "article"; showNewProject = true; return
+        case .projectNew: newProject(); return
         case .editUndo: undo(redo: false); return
         case .editRedo: undo(redo: true); return
         case .compileToggleAuto: autoCompile.toggle(); return
@@ -222,6 +220,8 @@ extension AppModel {
         case .pdfSave:
             savePanel(name: "\(project.id).pdf", type: .pdf) { url in await project.savePDF(to: url) }
         case .editFind: project.format("find")
+        case .editFindNext: findAgain(1, in: project)
+        case .editFindPrevious: findAgain(-1, in: project)
         case .editBold: project.format("bold")
         case .editItalic: project.format("italic")
         case .editMath: project.format("math")
@@ -241,22 +241,20 @@ extension AppModel {
         }
     }
 
-    /// Undo and redo go to CodeMirror's own history while the editor has
-    /// focus, and down the responder chain — to a text field's — otherwise.
-    /// The standard items would ask WebKit's undo manager, which never sees
-    /// the changes CodeMirror makes itself (formatting, completions).
+    /// The first responder when it is a native text field's editor (the find
+    /// field, a rename, the project search, the build log), not the editor's.
+    private var nativeText: NSText? {
+        guard let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) else { return nil }
+        return text
+    }
+
+    /// A native text field keeps its own undo. Anything else — the editor, or
+    /// a click on a toolbar button, which can take first responder from
+    /// the web view — goes to CodeMirror's history: the standard undo: would
+    /// reach WebKit's undo manager, which never sees CodeMirror's own changes
+    /// (formatting, completions) and reverted half of an insertion.
     private func undo(redo: Bool) {
-        // A native text field (the find field, a rename, the project search)
-        // keeps its own undo. Anything else — the editor, or a click on the
-        // source bar's pill, which can take first responder from the web
-        // view — goes to CodeMirror's history: the standard undo: would reach
-        // WebKit's undo manager, which never sees CodeMirror's own changes
-        // and reverted half of an insertion.
-        if let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) {
-            sendUndo(redo: redo)
-            return
-        }
-        guard project?.openPath != nil else { sendUndo(redo: redo); return }
+        guard nativeText == nil, project?.openPath != nil else { sendUndo(redo: redo); return }
         Task {
             // The page declines while one of its own fields, such as the
             // find panel's, has focus; that field's native undo takes it.
@@ -268,16 +266,48 @@ extension AppModel {
         }
     }
 
+    /// ⌘G steps the search being typed in. Other fields don't take the chord,
+    /// so the menu gets it: a native one steps its own matches (Find in PDF,
+    /// the build log's find bar) or leaves it be, rather than moving the
+    /// editor's search behind it.
+    private func findAgain(_ delta: Int, in project: ProjectModel) {
+        if let text = nativeText {
+            let owner = text.delegate as? NSView ?? text
+            if let field = (owner as? NSTextField)?.delegate as? SearchField.Coordinator {
+                field.field.step?(delta)
+            } else if let log = findBarText(around: owner) {
+                let sender = NSMenuItem()
+                sender.tag = (delta > 0 ? NSTextFinder.Action.nextMatch : .previousMatch).rawValue
+                log.performTextFinderAction(sender)
+            }
+            return
+        }
+        project.format(delta > 0 ? "findNext" : "findPrevious")
+    }
+
+    /// The text view whose find bar a view is part of, or is: the log's, as
+    /// its find bar sits in its scroll view.
+    private func findBarText(around view: NSView) -> NSTextView? {
+        sequence(first: view, next: \.superview).lazy
+            .compactMap { ($0 as? NSScrollView)?.documentView as? NSTextView }
+            .first { $0.usesFindBar }
+    }
+
     private func sendUndo(redo: Bool) {
         _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
 
+    /// The project's window, even while Settings is key (it can be main
+    /// too): the editor's, or, with the source pane hidden, the main window.
+    private var documentWindow: NSWindow? { editor.webView.window ?? NSApp.mainWindow ?? NSApp.keyWindow }
+
+    /// No starting folder: the panel opens where the user last saved, as
+    /// every Mac app's Save As does.
     private func savePanel(name: String, type: UTType, _ write: @escaping @MainActor (URL) async -> Void) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name
         panel.allowedContentTypes = [type]
-        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        guard let window = NSApp.keyWindow else { return }
+        guard let window = documentWindow else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in await write(url) }
@@ -289,7 +319,7 @@ extension AppModel {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.prompt = "Add"
-        guard let window = NSApp.keyWindow else { return }
+        guard let window = documentWindow else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK else { return }
             let urls = panel.urls
@@ -300,11 +330,16 @@ extension AppModel {
 
 struct AppCommands: Commands {
     let app: AppModel
+    @AppStorage(NavigatorView.outlineCollapsedKey) private var outlineCollapsed = false
 
     private func item(_ command: MenuCommand) -> some View {
         Button(app.title(command)) { app.perform(command) }
             .keyboardShortcut(app.shortcut(command))
             .disabled(!app.isEnabled(command))
+    }
+
+    private func send(_ action: Selector) {
+        NSApp.sendAction(action, to: nil, from: nil)
     }
 
     var body: some Commands {
@@ -319,50 +354,79 @@ struct AppCommands: Commands {
             item(.fileNewFolder)
             item(.fileUpload)
         }
+        // Replacing the save group drops the standard Close with it.
         CommandGroup(replacing: .saveItem) {
+            Button("Close") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w")
             item(.fileSave)
             Divider()
             item(.projectClose)
             Divider()
+            // What makes a copy, then Share on its own, as Mac File menus
+            // group them.
             item(.pdfSave)
+            item(.projectExport)
+            Divider()
             if let project = app.project, let url = project.pdfURL, project.pdfVersion > 0 {
                 ShareLink("Share PDF", item: url)
             } else {
                 Button("Share PDF") {}.disabled(true)
             }
-            item(.projectExport)
+        }
+        // The standard Print would go to the first responder, usually the
+        // editor's web view, and print the page rather than the PDF.
+        CommandGroup(replacing: .printItem) {
+            Button("Page Setup…") { NSApp.runPageLayout(nil) }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Print…") { app.requestPDF(.print) }
+                .keyboardShortcut("p")
+                .disabled(app.project?.pdfVersion ?? 0 == 0)
         }
         CommandGroup(replacing: .textEditing) {
-            item(.editFind)
-            item(.projectSearch)
-            item(.pdfFind)
+            Menu("Find") {
+                item(.editFind)
+                item(.editFindNext)
+                item(.editFindPrevious)
+                item(.projectSearch)
+                item(.pdfFind)
+            }
             item(.editGotoLine)
+            // Replacing the group dropped the standard spelling items, which
+            // the editor's native WebKit spell checking answers to. They go
+            // down the responder chain, as AppKit's own do.
+            Menu("Spelling and Grammar") {
+                Button("Show Spelling and Grammar") { send(#selector(NSText.showGuessPanel(_:))) }
+                    .keyboardShortcut(":", modifiers: .command)
+                Button("Check Document Now") { send(#selector(NSText.checkSpelling(_:))) }
+                    .keyboardShortcut(";", modifiers: .command)
+            }
         }
         // Where Mac text apps keep styling (TextEdit, Pages): the toolbar's
         // centre group, and what its Insert menu holds.
-        CommandMenu("Format") {
+        CommandGroup(replacing: .textFormatting) {
             item(.editBold)
             item(.editItalic)
-            item(.editMath)
             Divider()
-            InsertMenuItems(project: app.project)
+            // Inline Math beside Display Math, after the line's level.
+            InsertMenuItems(project: app.project, inlineMath: item(.editMath))
                 .disabled(app.project?.openPath?.hasSuffix(".tex") != true)
             Divider()
             item(.editComment)
         }
+        // The panes left to right, then the build panel below them.
         CommandGroup(after: .sidebar) {
-            Toggle("Inspector", isOn: Binding(get: { app.showInspector }, set: { app.showInspector = $0 }))
+            item(.viewToggleSidebar)
+            // The sidebar's outline section, folded from its header too; here
+            // it is a keyboard's and VoiceOver's way to it.
+            Button(outlineCollapsed ? "Show File Outline" : "Hide File Outline") { outlineCollapsed.toggle() }
+                .disabled(app.project?.openPath?.hasSuffix(".tex") != true || !app.sidebarVisible)
+            item(.viewTogglePdf)
+            Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(app.project == nil)
-            Divider()
-            item(.viewToggleSidebar)
-            item(.viewTogglePdf)
-            Toggle(MenuCommand.viewToggleLogs.title, isOn: Binding(
-                get: { app.project?.showLogs ?? false },
-                set: { app.project?.showLogs = $0 }
-            ))
-            .keyboardShortcut(MenuCommand.viewToggleLogs.shortcut)
-            .disabled(app.project == nil)
+            item(.viewToggleLogs)
+            Button(app.showWordCount ? "Hide Word Count" : "Show Word Count") { app.showWordCount.toggle() }
+                .disabled(app.project == nil)
             Divider()
             item(.viewZoomIn)
             item(.viewZoomOut)
@@ -375,10 +439,7 @@ struct AppCommands: Commands {
             Button("Stop") { app.project?.stopCompile() }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(app.project?.compiling != true)
-            Toggle(MenuCommand.compileToggleAuto.title, isOn: Binding(
-                get: { app.autoCompile },
-                set: { app.autoCompile = $0 }
-            ))
+            Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
             Picker("Engine", selection: Binding(
                 get: { app.project?.settings?.engine ?? "pdflatex" },
                 set: { engine in

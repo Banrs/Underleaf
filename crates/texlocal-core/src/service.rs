@@ -49,16 +49,11 @@ pub struct UploadSpec {
     pub size: usize,
 }
 
-#[derive(Default)]
-struct StatusCache {
-    available: Option<TexStatus>,
-    checked_at: Option<Instant>,
-}
-
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
-    status: Mutex<StatusCache>,
+    /// The last TeX probe and when it ran.
+    status: Mutex<Option<(TexStatus, Instant)>>,
     symbols: Mutex<HashMap<PathBuf, (Vec<FileStamp>, Symbols)>>,
 }
 
@@ -69,6 +64,14 @@ fn upload_rel(dir: &str, name: &str) -> String {
     } else {
         format!("{}/{}", dir.trim_end_matches('/'), name)
     }
+}
+
+/// Write a file, creating the folders it sits in.
+fn write_creating(abs: &Path, contents: impl AsRef<[u8]>) -> Result<(), CoreError> {
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(std::fs::write(abs, contents)?)
 }
 
 fn too_large() -> CoreError {
@@ -111,8 +114,8 @@ impl Service {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             data_dir,
-            compile: CompileManager::new(),
-            status: Mutex::new(StatusCache::default()),
+            compile: CompileManager::default(),
+            status: Mutex::new(None),
             symbols: Mutex::new(HashMap::new()),
         }
     }
@@ -125,6 +128,18 @@ impl Service {
         self.symbols.lock().unwrap().remove(root);
     }
 
+    /// Run `edit` on a project's folder, then drop its cached symbols.
+    fn edit<T>(
+        &self,
+        id: &str,
+        edit: impl FnOnce(&Path) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let root = self.project_root(id)?;
+        let result = edit(&root)?;
+        self.forget_project(&root);
+        Ok(result)
+    }
+
     // ---------- status ----------
 
     /// A found TeX is cached until the chosen TeX folder changes; a missing
@@ -132,22 +147,14 @@ impl Service {
     pub async fn status(&self) -> TexStatus {
         let tex_dir = self.tex_dir();
         let chosen = tex_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
-        {
-            let cache = self.status.lock().unwrap();
-            if let Some(status) = &cache.available {
-                let fresh = cache
-                    .checked_at
-                    .is_some_and(|at| at.elapsed() < TEX_MISSING_TTL);
-                if status.tex_dir == chosen && (status.available || fresh) {
-                    return status.clone();
-                }
+        if let Some((status, at)) = &*self.status.lock().unwrap() {
+            if status.tex_dir == chosen && (status.available || at.elapsed() < TEX_MISSING_TTL) {
+                return status.clone();
             }
         }
         let mut found = compile::tex_available(&compile::tex_path(tex_dir.as_deref())).await;
         found.tex_dir = chosen;
-        let mut cache = self.status.lock().unwrap();
-        cache.available = Some(found.clone());
-        cache.checked_at = Some(Instant::now());
+        *self.status.lock().unwrap() = Some((found.clone(), Instant::now()));
         found
     }
 
@@ -282,41 +289,25 @@ impl Service {
 
     pub fn read_file(&self, id: &str, path: &str) -> Result<String, CoreError> {
         let bytes = std::fs::read(paths::safe_path(&self.project_root(id)?, path)?)?;
-        // Valid UTF-8, the usual case, becomes the String without a second copy.
-        Ok(String::from_utf8(bytes)
-            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()))
+        Ok(crate::lossy_string(bytes))
     }
 
     pub fn write_file(&self, id: &str, path: &str, text: &str) -> Result<(), CoreError> {
-        let root = self.project_root(id)?;
-        let abs = paths::safe_path(&root, path)?;
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(abs, text)?;
-        self.forget_project(&root);
-        Ok(())
+        self.edit(id, |root| {
+            write_creating(&paths::safe_path(root, path)?, text)
+        })
     }
 
     pub fn create_entry(&self, id: &str, path: &str, dir: bool) -> Result<(), CoreError> {
-        let root = self.project_root(id)?;
-        projects::create_file(&root, path, dir)?;
-        self.forget_project(&root);
-        Ok(())
+        self.edit(id, |root| projects::create_file(root, path, dir))
     }
 
     pub fn rename_entry(&self, id: &str, from: &str, to: &str) -> Result<RenameResult, CoreError> {
-        let root = self.project_root(id)?;
-        let result = projects::rename_entry(&root, from, to)?;
-        self.forget_project(&root);
-        Ok(result)
+        self.edit(id, |root| projects::rename_entry(root, from, to))
     }
 
     pub fn delete_entry(&self, id: &str, path: &str) -> Result<(), CoreError> {
-        let root = self.project_root(id)?;
-        projects::delete_entry(&root, path)?;
-        self.forget_project(&root);
-        Ok(())
+        self.edit(id, |root| projects::delete_entry(root, path))
     }
 
     /// Validate a complete upload before the first write, so a late unsafe path
@@ -360,14 +351,10 @@ impl Service {
         if bytes.len() > UPLOAD_MAX_BYTES {
             return Err(too_large());
         }
-        let root = self.project_root(id)?;
         let rel = upload_rel(dir, path);
-        let abs = paths::safe_path(&root, &rel)?;
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(abs, bytes)?;
-        self.forget_project(&root);
+        self.edit(id, |root| {
+            write_creating(&paths::safe_path(root, &rel)?, bytes)
+        })?;
         Ok(rel)
     }
 
@@ -496,7 +483,8 @@ impl Service {
 }
 
 fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
-    serde_json::from_value(args.get(key).cloned().unwrap_or(Value::Null))
+    // Straight from the borrowed Value, with no intermediate clone of it.
+    T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
 }
 

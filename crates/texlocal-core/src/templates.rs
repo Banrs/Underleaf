@@ -125,13 +125,34 @@ const BEAMER_MAIN: &str = r#"\documentclass{beamer}
 \end{document}
 "#;
 
-/// The files for a template; an unknown name falls back to `article`, as the
-/// JS original did.
+/// The files for a template; an unknown name falls back to `article`.
 pub fn files(template: &str) -> &'static [(&'static str, &'static str)] {
     match template {
         "blank" => &[("main.tex", BLANK_MAIN)],
         "report" => &[("main.tex", REPORT_MAIN), ("references.bib", ARTICLE_BIB)],
         "beamer" => &[("main.tex", BEAMER_MAIN)],
         _ => &[("main.tex", ARTICLE_MAIN), ("references.bib", ARTICLE_BIB)],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::files;
+
+    #[test]
+    fn every_template_is_plain_file_names_led_by_main_tex() {
+        // create_project writes these straight into the new folder, without
+        // the path checks user input goes through.
+        for name in ["blank", "article", "report", "beamer", "unknown"] {
+            let template = files(name);
+            assert_eq!(template[0].0, "main.tex", "{name}");
+            for (file, _) in template {
+                assert!(
+                    !file.contains(['/', '\\']) && !file.starts_with('.'),
+                    "{name}: {file}"
+                );
+            }
+        }
+        assert_eq!(files("unknown"), files("article"));
     }
 }

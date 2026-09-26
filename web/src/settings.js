@@ -9,9 +9,10 @@ import { icon } from './icons.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
 import { chooseTexFolder } from './texfolder.js';
+import { bridge } from './bridge.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
-// its accessible name from the title, so icon-only segments still read properly.
+// its accessible name from the title, so a switch or radio group reads with it.
 function row(title, hint, control) {
   const id = nextId('set');
   control.setAttribute('aria-labelledby', id);
@@ -32,15 +33,14 @@ function group(title, ...rows) {
 }
 
 // Segmented control as a radio group: arrow keys move between options and the
-// selected option is exposed, not just coloured.
-function segmented(options, get, set) {
+// selected option is exposed, not just coloured. `options` are [value, label].
+function segmented(pairs, get, set) {
+  const options = pairs.map(([value, label]) => ({ value, label }));
   const wrap = el('div', { class: 'segmented', role: 'radiogroup' });
-  const buttons = options.map(({ value, label, glyph }) => el('button', {
+  const buttons = options.map(({ value, label }) => el('button', {
     class: 'segment',
     role: 'radio',
     'aria-checked': String(get() === value),
-    title: label,
-    'aria-label': label,
     onclick: () => choose(value),
     onkeydown: (e) => {
       const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
@@ -51,7 +51,7 @@ function segmented(options, get, set) {
       choose(next.value);
       buttons[options.indexOf(next)].focus();
     },
-  }, glyph ? icon(glyph) : label));
+  }, label));
   function choose(value) {
     set(value);
     options.forEach((o, i) => {
@@ -84,8 +84,8 @@ function toggle(get, set) {
 // doing nothing.
 function stepper(values, get, set, format) {
   const label = el('span', { class: 'stepper-value' }, format(get()));
-  const dec = el('button', { class: 'icon-btn small', 'aria-label': 'Decrease' }, icon('minus'));
-  const inc = el('button', { class: 'icon-btn small', 'aria-label': 'Increase' }, icon('plus'));
+  const dec = el('button', { class: 'icon-btn small', title: 'Decrease' }, icon('minus'));
+  const inc = el('button', { class: 'icon-btn small', title: 'Increase' }, icon('plus'));
   // Clamp: a stored value off the list (hand-edited, older build) must not
   // make the first step jump to the minimum.
   const indexOf = () => Math.max(0, values.indexOf(get()));
@@ -110,7 +110,7 @@ function stepper(values, get, set, format) {
 
 // The TeX installation in use, and the way to choose another. Only one dialog
 // is open at a time, so the folder chooser replaces Settings, which reopens
-// once it closes; a change reopens it too, so the footer status agrees.
+// once it closes; a change reopens it too, so the row agrees.
 function texGroup(options, close) {
   const tex = state.tex;
   let hint;
@@ -159,16 +159,11 @@ export function openSettings(options = {}) {
   return showModal((close) => {
     const groups = [
       group('Appearance',
-        row('Theme', null, segmented([
-          { value: 'system', label: 'Follow System', glyph: 'monitor' },
-          { value: 'light', label: 'Light', glyph: 'sun' },
-          { value: 'dark', label: 'Dark', glyph: 'moon' },
-        ], () => prefs.themeMode, (v) => { prefs.themeMode = v; })),
-        row('Document paper', 'Dark paper inverts the rendered PDF for night reading', segmented([
-          { value: 'white', label: 'White' },
-          { value: 'dark', label: 'Dark' },
-          { value: 'auto', label: 'Auto' },
-        ], () => prefs.pdfPaper, (v) => { prefs.pdfPaper = v; })),
+        row('Theme', null, segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']],
+          () => prefs.themeMode, (v) => { prefs.themeMode = v; })),
+        row('Document paper', 'Dark paper inverts the rendered PDF for night reading',
+          segmented([['white', 'White'], ['dark', 'Dark'], ['auto', 'Auto']],
+            () => prefs.pdfPaper, (v) => { prefs.pdfPaper = v; })),
         row('Floating panels', 'Inset rounded panes instead of edge-to-edge',
           toggle(() => prefs.floating, (v) => { prefs.floating = v; })),
       ),
@@ -177,17 +172,14 @@ export function openSettings(options = {}) {
           toggle(() => prefs.autoCompile, (v) => { prefs.autoCompile = v; })),
         row('Word count', 'Show words and lines over the editor',
           toggle(() => prefs.showWordCount, (v) => { prefs.showWordCount = v; })),
-        row('Syntax colours', 'Xcode uses Xcode 27’s own Default themes', segmented([
-          { value: 'onedark', label: 'One Dark' },
-          { value: 'xcode', label: 'Xcode' },
-        ], () => prefs.editorTheme, (v) => { prefs.editorTheme = v; })),
-        row('Editor font', 'The system monospace matches Xcode; JetBrains Mono is bundled', segmented([
-          { value: 'system', label: 'System' },
-          { value: 'jetbrains', label: 'JetBrains' },
-        ], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
+        row('Syntax colours', 'Colours for LaTeX commands in the source',
+          segmented([['onedark', 'One Dark'], ['xcode', 'Xcode']], () => prefs.editorTheme, (v) => { prefs.editorTheme = v; })),
+        row('Editor font', null,
+          segmented([['system', 'System'], ['jetbrains', 'JetBrains']], () => prefs.editorFont, (v) => { prefs.editorFont = v; })),
         row('Editor font size', null,
           stepper(FONT_SIZES, () => prefs.editorFontSize, (v) => { prefs.editorFontSize = v; }, (v) => `${v} pt`)),
-        row('Interface scale', null,
+        // A browser has its own zoom, which this would only duplicate.
+        bridge?.kind === 'browser' ? null : row('Interface scale', null,
           stepper(UI_SCALES, () => prefs.uiScale, (v) => { prefs.uiScale = v; }, (v) => `${v}%`)),
       ),
       texGroup(options, close),
@@ -230,11 +222,7 @@ export function openSettings(options = {}) {
     return el('div', { class: 'modal settings-dialog' },
       el('h2', { class: 'modal-title' }, 'Settings'),
       el('div', { class: 'settings-body' }, groups),
-      el('div', { class: 'modal-actions settings-foot' },
-        el('span', { class: 'settings-status' },
-          state.tex.available
-            ? `${state.tex.version ?? 'TeX Live'} detected`
-            : 'TeX Live not found — compilation disabled'),
+      el('div', { class: 'modal-actions' },
         // The default button takes initial focus (Return dismisses), so the
         // dialog opens at its top instead of scrolled to the first field.
         el('button', { class: 'btn primary', autofocus: '', onclick: () => close(null) }, 'Done'),

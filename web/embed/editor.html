@@ -14,8 +14,120 @@
        Settings on a Mac, Fluent ones on Windows — rather than the browser
        version's tinted bar (styles.css). */
     * { scrollbar-width: auto; scrollbar-color: auto; }
-    /* Room to scroll the last line clear of the host's status bar. */
+    /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
+    /* The host's highlight colour for the selection when it sends one (the
+       Mac's), unemphasised while the editor is not focused, as in a native
+       text view. !important: the syntax themes set theirs at higher
+       specificity. */
+    :root[data-host-selection] .cm-editor .cm-selectionBackground {
+      background: var(--host-selection-inactive) !important;
+    }
+    :root[data-host-selection] .cm-editor.cm-focused .cm-selectionBackground {
+      background: var(--host-selection) !important;
+    }
+
+    /* ---------- a host's own chrome (setAppearance `host`: the Mac's) ----------
+       The editor then sits in the native chrome as a native text view
+       would: the system's text surface, its type scale and colours, and the
+       metrics of its menus. Hosts that send no colours keep the page's look.
+       !important where a syntax theme sets its own at higher specificity. */
+
+    /* The system's text background, whatever surface the syntax colours'
+       theme brings (One Dark's is blue-grey). */
+    :root[data-host], :root[data-host] body,
+    :root[data-host] .cm-editor { background-color: var(--host-text-background) !important; }
+
+    /* The gutter as Xcode draws it: line numbers a step smaller than the
+       code, in SF Mono with tabular figures and the secondary label colour,
+       8 px either side, then 4 px before the text. The line box stays the
+       code's, so each number sits on its line. */
+    :root[data-host] .cm-gutters {
+      background: transparent !important;
+      border: none !important;
+      color: var(--host-secondary-label) !important;
+    }
+    :root[data-host] .cm-lineNumbers .cm-gutterElement {
+      font-family: var(--mono);
+      font-size: calc(var(--editor-fs, 13px) - 2px);
+      line-height: calc(var(--editor-fs, 13px) * 1.45);
+      padding: 0 8px !important;
+    }
+    :root[data-host] .cm-activeLineGutter { color: var(--host-text) !important; }
+    :root[data-host] .cm-line { padding-left: 4px; }
+
+    /* The current line and the other occurrences of the selection in the
+       host's faint neutral fills, as Xcode draws them, whatever the syntax
+       colours' theme tints them. Specificity rather than !important, which
+       would outrank the jump flash's animation (styles.css) on the line it
+       lands on. As CodeMirror's own rule, no occurrence tint inside a find
+       match. */
+    :root[data-host] .cm-editor .cm-activeLine,
+    :root[data-host] .cm-editor .cm-activeLineGutter { background-color: var(--host-current-line); }
+    :root[data-host] .cm-editor .cm-selectionMatch { background-color: var(--host-selection-match); }
+    :root[data-host] .cm-editor .cm-searchMatch .cm-selectionMatch { background-color: transparent; }
+
+    /* Find matches in the system's find highlight: every match tinted, the
+       current one solid with dark text, as Safari and TextEdit show it. */
+    :root[data-host] .cm-searchMatch {
+      background-color: color-mix(in srgb, var(--host-find-highlight) 35%, transparent) !important;
+      outline: none !important;
+    }
+    /* In dark mode the tint lifts the background toward the syntax colours
+       (a comment's grey, a keyword's pink), so the other matches' text takes
+       the system's text colour, which keeps its contrast on the tint. */
+    :root[data-host][data-theme="dark"] .cm-searchMatch,
+    :root[data-host][data-theme="dark"] .cm-searchMatch * {
+      color: var(--host-text) !important;
+    }
+    :root[data-host] .cm-searchMatch-selected,
+    :root[data-host] .cm-searchMatch-selected *,
+    :root[data-host][data-theme="dark"] .cm-searchMatch-selected,
+    :root[data-host][data-theme="dark"] .cm-searchMatch-selected * {
+      background-color: var(--host-find-highlight) !important;
+      color: #000 !important;
+    }
+    /* The host draws the find bar; CodeMirror's panel is an empty stand-in. */
+    :root[data-host-find] .cm-panels { display: none !important; }
+
+    /* Completions and the math preview as the system's menus are: a raised
+       surface with the menu shadow and the kit's 12 px menu corners, 24 px
+       rows at the editor's font and size with 8 px corners, the selection in
+       the system's selected-content colour, details in the secondary colour.
+       No per-kind icons: a Mac completion list is text. */
+    :root[data-host] .cm-tooltip {
+      background: var(--bg-raised) !important;
+      color: var(--label) !important;
+      border: none !important;
+      border-radius: 12px;
+      box-shadow: var(--shadow-menu);
+    }
+    :root[data-host] .cm-tooltip.cm-tooltip-autocomplete { padding: 5px; }
+    :root[data-host] .cm-tooltip-autocomplete > ul {
+      font-family: var(--editor-font, var(--mono)) !important;
+      font-size: var(--editor-fs, 13px);
+      max-height: 240px !important;
+    }
+    :root[data-host] .cm-tooltip-autocomplete > ul > li {
+      padding: 4px 8px !important;
+      line-height: 16px;
+      border-radius: 8px;
+    }
+    :root[data-host] .cm-tooltip-autocomplete > ul > li[aria-selected] {
+      background: var(--host-selected-content) !important;
+      color: var(--host-selected-text) !important;
+    }
+    :root[data-host] .cm-completionIcon { display: none; }
+    :root[data-host] .cm-completionLabel { font-family: inherit; }
+    :root[data-host] .cm-completionMatchedText { text-decoration: none; font-weight: 600; }
+    :root[data-host] .cm-completionDetail {
+      margin-left: 12px;
+      font: var(--fs-micro)/var(--lh-micro) var(--font);
+      font-style: normal;
+      color: var(--host-secondary-label);
+    }
+    :root[data-host] li[aria-selected] .cm-completionDetail { color: inherit; opacity: 0.85; }
+    :root[data-host] .cm-tooltip.cm-math-preview { padding: 8px 16px; }
   </style>
 </head>
 <body>

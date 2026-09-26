@@ -17,6 +17,13 @@ fn service() -> (TempDir, Service) {
     (dir, service)
 }
 
+/// A service whose data dir holds one blank project, "P".
+fn with_project() -> (TempDir, Service) {
+    let (dir, service) = service();
+    texlocal_core::projects::create_project(&service.data_dir, "P", "blank").unwrap();
+    (dir, service)
+}
+
 async fn call(service: &Service, command: &str, args: Value) -> Value {
     service
         .call(command, &args)
@@ -70,34 +77,36 @@ async fn dispatch_round_trips_project_and_file_commands() {
 
 #[tokio::test]
 async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
-    let (_dir, service) = service();
-    call(
-        &service,
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    )
-    .await;
+    let (_dir, service) = with_project();
 
     assert_eq!(status_of(&service, "no_such_command", json!({})).await, 404);
-    assert_eq!(
-        status_of(&service, "read_file", json!({ "id": "P" })).await,
-        400
-    );
-    assert_eq!(
-        status_of(
-            &service,
+    // Missing and mistyped arguments, and paths the boundary refuses, which
+    // apply through the dispatch exactly as through the methods.
+    for (command, args) in [
+        ("read_file", json!({ "id": "P" })),
+        (
             "synctex_forward",
-            json!({ "id": "P", "file": "a.tex", "line": "x" })
-        )
-        .await,
-        400
-    );
+            json!({ "id": "P", "file": "a.tex", "line": "x" }),
+        ),
+        (
+            "read_file",
+            json!({ "id": "P", "path": "../../etc/passwd" }),
+        ),
+        ("read_file", json!({ "id": "../P", "path": "main.tex" })),
+    ] {
+        assert_eq!(status_of(&service, command, args).await, 400, "{command}");
+    }
     // A write without its text is refused, never taken as an empty file.
     for args in [
         json!({ "id": "P", "path": "main.tex" }),
         json!({ "id": "P", "path": "main.tex", "text": null }),
     ] {
-        assert_eq!(status_of(&service, "write_file", args).await, 400);
+        let err = service.call("write_file", &args).await.unwrap_err();
+        assert_eq!(err.status, 400);
+        assert_eq!(
+            err.message,
+            "Invalid argument `text`: invalid type: null, expected a string"
+        );
     }
     let main = call(
         &service,
@@ -106,25 +115,6 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
     )
     .await;
     assert!(!main["text"].as_str().unwrap().is_empty());
-    // Path checks apply through the dispatch exactly as through the methods.
-    assert_eq!(
-        status_of(
-            &service,
-            "read_file",
-            json!({ "id": "P", "path": "../../etc/passwd" })
-        )
-        .await,
-        400
-    );
-    assert_eq!(
-        status_of(
-            &service,
-            "read_file",
-            json!({ "id": "../P", "path": "main.tex" })
-        )
-        .await,
-        400
-    );
 }
 
 #[tokio::test]
@@ -147,13 +137,7 @@ async fn byte_and_absolute_path_operations_are_not_reachable_by_name() {
 
 #[tokio::test]
 async fn writes_invalidate_the_symbols_cache() {
-    let (_dir, service) = service();
-    call(
-        &service,
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    )
-    .await;
+    let (_dir, service) = with_project();
     call(
         &service,
         "write_file",
@@ -176,8 +160,7 @@ async fn writes_invalidate_the_symbols_cache() {
 
 #[test]
 fn uploads_are_validated_as_a_batch_before_any_write() {
-    let (_dir, service) = service();
-    texlocal_core::projects::create_project(&service.data_dir, "P", "blank").unwrap();
+    let (_dir, service) = with_project();
     let spec = |path: &str, size: usize| texlocal_core::service::UploadSpec {
         path: path.into(),
         size,
@@ -186,21 +169,22 @@ fn uploads_are_validated_as_a_batch_before_any_write() {
     assert!(service
         .validate_uploads("P", "img", &[spec("a.png", 1), spec("b.png", 1)])
         .is_ok());
-    let dup = service
-        .validate_uploads("P", "", &[spec("a.png", 1), spec("a.png", 1)])
-        .unwrap_err();
-    assert_eq!(dup.status, 400);
-    let big = service
-        .validate_uploads(
-            "P",
-            "",
-            &[spec("a.png", texlocal_core::service::UPLOAD_MAX_BYTES + 1)],
-        )
-        .unwrap_err();
-    assert_eq!(big.status, 400);
-    assert!(service
-        .validate_uploads("P", "", &[spec("../x.png", 1)])
-        .is_err());
+    for batch in [
+        [spec("a.png", 1), spec("a.png", 1)],
+        [
+            spec("a.png", 1),
+            spec("b.png", texlocal_core::service::UPLOAD_MAX_BYTES + 1),
+        ],
+        [spec("a.png", 1), spec("../x.png", 1)],
+    ] {
+        assert_eq!(
+            service
+                .validate_uploads("P", "", &batch)
+                .unwrap_err()
+                .status,
+            400
+        );
+    }
 
     let saved = service.upload_file("P", "img", "c.png", b"png").unwrap();
     assert_eq!(saved, "img/c.png");
@@ -212,8 +196,7 @@ fn uploads_are_validated_as_a_batch_before_any_write() {
 
 #[test]
 fn serve_routes_resolve_through_the_project_boundary() {
-    let (_dir, service) = service();
-    texlocal_core::projects::create_project(&service.data_dir, "P", "blank").unwrap();
+    let (_dir, service) = with_project();
     let seg = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
 
     let raw = serve::resolve(&service, &seg(&["__raw", "P", "img", "a.png"])).unwrap();
@@ -377,13 +360,7 @@ async fn list_dirs_lists_visible_subfolders_by_name() {
 
 #[tokio::test]
 async fn the_app_settings_file_is_not_listed_as_a_project() {
-    let (_dir, service) = service();
-    call(
-        &service,
-        "create_project",
-        json!({ "name": "P", "template": "blank" }),
-    )
-    .await;
+    let (_dir, service) = with_project();
     let tex = TempDir::new().unwrap();
     call(
         &service,

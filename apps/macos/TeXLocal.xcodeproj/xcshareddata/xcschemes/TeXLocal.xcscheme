@@ -43,6 +43,25 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "NO"
       onlyGenerateCoverageForSpecifiedTargets = "NO">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Copy workspace.js for the tests"
+               scriptText = "mkdir -p /tmp/texlocal-xctest &amp;&amp; cp &quot;$SRCROOT/../../web/src/workspace.js&quot; /tmp/texlocal-xctest/workspace.js&#10;"
+               shellToInvoke = "/bin/sh">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "6C934F26C451BB83C7839F4E"
+                     BuildableName = "TeXLocal.app"
+                     BlueprintName = "TeXLocal"
+                     ReferencedContainer = "container:TeXLocal.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"

@@ -9,16 +9,20 @@ struct TeXLocalApp: App {
         Window("TeXLocal", id: "main") {
             RootView()
                 .environment(app)
-                .onAppear {
-                    delegate.app = app
-                    applyAppearance(UserDefaults.standard.string(forKey: "appearance") ?? "system")
-                }
+                .onAppear { delegate.app = app }
         }
         .defaultSize(width: 1200, height: 760)
         .commands {
             AppCommands(app: app)
             // Show/Hide Toolbar and Customize Toolbar… in the View menu.
+            // AppKit's items, sent to the key window, which names and toggles
+            // its toolbar; with no key window (TeXLocal in the background,
+            // driven by System Events) they read "Show Toolbar" and do nothing.
             ToolbarCommands()
+            // The app has no help book; the default item only said so.
+            CommandGroup(replacing: .help) {
+                Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
+            }
         }
 
         Settings {
@@ -30,10 +34,10 @@ struct TeXLocalApp: App {
 
 /// Quit waits for the open document to reach disk, and refuses — keeping the
 /// window — when it cannot, rather than dropping the only copy of the edits.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor var app: AppModel?
+    var app: AppModel?
 
-    @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A save in flight counts: it has cleared `dirty` before its write
         // is on disk.
@@ -44,7 +48,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    @MainActor
     func applicationWillTerminate(_ notification: Notification) {
         // Compiles run in their own process groups; nothing else stops them.
         Core.shared.killAll()
@@ -52,6 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+}
+
+extension Binding where Value == Bool {
+    /// True while `item` holds something; set to false, it clears `item`.
+    init<Item: Sendable>(presenting item: Binding<Item?>) {
+        self.init(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
     }
 }
 
@@ -68,11 +78,11 @@ struct RootView: View {
             }
         }
         // One minimum for the window whatever it shows, with room for every
-        // column at its own: navigator 180, source and PDF 441, inspector
-        // 220. A minimum that changed with the content — raised as a project
-        // opened — landed mid-layout on the split view, whose constraint
-        // passes then looped until AppKit threw.
-        .frame(minWidth: 960, minHeight: 600)
+        // column at its own: navigator 200, source and PDF together 441,
+        // inspector 220. A minimum that changed with the content — raised as
+        // a project opened — landed mid-layout on the split view, whose
+        // constraint passes then looped until AppKit threw.
+        .frame(minWidth: WindowMetrics.minimum.width, minHeight: WindowMetrics.contentMinHeight)
         .task {
             await app.refresh()
             // `open TeXLocal.app --args -openProject <id>` opens a project at
@@ -83,13 +93,23 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
-        .alert("TeXLocal", isPresented: Binding(
-            get: { app.alert != nil },
-            set: { if !$0 { app.alert = nil } }
-        )) {
+        // The title says what happened, briefly, as the HIG asks; the
+        // detail is the message. `presenting`, so the text stays while the
+        // alert closes.
+        .alert(app.alert?.title ?? "", isPresented: Binding(presenting: $app.alert), presenting: app.alert) { _ in
             Button("OK") {}
-        } message: {
-            Text(app.alert ?? "")
+        } message: { alert in
+            Text(alert.message)
         }
     }
+}
+
+/// The window's one minimum size, 960 × 600 as a whole window. The content's
+/// minimum height leaves out the toolbar, which the window adds above it
+/// (the unified toolbar is 52 pt in both windows), so a 600 pt minimum on
+/// the content made the smallest window 652 pt tall.
+enum WindowMetrics {
+    static let minimum = CGSize(width: 960, height: 600)
+    static let toolbarHeight: CGFloat = 52
+    static var contentMinHeight: CGFloat { minimum.height - toolbarHeight }
 }

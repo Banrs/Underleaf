@@ -1,8 +1,8 @@
 /* TeXLocal interface.
    Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
-   extraction. Platform-specific chrome is gated on html.mac / html.win so the
-   Windows shell is additive rather than a rewrite. The app only ever runs in
-   the desktop shell, so there is no browser variant to gate against. */
+   extraction. The Tauri Mac window's chrome is gated on html.mac; a browser tab
+   gets html.browser, and vibrancy that needs a native window falls back to
+   opaque surfaces (html:not(.mac)). */
 
 /* ---------- fonts ---------- */
 
@@ -30,7 +30,7 @@
   /* Labels and fills are alpha over the window background, which is what lets
      them read correctly on both opaque panels and vibrant materials. */
   --label: rgba(0, 0, 0, 0.85);
-  --label-2: rgba(0, 0, 0, 0.5);
+  --label-2: rgba(0, 0, 0, 0.6);   /* 5.7:1 on white — AA for small text */
   --label-3: rgba(0, 0, 0, 0.25);
   --label-4: rgba(0, 0, 0, 0.1);
   --fill-1: rgba(0, 0, 0, 0.1);
@@ -43,15 +43,27 @@
   --bg-window: #ffffff;
   --bg-content: #ffffff;
   --bg-recessed: #f2f2f4;
+  --bg-raised: #ffffff;                    /* menus, toasts, dialogs */
   --material: rgba(236, 236, 236, 0.63);   /* "regular" */
 
-  --accent: #0088ff;
+  /* Accent text and filled controls with a white label both need 4.5:1, which
+     the kit's #0088ff (3.5:1) misses. The fill stays this blue in dark too,
+     where --accent itself is brighter for text on the dark background. */
+  --accent: #0b6bdc;
+  --accent-fill: #0b6bdc;
   --on-accent: #ffffff;
   --red: #ff383c;
   --orange: #ff8d28;
   --yellow: #ffcc00;
   --green: #34c759;
   --gray: #8e8e93;
+  /* The hues above are for fills and icons; status text uses these darker
+     ones (4.5:1 on white and on their own 16% tint), and white labels sit on
+     --red-fill. */
+  --red-text: #c62828;
+  --orange-text: #a15c00;
+  --green-text: #1e7e34;
+  --red-fill: #c42b1c;
 
   /* Control sizes, standardized to two from the kit's ramp (16/20/24/28/36):
      --h-control (28) for every interactive control below the title bar, and
@@ -138,6 +150,7 @@
   --bg-window: #1e1e1e;
   --bg-content: #1e1e1e;
   --bg-recessed: #171717;
+  --bg-raised: #2b2b2b;
   --material: rgba(44, 44, 44, 0.61);
 
   --accent: #0091ff;
@@ -146,10 +159,20 @@
   --yellow: #ffd600;
   --green: #30d158;
   --gray: #98989d;
+  --red-text: #ff6961;   /* --red is 4.1:1 on its own tint here */
+  --orange-text: var(--orange);
+  --green-text: var(--green);
 
   --shadow-menu: 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
   --shadow-dialog: 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 12px 28px rgba(0, 0, 0, 0.5), 0 32px 64px rgba(0, 0, 0, 0.5);
   --shadow-pane: 0 0.5px 1px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* A browser tab isn't a macOS window: controls take the web's 14px and small
+   text 13px, so Windows and Mac readers both get a comfortable size. */
+.browser {
+  --fs-control: 14px; --lh-control: 20px;
+  --fs-small: 13px;   --lh-small: 18px;
 }
 
 /* ---------- base ---------- */
@@ -162,8 +185,9 @@ html, body {
   /* The window itself never scrolls: panes fit to the window and scroll
      internally, so no fixed-width pane can overflow the whole app. */
   overflow: hidden;
-  /* macOS's base UI size is 13/16, not the 14px web default. */
-  font: 13px/16px var(--font);
+  /* macOS's base UI size is 13/16, not the 14px web default; a browser tab
+     gets the web's 14 (html.browser below). */
+  font: var(--fs-control)/var(--lh-control) var(--font);
   color: var(--label);
   background: var(--bg-window);
   -webkit-font-smoothing: antialiased;
@@ -218,8 +242,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   flex: none;
   height: var(--h-titlebar);
   padding: 0 var(--sp-2);
-  /* The title sits a control-gap away from the navigation buttons. */
-  --title-gap: var(--sp-2);
   background: var(--bg-content);
   box-shadow: inset 0 -1px 0 var(--separator);
 }
@@ -232,28 +254,12 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   padding: 0 var(--sp-2);
 }
 
-.window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--title-gap, 0); }
-.title-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 var(--sp-1); }
+.window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--sp-2); }
 .save-state { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
 
 /* One toggle exists in each band; only the relevant one shows. */
 .icon-btn.sidebar-toggle-fallback { display: none; }
 .shell:has(.sidebar.collapsed) .icon-btn.sidebar-toggle-fallback { display: inline-flex; }
-
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: var(--fs-control);
-  line-height: var(--lh-control);
-  color: var(--label-2);
-}
-.crumb { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.crumb:first-child { color: var(--label); }
-.crumb-separator { color: var(--label-3); flex: none; }
 
 /* ---------- controls ---------- */
 
@@ -272,10 +278,9 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   color: var(--label-2);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
-.icon-btn .icon svg { width: 16px; height: 16px; }
-.icon-btn:hover:not(:disabled) { background: var(--fill-3); color: var(--label); }
-.icon-btn:active:not(:disabled) { background: var(--fill-2); }
-.icon-btn:disabled { color: var(--label-3); cursor: default; }
+.icon-btn:hover:not(:disabled) { background: var(--fill-2); color: var(--label); }
+.icon-btn:active:not(:disabled) { background: var(--fill-1); }
+.icon-btn:disabled { color: var(--label-3); }
 .icon-btn.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 /* "Small" here is the in-pane toolbar size. Native pane toolbars (Preview,
@@ -286,7 +291,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   height: var(--h-control);
   border-radius: var(--r-control);
 }
-.icon-btn.small .icon svg { width: 16px; height: 16px; }
 
 .btn {
   display: inline-flex;
@@ -302,27 +306,26 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
   white-space: nowrap;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
-.btn:hover:not(:disabled) { background: var(--fill-2); }
-.btn:active:not(:disabled) { background: var(--fill-1); }
-.btn:disabled { color: var(--label-3); cursor: default; }
+.btn:is(:hover, :active):not(:disabled) { background: var(--fill-1); }
+.btn:disabled { color: var(--label-3); }
+.btn[aria-pressed="true"] { background: var(--fill-1); color: var(--accent); }
 .btn .icon svg { width: 15px; height: 15px; }
 
-.btn.primary { background: var(--accent); color: var(--on-accent); }
-.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
-.btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 78%, black); }
+.btn.primary { background: var(--accent-fill); color: var(--on-accent); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, black); }
+.btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 78%, black); }
 .btn.primary:disabled { background: var(--fill-2); color: var(--label-3); }
 /* Busy is not disabled: the button keeps its fill while its spinner runs. */
-.btn.primary.busy:disabled { background: var(--accent); color: var(--on-accent); }
+.btn.primary.busy:disabled { background: var(--accent-fill); color: var(--on-accent); }
 
-.btn.destructive { background: var(--red); color: #fff; }
-.btn.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 88%, black); }
+.btn.destructive { background: var(--red-fill); color: #fff; }
+.btn.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--red-fill) 88%, black); }
 
 /* In-pane toolbar button: 28px with the 13pt control label, like Preview's. */
 .btn.small {
   height: var(--h-control);
   padding: 0 10px;
   border-radius: var(--r-control);
-  font-size: var(--fs-control);
 }
 .btn.small .icon svg { width: 14px; height: 14px; }
 
@@ -339,6 +342,7 @@ input, select, textarea {
   padding: 0 var(--sp-2);
   outline: none;
 }
+.browser input, .browser select { font-weight: 400; }   /* web fields are Regular */
 select { padding-right: var(--sp-1); }
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent);
@@ -369,7 +373,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 .segment:hover { color: var(--label); }
-.segment .icon svg { width: 15px; height: 15px; }
 .segment[aria-checked="true"] {
   background: var(--bg-content);
   color: var(--label);
@@ -424,9 +427,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   line-height: var(--lh-micro);
   font-weight: 600;
 }
-.badge.error { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
-.badge.warning { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange); }
-.badge.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.badge.error { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
+.badge.warning { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange-text); }
+.badge.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green-text); }
 
 .count-badge {
   min-width: var(--sp-4);
@@ -455,8 +458,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   color: #fff;
   box-shadow: 0 0 0 1.5px var(--bg-content);
 }
-.badge-count.error { background: var(--red); }
-.badge-count.warning { background: var(--orange); }
+.badge-count.error { background: var(--red-fill); }
+.badge-count.warning { background: var(--orange); color: #000; }
 
 .notice {
   display: flex;
@@ -478,7 +481,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* ---------- home ---------- */
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.home-titlebar { box-shadow: none; background: transparent; height: var(--h-titlebar); }
+.home-titlebar { box-shadow: none; background: transparent; }
 .mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns like the Xcode/Pages welcome window: branding + primary actions on
@@ -522,6 +525,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Grouped list of recent documents — no lifting cards, no shadows. */
 .doc-list { border: 0.5px solid var(--separator); border-radius: var(--r-container); overflow: hidden; background: var(--bg-content); }
 .doc-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -536,13 +540,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .doc-icon { color: var(--accent); display: inline-flex; }
 .doc-icon svg { width: 22px; height: 22px; }
 .doc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.doc-name { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-name { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; text-decoration: none; }
+/* Stretched link: the name's link covers the whole row. */
+.doc-name::after { content: ''; position: absolute; inset: 0; }
 .doc-meta { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
+/* The focused link is the name, but the ring belongs to the whole row — drawn
+   inside it, since the list's overflow clips an outer one. */
+.doc-row:has(.doc-name:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.doc-name:focus-visible { outline: none; }
 /* Row actions appear on hover or keyboard focus — never only on hover. */
-.row-actions { opacity: 0; transition: opacity 0.1s ease; }
+.row-actions { position: relative; z-index: 1; opacity: 0; transition: opacity 0.1s ease; }
 .doc-row:hover .row-actions,
-.doc-row:focus-visible .row-actions,
-.row-actions:focus-within { opacity: 1; }
+.doc-row:focus-within .row-actions { opacity: 1; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); padding: var(--sp-6); color: var(--label-2); }
 
@@ -595,7 +604,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   flex: none;
   text-align: left;
 }
-.section-header.disclosure { margin-top: var(--sp-4); cursor: default; }   /* section-to-section gap */
+.section-header.disclosure { margin-top: var(--sp-4); }   /* section-to-section gap */
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
@@ -640,7 +649,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    sidebar edge, icon 24 wide with a 4px gap to the label. */
 .tree, .outline, .search-results { overflow-y: auto; padding: 0 10px var(--sp-3); }
 .tree { flex: 1 1 auto; min-height: 120px; }
-.outline { flex: 0 1 auto; max-height: 40%; padding-bottom: var(--sp-2); }
+/* The outline is docked under the files at a height the divider sets. */
+.outline { flex: none; height: 38%; min-height: 80px; max-height: calc(100% - 260px); padding-bottom: var(--sp-2); }
 .search-results { flex: 1; }
 .tree.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-row); }
 
@@ -687,6 +697,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: block;
 }
 .outline-row:hover { background-color: var(--fill-4); }
+.outline-row.selected { background-color: var(--fill-2); }
+/* The lists clip an outer ring. */
+.outline-row:focus-visible { outline-offset: -2px; }
+
+/* The divider between the files and the outline: a hairline with a wider
+   grab zone, focusable, resized with the arrow keys too. */
+.sidebar-split {
+  position: relative;
+  flex: none;
+  height: 1px;
+  margin: var(--sp-1) 10px 0;
+  background: var(--separator);
+  transition: background-color 0.12s ease;
+}
+.sidebar-split::before { content: ''; position: absolute; inset: -4px 0; cursor: row-resize; }
+.sidebar-split:hover, .sidebar-split:focus-visible { background: var(--label-3); }
+.sidebar-split:focus-visible { outline-offset: 2px; }
+.sidebar-split.dragging { background: var(--accent); }
+.sidebar-split + .section-header.disclosure { margin-top: var(--sp-3); }
 
 /* A toolbar band at the kit's toolbar height: 44 = a 28 control with 8 above
    and below. */
@@ -712,7 +741,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-weight: 500;
 }
 .engine-status:hover { background: var(--fill-3); color: var(--label); }
-.engine-status.warn { color: var(--orange); }
+.engine-status.warn { color: var(--orange-text); }
 .engine-status svg { width: 13px; height: 13px; }
 .engine-status .spinner { width: 11px; height: 11px; }
 
@@ -750,19 +779,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .sync-pill {
   position: absolute;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 2px;
-  border-radius: var(--r-container);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
   background: var(--bg-content);
-  box-shadow: var(--shadow-menu);
   z-index: 10;
-  cursor: grab;
+  cursor: auto;
 }
-.sync-pill.dragging { cursor: grabbing; }
 .sync-pill button {
   width: var(--h-control);
   height: var(--h-control);
@@ -772,8 +801,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   justify-content: center;
   color: var(--label-2);
 }
-.sync-pill button:hover { background: var(--fill-3); color: var(--accent); }
-.sync-pill svg { width: 13px; height: 13px; }
+.sync-pill button:hover { background: var(--fill-2); color: var(--label); }
+.sync-pill svg { width: 16px; height: 16px; }
 
 /* ---------- in-pane toolbars ---------- */
 
@@ -792,6 +821,50 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .toolbar > * { flex-shrink: 0; }
 .toolbar .spacer { flex: 1 1 auto; min-width: var(--sp-2); }
 .toolbar-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 5px; }
+
+/* The source bar's LaTeX tools, in groups that fold into its ⋯ menu. */
+.latex-tools, .tool-group { display: flex; align-items: center; gap: var(--sp-1); flex: none; }
+.latex-tools[hidden], .tool-group[hidden] { display: none; }
+/* The section level: as wide as its widest value, so the bar holds still. */
+.heading-menu { padding: 0 var(--sp-2) 0 10px; font-weight: 400; }
+.heading-label { display: inline-grid; text-align: left; }
+.heading-label > * { grid-area: 1 / 1; }
+.heading-twin { visibility: hidden; }
+
+/* The symbol palette: a grid per kind, in a popover under its button. */
+.popover { padding: var(--sp-3); overflow-y: auto; }
+.symbol-palette { display: flex; flex-direction: column; gap: var(--sp-3); }
+.symbol-group-title { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); margin-bottom: var(--sp-1); }
+.symbol-grid { display: grid; grid-template-columns: repeat(10, 32px); gap: 2px; }
+.symbol { width: 32px; height: 32px; border-radius: var(--r-menu); font-size: 17px; line-height: 1; color: var(--label); }
+.symbol:hover { background: var(--fill-2); }
+
+/* Where the caret is: project › folders › file › section, a 28px row. */
+.location-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: var(--h-control);
+  padding: 0 var(--sp-2);
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--bg-content);
+  box-shadow: inset 0 -1px 0 var(--separator);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--label-2);
+}
+.location-bar:empty { display: none; }
+.location-crumb { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; height: 22px; padding: 0 var(--sp-1); border-radius: var(--r-small); }
+.location-crumb .icon svg { width: 14px; height: 14px; }
+.location-text { overflow: hidden; text-overflow: ellipsis; }
+.location-menu { color: var(--label); flex: 0 1 auto; }
+.location-menu.secondary { color: var(--label-2); }
+.location-menu:hover, .location-menu[aria-expanded="true"] { background: var(--fill-2); }
+.location-project, .location-folder { flex: 0 1 auto; }
+.location-chevron { display: inline-flex; flex: none; color: var(--label-3); }
+.location-chevron svg { width: 12px; height: 12px; }
 
 /* The PDF toolbar is a glass bar the document scrolls under — the kit's
    scroll-edge effect. The scroll view fills the pane; its top padding keeps
@@ -961,7 +1034,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- compile log ---------- */
 
-.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); }
+.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); animation: fade-in 0.14s ease-out; }
 .logs-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .logs-summary { display: flex; align-items: center; gap: var(--sp-2); }
 .logs-duration { color: var(--label-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
@@ -979,9 +1052,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   cursor: default;
 }
 .log-item:hover { background: var(--fill-3); }
+.log-item:disabled:hover { background: none; }
 .log-kind { flex: none; font-weight: 600; }
-.log-item.error .log-kind { color: var(--red); }
-.log-item.warning .log-kind { color: var(--orange); }
+.log-item.error .log-kind { color: var(--red-text); }
+.log-item.warning .log-kind { color: var(--orange-text); }
 .log-loc { flex: none; color: var(--label-2); font-family: var(--mono); font-size: var(--fs-small); }
 .log-message { min-width: 0; }
 .logs-raw { font-family: var(--mono); font-size: var(--fs-small); line-height: 17px; white-space: pre-wrap; word-break: break-all; color: var(--label-2); margin: 0; }
@@ -1025,7 +1099,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: flex-start;
   justify-content: center;
   padding: 12vh var(--sp-5) var(--sp-5);
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .modal {
@@ -1036,7 +1110,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   max-height: 100%;
   padding: var(--sp-5);
   border-radius: var(--r-window);
-  background: var(--bg-window);
+  background: var(--bg-raised);
   box-shadow: var(--shadow-dialog);
   animation: pop-in 0.16s ease-out;
 }
@@ -1064,13 +1138,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); }
-.settings-foot { justify-content: space-between; }
+.settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow-wrap: anywhere; }   /* a long TeX path wraps */
 .settings-control { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; color: var(--label-2); }
-.settings-status { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-control .btn:not(:disabled) { color: var(--label); }
-/* A long TeX folder path wraps anywhere rather than widening the dialog. */
-.settings-hint { overflow-wrap: anywhere; }
 
 /* TeX folder chooser: drive chips, the current path, then a grouped list of
    folders in the recents' style. */
@@ -1086,9 +1156,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .folder-row { display: flex; align-items: center; gap: var(--sp-1); width: 100%; height: var(--h-control); padding: 0 var(--sp-2); font-size: var(--fs-control); text-align: left; white-space: nowrap; }
 .folder-row + .folder-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .folder-row:hover { background: var(--fill-4); }
+.folder-row:focus-visible { outline-offset: -2px; }   /* the list clips an outer ring */
 .folder-row:active { background: var(--fill-3); }
 .folder-row .row-label { overflow: hidden; text-overflow: ellipsis; }
-.folder-error { margin-top: var(--sp-2); color: var(--red); font-size: var(--fs-small); line-height: var(--lh-small); }
+.folder-error { margin-top: var(--sp-2); color: var(--red-text); font-size: var(--fs-small); line-height: var(--lh-small); }
 .folder-error:empty { display: none; }
 
 /* Menus use the vibrant material; rows are 28 (kit 24) with radius 6. */
@@ -1103,8 +1174,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   box-shadow: var(--shadow-menu);
   animation: pop-in 0.12s ease-out;
 }
-/* An opaque fill hides the blur entirely, so skip computing it. */
-.win .menu { background: var(--bg-window); backdrop-filter: none; }
 .menu-item {
   display: flex;
   align-items: center;
@@ -1118,15 +1187,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   text-align: left;
   color: var(--label);
 }
-.menu-item:hover, .menu-item:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
-.menu-item.danger { color: var(--red); }
-.menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--red); color: #fff; }
+/* Rows highlight neutrally, as on the web and Windows; macOS fills the row
+   with the accent. */
+.menu-item:hover, .menu-item:focus-visible { background: var(--fill-2); outline: none; }
+.mac .menu-item:not(:disabled):is(:hover, :focus-visible) { background: var(--accent-fill); color: var(--on-accent); }
+.menu-item.danger { color: var(--red-text); }
+.mac .menu-item.danger:not(:disabled):is(:hover, :focus-visible) { background: var(--red-fill); color: #fff; }
 .menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: var(--fs-control); }
 .menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
 .menu-item:disabled { color: var(--label-3); }
 .menu-item:disabled:hover { background: none; }
 .menu-hint { margin-left: auto; padding-left: var(--sp-4); color: var(--label-2); font-variant-numeric: tabular-nums; }
-.menu-item:hover .menu-hint, .menu-item:focus-visible .menu-hint { color: inherit; }
+.mac .menu-item:is(:hover, :focus-visible) .menu-hint { color: inherit; }
 
 /* In a browser no shell draws a menu bar, so the title bar carries one. */
 .menubar { display: flex; flex: none; gap: 2px; margin-right: var(--sp-1); }
@@ -1138,7 +1210,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-weight: 500;
   color: var(--label);
 }
-.menubar-item:hover, .menubar-item:focus-visible { background: var(--fill-3); outline: none; }
+.menubar-item:hover, .menubar-item[aria-expanded="true"] { background: var(--fill-2); }
 
 #toast-root {
   position: fixed;
@@ -1164,7 +1236,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-weight: 500;
   animation: toast-in 0.18s ease-out;
 }
-.toast.error { background: var(--red); color: #fff; backdrop-filter: none; }   /* opaque: nothing to blur */
+.toast.error { background: var(--red-fill); color: #fff; backdrop-filter: none; }   /* opaque: nothing to blur */
+
+/* Vibrancy needs the native window behind it; in a browser tab the page would
+   show through, so menus and toasts are opaque there (and the blur is skipped). */
+html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-raised); backdrop-filter: none; }
 
 /* ---------- motion ---------- */
 
@@ -1173,7 +1249,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 @keyframes pop-in { from { opacity: 0; transform: scale(0.98) translateY(2px); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes fade-in { from { opacity: 0; } }
-.logs { animation: fade-in 0.14s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1204,10 +1279,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- narrow windows ---------- */
 
-@media (max-width: 900px) {
-  .crumbs, .title-separator { display: none; }
-}
-
 /* Narrow panes shed toolbar items the menu bar already carries (with the same
    shortcuts), rather than scrolling the bar and hiding controls off its end. */
 .editor-pane { container: editor-pane / inline-size; }
@@ -1215,7 +1286,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 @container editor-pane (max-width: 360px) {
   .toolbar [data-command="edit.undo"],
   .toolbar [data-command="edit.redo"],
-  .toolbar [data-command="edit.redo"] + .toolbar-separator { display: none; }
+  .toolbar [data-command="edit.find"],
+  .toolbar [data-command="edit.redo"] + .latex-tools > .toolbar-separator:first-child { display: none; }
+}
+/* The location row drops the project and folders first, then the section. */
+@container editor-pane (max-width: 480px) {
+  .location-project, .location-folder,
+  .location-bar .location-chevron:not(:has(+ .location-section)) { display: none; }
+}
+@container editor-pane (max-width: 300px) {
+  .location-section, .location-bar .location-chevron:has(+ .location-section) { display: none; }
 }
 @container pdf-pane (max-width: 400px) {
   .toolbar [data-command="view.zoomOut"],

@@ -19,7 +19,7 @@ const DEFS = {
   uiScale: { key: 'uiscale', def: 100, type: 'num' },
   sidebarWidth: { key: 'w-side', def: 0, type: 'num' },
   pdfWidth: { key: 'w-pdf', def: 0, type: 'num' },
-  syncPillTop: { key: 'syncpill-top', def: 42, type: 'num' },
+  outlineHeight: { key: 'h-outline', def: 0, type: 'num' },
   openDirs: { key: 'opendirs', def: [], type: 'json' },
 };
 
@@ -122,10 +122,12 @@ export function onAccent(hex) {
 
 // The accent the user picked system-wide, once the host has reported it. Set on
 // the root element so it wins over both the light and the dark token block — a
-// person chooses one accent, not one per appearance.
+// person chooses one accent, not one per appearance. It replaces both the text
+// accent and the fill that filled controls use.
 export function applyAccent(hex) {
   const root = document.documentElement;
   root.style.setProperty('--accent', hex);
+  root.style.setProperty('--accent-fill', hex);
   root.style.setProperty('--on-accent', onAccent(hex));
 }
 

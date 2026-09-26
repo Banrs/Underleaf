@@ -6,19 +6,18 @@ import { $, el, toast, menuUnder, promptModal } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
-import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from './state.js';
+import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
 import { chooseTexFolder } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
-  buildSidebar, renderTree, updateTreeSelection, renderOutline, focusSearch,
+  buildSidebar, renderTree, updateTreeSelection, renderOutline, updateOutlineSelection, focusSearch,
   newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome, destroySidebar,
 } from './sidebar.js';
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
-
-const TEXT_FILE = /\.(tex|bib|cls|sty|bst|txt|md|csv|tsv|json|yaml|yml|lua|py|r|dat|def|clo|tikz)$/i;
+import { buildSourceBar } from './sourcebar.js';
 
 let ui = {};              // mounted elements
 let disposeCommands = null;
@@ -40,7 +39,7 @@ const EDITOR_CACHE_MAX = 8;
 const editorStateCache = new Map();   // path → { state, scrollTop }
 
 function stashEditorState(path) {
-  if (!path || !state.editor?.getState) return;
+  if (!path || !state.editor) return;
   editorStateCache.delete(path);
   editorStateCache.set(path, {
     state: state.editor.getState(),
@@ -137,10 +136,12 @@ function buildChrome(id) {
   const sidebar = buildSidebar({
     openFile,
     gotoLine: (line) => state.editor?.gotoLine(line),
+    revealSection: (line, focus) => state.editor?.gotoLine(line, true, focus),
     openSettings: openProjectSettings,
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
+    onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
       if (!(await flushCurrent())) throw new Error('The active document changed while saving');
     },
@@ -154,12 +155,7 @@ function buildChrome(id) {
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.classList.toggle('collapsed', prefs.sidebarCollapsed);
 
-  // --- window title bar (one 52px band across the whole window) ---
   const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
-  // The breadcrumb reads as text, so it opts out of the drag region around it.
-  const crumbs = el('nav', {
-    class: 'crumbs', 'aria-label': 'Document location', 'data-tauri-drag-region': 'false',
-  });
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
   // takes over once it's hidden, so the control never disappears with the pane.
@@ -170,43 +166,27 @@ function buildChrome(id) {
   // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
   // and other interactive elements on its own.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
-    menuBar(menuUnder),
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
+    menuBar(menuUnder),
     el('span', { class: 'window-title' }, state.settings?.title || id),
-    el('span', { class: 'title-separator' }),
-    crumbs,
     el('span', { class: 'spacer' }),
     saveState,
     iconButton('view.togglePdf', 'sidebar-right'),
     iconButton('project.export', 'archivebox'),
   );
 
-  // --- editor pane ---
-  const editorToolbar = el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing' },
-    iconButton('edit.undo', 'undo', 'small'),
-    iconButton('edit.redo', 'redo', 'small'),
-    el('span', { class: 'toolbar-separator' }),
-    iconButton('edit.bold', 'bold', 'small'),
-    iconButton('edit.italic', 'italic', 'small'),
-    iconButton('edit.math', 'sigma', 'small'),
-    el('span', { class: 'toolbar-separator' }),
-    el('button', {
-      class: 'btn small', title: 'Insert an environment',
-      onclick: (e) => menuUnder(e.currentTarget, INSERT_TEMPLATES.map(([label, tpl]) => ({
-        label, action: () => state.editor?.insertTemplate(tpl),
-      }))),
-    }, icon('plus'), 'Insert', icon('chevron-down')),
-    el('span', { class: 'spacer' }),
-    iconButton('edit.comment', 'comment', 'small'),
-    iconButton('edit.find', 'search', 'small'),
-  );
+  const sourceBar = buildSourceBar({
+    commandButton: (commandId, glyph) => iconButton(commandId, glyph, 'small'),
+    openFile,
+    reveal: (line) => state.editor?.gotoLine(line, true),
+    afterHeading: updateDocMeta,
+  });
 
   const editorHost = el('div', { class: 'editor-host' });
-  const wordCountPill = el('span', { class: 'word-count', role: 'status' });
-  const editorPane = el('div', { class: 'pane editor-pane' }, editorToolbar, editorHost, wordCountPill);
+  const wordCountPill = el('span', { class: 'word-count' });
+  const editorPane = el('div', { class: 'pane editor-pane' }, sourceBar.toolbar, sourceBar.location, editorHost, wordCountPill);
 
-  // --- PDF pane ---
   const pageIndicator = el('span', { class: 'page-indicator' });
   const pdfFreshness = el('span', {
     class: 'pdf-freshness', role: 'status', hidden: true,
@@ -214,7 +194,7 @@ function buildChrome(id) {
   });
   const zoomLabel = el('span', { class: 'zoom-value' }, '—');
   const zoomButton = el('button', {
-    class: 'btn small zoom-btn', title: 'Zoom', 'aria-label': 'Zoom',
+    class: 'btn small zoom-btn', title: 'Zoom', 'aria-haspopup': 'menu',
     onclick: (e) => menuUnder(e.currentTarget, [
       { label: 'Fit Width', action: () => state.pdf.fitWidth() },
       { label: 'Fit Height', action: () => state.pdf.fitHeight() },
@@ -239,11 +219,8 @@ function buildChrome(id) {
     },
   });
 
-  // --- PDF find bar (hidden until the command opens it) ---
-  const findCount = el('span', { class: 'find-count' });
-  const findInput = el('input', {
-    type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF',
-  });
+  const findCount = el('span', { class: 'find-count', role: 'status' });
+  const findInput = el('input', { type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF' });
   const showCount = ({ total, index, limited = false }) => {
     const totalLabel = limited ? `${total}+` : String(total);
     findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${totalLabel}` : 'Not found') : '';
@@ -263,12 +240,9 @@ function buildChrome(id) {
     const query = findInput.value;
     pdfFindTimer = setTimeout(async () => {
       const result = await viewer.find(query);
-      if (
-        generation === pdfFindGeneration
-        && state.pdf === viewer
-        && ui.findInput === findInput
-        && !findBar.hidden
-      ) showCount(result);
+      if (generation === pdfFindGeneration && state.pdf === viewer && ui.findInput === findInput && !findBar.hidden) {
+        showCount(result);
+      }
     }, 200);
   });
   findInput.addEventListener('keydown', (e) => {
@@ -296,13 +270,11 @@ function buildChrome(id) {
     pdfScroll,
   );
 
-  // --- dividers ---
   const sidebarDivider = el('div', { class: 'divider', role: 'separator', 'aria-orientation': 'vertical' });
   const syncPill = el('div', { class: 'sync-pill' },
-    el('button', { title: tooltip('sync.forward'), 'aria-label': 'Show cursor position in PDF', onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
-    el('button', { title: tooltip('sync.inverse'), 'aria-label': 'Show PDF position in source', onclick: () => runCommand('sync.inverse') }, icon('arrow-left')),
+    el('button', { dataset: { command: 'sync.forward' }, onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
+    el('button', { dataset: { command: 'sync.inverse' }, onclick: () => runCommand('sync.inverse') }, icon('arrow-left')),
   );
-  makeSyncPillDraggable(syncPill);
   const paneDivider = el('div', { class: 'divider divider-sync', role: 'separator', 'aria-orientation': 'vertical' }, syncPill);
 
   const workspace = el('div', { class: 'workspace' }, editorPane, paneDivider, pdfPane);
@@ -317,17 +289,15 @@ function buildChrome(id) {
   );
 
   ui = {
-    sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
-    compileButton, workspace, findBar, findInput, pdfFreshness,
+    sidebar, sourceBar, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
+    compileButton, workspace, findBar, findInput, stepFind, pdfFreshness,
   };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
   setupResizer(paneDivider, pdfPane, 'flex', 240, null, 'pdfWidth');
 
   state.pdf = new PdfViewer(pdfScroll, {
-    onZoomChange: (pct, mode) => {
-      zoomLabel.textContent = mode === 'width' ? 'Fit W' : mode === 'height' ? 'Fit H' : `${pct}%`;
-    },
+    onZoomChange: (pct) => { zoomLabel.textContent = `${pct}%`; },
     onPageChange: (p, total) => { pageIndicator.textContent = `${p} of ${total}`; },
     onSyncClick: async (page, x, y) => {
       try {
@@ -375,6 +345,17 @@ const hasProject = () => !!state.projectId;
 const hasEditor = () => !!state.editor;
 const hasPdf = () => !!state.pdf?.doc;
 
+// Find Next and Previous step the search being typed in. A native menu takes
+// the chord from every field, so the PDF find field steps its own matches and
+// other fields leave it be, rather than moving the editor's search behind them.
+function findAgain(delta) {
+  const field = document.activeElement;
+  if (field === ui.findInput) { ui.stepFind(delta); return; }
+  if (field?.matches?.('input, textarea') && !ui.editorHost?.contains(field)) return;
+  if (delta > 0) state.editor?.findNext();
+  else state.editor?.findPrevious();
+}
+
 function commandDefs() {
   return [
     { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+Shift+N', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
@@ -391,6 +372,8 @@ function commandDefs() {
     { id: 'edit.undo', title: 'Undo', accel: 'CmdOrCtrl+Z', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
     { id: 'edit.redo', title: 'Redo', accel: 'CmdOrCtrl+Shift+Z', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
     { id: 'edit.find', title: 'Find & Replace', accel: 'CmdOrCtrl+F', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.findNext', title: 'Find Next', accel: 'CmdOrCtrl+G', nativeOnly: true, run: () => findAgain(1), enabled: hasEditor },
+    { id: 'edit.findPrevious', title: 'Find Previous', accel: 'CmdOrCtrl+Shift+G', nativeOnly: true, run: () => findAgain(-1), enabled: hasEditor },
     { id: 'edit.bold', title: 'Bold', accel: 'CmdOrCtrl+B', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
     { id: 'edit.italic', title: 'Italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
     { id: 'edit.math', title: 'Inline Math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
@@ -432,6 +415,8 @@ function openProjectSettings() {
 
 function openPdfFind() {
   if (!ui?.findBar) return;
+  // The log takes the PDF's place, so matches would be highlighted out of sight.
+  if (state.logOpen) toggleLogs();
   ui.findBar.hidden = false;
   ui.findBar.parentElement?.classList.add('find-open');
   ui.findInput.focus();
@@ -471,48 +456,30 @@ function showEditorPlaceholder(message) {
   state.editor?.destroy();
   state.editor = null;
   ui.editorHost?.replaceChildren(el('p', { class: 'editor-placeholder' }, message));
+  renderCrumbs();
   refreshCommands();
 }
 
-function transitionStillCurrent(request, generation, projectId, host) {
-  return request === openGeneration
-    && generation === workspaceGeneration
-    && state.projectId === projectId
-    && host === ui.editorHost;
-}
-
-async function flushEditsBeforeSwitch(request, generation, projectId, host, editor, path) {
-  const isCurrent = () => transitionStillCurrent(request, generation, projectId, host)
-    && state.editor === editor
-    && state.openPath === path;
+// Save until no edit arrived during the last write, while `isCurrent` holds
+// and `editor` still shows `path`.
+function flushWhile(isCurrent, editor, path) {
   return flushUntilStable({
-    isCurrent,
+    isCurrent: () => isCurrent() && state.editor === editor && state.openPath === path,
     isDirty: () => state.dirty,
     save: () => saveCurrent({ triggerCompile: false }),
   });
 }
 
-// Save the currently mounted document until no edit arrived during the last
-// write. Quit, navigation, compilation and filesystem mutations use this rather
-// than a one-shot save so their success really means the latest buffer is safe.
+// Quit, navigation, compilation and filesystem mutations flush rather than
+// save once, so their success really means the latest buffer is safe.
 export async function flushCurrent() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
-  const editor = state.editor;
-  const path = state.openPath;
-  if (state.dirty && (!editor || !path)) return false;
-  const isCurrent = () => generation === workspaceGeneration
-    && state.projectId === projectId
-    && state.editor === editor
-    && state.openPath === path;
-  return flushUntilStable({
-    isCurrent,
-    isDirty: () => state.dirty,
-    save: () => saveCurrent({ triggerCompile: false }),
-  });
+  if (state.dirty && (!state.editor || !state.openPath)) return false;
+  return flushWhile(() => generation === workspaceGeneration && state.projectId === projectId, state.editor, state.openPath);
 }
 
-export async function openFile(path) {
+async function openFile(path) {
   if (!path || path === state.openPath) return;
   const request = ++openGeneration;
   const generation = workspaceGeneration;
@@ -521,33 +488,29 @@ export async function openFile(path) {
   const projectId = state.projectId;
   const prevPath = state.openPath;
   const prevEditor = state.editor;
+  const stillCurrent = () => request === openGeneration && generation === workspaceGeneration
+    && state.projectId === projectId && host === ui.editorHost;
+  const flushPrevious = () => flushWhile(stillCurrent, prevEditor, prevPath);
 
   // Stabilise the old buffer before every kind of transition. This includes
   // image/binary previews: an edit may have arrived during the preceding save,
   // even though the final path swap itself is synchronous.
-  if (!(await flushEditsBeforeSwitch(
-    request, generation, projectId, host, prevEditor, prevPath,
-  ))) return;
+  if (!(await flushPrevious())) return;
 
   // Non-text previews do not await a read, so no edit can interleave between
   // the stable check above and committing the new active path.
-  if (IMAGE_FILE.test(path)) {
-    stashEditorState(prevPath);
-    state.openPath = path;
-    updateTreeSelection();
-    state.editor?.destroy();
-    state.editor = null;
-    host.replaceChildren(el('div', { class: 'image-preview' },
-      el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
-    setSaveState('');
-    updateDocMeta();
-    return;
-  }
   if (!TEXT_FILE.test(path)) {
     stashEditorState(prevPath);
     state.openPath = path;
     updateTreeSelection();
-    showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
+    if (IMAGE_FILE.test(path)) {
+      state.editor?.destroy();
+      state.editor = null;
+      host.replaceChildren(el('div', { class: 'image-preview' },
+        el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
+    } else {
+      showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
+    }
     setSaveState('');
     updateDocMeta();
     return;
@@ -556,17 +519,15 @@ export async function openFile(path) {
   let text;
   try { ({ text } = await api.readFile(projectId, path)); }
   catch (err) {
-    if (transitionStillCurrent(request, generation, projectId, host)) toast(err.message, 'error');
+    if (stillCurrent()) toast(err.message, 'error');
     return;
   }
-  if (!transitionStillCurrent(request, generation, projectId, host)) return;
+  if (!stillCurrent()) return;
 
   // The old buffer remained active throughout the read. Persist anything typed
   // during it before changing openPath, or that text could be routed to the new
   // file or discarded with the old editor.
-  if (!(await flushEditsBeforeSwitch(
-    request, generation, projectId, host, prevEditor, prevPath,
-  ))) return;
+  if (!(await flushPrevious())) return;
 
   stashEditorState(prevPath);
   const cached = editorStateCache.get(path);
@@ -574,6 +535,7 @@ export async function openFile(path) {
   editorStateCache.delete(path);
 
   state.openPath = path;
+  state.topLine = 1;
   updateTreeSelection();
   state.editor?.destroy();
   host.replaceChildren();
@@ -599,6 +561,14 @@ export async function openFile(path) {
       state.cursorLine = line;
       clearTimeout(crumbTimer);
       crumbTimer = setTimeout(renderCrumbs, 150);
+    },
+    onScroll: (line) => {
+      // At the end of the file a section chosen in the outline may not reach
+      // the top; it stays selected rather than the one the view stopped at.
+      const s = host.querySelector('.cm-scroller');
+      const atEnd = s && s.scrollTop + s.clientHeight >= s.scrollHeight - 1;
+      if (!(atEnd && state.topLine > line)) state.topLine = line;
+      updateOutlineSelection();
     },
   });
   if (restore) state.editor.setScrollTop(restore.scrollTop);
@@ -642,7 +612,6 @@ async function doSave({ triggerCompile = true } = {}) {
 }
 
 let crumbTimer;
-
 let symbolsTimer;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
@@ -665,35 +634,21 @@ function scheduleDocMeta() {
 }
 
 function updateDocMeta() {
-  const isTex = state.openPath?.endsWith('.tex');
-  const editor = state.editor;
-  const pill = ui.wordCountPill;
-  const show = !!(isTex && editor);
+  const show = !!(state.editor && state.openPath?.endsWith('.tex'));
   const countWords = show && prefs.showWordCount;
-  const { outline, words, lines } = show
-    ? analyzeDoc(editor.scanLines, { countWords })
-    : { outline: [] };
+  const { outline, words, lines } = show ? analyzeDoc(state.editor.scanLines, { countWords }) : { outline: [] };
   state.outline = outline;
   renderOutline();
   renderCrumbs();
 
+  const pill = ui.wordCountPill;
   if (!pill) return;
   pill.hidden = !countWords;
-  if (countWords) {
-    pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
-  }
+  if (countWords) pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
 }
 
-function renderCrumbs() {
-  if (!ui.crumbs) return;
-  const parts = [];
-  if (state.openPath) parts.push(state.openPath.split('/').pop());
-  for (const entry of outlineChain(state.cursorLine)) parts.push(entry.title);
-  ui.crumbs.replaceChildren(...parts.flatMap((p, i) => [
-    i ? el('span', { class: 'crumb-separator', 'aria-hidden': 'true' }, '›') : null,
-    el('span', { class: 'crumb' }, p),
-  ]).filter(Boolean));
-}
+// The source bar's section level and location row follow the caret and path.
+const renderCrumbs = () => ui.sourceBar?.update();
 
 // ---------- compile ----------
 
@@ -825,15 +780,13 @@ async function loadPdf() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   const viewer = state.pdf;
+  const current = () => generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
   try {
-    const loaded = await viewer.load(api.pdfUrl(projectId));
-    const current = generation === workspaceGeneration
-      && state.projectId === projectId
-      && state.pdf === viewer;
-    if (loaded && current) setPdfFreshness('');
-    return loaded && current;
+    const loaded = await viewer.load(api.pdfUrl(projectId)) && current();
+    if (loaded) setPdfFreshness('');
+    return loaded;
   } catch {
-    if (generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer) showPdfEmpty();
+    if (current()) showPdfEmpty();
     return false;
   }
 }
@@ -878,11 +831,8 @@ async function inverseSync() {
 function toggleSidebar() {
   prefs.sidebarCollapsed = !prefs.sidebarCollapsed;
   ui.sidebar?.classList.toggle('collapsed', prefs.sidebarCollapsed);
-  if (!prefs.sidebarCollapsed && prefs.sidebarWidth) {
-    ui.sidebar.style.width = `${prefs.sidebarWidth}px`;
-  } else if (prefs.sidebarCollapsed) {
-    ui.sidebar.style.width = '';
-  }
+  if (prefs.sidebarCollapsed) ui.sidebar.style.width = '';
+  else if (prefs.sidebarWidth) ui.sidebar.style.width = `${prefs.sidebarWidth}px`;
   refreshCommands();
 }
 
@@ -909,8 +859,8 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     pane.style.width = `${w}px`;
   }
   handle.addEventListener('pointerdown', (e) => {
-    // The sync pill rides on this divider; a pointerdown there is a button click
-    // or a pill drag, never a resize.
+    // The sync pill rides on this divider; a pointerdown there is a button
+    // click, never a resize.
     if (e.target.closest('.sync-pill')) return;
     e.preventDefault();
     handle.classList.add('dragging');
@@ -918,14 +868,14 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     // Resizing tracks the pointer 1:1 — suppress the collapse animation.
     const prevTransition = pane.style.transition;
     pane.style.transition = 'none';
-    state.pdf?.beginLiveResize?.();
+    state.pdf?.beginLiveResize();
     const startX = e.clientX;
     const startW = pane.getBoundingClientRect().width;
     const dir = mode === 'width' ? 1 : -1;
     const onMove = (ev) => {
       const w = Math.max(min, Math.min(max ?? innerWidth * 0.7, startW + dir * (ev.clientX - startX)));
       applyWidth(w);
-      state.pdf?.liveResize?.();
+      state.pdf?.liveResize();
     };
     let done = false;
     const onUp = () => {
@@ -936,7 +886,7 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
-      state.pdf?.endLiveResize?.();
+      state.pdf?.endLiveResize();
       prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
     };
     handle.addEventListener('pointermove', onMove);
@@ -944,46 +894,3 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     handle.addEventListener('pointercancel', onUp);
   });
 }
-
-// The sync pill slides vertically along the divider; its position persists.
-function makeSyncPillDraggable(pill) {
-  pill.style.top = `${prefs.syncPillTop}%`;
-  pill.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;   // arrows are their own controls
-    e.preventDefault();
-    e.stopPropagation();
-    const parent = pill.parentElement;
-    pill.setPointerCapture(e.pointerId);
-    pill.classList.add('dragging');
-    const onMove = (ev) => {
-      const r = parent.getBoundingClientRect();
-      const pct = Math.max(4, Math.min(92, ((ev.clientY - r.top) / r.height) * 100));
-      pill.style.top = `${pct}%`;
-    };
-    let done = false;
-    const onUp = () => {
-      if (done) return;
-      done = true;
-      pill.classList.remove('dragging');
-      pill.removeEventListener('pointermove', onMove);
-      pill.removeEventListener('pointerup', onUp);
-      pill.removeEventListener('pointercancel', onUp);
-      prefs.syncPillTop = Math.round(parseFloat(pill.style.top));
-    };
-    pill.addEventListener('pointermove', onMove);
-    pill.addEventListener('pointerup', onUp);
-    pill.addEventListener('pointercancel', onUp);
-  });
-}
-
-// ---------- insert templates ----------
-
-const INSERT_TEMPLATES = [
-  ['Figure', '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n'],
-  ['Table', '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n'],
-  ['Equation', '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n'],
-  ['Align (multi-line math)', '\\begin{align}\n  $0 \\\\\n\\end{align}\n'],
-  ['Bulleted List', '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n'],
-  ['Numbered List', '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n'],
-  ['Code Block', '\\begin{verbatim}\n$0\n\\end{verbatim}\n'],
-];

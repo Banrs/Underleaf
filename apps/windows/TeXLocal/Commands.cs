@@ -36,6 +36,7 @@ public sealed partial class MainWindow
             Project is { PdfVersion: > 0 },
         MenuCommand.SyncForward => Project is { PdfVersion: > 0, OpenPath: not null },
         MenuCommand.FileSave or MenuCommand.EditFind
+            or MenuCommand.EditFindNext or MenuCommand.EditFindPrevious
             or MenuCommand.EditBold or MenuCommand.EditItalic or MenuCommand.EditMath or MenuCommand.EditComment
             or MenuCommand.EditGotoLine => Editing,
         _ => true,
@@ -170,6 +171,12 @@ public sealed partial class MainWindow
                 break;
             case MenuCommand.EditFind:
                 Format(project, "find");
+                break;
+            case MenuCommand.EditFindNext:
+                Format(project, "findNext");
+                break;
+            case MenuCommand.EditFindPrevious:
+                Format(project, "findPrevious");
                 break;
             case MenuCommand.EditBold:
                 Format(project, "bold");

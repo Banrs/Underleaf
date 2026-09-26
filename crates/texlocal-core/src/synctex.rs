@@ -71,31 +71,18 @@ pub async fn synctex_forward(
     if out.code != 0 {
         return Err(CoreError::internal("synctex view failed"));
     }
-    let mut page = None;
-    let mut x = None;
-    let mut y = None;
-    let mut h = None;
-    let mut v = None;
-    let mut w = None;
-    let mut hh = None;
+    // The first value reported for each key: synctex lists every match.
+    const KEYS: [&str; 7] = ["Page", "x", "y", "h", "v", "W", "H"];
+    let mut values = [None; 7];
     for ln in out.stdout.split('\n') {
         let Some((key, value)) = ln.split_once(':') else {
             continue;
         };
-        let slot = match key {
-            "Page" => &mut page,
-            "x" => &mut x,
-            "y" => &mut y,
-            "h" => &mut h,
-            "v" => &mut v,
-            "W" => &mut w,
-            "H" => &mut hh,
-            _ => continue,
-        };
-        if slot.is_none() {
-            *slot = value.trim().parse::<f64>().ok();
+        if let Some(i) = KEYS.iter().position(|k| *k == key) {
+            values[i] = values[i].or_else(|| value.trim().parse::<f64>().ok());
         }
     }
+    let [page, x, y, h, v, width, height] = values;
     let page = page.ok_or_else(|| CoreError::not_found("No SyncTeX match"))?;
     Ok(ForwardLoc {
         page,
@@ -103,8 +90,8 @@ pub async fn synctex_forward(
         y,
         h,
         v,
-        width: w,
-        height: hh,
+        width,
+        height,
     })
 }
 
@@ -147,11 +134,8 @@ pub async fn synctex_inverse(
         return Err(CoreError::not_found("No SyncTeX match"));
     };
 
-    let abs = if Path::new(file).is_absolute() {
-        std::path::PathBuf::from(file)
-    } else {
-        root.join(file)
-    };
+    // join keeps an absolute `file` as it is.
+    let abs = root.join(file);
     // Generated files (.toc/.aux in the build dir) and anything outside the
     // project aren't real sources — report "no match" so the UI shows a toast.
     // TeX records the input under the working directory as getcwd reported
@@ -161,7 +145,7 @@ pub async fn synctex_inverse(
     let rel = rel_to_root(root, &abs)
         .or_else(|| rel_to_root(&std::fs::canonicalize(root).ok()?, &abs))
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    if rel == BUILD_DIR || rel.starts_with(&format!("{BUILD_DIR}/")) || !root.join(&rel).exists() {
+    if Path::new(&rel).starts_with(BUILD_DIR) || !root.join(&rel).exists() {
         return Err(CoreError::not_found("No source file at this location"));
     }
     Ok(InverseLoc { file: rel, line })

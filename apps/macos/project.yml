@@ -23,6 +23,8 @@ targets:
         PRODUCT_NAME: TeXLocal
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
+        # Assets.xcassets, from assets/TeXLocal.png.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         # Deleting moves to the Trash through Finder (the trash crate's default),
         # which keeps Put Back working and needs the Automation permission.
@@ -78,5 +80,12 @@ schemes:
       targets: [TeXLocalTests]
       environmentVariables:
         TEXLOCAL_DATA: /tmp/texlocal-xctest
+      # The tests run inside TeXLocal.app, which would need Documents access
+      # to read the repository; the one web file they check is copied out.
+      preActions:
+        - name: Copy workspace.js for the tests
+          settingsTarget: TeXLocal
+          script: |
+            mkdir -p /tmp/texlocal-xctest && cp "$SRCROOT/../../web/src/workspace.js" /tmp/texlocal-xctest/workspace.js
     run:
       config: Debug

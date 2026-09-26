@@ -8,7 +8,7 @@ import { bridge as ipc } from './bridge.js';
 // side percent-decodes it back (`upload_file` in commands.rs).
 const enc = encodeURIComponent;
 
-const commandApi = ipc && {
+export const api = ipc && {
   status: () => ipc.invoke('status'),
   // null goes back to finding TeX automatically.
   setTexDir: (dir) => ipc.invoke('set_tex_dir', { dir }),
@@ -36,20 +36,17 @@ const commandApi = ipc && {
   // predictable half-import. Raw one-file invokes keep peak memory bounded; an
   // unavoidable later I/O failure reports which earlier files did land.
   upload: async (id, files, dir = '') => {
+    const pathOf = (f) => f._relPath ?? f.name;
     await ipc.invoke('validate_uploads', {
       id,
       dir,
-      files: files.map((f) => ({ path: f._relPath ?? f.name, size: f.size })),
+      files: files.map((f) => ({ path: pathOf(f), size: f.size })),
     });
     const saved = [];
     try {
       for (const f of files) {
         const result = await ipc.invoke('upload_file', await f.arrayBuffer(), {
-          headers: {
-            'x-project': enc(id),
-            'x-dir': enc(dir),
-            'x-path': enc(f._relPath ?? f.name),
-          },
+          headers: { 'x-project': enc(id), 'x-dir': enc(dir), 'x-path': enc(pathOf(f)) },
         });
         saved.push(...result.saved);
       }
@@ -64,15 +61,13 @@ const commandApi = ipc && {
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
   // The desktop asks for a destination with a native save dialog; a browser
   // downloads the attachment instead.
-  downloadPdf: (id) => (ipc.download
-    ? ipc.download(`/__download/pdf/${enc(id)}`)
-    : ipc.invoke('save_pdf_as', { id })),
-  exportProject: (id) => (ipc.download
-    ? ipc.download(`/__download/zip/${enc(id)}`)
-    : ipc.invoke('export_project', { id })),
+  downloadPdf: (id) => saveAs(id, 'pdf', 'save_pdf_as'),
+  exportProject: (id) => saveAs(id, 'zip', 'export_project'),
 
   syncForward: (id, file, line) => ipc.invoke('synctex_forward', { id, file, line }),
   syncInverse: (id, page, x, y) => ipc.invoke('synctex_inverse', { id, page, x, y }),
 };
 
-export const api = commandApi;
+function saveAs(id, kind, command) {
+  return ipc.download ? ipc.download(`/__download/${kind}/${enc(id)}`) : ipc.invoke(command, { id });
+}

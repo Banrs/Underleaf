@@ -26,7 +26,7 @@ const MENU = [
     items: [
       { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
-      { id: 'edit.find' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
+      { id: 'edit.find' }, { id: 'edit.findNext' }, { id: 'edit.findPrevious' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
       { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
     ],
   },
@@ -61,6 +61,8 @@ const FALLBACK_TITLES = {
   'edit.undo': 'Undo',
   'edit.redo': 'Redo',
   'edit.find': 'Find & Replace',
+  'edit.findNext': 'Find Next',
+  'edit.findPrevious': 'Find Previous',
   'project.search': 'Find in Project',
   'pdf.find': 'Find in PDF…',
   'edit.gotoLine': 'Go to Line…',
@@ -89,10 +91,10 @@ let notifyHost = () => {};
 // project are simply absent when no project is open.
 export function registerCommands(defs) {
   for (const d of defs) registry.set(d.id, d);
-  publish();
+  refreshCommands();
   return () => {
     for (const d of defs) registry.delete(d.id);
-    publish();
+    refreshCommands();
   };
 }
 
@@ -107,8 +109,10 @@ export function commandTitle(id) {
 
 function commandEnabled(id) {
   const c = registry.get(id);
-  return !!c && (c.enabled ? !!c.enabled() : true);
+  return !!c && (!c.enabled || !!c.enabled());
 }
+
+const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (FALLBACK_TITLES[id] ?? id));
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
@@ -125,11 +129,13 @@ export function runCommand(id) {
 }
 
 // Push the current menu spec + enabled state to the shell, which owns the
-// actual native menu. Most refreshes (every appearance change, a compile
+// actual native menu. Called when app state changes (project opened, compile
+// started, PDF loaded) to re-evaluate every `enabled`/`checked` predicate.
+// Most refreshes (every appearance change, a compile
 // finishing the same way it started) leave the spec as it was; those skip the
 // IPC round trip and the shell's per-item native setters entirely.
 let lastSpec = '';
-function publish() {
+export function refreshCommands() {
   const spec = MENU.map((m) => ({
     label: m.label,
     items: m.items.map((it) => {
@@ -138,8 +144,8 @@ function publish() {
       const c = registry.get(it.id);
       return {
         id: it.id,
-        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
-        accelerator: c?.accel,
+        label: menuLabel(it.id),
+        accelerator: accelOf(it.id),
         enabled: commandEnabled(it.id),
         checked: c?.checked?.(),
         type: c?.checked ? 'checkbox' : undefined,
@@ -154,38 +160,58 @@ function publish() {
   notifyHost();
 }
 
-// Re-evaluate every `enabled`/`checked` predicate. Called when app state changes
-// (project opened, compile started, PDF loaded).
-export const refreshCommands = publish;
-
 export function onCommandsChanged(fn) { notifyHost = fn; }
 
 // ---------- accelerators ----------
 
 // An accelerator string → the glyph string macOS shows in menus and
-// tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). On Windows/Linux it degrades to
-// "Ctrl+Shift+Z".
+// tooltips ("CmdOrCtrl+Shift+Z" → "⇧⌘Z"). Elsewhere it reads the way Windows
+// writes shortcuts ("Ctrl+Shift+Z").
 const GLYPH = { CmdOrCtrl: '⌘', Cmd: '⌘', Command: '⌘', Shift: '⇧', Alt: '⌥', Option: '⌥', Ctrl: '⌃', Control: '⌃' };
 const KEYNAME = { Return: '↩', Enter: '↩', Backslash: '\\', Comma: ',', Plus: '+', Minus: '−' };
+const PC_NAME = { CmdOrCtrl: 'Ctrl', Control: 'Ctrl', Return: 'Enter', Backslash: '\\', Comma: ',', Plus: '+', Minus: '-' };
 
 export function accelLabel(accel) {
   if (!accel) return '';
   const parts = accel.split('+');
   const key = parts.pop();
+  if (!isMac) return [...parts, key].map((p) => PC_NAME[p] ?? (p.length === 1 ? p.toUpperCase() : p)).join('+');
   const shown = KEYNAME[key] ?? key.toUpperCase();
-  if (!isMac) return [...parts, shown].join('+');
   // macOS orders modifiers ⌃⌥⇧⌘ regardless of how they were written.
   const order = ['Ctrl', 'Control', 'Alt', 'Option', 'Shift', 'CmdOrCtrl', 'Cmd', 'Command'];
   const mods = parts.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((p) => GLYPH[p] ?? p);
   return mods.join('') + shown;
 }
 
+// Off the Mac, CmdOrCtrl and Ctrl are one key, so Compile (CmdOrCtrl+Return)
+// and Go to PDF Position (Ctrl+Return) would share a chord. The command
+// registered first keeps it and the other stays on the menu only, as in the
+// Windows app.
+const chord = (accel) => accel.replace('CmdOrCtrl', 'Ctrl');
+function accelOf(id) {
+  const accel = registry.get(id)?.accel;
+  if (!accel || isMac) return accel;
+  for (const [other, c] of registry) {
+    if (other === id) break;
+    if (c.accel && chord(c.accel) === chord(accel)) return undefined;
+  }
+  return accel;
+}
+
+// Browsers keep these chords for their own tabs and windows and never pass
+// them to the page, so a browser menu shouldn't advertise them.
+const BROWSER_OWNED = ['CmdOrCtrl+N', 'CmdOrCtrl+Shift+N', 'CmdOrCtrl+T', 'CmdOrCtrl+W'];
+function shownAccel(id) {
+  const accel = accelOf(id);
+  return nativeMenu() || !BROWSER_OWNED.includes(accel) ? accel : undefined;
+}
+
 // A title with its shortcut appended, for `title=` tooltips on toolbar buttons.
+// The "…" that marks a menu item opening a dialog doesn't belong in a tooltip.
 export function tooltip(id) {
-  const c = registry.get(id);
-  if (!c) return '';
-  const t = commandTitle(id);
-  const a = accelLabel(c.accel);
+  if (!registry.has(id)) return '';
+  const t = commandTitle(id).replace(/…$/, '');
+  const a = accelLabel(shownAccel(id));
   return a ? `${t} (${a})` : t;
 }
 
@@ -195,10 +221,16 @@ export function tooltip(id) {
 // menu bar and its shortcuts are drawn and dispatched here instead.
 const nativeMenu = () => ipc?.kind !== 'browser';
 
+// Without a native menu this is a browser, which zooms the page itself; an
+// interface size of our own would only stack on top of it.
+const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
+
 // A native menu owns its accelerators, so on the desktop nothing here listens
 // for keys — handling them a second time would fire every command twice. In a
 // browser the listener runs in the capture phase, ahead of the editor's own
 // keymap, which is the order a native menu's key equivalents take too.
+// `nativeOnly` commands are left out: the editor's keymap has them already,
+// and catching them here would make Ctrl+Z in a search field undo the editor.
 export function installMenuBridge() {
   if (nativeMenu()) {
     ipc?.onCommand?.((id) => runCommand(id));
@@ -206,7 +238,8 @@ export function installMenuBridge() {
   }
   addEventListener('keydown', (e) => {
     for (const [id, c] of registry) {
-      if (c.accel && matchesAccel(c.accel, e, isMac) && runCommand(id)) {
+      const accel = !c.nativeOnly && !BROWSER_OWNS.has(id) && accelOf(id);
+      if (accel && matchesAccel(accel, e, isMac) && runCommand(id)) {
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -253,22 +286,22 @@ export function matchesAccel(accel, e, mac) {
 // The browser's menu bar, drawn from the same MENU the native one is. Returns
 // null wherever the shell draws a native menu. Roles (Cut/Copy/Paste) belong to
 // the browser there, so they are left out along with separators they strand.
+// `openMenu` is dom.js's menuUnder, which also closes a trigger's open menu.
 export function menuBar(openMenu) {
   if (nativeMenu()) return null;
   const itemsOf = (group) => {
     const items = [];
     for (const it of group.items) {
-      if (it.role) continue;
+      if (it.role || BROWSER_OWNS.has(it.id)) continue;
       if (it === '-') {
         if (items.length && items.at(-1) !== '-') items.push('-');
         continue;
       }
-      const c = registry.get(it.id);
       items.push({
-        label: c ? commandTitle(it.id) : (FALLBACK_TITLES[it.id] ?? it.id),
-        hint: accelLabel(c?.accel),
+        label: menuLabel(it.id),
+        hint: accelLabel(shownAccel(it.id)),
         disabled: !commandEnabled(it.id),
-        checked: c?.checked?.(),
+        checked: registry.get(it.id)?.checked?.(),
         action: () => runCommand(it.id),
       });
     }
@@ -278,12 +311,22 @@ export function menuBar(openMenu) {
   const bar = document.createElement('nav');
   bar.className = 'menubar';
   bar.setAttribute('aria-label', 'Menu');
-  for (const group of MENU) {
+  const opens = [];
+  bar.append(...MENU.map((group, i) => {
     const b = document.createElement('button');
     b.className = 'menubar-item';
     b.textContent = group.label;
-    b.addEventListener('click', (e) => openMenu(e.currentTarget, itemsOf(group)));
-    bar.append(b);
-  }
+    b.setAttribute('aria-haspopup', 'menu');
+    b.setAttribute('aria-expanded', 'false');
+    // ←/→ walk the bar the way a desktop menu bar does.
+    const open = (focus) => openMenu(b, itemsOf(group), {
+      focus,
+      onArrow: (dir) => opens.at((i + dir) % opens.length)(true),
+    });
+    opens.push(open);
+    // A click from the keyboard (Enter/Space) has no pointer detail.
+    b.addEventListener('click', (e) => open(e.detail === 0));
+    return b;
+  }));
   return bar;
 }

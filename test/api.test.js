@@ -24,10 +24,7 @@ const fileLike = (name) => ({
   arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
 });
 
-// The upload headers were built by calling an `enc` that this module never
-// defined, so every upload — button or drag-and-drop — threw a ReferenceError
-// before reaching the backend. Asserting the encoded values keeps the escape
-// in place and keeps it agreeing with the Rust percent-decode.
+// The encoded values have to agree with the Rust percent-decode.
 test('upload percent-encodes its header metadata', async () => {
   calls.length = 0;
   const { saved } = await api.upload('proj id', [fileLike('notes ü.tex')], 'sub dir');

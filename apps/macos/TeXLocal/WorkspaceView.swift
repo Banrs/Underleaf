@@ -6,7 +6,6 @@ import SwiftUI
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    @State private var promptText = ""
 
     var body: some View {
         @Bindable var app = app
@@ -15,23 +14,19 @@ struct WorkspaceView: View {
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
             NavigatorView(project: project)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+                .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
+                                                max: Metrics.sidebarWidth.upperBound)
         } detail: {
-            // The inspector is a pane of the detail, drawn by SwiftUI, not
-            // `.inspector`: that makes a third column of the AppKit split
-            // view, and on opening a project with it shown the columns'
-            // minimum sizes re-measured each other until AppKit threw
-            // ("more Update Constraints passes than views"). The detail's
-            // minimum stays the same whether it shows or not.
-            HStack(spacing: 0) {
-                EditorArea(project: project)
-                if app.showInspector {
-                    InspectorPane(project: project)
-                        .transition(.move(edge: .trailing))
-                }
-            }
-            .frame(minWidth: 441, minHeight: 280)
-            .animation(.snappy(duration: 0.25), value: app.showInspector)
+            SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
+                SplitPane(minimum: Metrics.editorsMinWidth) { EditorArea(project: project) },
+                SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
+                          fraction: 0.28, keepsSize: true, shown: app.showInspector, glass: true) {
+                    InspectorView(project: project)
+                },
+            ])
+            // Built once per project: its panes keep the views they were made with.
+            .id(ObjectIdentifier(project))
+            .frame(minWidth: Metrics.editorsMinWidth, minHeight: 280)
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
             // together in one pill.
@@ -39,15 +34,29 @@ struct WorkspaceView: View {
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
-        .navigationDocument(project.openURL ?? URL(fileURLWithPath: "/"))
-        .alert(promptTitle, isPresented: Binding(
-            get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
-        ), presenting: app.prompt) { prompt in
-            TextField(promptLabel(prompt), text: $promptText)
-            Button("Cancel", role: .cancel) {}
-            Button(promptAction(prompt)) { submit(prompt) }
+        // The open file as the window's represented document (proxy icon and
+        // path menu), none rather than the disk's root while no file is open.
+        // From a background, so the workspace keeps its identity (and its
+        // panes) as the document comes and goes.
+        .background {
+            if let url = project.openURL { Color.clear.navigationDocument(url) }
         }
-        .onChange(of: app.prompt?.id) { _, _ in promptText = promptDefault }
+        .sheet(item: $app.prompt) { prompt in
+            switch prompt {
+            case .newFile: NewEntrySheet(project: project, directory: false)
+            case .newFolder: NewEntrySheet(project: project, directory: true)
+            case .gotoLine: GoToLineSheet(project: project)
+            }
+        }
+        // The open file changed on disk while it has edits here.
+        .alert(project.diskConflict.map { "“\(($0 as NSString).lastPathComponent)” Changed on Disk" } ?? "",
+               isPresented: Binding(presenting: $project.diskConflict), presenting: project.diskConflict) { _ in
+            Button("Keep Editing", role: .cancel) { project.keepEdits() }
+            // It discards the edits here: never the default button.
+            Button("Revert", role: .destructive) { Task { await project.revertToDisk() } }
+        } message: { path in
+            Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
             // This window's only: closing Settings is no reason to save.
             guard (note.object as? NSWindow) === app.editor.webView.window else { return }
@@ -55,101 +64,156 @@ struct WorkspaceView: View {
         }
     }
 
+    /// The columns' widths. The sidebar's ideal is the UI kit's window
+    /// sidebar; the window's own minimum (960 × 600) is set once, in the app.
+    private enum Metrics {
+        static let sidebarWidth: ClosedRange<CGFloat> = 200...320
+        static let sidebarIdeal: CGFloat = 256
+        /// The source and the PDF, side by side at their smallest.
+        static let editorsMinWidth: CGFloat = 441
+        static let inspectorWidth: ClosedRange<CGFloat> = 220...320
+    }
+
     // ---------- toolbar ----------
 
-    /// The file as the window's title at the leading edge, and the panes'
-    /// toggles at the trailing. What acts on a pane sits over it instead:
-    /// editing over the source (EditorView's `SourceBar`), compiling and
-    /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
-    /// too.
+    /// Back and the file as the window's title at the leading edge, and the
+    /// panes' toggles at the trailing. What acts on a pane sits over it
+    /// instead: editing over the source (EditorView's `SourceBar`), compiling
+    /// and sharing over the PDF (PDFPane's bar). Every item is in the menu
+    /// bar too.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            Toggle(isOn: $project.showPDF) {
-                Label("PDF", systemImage: "doc.richtext")
+        // Back to the projects, as the web's and Windows' title bars lead
+        // with it; otherwise only File › Close Project left a project.
+        ToolbarItem(placement: .navigation) {
+            Button { app.perform(.projectClose) } label: {
+                Label("Projects", systemImage: "chevron.backward")
             }
-            .help(project.showPDF ? "Hide PDF (⇧⌘\\)" : "Show PDF (⇧⌘\\)")
-            Toggle(isOn: Bindable(app).showInspector) {
-                Label("Inspector", systemImage: "sidebar.right")
+            .help("Back to Projects")
+        }
+
+        // Two pieces of glass, as they are two functions: adjacent plain
+        // buttons would share one.
+        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) { InspectorToggle() }
+    }
+}
+
+/// File › New File… and New Folder…: a name, and the folder to make it in
+/// (the open file's to begin with), as a Save sheet asks.
+private struct NewEntrySheet: View {
+    let project: ProjectModel
+    let directory: Bool
+    @State private var name: String
+    @State private var folder: String
+    @FocusState private var nameFocused: Bool
+
+    init(project: ProjectModel, directory: Bool) {
+        self.project = project
+        self.directory = directory
+        _name = State(initialValue: directory ? "untitled folder" : "untitled.tex")
+        _folder = State(initialValue: (project.openPath.map { ($0 as NSString).deletingLastPathComponent }) ?? "")
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
+                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/")) {
+            let path = folder.isEmpty ? trimmed : "\(folder)/\(trimmed)"
+            Task { await project.createEntry(path, directory: directory) }
+        } fields: {
+            TextField("Name", text: $name)
+                .focused($nameFocused)
+            Picker("Where", selection: $folder) {
+                Label(project.id, systemImage: "folder").tag("")
+                ForEach(folders(project.tree), id: \.self) { path in
+                    Label(path, systemImage: "folder").tag(path)
+                }
             }
-            .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
         }
+        .onAppear { nameFocused = true }
     }
 
-    // ---------- prompts ----------
+    private func folders(_ nodes: [TreeNode]) -> [String] {
+        nodes.filter(\.isDirectory).flatMap { [$0.path] + folders($0.children ?? []) }
+    }
+}
 
-    private var promptTitle: String {
-        switch app.prompt {
-        case .newFile: "New File"
-        case .newFolder: "New Folder"
-        case .gotoLine: "Go to Line"
-        case .renameEntry: "Rename"
-        case .renameProject: "Rename Project"
-        case nil: ""
-        }
+/// Edit › Go to Line…: a line of the open file.
+private struct GoToLineSheet: View {
+    let project: ProjectModel
+    @State private var text = ""
+
+    private var lines: Int? { project.counts?.lines }
+
+    private var line: Int? {
+        guard let line = Int(text.trimmingCharacters(in: .whitespaces)), line >= 1 else { return nil }
+        return lines.map { min(line, $0) } ?? line
     }
 
-    private var promptDefault: String {
-        switch app.prompt {
-        case .renameEntry(let path): path
-        case .renameProject(let p): p.name
-        default: ""
-        }
-    }
-
-    private func promptLabel(_ prompt: Prompt) -> String {
-        switch prompt {
-        case .newFile: "Path, e.g. sections/intro.tex"
-        case .newFolder: "Path, e.g. figures"
-        case .gotoLine: "Line number"
-        case .renameEntry: "Path"
-        case .renameProject: "Name"
-        }
-    }
-
-    private func promptAction(_ prompt: Prompt) -> String {
-        switch prompt {
-        case .newFile, .newFolder: "Create"
-        case .gotoLine: "Go"
-        case .renameEntry, .renameProject: "Rename"
-        }
-    }
-
-    private func submit(_ prompt: Prompt) {
-        let text = promptText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        Task {
-            switch prompt {
-            case .newFile: await project.createEntry(text, directory: false)
-            case .newFolder: await project.createEntry(text, directory: true)
-            case .gotoLine: if let line = Int(text) { project.reveal(line: line) }
-            case .renameEntry(let from): await project.renameEntry(from, to: text)
-            case .renameProject(let p): await app.rename(p, to: text)
-            }
+    var body: some View {
+        DialogSheet(title: "Go to Line", action: "Go", enabled: line != nil) {
+            if let line { project.reveal(line: line) }
+        } fields: {
+            TextField("Line", text: $text, prompt: Text(lines.map { "1–\($0)" } ?? "Line number"))
         }
     }
 }
 
-/// What LaTeX's Insert menu offers, in the toolbar and the Format menu: the
-/// web editor bar's heading, reference, list and insert menus
-/// (workspace.js `editorToolbar`) as submenus of one.
-struct InsertMenuItems: View {
-    let project: ProjectModel?
+/// Shows and hides the PDF, as View › Hide PDF does. A plain button whose
+/// title says what it will do, as the sidebar's toggle and Xcode's
+/// inspector button are: a toggle draws its on state accent-filled, which
+/// made the two toggles the toolbar's loudest controls.
+private struct PDFToggle: View {
+    @Bindable var project: ProjectModel
 
     var body: some View {
-        submenu("Heading", headingTemplates)
-        submenu("Reference", referenceTemplates)
-        submenu("List", listTemplates)
+        let title = project.showPDF ? "Hide PDF" : "Show PDF"
+        Button(title, systemImage: "doc.richtext") { project.showPDF.toggle() }
+            .help(title)
+    }
+}
+
+/// Shows and hides the inspector, as View › Hide Inspector does.
+private struct InspectorToggle: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let title = app.showInspector ? "Hide Inspector" : "Show Inspector"
+        Button(title, systemImage: "sidebar.right") { app.showInspector.toggle() }
+            .help(title)
+    }
+}
+
+/// The Format menu's LaTeX tools, as the source bar offers them: the line's
+/// section level, math and symbols, references, then what inserts a block.
+struct InsertMenuItems<InlineMath: View>: View {
+    let project: ProjectModel?
+    /// The menu bar's Inline Math item, with its shortcut.
+    let inlineMath: InlineMath
+
+    var body: some View {
+        Menu("Section Level") {
+            ForEach(headingLevels, id: \.1) { title, command in
+                Button(title) { project?.format("heading", command) }
+            }
+        }
+        inlineMath
+        Button("Display Math") { project?.format("displayMath") }
+        SymbolMenu(project: project)
+        Menu("Reference") {
+            ForEach(referenceTemplates, id: \.0) { label, template in
+                Button(label) { project?.format("inline", template) }
+            }
+        }
         Divider()
-        ForEach(insertTemplates.filter { !$0.0.hasSuffix("List") }, id: \.0) { label, template in
+        ForEach(insertTemplates, id: \.0) { label, template in
             Button(label) { project?.format("insert", template) }
         }
-    }
-
-    private func submenu(_ title: String, _ templates: [(String, String)]) -> some View {
-        Menu(title) {
-            ForEach(templates, id: \.0) { label, template in
+        Menu("List") {
+            ForEach(listTemplates, id: \.0) { label, template in
                 Button(label) { project?.format("insert", template) }
             }
         }
@@ -159,64 +223,26 @@ struct InsertMenuItems: View {
 /// The engines a project can compile with, for the compile menu and Settings.
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
-/// web/src/workspace.js `INSERT_TEMPLATES`; "$0" marks where the cursor lands.
+/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
+/// "$0" marks where the cursor lands. The source bar finds them by title
+/// (`ProjectModel.insert`). Titles are menu items here, so title case
+/// without the web's parenthetical: "Aligned Equations" is the web's
+/// "Align (multi-line math)".
 let insertTemplates: [(String, String)] = [
     ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
     ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
     ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-    ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
+    ("Aligned Equations", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
     ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
 ]
-
-/// The inspector column: a hairline to drag on its leading edge, then the
-/// inspector at a width remembered across launches (Xcode's 220–320 pt).
-struct InspectorPane: View {
-    let project: ProjectModel
-    @AppStorage("inspectorWidth") private var width = 260.0
-    @State private var dragStart: Double?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(.separator)
-                .frame(width: 1)
-                .overlay {
-                    Color.clear
-                        .frame(width: 8)
-                        .contentShape(.rect)
-                        // One-way at either limit, as NSSplitView shows it.
-                        .pointerStyle(.columnResize(directions:
-                            width <= 220 ? .leading : width >= 320 ? .trailing : [.leading, .trailing]))
-                        .gesture(
-                            DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                                .onChanged { drag in
-                                    let start = dragStart ?? width
-                                    dragStart = start
-                                    width = min(max(start - drag.translation.width, 220), 320)
-                                }
-                                .onEnded { _ in dragStart = nil }
-                        )
-                        .accessibilityHidden(true)
-                }
-                .zIndex(1)
-            InspectorView(project: project)
-                .frame(width: min(max(width, 220), 320))
-                .frame(maxHeight: .infinity)
-        }
-    }
-}
 
 /// The trailing inspector: the project's build settings, then facts about
 /// the open file and the PDF — what the web kept in its settings popover and
 /// status line, gathered where a Mac app keeps them.
 struct InspectorView: View {
-    @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
     var body: some View {
-        @Bindable var app = app
         Form {
             Section("Project") {
                 Picker("Main File", selection: Binding(
@@ -236,9 +262,8 @@ struct InspectorView: View {
                     set: { on in Task { await project.setShellEscape(on) } }
                 )) {
                     Text("Shell Escape")
-                    Text("Lets packages such as minted run programs. Turn on only for projects you trust.")
+                    Text("Lets packages such as minted run programs. Only for projects you trust.")
                 }
-                Toggle("Compile Automatically", isOn: $app.autoCompile)
             }
             .disabled(project.settings == nil)
 
@@ -256,17 +281,18 @@ struct InspectorView: View {
                 }
             }
 
-            Section("PDF") {
+            Section("Build") {
                 if let result = project.result {
                     LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
                     LabeledContent("Duration") {
-                        Text("\(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s")
-                            .monospacedDigit()
+                        Text(result.durationText).monospacedDigit()
                     }
                     LabeledContent("Errors", value: project.errorCount.formatted())
                     LabeledContent("Warnings", value: project.warningCount.formatted())
                 } else {
-                    LabeledContent("Last Build", value: "Not compiled")
+                    // The status bar's phrase, shortened to fit beside its
+                    // label in a narrow inspector.
+                    LabeledContent("Last Build", value: project.pdfVersion > 0 ? "None Yet" : "None")
                 }
                 if let freshness = project.pdfFreshness {
                     Label(freshness.title, systemImage: freshness.systemImage)
@@ -275,6 +301,8 @@ struct InspectorView: View {
             }
         }
         .formStyle(.grouped)
+        // The pane's glass shows through, as an inspector's does.
+        .scrollContentBackground(.hidden)
     }
 
     private func folder(of path: String) -> String {

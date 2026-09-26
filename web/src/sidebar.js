@@ -5,13 +5,13 @@
 import { api } from './api.js';
 import { el, toast, promptModal, confirmModal, contextMenu } from './dom.js';
 import { icon } from './icons.js';
-import { state, IMAGE_FILE } from './state.js';
+import { state, IMAGE_FILE, sectionIndexAt } from './state.js';
 import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
 import { trashName, deleteLabel } from './bridge.js';
 
-let host = {};          // { openFile, gotoLine, onMainFileChange }
-let nodes = {};         // cached elements for the mounted sidebar
+let host = {};          // the workspace's callbacks
+let nodes = {};         // elements of the mounted sidebar
 
 // Expansion state is per project — one shared list would apply project A's
 // expanded folders to project B.
@@ -34,6 +34,7 @@ function containsPath(parent, candidate) {
     || candidate?.startsWith(`${parent}/`)
     || candidate?.startsWith(`${parent}\\`);
 }
+
 function remapPath(candidate, from, to) {
   return containsPath(from, candidate) ? to + candidate.slice(from.length) : candidate;
 }
@@ -68,7 +69,16 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   setupDropzone(tree);
 
   const results = el('div', { class: 'search-results', hidden: '' });
-  const outline = el('div', { class: 'outline', role: 'list' });
+  // Files over the open file's outline, as Overleaf's sidebar and the macOS
+  // app's: two lists, each with its own selection, split by a divider.
+  const outline = el('div', {
+    class: 'outline', role: 'listbox', 'aria-label': 'File outline', onkeydown: outlineKeys,
+  });
+  const outlineSplit = el('div', {
+    class: 'sidebar-split', role: 'separator', tabindex: '0',
+    'aria-orientation': 'horizontal', 'aria-label': 'Resize file outline',
+  });
+  setupOutlineSplit(outlineSplit, outline);
 
   const outlineToggle = el('button', {
     class: 'section-header disclosure',
@@ -78,21 +88,20 @@ export function buildSidebar(callbacks, titlebarTrailing) {
       outlineToggle.setAttribute('aria-expanded', String(prefs.outlineOpen));
       renderOutline();
     },
-  }, el('span', {}, 'Outline'), el('span', { class: 'twisty' }, icon('chevron')));
+  }, el('span', {}, 'File Outline'), el('span', { class: 'twisty' }, icon('chevron')));
 
   const engineLabel = el('span', {}, state.tex.available ? (state.settings?.engine ?? 'pdflatex') : 'No LaTeX');
   const engineSpinner = el('span', { class: 'spinner', hidden: '', 'aria-hidden': 'true' });
-
-  nodes = { search, tree, results, outline, outlineToggle, fileInput, engineLabel, engineSpinner };
 
   const engineStatus = el('button', {
     class: `engine-status ${state.tex.available ? '' : 'warn'}`,
     title: state.tex.available ? 'TeX engine — open Settings to change' : 'No LaTeX distribution found — open Settings',
     onclick: () => host.openSettings?.(),
   }, state.tex.available ? null : icon('warning'), engineSpinner, engineLabel);
-  nodes.engineStatus = engineStatus;
 
-  const element = el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
+  nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
+
+  return el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
     el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
       el('span', { class: 'spacer' }), titlebarTrailing),
     el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
@@ -107,6 +116,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     ),
     results,
     tree,
+    outlineSplit,
     outlineToggle,
     outline,
     el('div', { class: 'sidebar-footer' },
@@ -118,8 +128,6 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     ),
     fileInput,
   );
-
-  return element;
 }
 
 // Engine name plus a spinner while a compile runs, so the engine that is
@@ -184,8 +192,7 @@ function renderNode(node, level) {
       onclick: () => {
         if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
         persistOpenDirs();
-        // Rebuild only this folder's subtree. Toggling one folder used to
-        // recreate every row in the project.
+        // Rebuild only this folder's subtree.
         const fresh = renderNode(node, level);
         group.replaceWith(fresh);
         syncRovingFocus();
@@ -271,7 +278,8 @@ function rowMenu(e, node) {
         try {
           await host.beforePathMutation?.();
           const result = await api.renameEntry(state.projectId, node.path, to);
-          state.openPath = remapPath(state.openPath, node.path, to);
+          const oldOpen = state.openPath;
+          state.openPath = remapPath(oldOpen, node.path, to);
           const oldMain = state.settings?.mainFile;
           if (result?.mainFile) state.settings = { ...state.settings, mainFile: result.mainFile };
           for (const dir of [...openDirs]) {
@@ -281,6 +289,7 @@ function rowMenu(e, node) {
           }
           persistOpenDirs();
           await refreshTree();
+          if (containsPath(node.path, oldOpen)) host.onOpenPathChange?.();
           if (oldMain !== state.settings?.mainFile) host.onMainFileChange?.();
         } catch (err) { toast(err.message, 'error'); }
       },
@@ -323,7 +332,7 @@ function rowMenu(e, node) {
 // Never throws: callers await it inside their own try blocks, and a tree-fetch
 // hiccup must not be reported as the caller's failure (e.g. after a successful
 // upload).
-export async function refreshTree() {
+async function refreshTree() {
   const projectId = state.projectId;
   if (!projectId) return;
   let tree;
@@ -366,7 +375,7 @@ function setupDropzone(treeEl) {
     e.preventDefault();
     treeEl.classList.remove('drop-target');
     // Walking the dropped entries can reject (an unreadable folder, a permission
-    // refusal). Without this the drop failed silently as an unhandled rejection.
+    // refusal); uncaught, the drop would fail silently as an unhandled rejection.
     try {
       const files = await collectDroppedFiles(e.dataTransfer);
       if (files.length) await upload(files);
@@ -400,26 +409,25 @@ async function collectDroppedFiles(dt) {
 }
 
 async function upload(files) {
+  const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
+  let msg, kind;
   try {
     const { saved } = await api.upload(state.projectId, files);
-    toast(`Uploaded ${saved.length} file${saved.length === 1 ? '' : 's'}`);
-    await refreshTree();
-    host.onFilesChanged?.();
+    msg = `Uploaded ${count(saved.length)}`;
   } catch (err) {
-    const saved = err.saved ?? [];
-    if (saved.length) {
-      await refreshTree();
-      host.onFilesChanged?.();
-      toast(`Upload stopped after ${saved.length} file${saved.length === 1 ? '' : 's'}: ${err.message}`, 'error');
-    } else {
-      toast(err.message, 'error');
-    }
+    if (!err.saved?.length) { toast(err.message, 'error'); return; }
+    msg = `Upload stopped after ${count(err.saved.length)}: ${err.message}`;
+    kind = 'error';
   }
+  await refreshTree();
+  host.onFilesChanged?.();
+  toast(msg, kind);
 }
 
 // ---------- outline ----------
 
 const GUTTER = 10, INDENT = 14, RAIL = 3;
+const OUTLINE_MIN = 80;
 
 export function renderOutline() {
   const box = nodes.outline;
@@ -427,33 +435,130 @@ export function renderOutline() {
   const open = prefs.outlineOpen;
   nodes.outlineToggle.querySelector('.twisty')?.classList.toggle('open', open);
   box.hidden = !open || !!state.searchQuery;
+  nodes.outlineSplit.hidden = box.hidden;
   if (box.hidden) return;
 
   if (!state.outline.length) {
     box.replaceChildren(el('p', { class: 'placeholder' }, 'No sections'));
     return;
   }
+  // A rebuild (every edit) keeps keyboard focus on the same row.
+  const focused = [...box.children].indexOf(document.activeElement);
   const minDepth = Math.min(...state.outline.map((o) => o.depth));
-  box.replaceChildren(...state.outline.map((o) => {
+  box.replaceChildren(...state.outline.map((o, i) => {
     const rd = o.depth - minDepth;
     // One vertical guide rail per ancestor level, painted as stacked background
     // gradients so nesting reads at a glance without extra elements.
     let style = `padding-left:${GUTTER + rd * INDENT}px`;
     if (rd > 0) {
-      const imgs = [], pos = [];
-      for (let i = 0; i < rd; i++) {
-        imgs.push('linear-gradient(var(--separator),var(--separator))');
-        pos.push(`${GUTTER + i * INDENT + RAIL}px 0`);
-      }
-      style += `;background-image:${imgs.join(',')};background-position:${pos.join(',')};background-size:1px 100%`;
+      const rail = 'linear-gradient(var(--separator),var(--separator))';
+      const pos = Array.from({ length: rd }, (_, k) => `${GUTTER + k * INDENT + RAIL}px 0`);
+      style += `;background-image:${Array(rd).fill(rail)};background-position:${pos};background-size:1px 100%`;
     }
-    return el('button', {
+    return el('div', {
       class: 'outline-row',
+      role: 'option',
+      tabindex: '-1',
+      'aria-selected': 'false',
       style,
       title: o.title,
-      onclick: () => host.gotoLine(o.line),
+      onclick: () => chooseSection(i),
     }, o.title);
   }));
+  updateOutlineSelection();
+  if (focused !== -1) box.children[Math.min(focused, box.children.length - 1)].focus();
+}
+
+// The selection is the section on screen, the one the top of the source is
+// in, and follows as the source scrolls (not the caret). The list scrolls to
+// keep it in view; keyboard focus stays where it is.
+export function updateOutlineSelection() {
+  const box = nodes.outline;
+  if (!box || box.hidden || !state.outline.length) return;
+  const index = sectionIndexAt(state.outline, state.topLine);
+  const rows = [...box.children];
+  const focused = rows.includes(document.activeElement);
+  rows.forEach((r, i) => {
+    r.setAttribute('aria-selected', String(i === index));
+    r.classList.toggle('selected', i === index);
+    if (!focused) r.tabIndex = i === Math.max(0, index) ? 0 : -1;
+  });
+  const row = rows[index];
+  if (row && !focused) {
+    if (row.offsetTop < box.scrollTop) box.scrollTop = row.offsetTop;
+    else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) {
+      box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
+    }
+  }
+}
+
+// Choosing a section brings it to the top of the source. Focus stays in the
+// list unless asked for (Enter), so the arrow keys keep walking it.
+function chooseSection(i, focusEditor = false) {
+  const entry = state.outline[i];
+  const row = nodes.outline?.children[i];
+  if (!entry || !row) return;
+  for (const r of nodes.outline.children) r.tabIndex = r === row ? 0 : -1;
+  row.focus();
+  state.topLine = entry.line;
+  updateOutlineSelection();
+  host.revealSection?.(entry.line, focusEditor);
+}
+
+function outlineKeys(e) {
+  const rows = [...nodes.outline.children];
+  const i = rows.indexOf(document.activeElement);
+  if (i === -1) return;
+  const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[e.key];
+  if (to !== undefined) {
+    e.preventDefault();
+    chooseSection(Math.max(0, Math.min(rows.length - 1, to)));
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    chooseSection(i, e.key === 'Enter');
+  }
+}
+
+// The divider over the outline: drag it, or focus it and use the arrow keys.
+// The outline's height is remembered; the file tree keeps room of its own.
+function setupOutlineSplit(handle, box) {
+  const max = () => Math.max(OUTLINE_MIN, (handle.parentElement?.clientHeight ?? 400) - 260);
+  const apply = (h, save = false) => {
+    const height = Math.round(Math.max(OUTLINE_MIN, Math.min(max(), h)));
+    box.style.height = `${height}px`;
+    handle.setAttribute('aria-valuemin', String(OUTLINE_MIN));
+    handle.setAttribute('aria-valuemax', String(Math.round(max())));
+    handle.setAttribute('aria-valuenow', String(height));
+    if (save) prefs.outlineHeight = height;
+  };
+  // Until the sidebar is laid out its height is unknown; clamp on first use.
+  box.style.height = prefs.outlineHeight ? `${prefs.outlineHeight}px` : '';
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = box.getBoundingClientRect().height;
+    const onMove = (ev) => apply(startH - (ev.clientY - startY));
+    const onUp = () => {
+      handle.classList.remove('dragging');
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      apply(box.getBoundingClientRect().height, true);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  });
+  handle.addEventListener('keydown', (e) => {
+    const h = box.getBoundingClientRect().height;
+    const to = { ArrowUp: h + 16, ArrowDown: h - 16, Home: max(), End: OUTLINE_MIN }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    apply(to, true);
+  });
+  handle.addEventListener('focus', () => apply(box.getBoundingClientRect().height));
 }
 
 // ---------- project search ----------
@@ -467,7 +572,7 @@ function scheduleSearch(query) {
 }
 
 async function runSearch() {
-  const { results, tree, outline, outlineToggle } = nodes;
+  const { results, tree, outlineToggle } = nodes;
   if (!results || !tree) return;
   const q = state.searchQuery;
   const searching = q.length > 0;

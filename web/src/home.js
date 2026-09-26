@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { platform, trashName, deleteLabel } from './bridge.js';
-import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
+import { $, el, toast, withTimeout, showModal, dialogShell, promptModal, confirmModal, menuUnder, contextMenu } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip, menuBar } from './commands.js';
@@ -35,40 +35,31 @@ function relativeDate(ms) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function openProject(id) {
-  location.hash = `#/p/${encodeURIComponent(id)}`;
-}
+const projectHref = (id) => `#/p/${encodeURIComponent(id)}`;
 
+// The row is a real link (open in a new tab, copy address), stretched over
+// the whole row by `.doc-name::after`; the actions button sits above it.
 function projectRow(p, reload) {
-  const actions = el('div', { class: 'row-actions' },
-    el('button', {
-      class: 'icon-btn small', title: 'More actions', 'aria-label': `Actions for ${p.name}`,
-      onclick: (e) => {
-        e.stopPropagation();
-        menuUnder(e.currentTarget, [
-          { label: 'Rename…', action: () => renameProject(p, reload) },
-          '-',
-          { label: `${deleteLabel}…`, danger: true, action: () => deleteProject(p, reload) },
-        ]);
-      },
-    }, icon('ellipsis')),
-  );
-
+  const items = () => [
+    { label: 'Rename…', action: () => renameProject(p, reload) },
+    '-',
+    { label: `${deleteLabel}…`, danger: true, action: () => deleteProject(p, reload) },
+  ];
   return el('div', {
     class: 'doc-row',
-    role: 'button',
-    tabindex: '0',
-    onclick: () => openProject(p.id),
-    onkeydown: (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openProject(p.id); }
-    },
+    oncontextmenu: (e) => { e.preventDefault(); contextMenu(e.clientX, e.clientY, items()); },
   },
     el('span', { class: 'doc-icon' }, icon('doc-tex')),
     el('span', { class: 'doc-text' },
-      el('span', { class: 'doc-name' }, p.name),
+      el('a', { class: 'doc-name', href: projectHref(p.id) }, p.name),
       el('span', { class: 'doc-meta' }, relativeDate(p.mtime)),
     ),
-    actions,
+    el('div', { class: 'row-actions' },
+      el('button', {
+        class: 'icon-btn small', title: 'More actions', 'aria-label': `Actions for ${p.name}`,
+        onclick: (e) => menuUnder(e.currentTarget, items()),
+      }, icon('ellipsis')),
+    ),
   );
 }
 
@@ -102,20 +93,18 @@ export async function newProjectFlow() {
     );
     const go = () => close({ name: name.value.trim() || 'Untitled', template: tpl.value });
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    return el('div', { class: 'modal' },
-      el('h2', { class: 'modal-title' }, 'New Project'),
+    return dialogShell('New Project', [
       el('div', { class: 'field' }, el('label', { for: 'np-name' }, 'Name'), name),
       el('div', { class: 'field' }, el('label', { for: 'np-tpl' }, 'Template'), tpl),
-      el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
-        el('button', { class: 'btn primary', onclick: go }, 'Create'),
-      ),
-    );
+    ], [
+      el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
+      el('button', { class: 'btn primary', onclick: go }, 'Create'),
+    ]);
   });
   if (!result?.name) return;
   try {
     const p = await api.createProject(result.name, result.template);
-    openProject(p.id);
+    location.hash = projectHref(p.id);
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -137,10 +126,8 @@ export async function renderHome() {
   const app = $('#app');
   // Render the shell first, then fill in projects — a slow or permission-blocked
   // data dir must never leave a blank window.
-  const list = el('div', { class: 'doc-list' },
-    el('p', { class: 'placeholder' }, 'Loading projects…'));
+  const list = el('div', { class: 'doc-list' }, el('p', { class: 'placeholder' }, 'Loading projects…'));
   const banner = el('div');
-
   const reload = () => renderHome();
 
   // Welcome-window layout (the Xcode pattern): branding and primary actions on
@@ -162,7 +149,6 @@ export async function renderHome() {
           banner,
           el('div', { class: 'brand-actions' },
             el('button', { class: 'btn primary', onclick: newProjectFlow }, icon('plus'), 'New Project'),
-            el('button', { class: 'btn', onclick: settings }, icon('gear'), 'Settings'),
           ),
         ),
         el('div', { class: 'home-recents' },

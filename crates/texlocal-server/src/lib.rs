@@ -7,6 +7,7 @@
 
 pub mod http;
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
 use texlocal_core::{paths, serve, zipexport, CoreError};
 
 pub use http::{Request, Response};
+use tokio::net::TcpListener;
 
 const COOKIE: &str = "texlocal_token";
 /// Uploads and whole documents travel in one body.
@@ -23,7 +25,7 @@ pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
 pub struct App {
     pub service: Arc<Service>,
-    web_dir: PathBuf,
+    web_dir: Arc<Path>,
     token: String,
     hosts: [String; 2],
     origins: [String; 2],
@@ -59,12 +61,31 @@ fn error(err: CoreError) -> Response {
     Response::json(err.status, &json!({ "error": err.message }))
 }
 
+/// Serve `app` on `listener` until `shutdown` resolves, running its guard on
+/// each request head before any body is read.
+pub async fn serve(
+    app: Arc<App>,
+    listener: TcpListener,
+    max_body: usize,
+    shutdown: impl Future<Output = ()>,
+) {
+    let guard = {
+        let app = Arc::clone(&app);
+        Arc::new(move |req: &Request| app.guard(req))
+    };
+    let handler = Arc::new(move |req| {
+        let app = Arc::clone(&app);
+        async move { app.handle(req).await }
+    });
+    http::serve(listener, handler, guard, max_body, shutdown).await
+}
+
 impl App {
     /// `port` is the one actually bound: Host and Origin are checked against it.
     pub fn new(service: Service, web_dir: PathBuf, port: u16, token: String) -> Self {
         Self {
             service: Arc::new(service),
-            web_dir,
+            web_dir: web_dir.into(),
             token,
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
             origins: [
@@ -75,6 +96,8 @@ impl App {
     }
 
     pub async fn handle(&self, req: Request) -> Response {
+        // `http::serve` has already run the guard on the head, before reading
+        // the body; it runs again for anyone handing a whole request in.
         if let Some(refused) = self.guard(&req) {
             return refused;
         }
@@ -98,9 +121,10 @@ impl App {
         response.with("X-Content-Type-Options", "nosniff")
     }
 
-    // ---------- access ----------
-
-    fn guard(&self, req: &Request) -> Option<Response> {
+    /// Host, Origin and the token, from the request head alone: the server
+    /// runs this before reading a body, so nobody unauthenticated can make it
+    /// buffer one.
+    pub fn guard(&self, req: &Request) -> Option<Response> {
         if !req
             .header("host")
             .is_some_and(|h| self.hosts.iter().any(|a| a == h))
@@ -144,8 +168,6 @@ impl App {
         None
     }
 
-    // ---------- commands ----------
-
     /// Run file-system work (tree walks, searches, whole-file reads and writes,
     /// ZIP builds) on the blocking pool, so a large project cannot stall the
     /// async workers every other request, pdf.js's range fetches included,
@@ -172,13 +194,9 @@ impl App {
         // A command may mix blocking file work with async process work, so
         // the blocking thread drives it to completion on the runtime's handle.
         let runtime = tokio::runtime::Handle::current();
-        let called = self
-            .blocking(move |service| runtime.block_on(service.call(&command, &args)))
-            .await;
-        match called {
-            Ok(value) => Response::json(200, &value),
-            Err(e) => error(e),
-        }
+        self.blocking(move |service| runtime.block_on(service.call(&command, &args)))
+            .await
+            .map_or_else(error, |value| Response::json(200, &value))
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
@@ -190,34 +208,40 @@ impl App {
                 .ok_or_else(|| CoreError::bad_request(format!("Missing {name} header")))
         };
         let names = (|| Ok((header("x-project")?, header("x-dir")?, header("x-path")?)))();
-        let saved = match names {
-            Ok((id, dir, path)) => {
-                let body = req.body;
-                self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
-                    .await
-            }
-            Err(e) => Err(e),
+        let (id, dir, path) = match names {
+            Ok(names) => names,
+            Err(e) => return error(e),
         };
-        match saved {
-            Ok(rel) => Response::json(200, &json!({ "saved": [rel] })),
-            Err(e) => error(e),
-        }
+        let body = req.body;
+        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
+            .await
+            .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }
 
-    // ---------- files ----------
-
+    /// Path resolution and the stat run on the blocking pool with everything
+    /// else that touches the disk.
     async fn file(&self, path: &str, range: Option<&str>) -> Response {
-        match serve::resolve(&self.service, &segments(path)) {
-            Ok(resolved) => {
-                let response = send_file(&resolved.path, range).await;
-                if resolved.sandboxed {
-                    // A project file must never execute as a document.
-                    response.with("Content-Security-Policy", "sandbox; default-src 'none'")
-                } else {
-                    response
-                }
-            }
-            Err(e) => Response::text(e.status, &e.message),
+        let segments = segments(path);
+        let located = self
+            .blocking(move |service| {
+                let resolved = serve::resolve(service, &segments)?;
+                let len = file_len(&resolved.path);
+                Ok((resolved, len))
+            })
+            .await;
+        let (resolved, len) = match located {
+            Ok(located) => located,
+            Err(e) => return Response::text(e.status, &e.message),
+        };
+        let response = match len {
+            Some(len) => send_file(&resolved.path, len, range).await,
+            None => not_found(),
+        };
+        if resolved.sandboxed {
+            // A project file must never execute as a document.
+            response.with("Content-Security-Policy", "sandbox; default-src 'none'")
+        } else {
+            response
         }
     }
 
@@ -225,56 +249,58 @@ impl App {
     /// files, so a crafted path cannot leave the web directory.
     async fn asset(&self, path: &str) -> Response {
         let rel = segments(path).join("/");
-        let rel = if rel.is_empty() {
-            "index.html".into()
-        } else {
-            rel
-        };
-        match paths::safe_path(&self.web_dir, &rel) {
-            Ok(abs) => send_file(&abs, None).await,
-            Err(_) => Response::text(404, "Not found"),
+        let web_dir = Arc::clone(&self.web_dir);
+        let located = tokio::task::spawn_blocking(move || {
+            let rel = if rel.is_empty() { "index.html" } else { &rel };
+            let abs = paths::safe_path(&web_dir, rel).ok()?;
+            let len = file_len(&abs)?;
+            Some((abs, len))
+        })
+        .await;
+        match located {
+            Ok(Some((abs, len))) => send_file(&abs, len, None).await,
+            _ => not_found(),
         }
     }
 
     async fn download_pdf(&self, id: String) -> Response {
-        let bytes = {
-            let id = id.clone();
-            self.blocking(move |service| {
-                let pdf = service.pdf_path(&id)?;
-                std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
-            })
-            .await
-        };
-        match bytes {
-            Ok(bytes) => attachment(bytes, &format!("{id}.pdf"), "application/pdf"),
-            Err(e) => error(e),
-        }
+        let name = format!("{id}.pdf");
+        self.blocking(move |service| {
+            let pdf = service.pdf_path(&id)?;
+            std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
+        })
+        .await
+        .map_or_else(error, |bytes| attachment(bytes, &name, "application/pdf"))
     }
 
     async fn download_zip(&self, id: String) -> Response {
-        let bytes = {
-            let id = id.clone();
-            self.blocking(move |service| {
-                let root = service.project_root(&id)?;
-                let dir = tempfile::tempdir()?;
-                let dest = dir.path().join("export.zip");
-                zipexport::export_zip(&root, &dest)?;
-                Ok(std::fs::read(dest)?)
-            })
-            .await
-        };
-        match bytes {
-            Ok(bytes) => attachment(bytes, &format!("{id}.zip"), "application/zip"),
-            Err(e) => error(e),
-        }
+        let name = format!("{id}.zip");
+        self.blocking(move |service| {
+            let root = service.project_root(&id)?;
+            let dir = tempfile::tempdir()?;
+            let dest = dir.path().join("export.zip");
+            zipexport::export_zip(&root, &dest)?;
+            Ok(std::fs::read(dest)?)
+        })
+        .await
+        .map_or_else(error, |bytes| attachment(bytes, &name, "application/zip"))
     }
 }
 
-async fn send_file(path: &Path, range: Option<&str>) -> Response {
-    let len = match tokio::fs::metadata(path).await {
-        Ok(meta) if meta.is_file() => meta.len(),
-        _ => return Response::text(404, "Not found"),
-    };
+fn not_found() -> Response {
+    Response::text(404, "Not found")
+}
+
+/// The length of a regular file; None for anything else or nothing at all.
+fn file_len(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| meta.len())
+}
+
+/// `len` is the file's length as `file_len` found it, for the range check.
+async fn send_file(path: &Path, len: u64, range: Option<&str>) -> Response {
     let range = match range.map(|h| serve::parse_range(h, len)) {
         Some(Ok(r)) => r,
         Some(Err(serve::Unsatisfiable)) => {
@@ -284,7 +310,7 @@ async fn send_file(path: &Path, range: Option<&str>) -> Response {
         None => None,
     };
     let Ok(bytes) = serve::read_file_range(path, range).await else {
-        return Response::text(404, "Not found");
+        return not_found();
     };
     let response = Response::new(
         if range.is_some() { 206 } else { 200 },

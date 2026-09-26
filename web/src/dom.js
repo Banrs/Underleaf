@@ -41,8 +41,7 @@ export function toast(msg, kind = '') {
   if (!root) return;
   // Cap concurrent toasts — drop the oldest so they never stack to infinity.
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
-  const t = el('div', { class: `toast ${kind}`, role: 'status' }, msg);
-  root.appendChild(t);
+  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: 'status' }, msg));
   setTimeout(() => t.remove(), 3200);
 }
 
@@ -108,7 +107,7 @@ export function showModal(build) {
   });
 }
 
-function dialogShell(title, body, actions) {
+export function dialogShell(title, body, actions) {
   return el('div', { class: 'modal' },
     el('h2', { class: 'modal-title' }, title),
     body,
@@ -122,14 +121,13 @@ export function promptModal({ title, label, value = '', confirm = 'OK' }) {
     const input = el('input', {
       id, value, onkeydown: (e) => { if (e.key === 'Enter') close(input.value.trim()); },
     });
-    const dialog = dialogShell(title,
+    setTimeout(() => { input.focus(); input.select(); });
+    return dialogShell(title,
       el('div', { class: 'field' }, label ? el('label', { for: id }, label) : null, input),
       [
         el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
         el('button', { class: 'btn primary', onclick: () => close(input.value.trim()) }, confirm),
       ]);
-    setTimeout(() => { input.focus(); input.select(); });
-    return dialog;
   });
 }
 
@@ -145,34 +143,42 @@ export function confirmModal({ title, body, confirm = 'Delete', destructive = tr
 // ---------- menus ----------
 
 // `items` is a list of `{ label, action, danger, checked, disabled, hint }` or
-// the string '-' for a separator; `hint` is a trailing shortcut label. Anchored menus keep keyboard operation: arrows move, Enter
-// activates, Escape dismisses and restores focus.
+// the string '-' for a separator; `hint` is a trailing shortcut label. Anchored
+// menus keep keyboard operation: arrows move, Enter activates, Escape dismisses
+// and restores focus, Tab dismisses and moves on. Options: `anchor` is the
+// button that opened the menu, `focus` puts focus on the first item (a
+// keyboard open), and `onArrow(±1)` handles ←/→ (the menu bar's neighbours).
 let openMenu = null;
 
-export function contextMenu(x, y, items) {
+export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}) {
   openMenu?.dismiss({ restore: false });
   const root = $('#modal-root');
-  const restoreTo = document.activeElement;
+  const restoreTo = anchor ?? document.activeElement;
   const dismiss = ({ restore = true } = {}) => {
     if (openMenu?.dismiss === dismiss) openMenu = null;
     menu.remove();
+    anchor?.setAttribute('aria-expanded', 'false');
     removeEventListener('pointerdown', onAway, true);
     removeEventListener('keydown', onKey, true);
     if (restore && restoreTo?.isConnected) restoreTo.focus();
   };
-  const onAway = (e) => { if (!menu.contains(e.target)) dismiss(); };
+  // A press on the anchor is left to its click, which closes the menu, so the
+  // press doesn't close it only for the click to reopen it.
+  const onAway = (e) => { if (!menu.contains(e.target) && !anchor?.contains(e.target)) dismiss(); };
 
   const buttons = [];
   const menu = el('div', { class: 'menu', role: 'menu' },
     items.map((it) => {
       if (it === '-') return el('hr', { role: 'separator' });
+      const checkable = it.checked !== undefined;
       const b = el('button', {
         class: `menu-item ${it.danger ? 'danger' : ''}`,
-        role: 'menuitem',
+        role: checkable ? 'menuitemcheckbox' : 'menuitem',
+        'aria-checked': checkable ? String(!!it.checked) : null,
         disabled: it.disabled ? '' : null,
         onclick: () => { dismiss({ restore: false }); it.action(); },
       },
-      el('span', { class: 'menu-check' }, it.checked ? '✓' : ''),
+      el('span', { class: 'menu-check', 'aria-hidden': 'true' }, it.checked ? '✓' : ''),
       it.label,
       it.hint ? el('span', { class: 'menu-hint' }, it.hint) : null);
       if (!it.disabled) buttons.push(b);
@@ -182,6 +188,12 @@ export function contextMenu(x, y, items) {
 
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
+    if (e.key === 'Tab') { dismiss(); return; }
+    if (onArrow && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      onArrow(e.key === 'ArrowRight' ? 1 : -1);
+      return;
+    }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const i = buttons.indexOf(document.activeElement);
@@ -197,13 +209,55 @@ export function contextMenu(x, y, items) {
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
   addEventListener('pointerdown', onAway, true);
   addEventListener('keydown', onKey, true);
-  openMenu = { dismiss };
+  anchor?.setAttribute('aria-expanded', 'true');
+  openMenu = { dismiss, anchor };
+  if (focus) buttons[0]?.focus();
   return { dismiss };
 }
 
 // Open a menu below a control, aligned to its leading edge — the macOS
-// pull-down convention.
-export function menuUnder(target, items) {
+// pull-down convention. Clicking the control again closes it.
+export function menuUnder(target, items, options) {
+  if (openMenu?.anchor === target) { openMenu.dismiss(); return null; }
   const r = target.getBoundingClientRect();
-  return contextMenu(r.left, r.bottom + 4, items);
+  return contextMenu(r.left, r.bottom + 4, items, { ...options, anchor: target });
+}
+
+// A non-modal popover below a control, holding `content` (the symbol
+// palette): it closes the way a menu does (Escape and a press outside restore
+// focus to the control; Tab moves on), and a second click on the control
+// closes it. `label` names it for assistive technology.
+export function popoverUnder(target, content, { label } = {}) {
+  if (openMenu?.anchor === target) { openMenu.dismiss(); return null; }
+  openMenu?.dismiss({ restore: false });
+  const dismiss = ({ restore = true } = {}) => {
+    if (openMenu?.dismiss === dismiss) openMenu = null;
+    box.remove();
+    target.setAttribute('aria-expanded', 'false');
+    removeEventListener('pointerdown', onAway, true);
+    removeEventListener('keydown', onKey, true);
+    if (restore && target.isConnected) target.focus();
+  };
+  const onAway = (e) => { if (!box.contains(e.target) && !target.contains(e.target)) dismiss(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
+    else if (e.key === 'Tab') dismiss();   // Tab then moves on from the control
+  };
+  const box = el('div', { class: 'menu popover', role: 'dialog', 'aria-label': label }, content);
+  $('#modal-root').appendChild(box);
+  // The target's rect is in window pixels, the box's own lengths in the
+  // body's zoomed ones (the interface scale; its size is read from offset*,
+  // which the pop-in transform leaves alone). Taller than the window, it
+  // scrolls.
+  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  box.style.maxHeight = `${(innerHeight - 16) / zoom}px`;
+  const r = target.getBoundingClientRect();
+  const [w, h] = [box.offsetWidth * zoom, box.offsetHeight * zoom];
+  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8)) / zoom}px`;
+  box.style.top = `${Math.max(8, Math.min(r.bottom + 4, innerHeight - h - 8)) / zoom}px`;
+  addEventListener('pointerdown', onAway, true);
+  addEventListener('keydown', onKey, true);
+  target.setAttribute('aria-expanded', 'true');
+  openMenu = { dismiss, anchor: target };
+  return { dismiss };
 }

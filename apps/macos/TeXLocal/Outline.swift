@@ -13,6 +13,9 @@ struct OutlineItem: Identifiable, Hashable {
     let level: Int
     let title: String
     let line: Int
+    /// A heading with an empty title, which `title` spells "(untitled)" as
+    /// the web does; `Outline.displayTitle` names it by its kind.
+    var isUntitled = false
 }
 
 /// Sectioning commands in a document, as the browser version's outline reads
@@ -41,7 +44,8 @@ enum Outline {
                     id: items.count,
                     level: levels.firstIndex(of: String(m.1)) ?? 2,
                     title: m.2.isEmpty ? "(untitled)" : String(m.2),
-                    line: lines
+                    line: lines,
+                    isUntitled: m.2.isEmpty
                 ))
             }
             words += lineWords(line)
@@ -61,7 +65,19 @@ enum Outline {
         }
     }
 
-    /// The outline as a tree by how the headings nest, for a sidebar with
+    /// Each heading's key for remembering its fold: its level and title,
+    /// and which of the headings with both it is ("1:Results#2"), so a fold
+    /// stays with its heading as others come and go above it.
+    static func foldKeys(_ outline: [OutlineItem]) -> [String] {
+        var seen: [String: Int] = [:]
+        return outline.map { item in
+            let key = "\(item.level):\(item.title)"
+            seen[key, default: 0] += 1
+            return "\(key)#\(seen[key]!)"
+        }
+    }
+
+    /// The outline as a tree by how the headings nest, for the sidebar's
     /// disclosure triangles.
     static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
         let depths = depths(outline)
@@ -80,11 +96,11 @@ enum Outline {
     }
 
     /// An empty heading by its kind — "Untitled Subsection" — where the web
-    /// writes "(untitled)".
+    /// writes "(untitled)". The kinds are the source bar's section levels.
     static func displayTitle(_ item: OutlineItem) -> String {
-        guard item.title == "(untitled)" else { return item.title }
-        let kinds = ["Part", "Chapter", "Section", "Subsection", "Subsubsection", "Paragraph"]
-        return "Untitled " + (kinds.indices.contains(item.level) ? kinds[item.level] : "Section")
+        guard item.isUntitled else { return item.title }
+        let kind = headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "Section"
+        return "Untitled " + kind
     }
 
     /// The headings that enclose a line, outermost first: the breadcrumb
