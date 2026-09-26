@@ -11,8 +11,10 @@ struct CoreError: LocalizedError {
 
 /// The Rust core through its C ABI (crates/texlocal-ffi): JSON in, JSON out,
 /// the same command names the browser version uses. `tl_call` blocks for as
-/// long as the command runs — minutes, for a compile — so every call runs on a
-/// detached task and the main actor only encodes and decodes.
+/// long as the command runs — minutes, for a compile — so every call runs on
+/// a GCD thread, never Swift's cooperative pool, which must not block (WWDC21,
+/// Swift concurrency: Behind the scenes), and the main actor only encodes and
+/// decodes.
 @MainActor
 final class Core {
     static let shared = Core()
@@ -55,7 +57,9 @@ final class Core {
         guard let handle else {
             throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
         }
-        return await Task.detached { Core.run(handle, command, json) }.value
+        return await withCheckedContinuation { done in
+            DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: Core.run(handle, command, json)) }
+        }
     }
 
     /// The command's result, nil when it gave none; its error thrown.
