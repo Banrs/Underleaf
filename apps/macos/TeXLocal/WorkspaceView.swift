@@ -195,9 +195,9 @@ struct InsertMenuItems: View {
 /// The engines a project can compile with, for the compile menu and Settings.
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
-/// web/src/workspace.js `INSERT_TEMPLATES` but the lists, which are
-/// `listTemplates`; "$0" marks where the cursor lands. The source bar finds
-/// them by title (`ProjectModel.insert`), so titles match the web's.
+/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
+/// "$0" marks where the cursor lands. The source bar finds them by title
+/// (`ProjectModel.insert`), so titles match the web's.
 let insertTemplates: [(String, String)] = [
     ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
     ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),

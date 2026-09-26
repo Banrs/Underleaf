@@ -15,6 +15,9 @@ struct TeXLocalApp: App {
         .commands {
             AppCommands(app: app)
             // Show/Hide Toolbar and Customize Toolbar… in the View menu.
+            // AppKit's items, sent to the key window, which names and toggles
+            // its toolbar; with no key window (TeXLocal in the background,
+            // driven by System Events) they read "Show Toolbar" and do nothing.
             ToolbarCommands()
             // The app has no help book; the default item only said so.
             CommandGroup(replacing: .help) {

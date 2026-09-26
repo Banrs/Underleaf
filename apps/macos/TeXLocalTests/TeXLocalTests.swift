@@ -166,6 +166,40 @@ final class PaneBarLayoutTests: XCTestCase {
     }
 }
 
+@MainActor
+final class SplitLayoutTests: XCTestCase {
+    /// Source | PDF with the PDF dragged narrow, in a split `width` wide.
+    private func split(width: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
+        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: width, height: 400))
+        split.isVertical = true
+        split.dividerStyle = .thin
+        let coordinator = SplitController.Coordinator()
+        coordinator.panes = [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }]
+        coordinator.views = [NSView(), NSView()]
+        coordinator.views.forEach(split.addArrangedSubview)
+        split.delegate = coordinator
+        split.setPosition(width - 200 - split.dividerThickness, ofDividerAt: 0)
+        return (split, coordinator)
+    }
+
+    private func widths(_ split: NSSplitView) -> [CGFloat] {
+        split.arrangedSubviews.map(\.frame.width)
+    }
+
+    /// A pane squeezed to its minimum by a small window gets its share back
+    /// as the window grows, rather than staying at the minimum.
+    func testAPaneGetsItsShareBackAfterASmallWindow() throws {
+        let (split, coordinator) = split(width: 936)
+        XCTAssertEqual(widths(split), [735, 200])
+        split.setFrameSize(NSSize(width: 300, height: 400))
+        XCTAssertEqual(widths(split), [159, 140])
+        // Hidden now, it would come back at the share it had, not squeezed.
+        XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
+        split.setFrameSize(NSSize(width: 936, height: 400))
+        XCTAssertEqual(widths(split), [735, 200])
+    }
+}
+
 final class CompileResultTests: XCTestCase {
     func testDurationsReadTheSameEverywhere() throws {
         let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
@@ -221,6 +255,8 @@ final class CommandTests: XCTestCase {
         XCTAssertTrue(ids.contains("edit.gotoLine"))
         XCTAssertTrue(ids.contains("view.zoomIn"))
         XCTAssertFalse(ids.contains("edit.find"))
+        XCTAssertFalse(ids.contains("edit.findNext"))
+        XCTAssertFalse(ids.contains("edit.findPrevious"))
         XCTAssertFalse(ids.contains("edit.comment"))
         XCTAssertFalse(ids.contains("edit.undo"))
         XCTAssertFalse(ids.contains("edit.redo"))
@@ -287,6 +323,11 @@ final class MenuBarTests: XCTestCase {
         // Not the standard undo:/redo: items, which ask WebKit's undo manager.
         XCTAssertNotEqual(try XCTUnwrap(item("z")).action, Selector(("undo:")))
         XCTAssertNotEqual(try XCTUnwrap(item("z", [.command, .shift])).action, Selector(("redo:")))
+    }
+
+    func testFindNextAndPreviousAreCommandG() throws {
+        XCTAssertEqual(try XCTUnwrap(item("g")).title, "Find Next")
+        XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
     }
 
     func testTheSidebarToggleIsCommandBackslash() throws {

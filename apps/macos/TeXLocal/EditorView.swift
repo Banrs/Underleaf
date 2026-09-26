@@ -22,20 +22,26 @@ struct EditorView: NSViewRepresentable {
         Task { await bridge.setAppearance(theme: theme, palette: palette, font: font, fontSize: fontSize) }
     }
 
+    /// The whole proposal, as the split's panes. Otherwise SwiftUI measures
+    /// the container through Auto Layout, updating its constraints inside
+    /// the window's constraint pass: the path of the 25 Sep crashes ("more
+    /// Update Constraints in Window passes than there are views").
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
     /// The web view outlives any one container (it moves between projects),
-    /// so it is re-parented rather than recreated.
+    /// so it is re-parented rather than recreated. It follows the container
+    /// by its autoresizing mask: constraints added here would land in
+    /// whatever layout pass SwiftUI is updating in.
     private func attach(to container: NSView) {
         let web = bridge.webView
         guard web.superview !== container else { return }
         web.removeFromSuperview()
-        web.translatesAutoresizingMaskIntoConstraints = false
+        web.translatesAutoresizingMaskIntoConstraints = true
+        web.frame = container.bounds
+        web.autoresizingMask = [.width, .height]
         container.addSubview(web)
-        NSLayoutConstraint.activate([
-            web.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            web.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            web.topAnchor.constraint(equalTo: container.topAnchor),
-            web.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
     }
 }
 

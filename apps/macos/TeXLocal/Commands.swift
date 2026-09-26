@@ -19,6 +19,8 @@ enum MenuCommand: String, CaseIterable {
     case editUndo = "edit.undo"
     case editRedo = "edit.redo"
     case editFind = "edit.find"
+    case editFindNext = "edit.findNext"
+    case editFindPrevious = "edit.findPrevious"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
     case editMath = "edit.math"
@@ -51,6 +53,8 @@ enum MenuCommand: String, CaseIterable {
         case .editUndo: "Undo"
         case .editRedo: "Redo"
         case .editFind: "Find and Replace…"
+        case .editFindNext: "Find Next"
+        case .editFindPrevious: "Find Previous"
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
@@ -82,6 +86,8 @@ enum MenuCommand: String, CaseIterable {
         case .editUndo: "CmdOrCtrl+Z"
         case .editRedo: "CmdOrCtrl+Shift+Z"
         case .editFind: "CmdOrCtrl+F"
+        case .editFindNext: "CmdOrCtrl+G"
+        case .editFindPrevious: "CmdOrCtrl+Shift+G"
         case .editBold: "CmdOrCtrl+B"
         case .editItalic: "CmdOrCtrl+I"
         case .editMath: "CmdOrCtrl+Shift+M"
@@ -135,7 +141,7 @@ enum MenuCommand: String, CaseIterable {
     /// Chords the editor page gives back to the menu. Undo, redo, find and
     /// comment stay with the editor, which implements them itself.
     static var editorHostKeys: [(id: String, accel: String)] {
-        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editComment]
+        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
         return allCases.compactMap { c in
             guard !editorOwned.contains(c), let accel = c.accel else { return nil }
             return (c.rawValue, accel)
@@ -166,7 +172,7 @@ extension AppModel {
         switch command {
         // Undo and redo also serve text fields outside the editor.
         case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
-        case .fileSave, .editFind, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .fileSave, .editFind, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.openPath != nil
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
@@ -221,6 +227,8 @@ extension AppModel {
         case .pdfSave:
             savePanel(name: "\(project.id).pdf", type: .pdf) { url in await project.savePDF(to: url) }
         case .editFind: project.format("find")
+        case .editFindNext: findAgain(1, in: project)
+        case .editFindPrevious: findAgain(-1, in: project)
         case .editBold: project.format("bold")
         case .editItalic: project.format("italic")
         case .editMath: project.format("math")
@@ -265,6 +273,33 @@ extension AppModel {
                 sendUndo(redo: redo)
             }
         }
+    }
+
+    /// ⌘G steps the search being typed in. Other fields don't take the chord,
+    /// so the menu gets it: a native one steps its own matches (Find in PDF,
+    /// the build log's find bar) or leaves it be, rather than moving the
+    /// editor's search behind it.
+    private func findAgain(_ delta: Int, in project: ProjectModel) {
+        if let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) {
+            let owner = text.delegate as? NSView ?? text
+            if let field = (owner as? NSTextField)?.delegate as? SearchField.Coordinator {
+                field.field.step?(delta)
+            } else if let log = findBarText(around: owner) {
+                let sender = NSMenuItem()
+                sender.tag = (delta > 0 ? NSTextFinder.Action.nextMatch : .previousMatch).rawValue
+                log.performTextFinderAction(sender)
+            }
+            return
+        }
+        project.format(delta > 0 ? "findNext" : "findPrevious")
+    }
+
+    /// The text view whose find bar a view is part of, or is: the log's, as
+    /// its find bar sits in its scroll view.
+    private func findBarText(around view: NSView) -> NSTextView? {
+        sequence(first: view, next: \.superview).lazy
+            .compactMap { ($0 as? NSScrollView)?.documentView as? NSTextView }
+            .first { $0.usesFindBar }
     }
 
     private func sendUndo(redo: Bool) {
@@ -358,6 +393,8 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .textEditing) {
             Menu("Find") {
                 item(.editFind)
+                item(.editFindNext)
+                item(.editFindPrevious)
                 item(.projectSearch)
                 item(.pdfFind)
             }

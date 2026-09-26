@@ -5,8 +5,9 @@ import SwiftUI
 /// controls: history; the section level of the line; bold and italic; math
 /// and symbols; links, references and citations; figures and tables; lists;
 /// then the rest in a menu. Narrow panes fold groups into that menu from the
-/// end, as a toolbar overflows. Commenting out is a code editor's tool; it
-/// stays in the Format menu (⌘/).
+/// end, as a toolbar overflows, then the section level and redo, so undo is
+/// never clipped. Commenting out is a code editor's tool; it stays in
+/// the Format menu (⌘/).
 struct SourceBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -29,27 +30,32 @@ struct SourceBar: View {
                 tools(showing: 2)
                 tools(showing: 1)
                 tools(showing: 0)
+                tools(showing: 0, level: false)
+                tools(showing: 0, level: false, redo: false)
             }
             Spacer(minLength: 0)
         }
     }
 
-    private func tools(showing count: Int) -> some View {
+    /// The bar with the first `count` groups; the section level and redo
+    /// fold last, for a source pane at its narrowest (at the large size,
+    /// its buttons are 51 pt wide).
+    private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
         return HStack(spacing: 4) {
-            ToolGroup(items: [
-                Segment(.editUndo, "arrow.uturn.backward", app: app),
-                Segment(.editRedo, "arrow.uturn.forward", app: app),
-            ])
+            ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
+                + (redo || !isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
             if isLaTeX {
-                ToolSeparator()
-                SectionLevelMenu(project: project)
+                if level {
+                    ToolSeparator()
+                    SectionLevelMenu(project: project)
+                }
                 ForEach(shown, id: \.self) { group in
                     ToolSeparator()
                     tools(group)
                 }
                 ToolSeparator()
-                moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count })
+                moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count }, level: !level, redo: !redo)
             }
         }
         .fixedSize()
@@ -83,8 +89,21 @@ struct SourceBar: View {
     }
 
     /// The folded groups' tools, then what has no button of its own.
-    private func moreMenu(folded: [Tools]) -> some View {
+    private func moreMenu(folded: [Tools], level: Bool, redo: Bool) -> some View {
         Menu {
+            if redo {
+                Button(MenuCommand.editRedo.title) { app.perform(.editRedo) }
+                    .disabled(!app.isEnabled(.editRedo))
+                Divider()
+            }
+            if level {
+                Menu("Section Level") {
+                    ForEach(headingLevels, id: \.1) { title, command in
+                        Button(title) { project.format("heading", command) }
+                    }
+                }
+                Divider()
+            }
             ForEach(folded, id: \.self) { group in
                 switch group {
                 case .format:
@@ -353,8 +372,7 @@ let referenceTemplates: [(String, String)] = [
     ("Label", "\\label{$0}"), ("Link", "\\href{$0}{}"), ("URL", "\\url{$0}"),
 ]
 
-/// The lists; with `insertTemplates`, web/src/workspace.js `INSERT_TEMPLATES`
-/// plus the description list.
+/// The lists: web/src/sourcebar.js `LIST_TEMPLATES`.
 let listTemplates: [(String, String)] = [
     ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
     ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),

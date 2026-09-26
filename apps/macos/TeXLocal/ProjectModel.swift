@@ -62,6 +62,10 @@ final class ProjectModel {
     private var readingText = false
     /// The editor's web process died holding edits not yet on disk.
     private var lostEdits = false
+    /// Writes that reached the disk, and how many of them the PDF on screen
+    /// was built from: equal, the files on disk are the PDF's.
+    private var writes = 0
+    private var builtWrites = 0
 
     init(id: String, editor: EditorBridge, app: AppModel) {
         self.id = id
@@ -223,6 +227,7 @@ final class ProjectModel {
         }
         do {
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
+            writes += 1
             analyze(text)
             await refreshSymbols()
             return true
@@ -242,6 +247,12 @@ final class ProjectModel {
         saveTask?.cancel()
         dirty = false
         openPath = nil
+        // A save in flight read its text before the crash and still lands:
+        // it counts once it has.
+        _ = await lastSave?.value
+        // The editor shows the file as it is on disk again, which is what
+        // the PDF was built from unless a save has landed since.
+        if pdfFreshness == .edited, writes == builtWrites { pdfFreshness = nil }
         await open(path)
         if lost {
             app?.alert = "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost."
@@ -300,6 +311,7 @@ final class ProjectModel {
         // Before the save, so a second request queues instead of racing this one.
         compiling = true
         let saved = await flush()
+        let built = writes
         if saved {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
@@ -311,8 +323,10 @@ final class ProjectModel {
                 if result.ok {
                     pdfURL = try await pdfPath()
                     pdfVersion += 1
-                    // Edits made while it built still aren't in it.
-                    pdfFreshness = dirty ? .edited : nil
+                    builtWrites = built
+                    // Edits made while it built still aren't in it, nor may
+                    // a save that landed meanwhile be.
+                    pdfFreshness = dirty || writes != built ? .edited : nil
                 } else {
                     if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
                     if !result.errors.isEmpty { panelTab = .issues; showLogs = true }
