@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
-use crate::projects::{self, FileStamp, ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
-use crate::settings::{self, Settings};
-use crate::synctex::{self, ForwardLoc, InverseLoc};
+use crate::projects::{self, FileStamp, Symbols};
+use crate::settings;
+use crate::synctex;
 use crate::{atomic, paths, CoreError};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
@@ -278,49 +278,7 @@ impl Service {
         })
     }
 
-    // ---------- projects ----------
-
-    pub fn list_projects(&self) -> Result<Vec<ProjectInfo>, CoreError> {
-        projects::list_projects(&self.data_dir)
-    }
-
-    pub fn create_project(
-        &self,
-        name: &str,
-        template: Option<&str>,
-    ) -> Result<ProjectInfo, CoreError> {
-        projects::create_project(&self.data_dir, name, template.unwrap_or("article"))
-    }
-
-    pub fn rename_project(&self, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
-        let old = self.project_root(id)?;
-        let info = projects::rename_project(&self.data_dir, id, name)?;
-        self.forget_project(&old);
-        Ok(info)
-    }
-
-    pub fn delete_project(&self, id: &str) -> Result<(), CoreError> {
-        let old = self.project_root(id)?;
-        projects::delete_project(&self.data_dir, id)?;
-        self.forget_project(&old);
-        Ok(())
-    }
-
-    // ---------- settings ----------
-
-    pub fn get_settings(&self, id: &str) -> Result<Settings, CoreError> {
-        Ok(settings::read_settings(&self.project_root(id)?))
-    }
-
-    pub fn set_settings(&self, id: &str, patch: &Value) -> Result<Settings, CoreError> {
-        settings::write_settings(&self.project_root(id)?, patch)
-    }
-
     // ---------- files ----------
-
-    pub fn file_tree(&self, id: &str) -> Result<Vec<TreeNode>, CoreError> {
-        projects::file_tree(&self.project_root(id)?)
-    }
 
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
         let root = self.project_root(id)?;
@@ -336,33 +294,6 @@ impl Service {
             .unwrap()
             .insert(root, (stamps, symbols.clone()));
         Ok(symbols)
-    }
-
-    pub fn search_project(&self, id: &str, query: &str) -> Result<Vec<SearchHit>, CoreError> {
-        projects::search_project(&self.project_root(id)?, query, SEARCH_LIMIT)
-    }
-
-    pub fn read_file(&self, id: &str, path: &str) -> Result<String, CoreError> {
-        let bytes = std::fs::read(paths::safe_path(&self.project_root(id)?, path)?)?;
-        Ok(crate::lossy_string(bytes))
-    }
-
-    pub fn write_file(&self, id: &str, path: &str, text: &str) -> Result<(), CoreError> {
-        self.edit(id, |root| {
-            write_creating(&paths::safe_write_path(root, path)?, text)
-        })
-    }
-
-    pub fn create_entry(&self, id: &str, path: &str, dir: bool) -> Result<(), CoreError> {
-        self.edit(id, |root| projects::create_file(root, path, dir))
-    }
-
-    pub fn rename_entry(&self, id: &str, from: &str, to: &str) -> Result<RenameResult, CoreError> {
-        self.edit(id, |root| projects::rename_entry(root, from, to))
-    }
-
-    pub fn delete_entry(&self, id: &str, path: &str) -> Result<(), CoreError> {
-        self.edit(id, |root| projects::delete_entry(root, path))
     }
 
     /// Validate a complete upload before the first write, so a late unsafe path
@@ -461,7 +392,7 @@ impl Service {
         paths::safe_path(&self.project_root(id)?, rel)
     }
 
-    // ---------- compile / synctex ----------
+    // ---------- compile ----------
 
     pub async fn compile(
         &self,
@@ -475,25 +406,6 @@ impl Service {
                 self.tex_dir().as_deref(),
             )
             .await
-    }
-
-    pub async fn synctex_forward(
-        &self,
-        id: &str,
-        file: &str,
-        line: u32,
-    ) -> Result<ForwardLoc, CoreError> {
-        synctex::synctex_forward(&self.project_root(id)?, file, line, &self.tex_path()).await
-    }
-
-    pub async fn synctex_inverse(
-        &self,
-        id: &str,
-        page: f64,
-        x: f64,
-        y: f64,
-    ) -> Result<InverseLoc, CoreError> {
-        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, &self.tex_path()).await
     }
 
     // ---------- dispatch ----------
@@ -517,37 +429,70 @@ impl Service {
     /// file contents.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| arg::<String>(args, key);
+        let root = || self.project_root(&s("id")?);
         match command {
             "status" => out(self.status().await),
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
             "list_dirs" => out(self.list_dirs(arg::<Option<String>>(args, "path")?.as_deref())?),
-            "list_projects" => out(self.list_projects()?),
-            "create_project" => out(self.create_project(
+            "list_projects" => out(projects::list_projects(&self.data_dir)?),
+            "create_project" => out(projects::create_project(
+                &self.data_dir,
                 &s("name")?,
-                arg::<Option<String>>(args, "template")?.as_deref(),
+                arg::<Option<String>>(args, "template")?
+                    .as_deref()
+                    .unwrap_or("article"),
             )?),
-            "rename_project" => out(self.rename_project(&s("id")?, &s("name")?)?),
-            "delete_project" => out(self.delete_project(&s("id")?)?),
-            "get_settings" => out(self.get_settings(&s("id")?)?),
-            "set_settings" => out(self.set_settings(&s("id")?, &arg::<Value>(args, "patch")?)?),
-            "file_tree" => out(self.file_tree(&s("id")?)?),
+            "rename_project" => {
+                let old = root()?;
+                let info = projects::rename_project(&self.data_dir, &s("id")?, &s("name")?)?;
+                self.forget_project(&old);
+                out(info)
+            }
+            "delete_project" => {
+                let old = root()?;
+                projects::delete_project(&self.data_dir, &s("id")?)?;
+                self.forget_project(&old);
+                out(())
+            }
+            "get_settings" => out(settings::read_settings(&root()?)),
+            "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
+            "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
-            "search_project" => out(self.search_project(&s("id")?, &s("query")?)?),
+            "search_project" => out(projects::search_project(
+                &root()?,
+                &s("query")?,
+                SEARCH_LIMIT,
+            )?),
             // Already a Value: out() would serialize it again, copying the
             // whole document.
-            "read_file" => Ok(json!({ "text": self.read_file(&s("id")?, &s("path")?)? })),
+            "read_file" => {
+                let bytes = fs::read(paths::safe_path(&root()?, &s("path")?)?)?;
+                Ok(json!({ "text": crate::lossy_string(bytes) }))
+            }
             // `text` is required: a call that lost it must fail, not empty
             // the file.
-            "write_file" => out(self.write_file(&s("id")?, &s("path")?, &s("text")?)?),
-            "create_entry" => out(self.create_entry(
-                &s("id")?,
-                &s("path")?,
-                arg::<Option<bool>>(args, "dir")?.unwrap_or(false),
-            )?),
-            "rename_entry" => out(self.rename_entry(&s("id")?, &s("from")?, &s("to")?)?),
-            "delete_entry" => out(self.delete_entry(&s("id")?, &s("path")?)?),
+            "write_file" => {
+                let (path, text) = (s("path")?, s("text")?);
+                out(self.edit(&s("id")?, |root| {
+                    write_creating(&paths::safe_write_path(root, &path)?, text)
+                })?)
+            }
+            "create_entry" => {
+                let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
+                out(self.edit(&s("id")?, |root| {
+                    projects::create_file(root, &path, dir.unwrap_or(false))
+                })?)
+            }
+            "rename_entry" => {
+                let (from, to) = (s("from")?, s("to")?);
+                out(self.edit(&s("id")?, |root| projects::rename_entry(root, &from, &to))?)
+            }
+            "delete_entry" => {
+                let path = s("path")?;
+                out(self.edit(&s("id")?, |root| projects::delete_entry(root, &path))?)
+            }
             "validate_uploads" => out(self.validate_uploads(
                 &s("id")?,
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
@@ -561,18 +506,22 @@ impl Service {
                 .await?),
             // The project's own build, which reports itself stopped; true
             // when one was running.
-            "stop_compile" => out(self.compile.stop(&self.project_root(&s("id")?)?).await),
-            "synctex_forward" => out(self
-                .synctex_forward(&s("id")?, &s("file")?, arg(args, "line")?)
-                .await?),
-            "synctex_inverse" => out(self
-                .synctex_inverse(
-                    &s("id")?,
-                    arg(args, "page")?,
-                    arg(args, "x")?,
-                    arg(args, "y")?,
-                )
-                .await?),
+            "stop_compile" => out(self.compile.stop(&root()?).await),
+            "synctex_forward" => out(synctex::synctex_forward(
+                &root()?,
+                &s("file")?,
+                arg(args, "line")?,
+                &self.tex_path(),
+            )
+            .await?),
+            "synctex_inverse" => out(synctex::synctex_inverse(
+                &root()?,
+                arg(args, "page")?,
+                arg(args, "x")?,
+                arg(args, "y")?,
+                &self.tex_path(),
+            )
+            .await?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }

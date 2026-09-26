@@ -1,31 +1,22 @@
-//! The desktop command surface: thin wrappers over `texlocal_core::service`,
-//! which owns every command's path checks and cache invalidation. Only what
-//! needs the shell — dialogs, notifications, menus, the quit handshake — is
-//! implemented here.
+//! The desktop command surface. Every core command goes through
+//! `Service::call` by name, as it does for the browser server and the native
+//! apps; only what needs the shell — raw upload bodies, notifications,
+//! dialogs, menus, the quit handshake — has a command of its own here.
 
 use std::path::PathBuf;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-use texlocal_core::compile::{CompileOverrides, CompileResult, TexStatus};
-use texlocal_core::projects::{ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
-use texlocal_core::service::{DirListing, UploadSpec};
-use texlocal_core::settings::Settings;
-use texlocal_core::synctex::{ForwardLoc, InverseLoc};
+use texlocal_core::compile::{CompileOverrides, CompileResult};
 use texlocal_core::zipexport;
 
 use crate::error::{CmdError, CmdResult};
 use crate::state::{AppState, FlushOutcome};
-
-#[derive(Serialize)]
-pub struct FileText {
-    pub text: String,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,148 +24,16 @@ pub struct Saved {
     pub saved: Vec<String>,
 }
 
-// ---------- status ----------
-
+/// Every core command by name: the dispatch table the browser server and the
+/// native apps use.
 #[tauri::command]
-pub async fn status(state: State<'_, AppState>) -> CmdResult<TexStatus> {
-    Ok(state.service.status().await)
-}
-
-#[tauri::command]
-pub async fn set_tex_dir(state: State<'_, AppState>, dir: Option<String>) -> CmdResult<TexStatus> {
-    Ok(state.service.set_tex_dir(dir.as_deref()).await?)
-}
-
-#[tauri::command]
-pub async fn list_dirs(state: State<'_, AppState>, path: Option<String>) -> CmdResult<DirListing> {
-    Ok(state.service.list_dirs(path.as_deref())?)
-}
-
-// ---------- projects ----------
-
-#[tauri::command]
-pub async fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<ProjectInfo>> {
-    Ok(state.service.list_projects()?)
-}
-
-#[tauri::command]
-pub async fn create_project(
+pub async fn call(
     state: State<'_, AppState>,
-    name: String,
-    template: Option<String>,
-) -> CmdResult<ProjectInfo> {
-    Ok(state.service.create_project(&name, template.as_deref())?)
-}
-
-#[tauri::command]
-pub async fn rename_project(
-    state: State<'_, AppState>,
-    id: String,
-    name: String,
-) -> CmdResult<ProjectInfo> {
-    Ok(state.service.rename_project(&id, &name)?)
-}
-
-#[tauri::command]
-pub async fn delete_project(state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    Ok(state.service.delete_project(&id)?)
-}
-
-// ---------- settings ----------
-
-#[tauri::command]
-pub async fn get_settings(state: State<'_, AppState>, id: String) -> CmdResult<Settings> {
-    Ok(state.service.get_settings(&id)?)
-}
-
-#[tauri::command]
-pub async fn set_settings(
-    state: State<'_, AppState>,
-    id: String,
-    patch: Value,
-) -> CmdResult<Settings> {
-    Ok(state.service.set_settings(&id, &patch)?)
-}
-
-// ---------- files ----------
-
-#[tauri::command]
-pub async fn file_tree(state: State<'_, AppState>, id: String) -> CmdResult<Vec<TreeNode>> {
-    Ok(state.service.file_tree(&id)?)
-}
-
-#[tauri::command]
-pub async fn scan_symbols(state: State<'_, AppState>, id: String) -> CmdResult<Symbols> {
-    Ok(state.service.scan_symbols(&id)?)
-}
-
-#[tauri::command]
-pub async fn search_project(
-    state: State<'_, AppState>,
-    id: String,
-    query: String,
-) -> CmdResult<Vec<SearchHit>> {
-    Ok(state.service.search_project(&id, &query)?)
-}
-
-#[tauri::command]
-pub async fn read_file(
-    state: State<'_, AppState>,
-    id: String,
-    path: String,
-) -> CmdResult<FileText> {
-    Ok(FileText {
-        text: state.service.read_file(&id, &path)?,
-    })
-}
-
-#[tauri::command]
-pub async fn write_file(
-    state: State<'_, AppState>,
-    id: String,
-    path: String,
-    text: String,
-) -> CmdResult<()> {
-    Ok(state.service.write_file(&id, &path, &text)?)
-}
-
-#[tauri::command]
-pub async fn create_entry(
-    state: State<'_, AppState>,
-    id: String,
-    path: String,
-    dir: Option<bool>,
-) -> CmdResult<()> {
-    Ok(state
-        .service
-        .create_entry(&id, &path, dir.unwrap_or(false))?)
-}
-
-#[tauri::command]
-pub async fn rename_entry(
-    state: State<'_, AppState>,
-    id: String,
-    from: String,
-    to: String,
-) -> CmdResult<RenameResult> {
-    Ok(state.service.rename_entry(&id, &from, &to)?)
-}
-
-#[tauri::command]
-pub async fn delete_entry(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
-    Ok(state.service.delete_entry(&id, &path)?)
-}
-
-#[tauri::command]
-pub async fn validate_uploads(
-    state: State<'_, AppState>,
-    id: String,
-    dir: Option<String>,
-    files: Vec<UploadSpec>,
-) -> CmdResult<texlocal_core::service::UploadCheck> {
-    Ok(state
-        .service
-        .validate_uploads(&id, dir.as_deref().unwrap_or_default(), &files)?)
+    command: String,
+    args: Option<Value>,
+) -> CmdResult<Value> {
+    let args = args.unwrap_or_else(|| json!({}));
+    Ok(state.service.call(&command, &args).await?)
 }
 
 /// One file per invoke, body sent raw. The renderer first calls
@@ -211,8 +70,7 @@ pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> Cm
     Ok(Saved { saved: vec![rel] })
 }
 
-// ---------- compile / synctex ----------
-
+/// Typed, rather than through `call`, to announce the result.
 #[tauri::command]
 pub async fn compile(
     app: AppHandle,
@@ -253,27 +111,6 @@ fn announce(app: &AppHandle, result: &CompileResult) {
         .title("TeXLocal")
         .body(body)
         .show();
-}
-
-#[tauri::command]
-pub async fn synctex_forward(
-    state: State<'_, AppState>,
-    id: String,
-    file: String,
-    line: u32,
-) -> CmdResult<ForwardLoc> {
-    Ok(state.service.synctex_forward(&id, &file, line).await?)
-}
-
-#[tauri::command]
-pub async fn synctex_inverse(
-    state: State<'_, AppState>,
-    id: String,
-    page: f64,
-    x: f64,
-    y: f64,
-) -> CmdResult<InverseLoc> {
-    Ok(state.service.synctex_inverse(&id, page, x, y).await?)
 }
 
 // ---------- export / save-as ----------
