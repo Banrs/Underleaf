@@ -171,7 +171,7 @@ pub async fn validate_uploads(
     id: String,
     dir: Option<String>,
     files: Vec<UploadSpec>,
-) -> CmdResult<()> {
+) -> CmdResult<texlocal_core::service::UploadCheck> {
     Ok(state
         .service
         .validate_uploads(&id, dir.as_deref().unwrap_or_default(), &files)?)
@@ -197,11 +197,16 @@ pub async fn upload_file(state: State<'_, AppState>, request: Request<'_>) -> Cm
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err(CmdError("Upload body must be raw bytes".into()));
     };
+    let replace = request
+        .headers()
+        .get("x-replace")
+        .is_some_and(|v| v == "true");
     let rel = state.service.upload_file(
         &header("x-project")?,
         &header("x-dir")?,
         &header("x-path")?,
         bytes,
+        replace,
     )?;
     Ok(Saved { saved: vec![rel] })
 }

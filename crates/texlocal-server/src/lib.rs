@@ -200,7 +200,8 @@ impl App {
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
-    /// the same shape as the desktop's `upload_file` invoke.
+    /// the same shape as the desktop's `upload_file` invoke; `X-Replace: true`
+    /// moves an entry in its place to the Trash.
     async fn upload(&self, req: Request) -> Response {
         let header = |name: &str| {
             req.header(name)
@@ -212,8 +213,10 @@ impl App {
             Ok(names) => names,
             Err(e) => return error(e),
         };
+        // The answer to Replace in the host's Replace / Keep Both / Stop.
+        let replace = req.header("x-replace") == Some("true");
         let body = req.body;
-        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
+        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body, replace))
             .await
             .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }

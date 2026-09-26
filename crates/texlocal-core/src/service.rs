@@ -3,6 +3,7 @@
 // check it runs, which cache it invalidates — lives here once, not per host.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -47,6 +48,57 @@ pub struct DirListing {
 pub struct UploadSpec {
     pub path: String,
     pub size: usize,
+}
+
+/// An entry an upload would land on: an incoming file's own place, or a
+/// folder on its path that is a file here. Both paths are relative to the
+/// upload's folder, as the host names the files; `keep_both` is a free name
+/// beside it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Clash {
+    pub path: String,
+    pub keep_both: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UploadCheck {
+    pub existing: Vec<Clash>,
+}
+
+/// An upload file's path once Keep Both has renamed the clash it lies under.
+pub fn keep_both(path: &str, clashes: &[Clash]) -> String {
+    let path = path.replace('\\', "/");
+    clashes
+        .iter()
+        .find_map(|c| {
+            let rest = path.strip_prefix(&c.path)?;
+            (rest.is_empty() || rest.starts_with('/')).then(|| format!("{}{rest}", c.keep_both))
+        })
+        .unwrap_or(path)
+}
+
+/// The first entry in `rel`'s way under `base`: the file itself if it
+/// exists, or a folder on its path that exists as something else.
+fn clash(base: &Path, rel: &str) -> Option<String> {
+    let mut end = 0;
+    loop {
+        end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+        let meta = fs::symlink_metadata(base.join(&rel[..end])).ok()?;
+        if end == rel.len() || !meta.is_dir() {
+            return Some(rel[..end].to_string());
+        }
+        end += 1;
+    }
+}
+
+/// A path as the volume compares it: macOS's and Windows' ignore case.
+fn fold_case(path: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        path.to_lowercase()
+    } else {
+        path.to_owned()
+    }
 }
 
 pub struct Service {
@@ -314,49 +366,87 @@ impl Service {
     }
 
     /// Validate a complete upload before the first write, so a late unsafe path
-    /// or oversize file cannot produce a predictable half-import.
+    /// or oversize file cannot produce a predictable half-import. Returns the
+    /// entries the upload would land on, for the host to ask about as Finder
+    /// does: Replace (upload with `replace`), Keep Both (rename the files
+    /// under each clash's `path` to its `keepBoth`, as `keep_both` does) or
+    /// Stop.
     pub fn validate_uploads(
         &self,
         id: &str,
         dir: &str,
         files: &[UploadSpec],
-    ) -> Result<(), CoreError> {
+    ) -> Result<UploadCheck, CoreError> {
         let root = self.project_root(id)?;
+        let base = root.join(paths::rel_key(dir).unwrap_or_default());
         let mut seen = HashSet::new();
+        let mut rels = Vec::new();
         for file in files {
             if file.size > UPLOAD_MAX_BYTES {
                 return Err(too_large());
             }
-            let abs = paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
-            let key = if cfg!(any(windows, target_os = "macos")) {
-                abs.to_string_lossy().to_ascii_lowercase()
-            } else {
-                abs.to_string_lossy().into_owned()
-            };
-            if !seen.insert(key) {
+            paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
+            // Relative to `dir`, as the host names the files.
+            let rel = paths::rel_key(&file.path)?;
+            if !seen.insert(fold_case(&rel)) {
                 return Err(CoreError::bad_request(
                     "The upload contains duplicate paths",
                 ));
             }
+            rels.push(rel);
         }
-        Ok(())
+        // Names a Keep Both may not take: every path the upload creates.
+        let mut taken: HashSet<String> = rels
+            .iter()
+            .flat_map(|rel| rel.match_indices('/').map(|(i, _)| &rel[..i]))
+            .map(fold_case)
+            .chain(seen)
+            .collect();
+        let mut existing: Vec<Clash> = Vec::new();
+        for rel in &rels {
+            let Some(path) = clash(&base, rel) else {
+                continue;
+            };
+            if existing.iter().any(|c| c.path == path) {
+                continue;
+            }
+            let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
+            let keep_both = (2..)
+                .map(|n| upload_rel(parent, &projects::numbered(name, n)))
+                .find(|free| {
+                    fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
+                })
+                .expect("a free name");
+            existing.push(Clash { path, keep_both });
+        }
+        Ok(UploadCheck { existing })
     }
 
     /// One file of an upload the host has already passed to
-    /// `validate_uploads`. Returns the project-relative path written.
+    /// `validate_uploads`. Returns the project-relative path written. An
+    /// entry in its place is an error, unless `replace` moves it to the
+    /// Trash first.
     pub fn upload_file(
         &self,
         id: &str,
         dir: &str,
         path: &str,
         bytes: &[u8],
+        replace: bool,
     ) -> Result<String, CoreError> {
         if bytes.len() > UPLOAD_MAX_BYTES {
             return Err(too_large());
         }
         let rel = upload_rel(dir, path);
         self.edit(id, |root| {
-            write_creating(&paths::safe_write_path(root, &rel)?, bytes)
+            let abs = paths::safe_write_path(root, &rel)?;
+            if let Some(taken) = clash(root, &paths::rel_key(&rel)?) {
+                if !replace {
+                    return Err(CoreError::conflict(format!("“{taken}” already exists")));
+                }
+                projects::discard_replaced(root, &taken)?;
+            }
+            write_creating(&abs, bytes)
         })?;
         Ok(rel)
     }
@@ -488,7 +578,8 @@ impl Service {
     }
 }
 
-fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
+/// Argument `key` of a JSON command, which a missing key reads as null.
+pub fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
     // Straight from the borrowed Value, with no intermediate clone of it.
     T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))

@@ -98,7 +98,13 @@ fn ensure_existing_ancestor_within(
     loop {
         match fs::symlink_metadata(existing) {
             Ok(_) => break,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // A file where the path wants a folder ends the path there too.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 existing = existing
                     .parent()
                     .ok_or_else(|| CoreError::bad_request(escape_err))?;

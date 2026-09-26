@@ -457,6 +457,27 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     })
 }
 
+/// Move to the Trash an entry an incoming file of its name replaces. The main
+/// file may go, since the file taking its place keeps it valid; a folder
+/// holding it may not.
+pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> {
+    if is_under(&main_file_key(root), rel) {
+        return Err(CoreError::conflict(
+            "Choose a different main file before replacing this folder",
+        ));
+    }
+    discard(&safe_path(root, rel)?)
+}
+
+/// `name` with a copy's number, as Finder numbers them: "main 2.tex",
+/// "figures 2".
+pub(crate) fn numbered(name: &str, n: u32) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
+        _ => format!("{name} {n}"),
+    }
+}
+
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
     delete_entry_using(root, rel, discard)
 }

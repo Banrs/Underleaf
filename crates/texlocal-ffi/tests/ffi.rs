@@ -182,6 +182,44 @@ fn dropped_files_and_folders_import_into_the_project() {
     unsafe { tl_close(handle) };
 }
 
+#[test]
+fn a_drop_onto_existing_files_asks_first_and_can_keep_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(&dir.path().join("data"));
+
+    let drop = dir.path().join("drop");
+    std::fs::create_dir_all(drop.join("figs/.git")).unwrap();
+    std::fs::write(drop.join("figs/.git/HEAD"), b"ref").unwrap();
+    std::fs::write(drop.join("figs/.DS_Store"), b"x").unwrap();
+    std::fs::write(drop.join("figs/a.png"), b"a").unwrap();
+    std::fs::write(drop.join("main.tex"), b"new").unwrap();
+    let paths = strings([drop.join("figs"), drop.join("main.tex")]);
+    let args = |conflict: Value| json!({ "id": "P", "paths": paths, "conflict": conflict });
+
+    // Without an answer nothing is written; the clash is reported.
+    let asked = call(handle, "import_files", Some(args(Value::Null)));
+    assert_eq!(
+        asked["ok"],
+        json!({ "saved": [], "existing": [{ "path": "main.tex", "keepBoth": "main 2.tex" }] })
+    );
+    let main = dir.path().join("data/P/main.tex");
+    let original = std::fs::read(&main).unwrap();
+
+    let kept = call(handle, "import_files", Some(args(json!("keepBoth"))));
+    // Hidden files inside a dropped folder stay behind.
+    assert_eq!(saved(&kept), ["figs/a.png", "main 2.tex"]);
+    assert_eq!(std::fs::read(&main).unwrap(), original);
+    assert_eq!(
+        std::fs::read(dir.path().join("data/P/main 2.tex")).unwrap(),
+        b"new"
+    );
+
+    let bad = call(handle, "import_files", Some(args(json!("merge"))));
+    assert_eq!(bad["status"], 400);
+
+    unsafe { tl_close(handle) };
+}
+
 #[cfg(unix)]
 #[test]
 fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {

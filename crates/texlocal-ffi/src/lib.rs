@@ -11,8 +11,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use texlocal_core::service::{Service, UploadSpec};
-use texlocal_core::{zipexport, CoreError};
+use texlocal_core::service::{arg, Service};
+use texlocal_core::{import, zipexport, CoreError};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -23,18 +23,14 @@ pub struct TlHandle {
 /// paths — fine for the app that owns this process, which is why they live
 /// here and not in `Service::call`, which the browser server exposes.
 fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<Value, CoreError>> {
-    let s = |key: &str| {
-        args.get(key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| CoreError::bad_request(format!("Invalid argument `{key}`")))
-    };
+    let s = |key: &str| arg::<String>(args, key);
     let path = |p: PathBuf| json!(p.to_string_lossy());
     Some(match command {
-        "pdf_path" => s("id").and_then(|id| service.pdf_path(id)).map(path),
-        "raw_path" => (|| service.raw_path(s("id")?, s("path")?))().map(path),
+        "pdf_path" => (|| service.pdf_path(&s("id")?))().map(path),
+        "raw_path" => (|| service.raw_path(&s("id")?, &s("path")?))().map(path),
         "export_zip" => (|| {
-            let root = service.project_root(s("id")?)?;
-            zipexport::export_zip(&root, Path::new(s("dest")?))?;
+            let root = service.project_root(&s("id")?)?;
+            zipexport::export_zip(&root, Path::new(&s("dest")?))?;
             Ok(Value::Null)
         })(),
         // On quit, while a compile call may still be in flight — which rules
@@ -45,72 +41,17 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
             Ok(Value::Null)
         }
         "import_files" => (|| {
-            let id = s("id")?;
-            let dir = args.get("dir").and_then(Value::as_str).unwrap_or_default();
-            let mut specs = Vec::new();
-            let mut sources = Vec::new();
-            for p in args
-                .get("paths")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let abs = Path::new(
-                    p.as_str()
-                        .ok_or_else(|| CoreError::bad_request("Invalid argument `paths`"))?,
-                );
-                let name = abs.file_name().unwrap_or_default().to_string_lossy();
-                // A dropped link is followed: dropping it names the file or
-                // folder it points at.
-                let meta = std::fs::metadata(abs)?;
-                collect(abs, name.into_owned(), meta, &mut specs, &mut sources)?;
-            }
-            // The same validate-then-write rule as a browser upload: a bad
-            // path or oversize file fails the drop before anything lands.
-            service.validate_uploads(id, dir, &specs)?;
-            let mut saved = Vec::new();
-            for (spec, abs) in specs.iter().zip(&sources) {
-                saved.push(service.upload_file(id, dir, &spec.path, &std::fs::read(abs)?)?);
-            }
-            Ok(json!({ "saved": saved }))
+            let imported = import::import_files(
+                service,
+                &s("id")?,
+                &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
+                &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
+                arg(args, "conflict")?,
+            )?;
+            Ok(json!(imported))
         })(),
         _ => return None,
     })
-}
-
-/// Files under a dropped path, with project-relative names that keep a
-/// dropped folder's own name, and where to read each. Symlinks inside a
-/// dropped folder are skipped, not followed: a drop imports what was dropped,
-/// never what a link inside it points at.
-fn collect(
-    abs: &Path,
-    rel: String,
-    meta: std::fs::Metadata,
-    specs: &mut Vec<UploadSpec>,
-    sources: &mut Vec<PathBuf>,
-) -> Result<(), CoreError> {
-    if meta.is_file() {
-        specs.push(UploadSpec {
-            path: rel,
-            // Saturating, so a size past usize still fails the upload limit.
-            size: usize::try_from(meta.len()).unwrap_or(usize::MAX),
-        });
-        sources.push(abs.to_path_buf());
-    } else if meta.is_dir() {
-        for entry in std::fs::read_dir(abs)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // DirEntry::metadata does not follow links.
-            collect(
-                &entry.path(),
-                format!("{rel}/{name}"),
-                entry.metadata()?,
-                specs,
-                sources,
-            )?;
-        }
-    }
-    Ok(())
 }
 
 /// The result as a JSON envelope the host frees with `tl_free`.
