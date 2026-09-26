@@ -60,7 +60,7 @@ pub async fn synctex_forward(
     }
     let input = format!("{line}:1:./{rel}");
     let pdf_str = pdf.to_string_lossy().into_owned();
-    let out = run(
+    let (code, stdout) = run(
         "synctex",
         &["view", "-i", &input, "-o", &pdf_str],
         Some(root),
@@ -68,13 +68,13 @@ pub async fn synctex_forward(
         path_env,
     )
     .await;
-    if out.code != 0 {
+    if code != 0 {
         return Err(CoreError::internal("synctex view failed"));
     }
     // The first value reported for each key: synctex lists every match.
     const KEYS: [&str; 7] = ["Page", "x", "y", "h", "v", "W", "H"];
     let mut values = [None; 7];
-    for ln in out.stdout.split('\n') {
+    for ln in stdout.split('\n') {
         let Some((key, value)) = ln.split_once(':') else {
             continue;
         };
@@ -108,7 +108,7 @@ pub async fn synctex_inverse(
     }
     let pdf = pdf_for(root)?;
     let target = format!("{page}:{x}:{y}:{}", pdf.to_string_lossy());
-    let out = run(
+    let (code, stdout) = run(
         "synctex",
         &["edit", "-o", &target],
         Some(root),
@@ -116,17 +116,15 @@ pub async fn synctex_inverse(
         path_env,
     )
     .await;
-    if out.code != 0 {
+    if code != 0 {
         return Err(CoreError::internal("synctex edit failed"));
     }
-    let file = out
-        .stdout
+    let file = stdout
         .split('\n')
         .find_map(|ln| ln.strip_prefix("Input:"))
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let line = out
-        .stdout
+    let line = stdout
         .split('\n')
         .find_map(|ln| ln.strip_prefix("Line:"))
         .and_then(|s| s.trim().parse::<u32>().ok());

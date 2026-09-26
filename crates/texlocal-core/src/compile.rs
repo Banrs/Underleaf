@@ -241,29 +241,22 @@ fn take_text(buffer: &Mutex<Vec<u8>>) -> String {
     crate::lossy_string(bytes)
 }
 
-pub(crate) struct RunOutput {
-    pub code: i32,
-    pub stdout: String,
-}
-
-/// Spawn, collect capped output, and kill the whole tree on timeout.
+/// Spawn, collect capped output, and kill the whole tree on timeout: the
+/// exit code (-1 for none) and stdout.
 pub(crate) async fn run(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
     timeout: Duration,
     path_env: &str,
-) -> RunOutput {
+) -> (i32, String) {
     let mut cmd = base_command(program, cwd, path_env);
     cmd.args(args);
     let Ok(mut child) = cmd.spawn() else {
-        return RunOutput {
-            code: -1,
-            stdout: String::new(),
-        };
+        return (-1, String::new());
     };
     let (code, stdout, _) = drive(&mut child, timeout).await;
-    RunOutput { code, stdout }
+    (code, stdout)
 }
 
 /// Drive a spawned child to completion: stream both pipes into capped buffers,
@@ -333,11 +326,11 @@ pub struct TexStatus {
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
-    let out = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
-    let available = out.code == 0;
+    let (code, stdout) = run("latexmk", &["-version"], None, PROBE_TIMEOUT, path_env).await;
+    let available = code == 0;
     TexStatus {
         available,
-        version: available.then(|| version_line(&out.stdout)),
+        version: available.then(|| version_line(&stdout)),
         tex_dir: None,
         found: available
             .then(|| latexmk_dir(path_env))
