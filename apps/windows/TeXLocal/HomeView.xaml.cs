@@ -99,7 +99,7 @@ public sealed partial class HomeView : UserControl
             case TemplatePage.Blank:
                 return new FontIcon
                 {
-                    Glyph = "",
+                    Glyph = "\uE710",
                     FontSize = 28,
                     Foreground = new SolidColorBrush(Colors.Gray) { Opacity = 0.6 },
                     HorizontalAlignment = HorizontalAlignment.Center,
@@ -215,7 +215,7 @@ public sealed partial class HomeView : UserControl
             header.Children.Add(new TextBlock { Text = title, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] });
             if (column == sortBy)
             {
-                header.Children.Add(new FontIcon { Glyph = descending ? "" : "", FontSize = 10 });
+                header.Children.Add(new FontIcon { Glyph = descending ? "\uE70D" : "\uE70E", FontSize = 10 });
             }
             button.Content = header;
             AutomationProperties.SetName(button, column == sortBy
@@ -244,12 +244,12 @@ public sealed partial class HomeView : UserControl
     private MenuFlyout ProjectMenu(ProjectInfo project)
     {
         var menu = new MenuFlyout();
-        menu.Items.Add(ContextMenus.Item("Open", "", () => _ = Main.OpenAsync(project.Id)));
+        menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = Main.OpenAsync(project.Id)));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Rename…", "", () => _ = RenameAsync(project), "F2"));
-        menu.Items.Add(ContextMenus.Item("Open folder location", "", () => _ = RevealAsync(project)));
+        menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(project), "F2"));
+        menu.Items.Add(ContextMenus.Item("Open folder location", "\uE838", () => _ = RevealAsync(project)));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Delete…", "", () => _ = DeleteAsync(project), "Delete"));
+        menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(project), "Delete"));
         return menu;
     }
 

@@ -739,7 +739,7 @@ public sealed partial class WorkspaceView : UserControl
         outlineSplitter.Visibility = OutlinePane.Visibility;
         OutlineRow.Height = new GridLength(shown && open ? Math.Clamp(outlineHeight, OutlineMinimum, Math.Max(OutlineMinimum, OutlineRoom)) : 0);
         // A state, not a direction: down while open, right while folded.
-        OutlineChevron.Glyph = open ? "" : "";
+        OutlineChevron.Glyph = open ? "\uE70D" : "\uE76C";
         PdfPane.SetToolTip(OutlineToggle, open ? "Hide file outline" : "Show file outline");
         AutomationProperties.SetItemStatus(OutlineToggle, open ? "Expanded" : "Collapsed");
     }
@@ -856,17 +856,17 @@ public sealed partial class WorkspaceView : UserControl
         var menu = new MenuFlyout();
         if (!node.IsDirectory)
         {
-            menu.Items.Add(ContextMenus.Item("Open", "", () => _ = p.OpenAsync(node.Path)));
+            menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = p.OpenAsync(node.Path)));
         }
         if (!node.IsDirectory && IsTex(node.Path) && node.Path != p.Settings?.MainFile)
         {
-            menu.Items.Add(ContextMenus.Item("Set as main file", "", () => _ = p.SetMainFileAsync(node.Path)));
+            menu.Items.Add(ContextMenus.Item("Set as main file", "\uE735", () => _ = p.SetMainFileAsync(node.Path)));
         }
-        menu.Items.Add(ContextMenus.Item("Rename…", "", () => _ = RenameAsync(p, node), "F2"));
+        menu.Items.Add(ContextMenus.Item("Rename…", "\uE8AC", () => _ = RenameAsync(p, node), "F2"));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Open file location", "", () => _ = p.RevealAsync(node.Path)));
+        menu.Items.Add(ContextMenus.Item("Open file location", "\uE838", () => _ = p.RevealAsync(node.Path)));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(ContextMenus.Item("Delete…", "", () => _ = DeleteAsync(p, node), "Delete"));
+        menu.Items.Add(ContextMenus.Item("Delete…", "\uE74D", () => _ = DeleteAsync(p, node), "Delete"));
         ContextMenus.Show(menu, row, e);
     }
 

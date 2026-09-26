@@ -38,7 +38,13 @@ public sealed partial class PdfPane : UserControl
     public PdfPane()
     {
         InitializeComponent();
-        AddZoomLevels(ZoomMenu.Items);
+        ZoomMenu.Items.Add(ContextMenus.Item("Fit width", FitWidth, "Ctrl+0"));
+        ZoomMenu.Items.Add(ContextMenus.Item("Fit height", FitHeight, "Ctrl+Alt+0"));
+        ZoomMenu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var percent in ZoomPercents)
+        {
+            ZoomMenu.Items.Add(ContextMenus.Item($"{percent}%", () => SetScale(percent / 100.0)));
+        }
         findDelay = DispatcherQueue.CreateTimer();
         findDelay.Interval = TimeSpan.FromMilliseconds(200);
         findDelay.IsRepeating = false;
@@ -48,18 +54,6 @@ public sealed partial class PdfPane : UserControl
     }
 
     private static string L(object? value) => EmbeddedPage.Literal(value);
-
-    /// <summary>The zoom level's menu: the fits, then the presets.</summary>
-    private void AddZoomLevels(IList<MenuFlyoutItemBase> items)
-    {
-        items.Add(ContextMenus.Item("Fit width", FitWidth, "Ctrl+0"));
-        items.Add(ContextMenus.Item("Fit height", FitHeight, "Ctrl+Alt+0"));
-        items.Add(new MenuFlyoutSeparator());
-        foreach (var percent in ZoomPercents)
-        {
-            items.Add(ContextMenus.Item($"{percent}%", () => SetScale(percent / 100.0)));
-        }
-    }
 
     private void OnMessage(string type, JsonElement body)
     {
@@ -167,75 +161,6 @@ public sealed partial class PdfPane : UserControl
 
     // ---------- the bar ----------
 
-    /// <summary>Whether the bar last folded for a build running, whose Stop is wider than Compile.</summary>
-    private bool compiling;
-
-    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (e.NewSize.Width != e.PreviousSize.Width)
-        {
-            Fold();
-        }
-    }
-
-    /// <summary>
-    /// The widest form of the bar that fits, as the source bar's
-    /// (WorkspaceView.FoldSourceBar): everything labelled; then icons only,
-    /// the tooltips keeping the names; then the zoom group into "See more";
-    /// then Share too. Each form is measured as it would lay out.
-    /// </summary>
-    private void Fold()
-    {
-        var available = Bar.ActualWidth - Bar.Padding.Left - Bar.Padding.Right - Bar.ColumnSpacing;
-        // Not laid out yet, or finding, which hides the commands.
-        if (available <= 0 || FindBar.Visibility == Visibility.Visible)
-        {
-            return;
-        }
-        var unbounded = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
-        for (var form = 0; form <= 3; form++)
-        {
-            CompileLabel.Visibility = StopLabel.Visibility = ShareLabel.Visibility =
-                form == 0 ? Visibility.Visible : Visibility.Collapsed;
-            ZoomTools.Visibility = ZoomSeparator.Visibility = form < 2 ? Visibility.Visible : Visibility.Collapsed;
-            ShareButton.Visibility = form < 3 ? Visibility.Visible : Visibility.Collapsed;
-            PdfMore.Visibility = form >= 2 ? Visibility.Visible : Visibility.Collapsed;
-            CompileControls.Measure(unbounded);
-            ViewTools.Measure(unbounded);
-            if (CompileControls.DesiredSize.Width + ViewTools.DesiredSize.Width <= available)
-            {
-                return;
-            }
-        }
-    }
-
-    /// <summary>"See more": what folded, enabled as the buttons it stands for are.</summary>
-    private void OnPdfMoreOpening(object? sender, object e)
-    {
-        var items = PdfMoreMenu.Items;
-        items.Clear();
-        if (ZoomTools.Visibility == Visibility.Collapsed)
-        {
-            items.Add(ContextMenus.Item("Zoom out", "\uE71F", () => ZoomBy(1 / 1.15), "Ctrl+Minus"));
-            items.Add(ContextMenus.Item("Zoom in", "\uE8A3", () => ZoomBy(1.15), "Ctrl+Plus"));
-            var level = new MenuFlyoutSubItem { Text = $"Zoom level ({ZoomText.Text})" };
-            AddZoomLevels(level.Items);
-            items.Add(level);
-        }
-        if (ShareButton.Visibility == Visibility.Collapsed)
-        {
-            if (items.Count > 0)
-            {
-                items.Add(new MenuFlyoutSeparator());
-            }
-            items.Add(ContextMenus.Item("Share", "\uE72D", () => Command?.Invoke(MenuCommand.PdfShare)));
-        }
-        foreach (var item in items)
-        {
-            item.IsEnabled = ShareButton.IsEnabled;
-        }
-    }
-
     /// <summary>
     /// The bar and location row for the project's state: Compile, or a
     /// spinner and Stop while a build runs; and whether the PDF is current.
@@ -246,12 +171,6 @@ public sealed partial class PdfPane : UserControl
         CompileProgress.IsActive = p.Compiling;
         CompileProgress.Visibility = StopButton.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
         CompileButton.IsEnabled = canCompile;
-        // Render runs on every edit; the bar folds again only as Compile and Stop trade places.
-        if (p.Compiling != compiling)
-        {
-            compiling = p.Compiling;
-            Fold();
-        }
         SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
         Freshness.Visibility = p.Freshness is null ? Visibility.Collapsed : Visibility.Visible;
         EditedIcon.Visibility = p.Freshness == PdfFreshness.Edited ? Visibility.Visible : Visibility.Collapsed;
@@ -336,7 +255,6 @@ public sealed partial class PdfPane : UserControl
         findDelay.Stop();
         FindBar.Visibility = Visibility.Collapsed;
         CompileControls.Visibility = ViewTools.Visibility = Visibility.Visible;
-        Fold();
         FindBox.Text = "";
         FindStatus.Text = "";
         PreviousMatch.IsEnabled = NextMatch.IsEnabled = false;
