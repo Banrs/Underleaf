@@ -258,27 +258,11 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 }
 
 .window-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 40%; margin-left: var(--title-gap, 0); }
-.title-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 var(--sp-1); }
 .save-state { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; color: var(--label-2); flex: none; padding: 0 var(--sp-2); font-variant-numeric: tabular-nums; }
 
 /* One toggle exists in each band; only the relevant one shows. */
 .icon-btn.sidebar-toggle-fallback { display: none; }
 .shell:has(.sidebar.collapsed) .icon-btn.sidebar-toggle-fallback { display: inline-flex; }
-
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: var(--fs-control);
-  line-height: var(--lh-control);
-  color: var(--label-2);
-}
-.crumb { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.crumb:first-child { color: var(--label); }
-.crumb-separator { color: var(--label-3); flex: none; }
 
 /* ---------- controls ---------- */
 
@@ -673,7 +657,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    sidebar edge, icon 24 wide with a 4px gap to the label. */
 .tree, .outline, .search-results { overflow-y: auto; padding: 0 10px var(--sp-3); }
 .tree { flex: 1 1 auto; min-height: 120px; }
-.outline { flex: 0 1 auto; max-height: 40%; padding-bottom: var(--sp-2); }
+/* The outline is docked under the files at a height the divider sets. */
+.outline { flex: none; height: 38%; min-height: 80px; max-height: calc(100% - 260px); padding-bottom: var(--sp-2); }
 .search-results { flex: 1; }
 .tree.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-row); }
 
@@ -720,6 +705,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   display: block;
 }
 .outline-row:hover { background-color: var(--fill-4); }
+.outline-row.selected { background-color: var(--fill-2); }
+/* The lists clip an outer ring. */
+.outline-row:focus-visible { outline-offset: -2px; }
+
+/* The divider between the files and the outline: a hairline with a wider
+   grab zone, focusable, resized with the arrow keys too. */
+.sidebar-split {
+  position: relative;
+  flex: none;
+  height: 1px;
+  margin: var(--sp-1) 10px 0;
+  background: var(--separator);
+  transition: background-color 0.12s ease;
+}
+.sidebar-split::before { content: ''; position: absolute; inset: -4px 0; cursor: row-resize; }
+.sidebar-split:hover, .sidebar-split:focus-visible { background: var(--label-3); }
+.sidebar-split:focus-visible { outline-offset: 2px; }
+.sidebar-split.dragging { background: var(--accent); }
+.sidebar-split + .section-header.disclosure { margin-top: var(--sp-3); }
 
 /* A toolbar band at the kit's toolbar height: 44 = a 28 control with 8 above
    and below. */
@@ -826,6 +830,50 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .toolbar > * { flex-shrink: 0; }
 .toolbar .spacer { flex: 1 1 auto; min-width: var(--sp-2); }
 .toolbar-separator { width: 1px; height: var(--sp-4); background: var(--separator); flex: none; margin: 0 5px; }
+
+/* The source bar's LaTeX tools, in groups that fold into its ⋯ menu. */
+.latex-tools, .tool-group { display: flex; align-items: center; gap: var(--sp-1); flex: none; }
+.latex-tools[hidden], .tool-group[hidden] { display: none; }
+/* The section level: as wide as its widest value, so the bar holds still. */
+.heading-menu { padding: 0 var(--sp-2) 0 10px; font-weight: 400; }
+.heading-label { display: inline-grid; text-align: left; }
+.heading-label > * { grid-area: 1 / 1; }
+.heading-twin { visibility: hidden; }
+
+/* The symbol palette: a grid per kind, in a popover under its button. */
+.popover { padding: var(--sp-3); overflow-y: auto; }
+.symbol-palette { display: flex; flex-direction: column; gap: var(--sp-3); }
+.symbol-group-title { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); margin-bottom: var(--sp-1); }
+.symbol-grid { display: grid; grid-template-columns: repeat(10, 32px); gap: 2px; }
+.symbol { width: 32px; height: 32px; border-radius: var(--r-menu); font-size: 17px; line-height: 1; color: var(--label); }
+.symbol:hover { background: var(--fill-2); }
+
+/* Where the caret is: project › folders › file › section, a 28px row. */
+.location-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: var(--h-control);
+  padding: 0 var(--sp-2);
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--bg-content);
+  box-shadow: inset 0 -1px 0 var(--separator);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--label-2);
+}
+.location-bar:empty { display: none; }
+.location-crumb { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; height: 22px; padding: 0 var(--sp-1); border-radius: var(--r-small); }
+.location-crumb .icon svg { width: 14px; height: 14px; }
+.location-text { overflow: hidden; text-overflow: ellipsis; }
+.location-menu { color: var(--label); flex: 0 1 auto; }
+.location-menu.secondary { color: var(--label-2); }
+.location-menu:hover, .location-menu[aria-expanded="true"] { background: var(--fill-2); }
+.location-project, .location-folder { flex: 0 1 auto; }
+.location-chevron { display: inline-flex; flex: none; color: var(--label-3); }
+.location-chevron svg { width: 12px; height: 12px; }
 
 /* The PDF toolbar is a glass bar the document scrolls under — the kit's
    scroll-edge effect. The scroll view fills the pane; its top padding keeps
@@ -1243,10 +1291,6 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 
 /* ---------- narrow windows ---------- */
 
-@media (max-width: 900px) {
-  .crumbs, .title-separator { display: none; }
-}
-
 /* Narrow panes shed toolbar items the menu bar already carries (with the same
    shortcuts), rather than scrolling the bar and hiding controls off its end. */
 .editor-pane { container: editor-pane / inline-size; }
@@ -1254,7 +1298,16 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 @container editor-pane (max-width: 360px) {
   .toolbar [data-command="edit.undo"],
   .toolbar [data-command="edit.redo"],
-  .toolbar [data-command="edit.redo"] + .toolbar-separator { display: none; }
+  .toolbar [data-command="edit.find"],
+  .toolbar [data-command="edit.redo"] + .latex-tools > .toolbar-separator:first-child { display: none; }
+}
+/* The location row drops the project and folders first, then the section. */
+@container editor-pane (max-width: 480px) {
+  .location-project, .location-folder,
+  .location-bar .location-chevron:not(:has(+ .location-section)) { display: none; }
+}
+@container editor-pane (max-width: 300px) {
+  .location-section, .location-bar .location-chevron:has(+ .location-section) { display: none; }
 }
 @container pdf-pane (max-width: 400px) {
   .toolbar [data-command="view.zoomOut"],

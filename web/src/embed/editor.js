@@ -100,6 +100,8 @@ window.texlocal = {
     }
     else if (name === 'comment') editor.toggleComment();
     else if (name === 'find') editor.openSearch();
+    else if (name === 'findNext') editor.findNext();
+    else if (name === 'findPrevious') editor.findPrevious();
     else if (name === 'insert') editor.insertTemplate(arg);
     else if (name === 'heading') editor.setHeading(arg ?? '');
     else if (name === 'text') editor.insertText(arg ?? '');

@@ -26,7 +26,7 @@ const MENU = [
     items: [
       { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
-      { id: 'edit.find' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
+      { id: 'edit.find' }, { id: 'edit.findNext' }, { id: 'edit.findPrevious' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
       { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
     ],
   },
@@ -61,6 +61,8 @@ const FALLBACK_TITLES = {
   'edit.undo': 'Undo',
   'edit.redo': 'Redo',
   'edit.find': 'Find & Replace',
+  'edit.findNext': 'Find Next',
+  'edit.findPrevious': 'Find Previous',
   'project.search': 'Find in Project',
   'pdf.find': 'Find in PDF…',
   'edit.gotoLine': 'Go to Line…',

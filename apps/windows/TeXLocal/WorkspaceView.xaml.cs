@@ -38,7 +38,7 @@ public sealed partial class WorkspaceView : UserControl
         ]),
         ("Edit", [
             MenuCommand.EditUndo, MenuCommand.EditRedo, null,
-            MenuCommand.EditFind, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine, null,
+            MenuCommand.EditFind, MenuCommand.EditFindNext, MenuCommand.EditFindPrevious, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine, null,
             MenuCommand.EditBold, MenuCommand.EditItalic, MenuCommand.EditMath, MenuCommand.EditComment,
         ]),
         ("View", [

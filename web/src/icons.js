@@ -54,6 +54,16 @@ const PATHS = {
   // optically high because of font baseline metrics.
   sigma: '<path d="M17 5H7l6 7-6 7h10"/>',
   comment: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M7 9h10"/><path d="M7 13h6"/>',
+  // The source bar's LaTeX tools, after the macOS app's symbols.
+  radical: '<path d="M3 12h3l3 8 5-16h7"/>',
+  pi: '<path d="M9 5v14"/><path d="M4 8a3 3 0 0 1 3-3h13"/><path d="M15 5v11a3 3 0 0 0 3 3h1"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  hash: '<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3 8 21"/><path d="m16 3-2 18"/>',
+  quote: '<path d="M10 6H6a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3"/><path d="M20 6h-4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3"/>',
+  table: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/>',
+  list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/>',
+  'list-ordered': '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6 20H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+  'list-indent': '<path d="M21 6H9"/><path d="M21 12h-8"/><path d="M21 18h-8"/><path d="M4 6v7a2 2 0 0 0 2 2h3"/>',
 };
 
 export function icon(name) {

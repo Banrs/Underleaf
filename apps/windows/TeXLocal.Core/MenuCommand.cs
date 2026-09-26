@@ -22,6 +22,8 @@ public enum MenuCommand
     EditUndo,
     EditRedo,
     EditFind,
+    EditFindNext,
+    EditFindPrevious,
     EditBold,
     EditItalic,
     EditMath,
@@ -60,6 +62,8 @@ public static class MenuCommands
         MenuCommand.EditUndo => "edit.undo",
         MenuCommand.EditRedo => "edit.redo",
         MenuCommand.EditFind => "edit.find",
+        MenuCommand.EditFindNext => "edit.findNext",
+        MenuCommand.EditFindPrevious => "edit.findPrevious",
         MenuCommand.EditBold => "edit.bold",
         MenuCommand.EditItalic => "edit.italic",
         MenuCommand.EditMath => "edit.math",
@@ -101,6 +105,8 @@ public static class MenuCommands
         MenuCommand.EditUndo => "Undo",
         MenuCommand.EditRedo => "Redo",
         MenuCommand.EditFind => "Find and replace",
+        MenuCommand.EditFindNext => "Find next",
+        MenuCommand.EditFindPrevious => "Find previous",
         MenuCommand.EditBold => "Bold",
         MenuCommand.EditItalic => "Italic",
         MenuCommand.EditMath => "Inline math",
@@ -135,6 +141,8 @@ public static class MenuCommands
         MenuCommand.EditUndo => "CmdOrCtrl+Z",
         MenuCommand.EditRedo => "CmdOrCtrl+Shift+Z",
         MenuCommand.EditFind => "CmdOrCtrl+F",
+        MenuCommand.EditFindNext => "CmdOrCtrl+G",
+        MenuCommand.EditFindPrevious => "CmdOrCtrl+Shift+G",
         MenuCommand.EditBold => "CmdOrCtrl+B",
         MenuCommand.EditItalic => "CmdOrCtrl+I",
         MenuCommand.EditMath => "CmdOrCtrl+Shift+M",
@@ -171,11 +179,13 @@ public static class MenuCommands
 
     /// <summary>
     /// Undo and redo belong to whichever text field has focus — the editor
-    /// page or a native box — so the menu shows their chords but never claims
-    /// them.
+    /// page or a native box — and find next and previous to the editor page's
+    /// find panel, which also answers F3 and Shift+F3, so the menu shows their
+    /// chords but never claims them.
     /// </summary>
     public static bool IsTextEditing(this MenuCommand command) =>
-        command is MenuCommand.EditUndo or MenuCommand.EditRedo;
+        command is MenuCommand.EditUndo or MenuCommand.EditRedo
+            or MenuCommand.EditFindNext or MenuCommand.EditFindPrevious;
 
     /// <summary>
     /// Whether the window takes this command's chord. Windows has no Command

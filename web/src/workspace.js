@@ -6,19 +6,18 @@ import { $, el, toast, menuUnder, promptModal } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
-import { state, resetProjectState, analyzeDoc, outlineChain, IMAGE_FILE } from './state.js';
+import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar } from './commands.js';
 import { openSettings } from './settings.js';
 import { chooseTexFolder } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
-  buildSidebar, renderTree, updateTreeSelection, renderOutline, focusSearch,
+  buildSidebar, renderTree, updateTreeSelection, renderOutline, updateOutlineSelection, focusSearch,
   newFileFlow, newFolderFlow, uploadFlow, refreshSidebarChrome, destroySidebar,
 } from './sidebar.js';
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
-
-const TEXT_FILE = /\.(tex|bib|cls|sty|bst|txt|md|csv|tsv|json|yaml|yml|lua|py|r|dat|def|clo|tikz)$/i;
+import { buildSourceBar } from './sourcebar.js';
 
 let ui = {};              // mounted elements
 let disposeCommands = null;
@@ -137,10 +136,13 @@ function buildChrome(id) {
   const sidebar = buildSidebar({
     openFile,
     gotoLine: (line) => state.editor?.gotoLine(line),
+    revealSection: (line, focus) => state.editor?.gotoLine(line, true, focus),
     openSettings: openProjectSettings,
     onFilesChanged: refreshSymbols,
     onMainFileChange: () => compile({ auto: true }),
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
+    // A rename moved the open file: the location row names it anew.
+    onOpenPathChange: () => ui.sourceBar?.update(),
     beforePathMutation: async () => {
       if (!(await flushCurrent())) throw new Error('The active document changed while saving');
     },
@@ -156,10 +158,6 @@ function buildChrome(id) {
 
   // --- window title bar (one 52px band across the whole window) ---
   const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
-  // The breadcrumb reads as text, so it opts out of the drag region around it.
-  const crumbs = el('nav', {
-    class: 'crumbs', 'aria-label': 'Document location', 'data-tauri-drag-region': 'false',
-  });
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
   // takes over once it's hidden, so the control never disappears with the pane.
@@ -174,8 +172,6 @@ function buildChrome(id) {
     iconButton('project.close', 'chevron-left'),
     menuBar(menuUnder),
     el('span', { class: 'window-title' }, state.settings?.title || id),
-    el('span', { class: 'title-separator' }),
-    crumbs,
     el('span', { class: 'spacer' }),
     saveState,
     iconButton('view.togglePdf', 'sidebar-right'),
@@ -183,28 +179,16 @@ function buildChrome(id) {
   );
 
   // --- editor pane ---
-  const editorToolbar = el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing' },
-    iconButton('edit.undo', 'undo', 'small'),
-    iconButton('edit.redo', 'redo', 'small'),
-    el('span', { class: 'toolbar-separator' }),
-    iconButton('edit.bold', 'bold', 'small'),
-    iconButton('edit.italic', 'italic', 'small'),
-    iconButton('edit.math', 'sigma', 'small'),
-    el('span', { class: 'toolbar-separator' }),
-    el('button', {
-      class: 'btn small', title: 'Insert an environment', 'aria-haspopup': 'menu',
-      onclick: (e) => menuUnder(e.currentTarget, INSERT_TEMPLATES.map(([label, tpl]) => ({
-        label, action: () => state.editor?.insertTemplate(tpl),
-      }))),
-    }, icon('plus'), 'Insert', icon('chevron-down')),
-    el('span', { class: 'spacer' }),
-    iconButton('edit.comment', 'comment', 'small'),
-    iconButton('edit.find', 'search', 'small'),
-  );
+  const sourceBar = buildSourceBar({
+    commandButton: (commandId, glyph) => iconButton(commandId, glyph, 'small'),
+    openFile,
+    reveal: (line) => state.editor?.gotoLine(line, true),
+    afterHeading: updateDocMeta,
+  });
 
   const editorHost = el('div', { class: 'editor-host' });
   const wordCountPill = el('span', { class: 'word-count' });
-  const editorPane = el('div', { class: 'pane editor-pane' }, editorToolbar, editorHost, wordCountPill);
+  const editorPane = el('div', { class: 'pane editor-pane' }, sourceBar.toolbar, sourceBar.location, editorHost, wordCountPill);
 
   // --- PDF pane ---
   const pageIndicator = el('span', { class: 'page-indicator' });
@@ -316,8 +300,8 @@ function buildChrome(id) {
   );
 
   ui = {
-    sidebar, crumbs, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
-    compileButton, workspace, findBar, findInput, pdfFreshness,
+    sidebar, sourceBar, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
+    compileButton, workspace, findBar, findInput, stepFind, pdfFreshness,
   };
 
   setupResizer(sidebarDivider, sidebar, 'width', 180, 420, 'sidebarWidth');
@@ -370,6 +354,17 @@ export function syncToolbarState() {
 
 const hasProject = () => !!state.projectId;
 const hasEditor = () => !!state.editor;
+
+// Find Next and Previous step the search being typed in. A native menu takes
+// the chord from every field, so the PDF find field steps its own matches and
+// other fields leave it be, rather than moving the editor's search behind them.
+function findAgain(delta) {
+  const field = document.activeElement;
+  if (field === ui.findInput) { ui.stepFind(delta); return; }
+  if (field?.matches?.('input, textarea') && !ui.editorHost?.contains(field)) return;
+  if (delta > 0) state.editor?.findNext();
+  else state.editor?.findPrevious();
+}
 const hasPdf = () => !!state.pdf?.doc;
 
 function commandDefs() {
@@ -388,6 +383,8 @@ function commandDefs() {
     { id: 'edit.undo', title: 'Undo', accel: 'CmdOrCtrl+Z', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
     { id: 'edit.redo', title: 'Redo', accel: 'CmdOrCtrl+Shift+Z', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
     { id: 'edit.find', title: 'Find & Replace', accel: 'CmdOrCtrl+F', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.findNext', title: 'Find Next', accel: 'CmdOrCtrl+G', nativeOnly: true, run: () => findAgain(1), enabled: hasEditor },
+    { id: 'edit.findPrevious', title: 'Find Previous', accel: 'CmdOrCtrl+Shift+G', nativeOnly: true, run: () => findAgain(-1), enabled: hasEditor },
     { id: 'edit.bold', title: 'Bold', accel: 'CmdOrCtrl+B', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
     { id: 'edit.italic', title: 'Italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
     { id: 'edit.math', title: 'Inline Math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
@@ -470,6 +467,7 @@ function showEditorPlaceholder(message) {
   state.editor?.destroy();
   state.editor = null;
   ui.editorHost?.replaceChildren(el('p', { class: 'editor-placeholder' }, message));
+  ui.sourceBar?.update();
   refreshCommands();
 }
 
@@ -573,6 +571,7 @@ export async function openFile(path) {
   editorStateCache.delete(path);
 
   state.openPath = path;
+  state.topLine = 1;
   updateTreeSelection();
   state.editor?.destroy();
   host.replaceChildren();
@@ -598,6 +597,14 @@ export async function openFile(path) {
       state.cursorLine = line;
       clearTimeout(crumbTimer);
       crumbTimer = setTimeout(renderCrumbs, 150);
+    },
+    onScroll: (line) => {
+      // At the end of the file a section chosen in the outline may not reach
+      // the top; it stays selected rather than the one the view stopped at.
+      const s = host.querySelector('.cm-scroller');
+      const atEnd = s && s.scrollTop + s.clientHeight >= s.scrollHeight - 1;
+      if (!(atEnd && state.topLine > line)) state.topLine = line;
+      updateOutlineSelection();
     },
   });
   if (restore) state.editor.setScrollTop(restore.scrollTop);
@@ -683,15 +690,9 @@ function updateDocMeta() {
   }
 }
 
+// The source bar's section level and location row follow the caret.
 function renderCrumbs() {
-  if (!ui.crumbs) return;
-  const parts = [];
-  if (state.openPath) parts.push(state.openPath.split('/').pop());
-  for (const entry of outlineChain(state.cursorLine)) parts.push(entry.title);
-  ui.crumbs.replaceChildren(...parts.flatMap((p, i) => [
-    i ? el('span', { class: 'crumb-separator', 'aria-hidden': 'true' }, '›') : null,
-    el('span', { class: 'crumb' }, p),
-  ]).filter(Boolean));
+  ui.sourceBar?.update();
 }
 
 // ---------- compile ----------
@@ -943,15 +944,3 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     handle.addEventListener('pointercancel', onUp);
   });
 }
-
-// ---------- insert templates ----------
-
-const INSERT_TEMPLATES = [
-  ['Figure', '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n'],
-  ['Table', '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n'],
-  ['Equation', '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n'],
-  ['Align (multi-line math)', '\\begin{align}\n  $0 \\\\\n\\end{align}\n'],
-  ['Bulleted List', '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n'],
-  ['Numbered List', '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n'],
-  ['Code Block', '\\begin{verbatim}\n$0\n\\end{verbatim}\n'],
-];

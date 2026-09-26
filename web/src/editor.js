@@ -8,7 +8,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from
 import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
+import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, findPrevious } from '@codemirror/search';
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
@@ -314,6 +314,29 @@ export function latexCompletions(getSymbols) {
 // `content`: it carries the document, selection, and undo history of an
 // earlier session with the same file. Its embedded listener closures only
 // touch stable module-level state, so reattaching them is safe.
+// A line as a heading of `command` (`section` etc.), or as plain text given
+// none, and where the caret goes: after the title. A heading is found where
+// the outline finds one (state.js SECTION_RE): anywhere on the line, with
+// an optional short title, which it keeps; otherwise the line is the title.
+export function headingLine(line, command) {
+  const m = /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(\[[^\]]*\])?\s*\{/.exec(line);
+  let before = /^\s*/.exec(line)[0];
+  let title = line.trim();
+  let rest = '';
+  if (m) {
+    before = line.slice(0, m.index);
+    // The title runs to the brace that closes the command's.
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < line.length && depth; i++) depth += { '{': 1, '}': -1 }[line[i]] ?? 0;
+    title = line.slice(m.index + m[0].length, depth ? line.length : i - 1);
+    rest = depth ? '' : line.slice(i);
+  }
+  if (!command) return { text: `${before}${title}${rest}`, cursor: before.length + title.length + rest.length };
+  const head = `${before}\\${command}${m?.[2] ?? ''}${m?.[3] ?? ''}{`;
+  return { text: `${head}${title}}${rest}`, cursor: head.length + title.length };
+}
+
 export function createEditor({ parent, content, restore, onChange, onCursor, onScroll, dark, getSymbols }) {
   const state = restore ?? EditorState.create({
     doc: content,
@@ -355,12 +378,16 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
   // A restored state carries the theme it was cached under, which may be stale.
   if (restore) view.dispatch({ effects: themeCompartment.reconfigure(themeFor(dark)) });
   // The line at the top of the view, as the reader moves through the file:
-  // an outline follows where you are reading, as Overleaf's does.
+  // an outline follows where you are reading, as Overleaf's does. The first
+  // line at least half showing: a jump to a heading leaves a sliver of the
+  // line above it in view, and that line would name the section before.
   if (onScroll) {
     let frame = 0;
     const report = () => {
       frame = 0;
-      if (view.dom.isConnected) onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number);
+      if (!view.dom.isConnected) return;
+      const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
+      onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(top + view.defaultLineHeight / 2).from).number);
     };
     view.scrollDOM.addEventListener('scroll', () => { frame ||= requestAnimationFrame(report); }, { passive: true });
     frame = requestAnimationFrame(report);
@@ -421,25 +448,9 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
     // existing heading changes level and keeps its title, and a line of text
     // becomes the title.
     setHeading(command) {
-      const { state } = view;
-      const line = state.doc.lineAt(state.selection.main.head);
-      const m = /^(\s*)\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*\{/.exec(line.text);
-      let title = line.text.trim();
-      let indent = /^\s*/.exec(line.text)[0];
-      let rest = '';
-      if (m) {
-        indent = m[1];
-        // The title runs to the brace that closes the command's.
-        let depth = 1;
-        let i = m[0].length;
-        for (; i < line.text.length && depth; i++) depth += { '{': 1, '}': -1 }[line.text[i]] ?? 0;
-        title = line.text.slice(m[0].length, depth ? line.text.length : i - 1);
-        rest = depth ? '' : line.text.slice(i);
-      }
-      const star = m?.[3] ?? '';
-      const text = command ? `${indent}\\${command}${star}{${title}}${rest}` : `${indent}${title}${rest}`;
-      const cursor = line.from + (command ? indent.length + command.length + star.length + 2 + title.length : text.length);
-      view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: cursor } });
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const { text, cursor } = headingLine(line.text, command);
+      view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: line.from + cursor } });
       view.focus();
     },
     // Insert a multi-line template at the cursor; "$0" marks the cursor spot.
@@ -454,6 +465,10 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       view.focus();
     },
     openSearch: () => openSearchPanel(view),
+    // The next or previous match of the find panel's query; with no query
+    // yet, CodeMirror opens the panel instead.
+    findNext: () => findNext(view),
+    findPrevious: () => findPrevious(view),
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };

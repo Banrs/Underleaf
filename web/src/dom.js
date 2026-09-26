@@ -224,3 +224,42 @@ export function menuUnder(target, items, options) {
   const r = target.getBoundingClientRect();
   return contextMenu(r.left, r.bottom + 4, items, { ...options, anchor: target });
 }
+
+// A non-modal popover below a control, holding `content` (the symbol
+// palette): it closes the way a menu does (Escape and a press outside restore
+// focus to the control; Tab moves on), and a second click on the control
+// closes it. `label` names it for assistive technology.
+export function popoverUnder(target, content, { label } = {}) {
+  if (openMenu?.anchor === target) { openMenu.dismiss(); return null; }
+  openMenu?.dismiss({ restore: false });
+  const dismiss = ({ restore = true } = {}) => {
+    if (openMenu?.dismiss === dismiss) openMenu = null;
+    box.remove();
+    target.setAttribute('aria-expanded', 'false');
+    removeEventListener('pointerdown', onAway, true);
+    removeEventListener('keydown', onKey, true);
+    if (restore && target.isConnected) target.focus();
+  };
+  const onAway = (e) => { if (!box.contains(e.target) && !target.contains(e.target)) dismiss(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); dismiss(); }
+    else if (e.key === 'Tab') dismiss();   // Tab then moves on from the control
+  };
+  const box = el('div', { class: 'menu popover', role: 'dialog', 'aria-label': label }, content);
+  $('#modal-root').appendChild(box);
+  // The target's rect is in window pixels, the box's own lengths in the
+  // body's zoomed ones (the interface scale; its size is read from offset*,
+  // which the pop-in transform leaves alone). Taller than the window, it
+  // scrolls.
+  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  box.style.maxHeight = `${(innerHeight - 16) / zoom}px`;
+  const r = target.getBoundingClientRect();
+  const [w, h] = [box.offsetWidth * zoom, box.offsetHeight * zoom];
+  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8)) / zoom}px`;
+  box.style.top = `${Math.max(8, Math.min(r.bottom + 4, innerHeight - h - 8)) / zoom}px`;
+  addEventListener('pointerdown', onAway, true);
+  addEventListener('keydown', onKey, true);
+  target.setAttribute('aria-expanded', 'true');
+  openMenu = { dismiss, anchor: target };
+  return { dismiss };
+}
