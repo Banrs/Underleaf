@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::analyze;
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
 use crate::projects::{self, FileStamp, Symbols};
 use crate::settings;
@@ -452,6 +453,7 @@ impl Service {
             "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
             "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
+            "analyze" => out(analyze::analyze(&s("text")?)),
             "search_project" => out(projects::search_project(
                 &root()?,
                 &s("query")?,

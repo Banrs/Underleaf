@@ -75,6 +75,15 @@ fn commands_round_trip_through_the_c_abi() {
         "x"
     );
 
+    assert_eq!(
+        call(
+            handle,
+            "analyze",
+            Some(json!({ "text": "\\section{Intro}\nHello world" }))
+        )["ok"],
+        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1 }], "words": 3, "lines": 2 })
+    );
+
     // Errors come back as an envelope with the core's status, never a crash.
     let bad = call(
         handle,

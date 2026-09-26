@@ -7,6 +7,7 @@
 // SyncTeX wants '/' regardless of OS. Inputs are accepted with either
 // separator.
 
+pub mod analyze;
 mod atomic;
 pub mod compile;
 pub mod error;
