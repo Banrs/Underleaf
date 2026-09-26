@@ -495,6 +495,12 @@ final class PDFController {
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
 
+    func pageChanged() {
+        guard let view, let document = view.document, let page = view.currentPage else { return }
+        self.page = document.index(for: page) + 1
+        pageCount = document.pageCount
+    }
+
     func scaleChanged() {
         guard let view else { return }
         zoomLabel = "\(Int((view.scaleFactor * 100).rounded()))%"
@@ -634,7 +640,8 @@ private struct PDFRepresentable: NSViewRepresentable {
     final class Coordinator {
         var version = 0
         var highlightToken = 0
-        var observers: [NSObjectProtocol] = []
+        /// Following the view's page and scale, until the view goes.
+        var watches: [Task<Void, Never>] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -661,16 +668,13 @@ private struct PDFRepresentable: NSViewRepresentable {
             Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
         controller.view = view
-        context.coordinator.observers = [
-            NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [controller] _ in
-                MainActor.assumeIsolated {
-                    guard let view = controller.view, let document = view.document, let page = view.currentPage else { return }
-                    controller.page = document.index(for: page) + 1
-                    controller.pageCount = document.pageCount
-                }
+        let center = NotificationCenter.default
+        context.coordinator.watches = [
+            Task { [controller] in
+                for await _ in center.notifications(named: .PDFViewPageChanged, object: view) { controller.pageChanged() }
             },
-            NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: view, queue: .main) { [controller] _ in
-                MainActor.assumeIsolated { controller.scaleChanged() }
+            Task { [controller] in
+                for await _ in center.notifications(named: .PDFViewScaleChanged, object: view) { controller.scaleChanged() }
             },
         ]
         return view
@@ -690,7 +694,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
-        coordinator.observers.forEach(NotificationCenter.default.removeObserver)
+        coordinator.watches.forEach { $0.cancel() }
     }
 
     /// Load a rebuilt PDF where the reader was: same spot on the same page,
