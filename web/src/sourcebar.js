@@ -39,7 +39,7 @@ const REFERENCE_TEMPLATES = [
   ['Label', '\\label{$0}'], ['Link', '\\href{$0}{}'], ['URL', '\\url{$0}'],
 ];
 
-// Symbols by kind, each inserted as its command.
+// Symbols by kind, each inserted as its command: bare in math, in $…$ in text.
 export const SYMBOL_GROUPS = [
   ['Greek', [['α', '\\alpha'], ['β', '\\beta'], ['γ', '\\gamma'], ['δ', '\\delta'], ['ε', '\\epsilon'],
     ['ζ', '\\zeta'], ['η', '\\eta'], ['θ', '\\theta'], ['κ', '\\kappa'], ['λ', '\\lambda'],
@@ -220,7 +220,7 @@ function openSymbols(anchor) {
   const buttons = [];
   const choose = (command) => {
     popover?.dismiss({ restore: false });
-    state.editor?.insertText(command);
+    state.editor?.insertSymbol(command);
   };
   const content = SYMBOL_GROUPS.map(([title, symbols]) => {
     const id = `symbols-${title.replace(/\W+/g, '-').toLowerCase()}`;

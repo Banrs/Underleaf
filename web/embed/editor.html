@@ -56,14 +56,34 @@
     :root[data-host] .cm-activeLineGutter { color: var(--host-text) !important; }
     :root[data-host] .cm-line { padding-left: 4px; }
 
+    /* The current line and the other occurrences of the selection in the
+       host's faint neutral fills, as Xcode draws them, whatever the syntax
+       colours' theme tints them. Specificity rather than !important, which
+       would outrank the jump flash's animation (styles.css) on the line it
+       lands on. As CodeMirror's own rule, no occurrence tint inside a find
+       match. */
+    :root[data-host] .cm-editor .cm-activeLine,
+    :root[data-host] .cm-editor .cm-activeLineGutter { background-color: var(--host-current-line); }
+    :root[data-host] .cm-editor .cm-selectionMatch { background-color: var(--host-selection-match); }
+    :root[data-host] .cm-editor .cm-searchMatch .cm-selectionMatch { background-color: transparent; }
+
     /* Find matches in the system's find highlight: every match tinted, the
        current one solid with dark text, as Safari and TextEdit show it. */
     :root[data-host] .cm-searchMatch {
       background-color: color-mix(in srgb, var(--host-find-highlight) 35%, transparent) !important;
       outline: none !important;
     }
+    /* In dark mode the tint lifts the background toward the syntax colours
+       (a comment's grey, a keyword's pink), so the other matches' text takes
+       the system's text colour, which keeps its contrast on the tint. */
+    :root[data-host][data-theme="dark"] .cm-searchMatch,
+    :root[data-host][data-theme="dark"] .cm-searchMatch * {
+      color: var(--host-text) !important;
+    }
     :root[data-host] .cm-searchMatch-selected,
-    :root[data-host] .cm-searchMatch-selected * {
+    :root[data-host] .cm-searchMatch-selected *,
+    :root[data-host][data-theme="dark"] .cm-searchMatch-selected,
+    :root[data-host][data-theme="dark"] .cm-searchMatch-selected * {
       background-color: var(--host-find-highlight) !important;
       color: #000 !important;
     }

@@ -234,6 +234,139 @@ export const mathPreviewField = StateField.define({
 // Hide the preview when the editor loses focus (e.g. clicking into the PDF).
 const mathPreviewFocus = EditorView.focusChangeEffect.of((_state, focusing) => editorFocusEff.of(focusing));
 
+// ---------- math mode ----------
+// Whether a position of a LaTeX source is in math mode, so a symbol from the
+// palette goes in as \alpha in math and as $\alpha$ in text. The stex mode's
+// syntax tree only knows $, $$, \( and \[, not math environments, so this
+// reads the text before the position as TeX would: $…$, $$…$$, \(…\), \[…\]
+// and the math environments (starred too) open math; \text{…} and its kin
+// return to text inside it; escapes (\$, \%, \\) are not delimiters; comments
+// and verbatim are skipped; and a blank line ends an unclosed $ or \[, as
+// the paragraph it cannot span. Only the text before the position counts,
+// so `$|$` (an empty pair, the caret between) is math.
+
+const MATH_ENVIRONMENTS = new Set([
+  'equation', 'align', 'gather', 'multline', 'eqnarray', 'alignat', 'flalign', 'xalignat', 'xxalignat',
+  'math', 'displaymath', 'dmath', 'dgroup', 'darray',
+].flatMap((e) => [e, `${e}*`]));
+const VERBATIM_ENVIRONMENTS = new Set(['verbatim', 'verbatim*', 'Verbatim', 'Verbatim*', 'lstlisting', 'minted', 'comment']);
+// Commands whose braced argument is text, even in math.
+const TEXT_COMMANDS = new Set([
+  'text', 'textrm', 'textit', 'textbf', 'textsf', 'texttt', 'textup', 'textsl', 'textsc', 'textmd', 'textnormal',
+  'mbox', 'hbox', 'fbox', 'intertext', 'shortintertext',
+]);
+
+export function mathModeAt(text, pos = text.length) {
+  const src = text.slice(0, pos);
+  const n = src.length;
+  // Open groups, innermost last: { math, end }, where `end` is what closes
+  // it: '$', '$$', '\\)', '\\]', '}' or 'env:<name>'.
+  const stack = [];
+  const math = () => (stack.length ? stack[stack.length - 1].math : false);
+  const top = () => stack[stack.length - 1]?.end;
+  let textArg = false; // the next { opens a text argument (\text{)
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    if (c === '%') {
+      const eol = src.indexOf('\n', i);
+      if (eol === -1) break;
+      i = eol; // the newline itself is read next, for the blank-line rule
+      continue;
+    }
+    if (c === '\n') {
+      // A blank line (only spaces between) ends a paragraph, which inline
+      // and display delimiters cannot span: drop them, and all inside them.
+      let j = i + 1;
+      while (j < n && (src[j] === ' ' || src[j] === '\t' || src[j] === '\r')) j++;
+      if (src[j] === '\n') {
+        const k = stack.findIndex((f) => f.end === '$' || f.end === '$$' || f.end === '\\)' || f.end === '\\]');
+        if (k !== -1) stack.length = k;
+        textArg = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '$') {
+      if (top() === '$') { stack.pop(); i += 1; }
+      else if (top() === '$$') { stack.pop(); i += src[i + 1] === '$' ? 2 : 1; }
+      else if (math()) i += 1; // a stray $ in an environment's math
+      else if (src[i + 1] === '$') { stack.push({ math: true, end: '$$' }); i += 2; }
+      else { stack.push({ math: true, end: '$' }); i += 1; }
+      textArg = false;
+      continue;
+    }
+    if (c === '{') {
+      stack.push({ math: textArg ? false : math(), end: '}' });
+      textArg = false;
+      i += 1;
+      continue;
+    }
+    if (c === '}') {
+      // The innermost open brace, and anything unclosed inside it.
+      const k = stack.findLastIndex((f) => f.end === '}');
+      if (k !== -1) stack.length = k;
+      i += 1;
+      continue;
+    }
+    if (c !== '\\') {
+      if (textArg && !/\s/.test(c)) textArg = false;
+      i += 1;
+      continue;
+    }
+    // A control symbol: \( \) \[ \] open and close math; any other (\$, \%,
+    // \\, \{) is an escape and nothing more.
+    const d = src[i + 1];
+    if (d === undefined) break;
+    if (!/[A-Za-z]/.test(d)) {
+      if (d === '(' || d === '[') { if (!math()) stack.push({ math: true, end: `\\${d === '(' ? ')' : ']'}` }); }
+      else if (d === ')' || d === ']') {
+        const k = stack.findLastIndex((f) => f.end === `\\${d}`);
+        if (k !== -1) stack.length = k;
+      }
+      textArg = false;
+      i += 2;
+      continue;
+    }
+    // A control word.
+    let j = i + 1;
+    while (j < n && /[A-Za-z]/.test(src[j])) j++;
+    const name = src.slice(i + 1, j);
+    i = j;
+    textArg = false;
+    if (name === 'verb') {
+      if (src[i] === '*') i += 1;
+      const delim = src[i];
+      if (delim === undefined) break;
+      const close = src.indexOf(delim, i + 1);
+      if (close === -1) return false; // inside \verb|…
+      i = close + 1;
+      continue;
+    }
+    if (name === 'begin' || name === 'end') {
+      const m = /^\s*\{([^{}]*)\}/.exec(src.slice(i, i + 64));
+      if (!m) continue;
+      const env = m[1].trim();
+      i += m[0].length;
+      if (name === 'begin') {
+        if (VERBATIM_ENVIRONMENTS.has(env)) {
+          const close = src.indexOf(`\\end{${env}}`, i);
+          if (close === -1) return false; // inside verbatim
+          i = close + `\\end{${env}}`.length;
+        } else {
+          stack.push({ math: MATH_ENVIRONMENTS.has(env) || math(), end: `env:${env}` });
+        }
+      } else {
+        const k = stack.findLastIndex((f) => f.end === `env:${env}`);
+        if (k !== -1) stack.length = k;
+      }
+      continue;
+    }
+    if (TEXT_COMMANDS.has(name) && math()) textArg = true;
+  }
+  return math();
+}
+
 // Toggle "%" line comments on the selected lines (LaTeX has no block comments).
 function toggleLatexComment(view) {
   const { state } = view;
@@ -440,6 +573,13 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       const { from, to } = view.state.selection.main;
       view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
       view.focus();
+    },
+    // A math symbol from the palette (\alpha) in place of the selection: as
+    // it is in math, and as $\alpha$ in text, where the bare command would
+    // stop the build. The caret goes after it either way.
+    insertSymbol(command) {
+      const { from } = view.state.selection.main;
+      this.insertText(mathModeAt(view.state.sliceDoc(0, from)) ? command : `$${command}$`);
     },
     // Make the cursor's line a heading (`\section` etc.), or plain text given
     // no command, as a word processor's paragraph style does: an
