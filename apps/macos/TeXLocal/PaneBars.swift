@@ -6,16 +6,19 @@ import SwiftUI
 /// standard one: the bars under the window toolbar (the source's and the
 /// PDF's actions, the find bar, the build panel's header) and the
 /// secondary rows.
+@MainActor
 enum BarMetrics {
-    /// A bar of actions: regular 24 pt controls with 8 pt above and below,
-    /// the kit's Unified Compact toolbar.
-    static let barHeight: CGFloat = 40
     static let controlSize: ControlSize = .regular
-    /// The secondary rows: the source's location row and the status bar.
-    /// Small 20 pt controls with 4 pt above and below.
-    static let secondaryBarHeight: CGFloat = 28
     static let inset: CGFloat = 8
     static let spacing: CGFloat = 4
+    /// A bar of actions: its controls' native height (24 pt at regular)
+    /// with 8 pt above and below, the kit's Unified Compact toolbar. Every
+    /// bar is its control size's height, whatever it holds, so bars side by
+    /// side line up, as AppKit's do.
+    static var barHeight: CGFloat { controlHeight(controlSize) + 2 * inset }
+    /// The secondary rows (the location rows, the status bar): small
+    /// controls (20 pt) with 4 pt above and below.
+    static var secondaryBarHeight: CGFloat { controlHeight(Typography.secondaryControlSize) + 2 * spacing }
     static let groupSpacing: CGFloat = 8
     static let separatorHeight: CGFloat = 16
     /// Between the separate items of a secondary row's text (the status
@@ -32,13 +35,22 @@ enum BarMetrics {
     /// the bars under it read as one chrome block over the content. Not
     /// `.bar`: nothing scrolls under a stacked bar for it to blur.
     static let background = Color(nsColor: .windowBackgroundColor)
+
+    /// A bezeled control's height at a size, as the system draws it.
+    static func controlHeight(_ size: ControlSize) -> CGFloat {
+        if let height = heights[size] { return height }
+        let height = NSHostingView(rootView: Button("Button") {}.buttonStyle(.bordered).controlSize(size)).fittingSize.height
+        heights[size] = height
+        return height
+    }
+
+    private static var heights: [ControlSize: CGFloat] = [:]
 }
 
-/// Controls that float over a pane's content (the PDF's page controls and
-/// its find bar): Liquid Glass capsules, as the toolbar's items are, at the
-/// window toolbar's size, so the two read as one control layer. The kit's
-/// XL toolbar pill: large (28 pt) controls with 4 pt of glass around them,
-/// a 36 pt capsule.
+/// Controls that float over a pane's content (Find in PDF): a Liquid
+/// Glass capsule, as the toolbar's items are, at the window toolbar's
+/// size, so the two read as one control layer. The kit's XL toolbar pill:
+/// large (28 pt) controls with 4 pt of glass around them, 36 pt.
 enum FloatingMetrics {
     static let controlSize: ControlSize = .large
     static let padding: CGFloat = 4
@@ -47,15 +59,8 @@ enum FloatingMetrics {
     static let inset: CGFloat = 12
     /// Apart from the pane's edges.
     static let margin: CGFloat = 12
-    /// Between separate capsules: further apart than the container's
-    /// blending distance, so they stay separate shapes.
-    static let spacing: CGFloat = 8
-    static let blending: CGFloat = 4
     /// Between the controls in one capsule.
     static let itemSpacing: CGFloat = 12
-    /// The height a capsule takes, for the content inset that lets the
-    /// last page scroll clear of it.
-    static let height: CGFloat = 36
 }
 
 /// The app's text roles, each one of the system's text styles, so the
@@ -94,7 +99,6 @@ extension View {
             .padding(.vertical, FloatingMetrics.padding)
             .padding(.leading, leadsWithField ? FloatingMetrics.padding : FloatingMetrics.inset)
             .padding(.trailing, FloatingMetrics.inset)
-            .frame(minHeight: FloatingMetrics.height)
             .glassEffect(.regular, in: .capsule)
     }
 }

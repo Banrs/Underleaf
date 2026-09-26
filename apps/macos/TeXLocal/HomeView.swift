@@ -210,7 +210,6 @@ private struct ProjectRow: View {
                 .font(.title2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
     }
 }
 

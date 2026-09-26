@@ -157,7 +157,7 @@ enum Prompt: String, Identifiable {
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, fitWidth, fitHeight, find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, find, inverseFromView, print
 }
 
 extension AppModel {
@@ -433,6 +433,8 @@ struct AppCommands: Commands {
             Divider()
             item(.viewZoomIn)
             item(.viewZoomOut)
+            Button("Actual Size") { app.requestPDF(.actualSize) }
+                .disabled(app.project == nil)
             item(.viewFitWidth)
             item(.viewFitHeight)
             Divider()

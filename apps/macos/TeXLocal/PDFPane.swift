@@ -112,6 +112,7 @@ struct PDFPane: View {
         switch action {
         case .zoomIn: controller.zoom(in: true)
         case .zoomOut: controller.zoom(in: false)
+        case .actualSize: controller.setScale(1)
         case .fitWidth: controller.fitWidth()
         case .fitHeight: controller.fitHeight()
         case .find: finding = true; findFocus += 1
@@ -178,18 +179,56 @@ struct PDFPane: View {
         }
     }
 
-    /// Zoom out, actual size, zoom in: three equal buttons, as Preview's
-    /// zoom is. The scale and its presets are the menu in the row under the
-    /// bar (`ZoomMenu`). Not the View menu's commands: their route
-    /// (`requestPDF`) also hides the panel.
+    /// Zoom out | the scale | zoom in, one native control group. The scale
+    /// is a menu of ways to fit and preset scales, the one in use checked:
+    /// a menu rather than a pop-up, as the scale is any percentage. Not the
+    /// View menu's commands: their route (`requestPDF`) also hides the panel.
     private var zoomControls: some View {
-        ToolGroup(items: [
-            Segment(id: "out", title: "Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) },
-            Segment(id: "actual", title: "Actual Size", systemImage: "1.magnifyingglass") { controller.setScale(1) },
-            Segment(id: "in", title: "Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) },
-        ])
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
+                .help("Zoom Out")
+            Menu {
+                // The fitting in use is checked, as Preview's is; while
+                // fitting, no preset is, even at a preset's scale.
+                Picker("Fit", selection: Binding(
+                    get: { controller.fit },
+                    set: { fit in
+                        switch fit {
+                        case .width: controller.fitWidth()
+                        case .height: controller.fitHeight()
+                        case nil: break
+                        }
+                    }
+                )) {
+                    Text("Fit Width").tag(Optional(PDFController.Fit.width))
+                    Text("Fit Height").tag(Optional(PDFController.Fit.height))
+                }
+                .pickerStyle(.inline)
+                Picker("Zoom", selection: Binding(
+                    get: { controller.fit == nil ? Self.zoomPresets.first { "\($0)%" == controller.zoomLabel } : nil },
+                    set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
+                )) {
+                    ForEach(Self.zoomPresets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                // As wide at 68% as at 400% (figure spaces are a digit
+                // wide), so the group keeps its width and Zoom Out stays
+                // under the pointer as the scale changes.
+                Text(String(repeating: "\u{2007}", count: max(0, 4 - controller.zoomLabel.count)) + controller.zoomLabel)
+                    .monospacedDigit()
+            }
+            .help("Zoom")
+            .accessibilityLabel("Zoom")
+            .accessibilityValue(controller.zoomLabel)
+            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
+                .help("Zoom In")
+        }
+        .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
+
+    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
 
     /// Find in PDF, floating over the top of the pages: the field, the
     /// count, previous / next and Done, one glass capsule. A narrow pane
@@ -255,61 +294,6 @@ struct PDFPane: View {
     }
 }
 
-/// The foot of the PDF: whether it still matches the source, then the
-/// page with previous / next, each its own glass capsule floating over the
-/// pages, as the toolbar's items float over the window. The freshness is a
-/// button that does what fixes it: compile, or show the failed build's
-/// issues. A narrow pane shortens the page to "2 / 5" and the freshness to
-/// its symbol.
-/// The scale as quiet text with a menu of ways to fit and preset scales,
-/// the one in use checked: a menu rather than a pop-up, as the scale is
-/// any percentage.
-private struct ZoomMenu: View {
-    let controller: PDFController
-    private static let presets = [50, 75, 100, 125, 150, 200]
-
-    var body: some View {
-        Menu {
-            // The fitting in use is checked, as Preview's is; while fitting,
-            // no preset is, even at a preset's scale.
-            Picker("Fit", selection: Binding(
-                get: { controller.fit },
-                set: { fit in
-                    switch fit {
-                    case .width: controller.fitWidth()
-                    case .height: controller.fitHeight()
-                    case nil: break
-                    }
-                }
-            )) {
-                Text("Fit Width").tag(Optional(PDFController.Fit.width))
-                Text("Fit Height").tag(Optional(PDFController.Fit.height))
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            Divider()
-            Picker("Zoom", selection: Binding(
-                get: { controller.fit == nil ? Self.presets.first { "\($0)%" == controller.zoomLabel } : nil },
-                set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
-            )) {
-                ForEach(Self.presets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Text(controller.zoomLabel).monospacedDigit()
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.visible)
-        .foregroundStyle(.secondary)
-        .fixedSize()
-        .help("Zoom")
-        .accessibilityLabel("Zoom")
-        .accessibilityValue(controller.zoomLabel)
-    }
-}
-
 /// Whether the preview is current, and the page at the trailing end, as
 /// quiet text in the row under the PDF's bar, as Preview shows the page:
 /// paging is the keyboard's and the scroll's. The PDF's page, not the one
@@ -339,9 +323,6 @@ private struct PageRow: View {
                 .transition(.opacity)
             }
             Spacer(minLength: 0)
-            if project.pdfVersion > 0 {
-                ZoomMenu(controller: controller)
-            }
             if project.pdfVersion > 0, controller.pageCount > 0 {
                 Text("Page \(controller.page) of \(controller.pageCount)")
                     .monospacedDigit()
