@@ -99,7 +99,7 @@ private struct FilesList: View {
         } primaryAction: { paths in
             // Double-click or Return on a folder opens or closes it, as
             // Xcode's navigator does; a file is open once it's chosen.
-            guard let path = paths.first, isFolder(path, in: project.tree) else { return }
+            guard let path = paths.first, project.tree.flattened.contains(where: { $0.path == path && $0.isDirectory }) else { return }
             if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
@@ -164,10 +164,6 @@ private struct FilesList: View {
                 row(node).tag(node.path)
             }
         })
-    }
-
-    private func isFolder(_ path: String, in nodes: [TreeNode]) -> Bool {
-        nodes.contains { $0.path == path ? $0.isDirectory : isFolder(path, in: $0.children ?? []) }
     }
 
     private func row(_ node: TreeNode) -> some View {

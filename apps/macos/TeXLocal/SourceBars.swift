@@ -340,13 +340,8 @@ struct SourceLocation: View {
     /// The text files in the open file's folder, walked once per update.
     private func siblings(of path: String) -> [String] {
         let folder = (path as NSString).deletingLastPathComponent
-        return textFiles(project.tree).filter { ($0 as NSString).deletingLastPathComponent == folder }
-    }
-
-    private func textFiles(_ nodes: [TreeNode]) -> [String] {
-        nodes.flatMap { node in
-            node.isDirectory ? textFiles(node.children ?? []) : (isTextFile(node.path) ? [node.path] : [])
-        }
+        return project.tree.flattened.filter { !$0.isDirectory && isTextFile($0.path) }.map(\.path)
+            .filter { ($0 as NSString).deletingLastPathComponent == folder }
     }
 }
 

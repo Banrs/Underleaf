@@ -139,16 +139,12 @@ private struct NewEntrySheet: View {
                 .focused($nameFocused)
             Picker("Where", selection: $folder) {
                 Label(project.id, systemImage: "folder").tag("")
-                ForEach(folders(project.tree), id: \.self) { path in
+                ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in
                     Label(path, systemImage: "folder").tag(path)
                 }
             }
         }
         .onAppear { nameFocused = true }
-    }
-
-    private func folders(_ nodes: [TreeNode]) -> [String] {
-        nodes.filter(\.isDirectory).flatMap { [$0.path] + folders($0.children ?? []) }
     }
 }
 
@@ -268,7 +264,7 @@ struct InspectorView: View {
                         get: { project.settings?.mainFile ?? "" },
                         set: { path in Task { await project.setMainFile(path) } }
                     )) {
-                        ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
+                        ForEach(project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path), id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
                     .fixedSize()
@@ -356,11 +352,5 @@ struct InspectorView: View {
     private func folder(of path: String) -> String {
         let dir = (path as NSString).deletingLastPathComponent
         return dir.isEmpty ? project.id : dir
-    }
-
-    private func texFiles(_ nodes: [TreeNode]) -> [String] {
-        nodes.flatMap { node in
-            node.isDirectory ? texFiles(node.children ?? []) : (node.path.hasSuffix(".tex") ? [node.path] : [])
-        }
     }
 }

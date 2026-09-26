@@ -23,6 +23,11 @@ struct TreeNode: Decodable, Identifiable {
     var isDirectory: Bool { type == "dir" }
 }
 
+extension [TreeNode] {
+    /// Every entry, each folder before what it holds.
+    var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
+}
+
 struct TexStatus: Decodable {
     let available: Bool
     let version: String?
