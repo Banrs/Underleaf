@@ -11,11 +11,22 @@ internal static class Dialogs
 {
     public static bool IsOpen { get; private set; }
 
-    private static async Task<ContentDialogResult> ShowAsync(ContentDialog dialog, XamlRoot root)
+    private static ContentDialog Dialog(string title, object content, string action, string cancel = "Cancel",
+        ContentDialogButton defaultButton = ContentDialogButton.Primary) => new()
+    {
+        Title = title,
+        Content = content,
+        PrimaryButtonText = action,
+        CloseButtonText = cancel,
+        DefaultButton = defaultButton,
+    };
+
+    /// <summary>Whether the primary action was chosen.</summary>
+    private static async Task<bool> ShowAsync(ContentDialog dialog, XamlRoot root)
     {
         if (IsOpen)
         {
-            return ContentDialogResult.None;
+            return false;
         }
         dialog.XamlRoot = root;
         dialog.Style = (Style)Application.Current.Resources["DefaultContentDialogStyle"];
@@ -28,7 +39,7 @@ internal static class Dialogs
         IsOpen = true;
         try
         {
-            return await dialog.ShowAsync();
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
         }
         finally
         {
@@ -46,65 +57,26 @@ internal static class Dialogs
             box.Focus(FocusState.Programmatic);
             box.SelectAll();
         };
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = box,
-            PrimaryButtonText = action,
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-        };
-        if (await ShowAsync(dialog, root) != ContentDialogResult.Primary)
-        {
-            return null;
-        }
-        var text = box.Text.Trim();
-        return text.Length == 0 ? null : text;
+        return await ShowAsync(Dialog(title, box, action), root) && box.Text.Trim() is { Length: > 0 } text ? text : null;
     }
 
     /// <summary>A destructive action, which Cancel guards by default.</summary>
-    public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string action)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = new TextBlock { Text = body, TextWrapping = TextWrapping.Wrap },
-            PrimaryButtonText = action,
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-        };
-        return await ShowAsync(dialog, root) == ContentDialogResult.Primary;
-    }
+    public static Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string action, string cancel = "Cancel") =>
+        ShowAsync(Dialog(title, new TextBlock { Text = body, TextWrapping = TextWrapping.Wrap }, action, cancel, ContentDialogButton.Close), root);
 
-    private static readonly (string Id, string Label)[] Templates =
-    [
-        ("article", "Article"), ("report", "Report"), ("beamer", "Beamer slides"), ("blank", "Blank"),
-    ];
-
-    public static async Task<(string Name, string Template)?> NewProjectAsync(XamlRoot root)
+    public static async Task<(string Name, string Template)?> NewProjectAsync(XamlRoot root, string template)
     {
         var name = new TextBox { Header = "Name", PlaceholderText = "My Paper" };
         name.Loaded += (_, _) => name.Focus(FocusState.Programmatic);
         var templates = new RadioButtons { Header = "Template" };
-        foreach (var (_, label) in Templates)
+        foreach (var t in ProjectTemplates.All)
         {
-            templates.Items.Add(label);
+            templates.Items.Add(t.Title);
         }
-        templates.SelectedIndex = 0;
-        var dialog = new ContentDialog
-        {
-            Title = "New project",
-            Content = new StackPanel { Spacing = 16, MinWidth = 320, Children = { name, templates } },
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            IsPrimaryButtonEnabled = false,
-        };
+        templates.SelectedIndex = Math.Max(0, ProjectTemplates.All.ToList().FindIndex(t => t.Id == template));
+        var dialog = Dialog("New project", new StackPanel { Spacing = 16, MinWidth = 320, Children = { name, templates } }, "Create");
+        dialog.IsPrimaryButtonEnabled = false;
         name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = name.Text.Trim().Length > 0;
-        if (await ShowAsync(dialog, root) != ContentDialogResult.Primary)
-        {
-            return null;
-        }
-        return (name.Text.Trim(), Templates[Math.Max(0, templates.SelectedIndex)].Id);
+        return await ShowAsync(dialog, root) ? (name.Text.Trim(), ProjectTemplates.All[Math.Max(0, templates.SelectedIndex)].Id) : null;
     }
 }

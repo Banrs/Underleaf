@@ -25,9 +25,9 @@ internal static class ContextMenus
         return null;
     }
 
-    public static MenuFlyoutItem Item(string text, Action action)
+    public static MenuFlyoutItem Item(string text, Action action, string? shortcut = null)
     {
-        var item = new MenuFlyoutItem { Text = text };
+        var item = new MenuFlyoutItem { Text = text, KeyboardAcceleratorTextOverride = shortcut ?? "" };
         item.Click += (_, _) => action();
         return item;
     }
@@ -35,12 +35,8 @@ internal static class ContextMenus
     /// <summary>A context-menu item with its Segoe Fluent Icons glyph, and the key that does the same.</summary>
     public static MenuFlyoutItem Item(string text, string glyph, Action action, string? shortcut = null)
     {
-        var item = Item(text, action);
+        var item = Item(text, action, shortcut);
         item.Icon = new FontIcon { Glyph = glyph };
-        if (shortcut is not null)
-        {
-            item.KeyboardAcceleratorTextOverride = shortcut;
-        }
         return item;
     }
 

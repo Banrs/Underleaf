@@ -8,9 +8,11 @@ All checks pass: Debug build with no Swift warnings, 30 XCTests, `cargo fmt`, cl
 
 Crashes (18 reports, 25–26 Sep): 15 were one update-constraints loop that `d08f82b` (AppKit splits) fixed, and the editor view no longer adds constraints mid-layout; the startup-alert crash was already fixed; one was a debugger's leftover breakpoint. **Still open: an AppKit assertion leaving full screen** (`-[_NSFullScreenMenuBarCompanionController _relinquishTitlebar]`, 26 Sep 11:03, a window restored into full screen at launch). Not reproduced in many tries; if it recurs, break on `__assert_rtn` under lldb (developer mode is now on, so lldb attaches without a prompt).
 
+**Windows session (2026-09-26, evening, on the owner's PC), branch `claude/windows-parity`.** The uncommitted 2026-09 Fluent redesign found in the Windows checkout is committed as `53e4a1e` and merged with `main`; then the parity gaps from issue #10 (Banrs/Underleaf), a native-motion pass and a WinUI deflation, described under the Windows app below. Later that night: the source and PDF bars became `CommandBar`s, WebView2 browser-process recovery, the trimmed Windows App SDK packages, an Inno Setup installer built in CI, and a behaviour-preserving deflation of the Windows code (its .cs and .xaml went from about 8,400 lines at their largest to 7,300). The Windows build (warnings as errors), its 41 xUnit tests and `npm test` (53) pass, and the deflated build was checked on screen.
+
 Next:
-- The Windows app, which the owner is picking up from `main`.
-- The on-screen checks that need TeXLocal frontmost (below).
+- The on-screen checks that need TeXLocal frontmost (below), on both apps.
+- Windows: try the installer from CI on the owner's PC (it installs over the hand-published copy).
 
 ## Goal
 
@@ -200,10 +202,11 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
     - the outline parser, `ProjectPaths` (moving the open file's path on a rename) and `Preferences` (JSON under `%LOCALAPPDATA%\TeXLocal`).
   - **`TeXLocal.Tests`** (xUnit): the FFI round trip, the shortcut table checked against `workspace.js`, and the pure logic.
   - **`TeXLocal`:** the WinUI 3 app.
-    - It is unpackaged and x64. .NET 10 and Windows App SDK 2.5.1 are both bundled, so users install neither.
+    - It is unpackaged and x64. .NET 10 and the Windows App SDK are both bundled, so users install neither. It references the SDK's WinUI, Foundation and InteractiveExperiences packages rather than the `Microsoft.WindowsAppSDK` metapackage, which also shipped the AI, ML, search and widgets runtimes (onnxruntime, DirectML…): a Release publish went from 234 MB to 174 MB.
     - `texlocal_ffi.dll` is copied from `target\debug` or `target\release` to match the configuration.
 - **Web surfaces:** the editor and PDF pages each run in a WebView2.
-  - The bundled `web\` is served at `app.texlocal`. The PDF is answered at `project.texlocal` from `WebResourceRequested`, with a CORS header for `app.texlocal`. A folder mapping only applies to pages loaded after it is set, so it never reached the already-open viewer.
+  - The bundled `web\` is served at `app.texlocal`. The PDF is answered at `project.texlocal` from `WebResourceRequested`, with a CORS header for `app.texlocal`, set up on each new CoreWebView2 before the page loads (`EmbeddedPage`'s `configure`).
+  - A renderer crash reloads the page. When the whole browser process dies, every WebView2 is dead and can't be started again, so `EmbeddedPage.Replace` puts a new one in the old one's place in its panel; the pages come back as after a renderer crash (checked by killing the browser process: a new one started, both pages reloaded with the document, and editing and autosave worked).
   - Window-level keyboard shortcuts stand down while a page has focus. The page posts the chord back instead: the editor page already did this, and `web/src/embed/pdf.js` now does too.
 - **Parity:** every command in `commandDefs`, and every setting the macOS app has.
   - Done: menus, toolbar, sidebar (tree, search, outline), autosave and the compile queue, compile and log, PDF find and zoom, SyncTeX, import and export.
@@ -211,7 +214,15 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Closing flushes first and then calls `kill_all`. A crashed editor page recovers.
   - Both macOS reviews' bug fixes are applied here too. The app uses `texlocal.rename` and the undo fallback from `web/src/embed/editor.js`.
   - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
-  - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`, unbuilt so far; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
+  - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
+  - **Issue #10's parity gaps (2026-09-26, evening):**
+    - The source bar has the Mac's and the browser's groups and order: undo, redo | section level (a `DropDownButton` naming the caret line's level, as wide as "Subsubsection"; `setHeading`) | bold, italic | inline math, display math, symbols (a `Flyout` holding a grouped `GridView`, 10 columns, one tab stop; `insertSymbol` via the `symbol` command) | link, reference, citation | figure, table | bulleted, numbered list | "See more". It is a `CommandBar` with dynamic overflow, so WinUI itself moves buttons into "See more" from the end; the templates with no button are its secondary commands. The PDF's zoom and Share are a `CommandBar` too. The Format menu gains Display math, Symbols and Section level. `LatexTemplates` holds the levels and symbols; a test reads `SYMBOL_GROUPS` from `web/src/sourcebar.js` so the tables can't drift.
+    - Segoe Fluent Icons has no sigma, pi, number sign or numbered list: Σ and # come from Segoe UI, π and the numbered list are 16 px `PathIcon`s (`PiIconData`, `NumberedListIconData`). The glyph sheets were rendered from `SegoeIcons.ttf` to check.
+    - The File Outline is docked under Files: a 32 px "File outline" heading (its line is the divider) with a chevron that folds it to the sidebar's foot, a divider whose height is remembered (`OutlineHeight`), folds remembered per project and file (`OutlineFolded`, by `Outline.FoldKeys`). It has no selection: the current section is accent semibold, follows the editor's top visible line (the page's `scroll` message → `ProjectModel.TopLine`), and opens its parents and scrolls into view. Choosing a heading reveals it at the top of the editor without taking focus (`reveal(line, atTop, focus)`).
+    - "Out of date" by save counting (`writes` / `builtWrites`), as the Mac: it clears after the lost-edits message when nothing was saved since the last good build.
+    - The open file is watched (`FileSystemWatcher` on its folder, filtered to its name, for editors that save by renaming). A change with no unsaved edits reloads at the same top line, marks the preview out of date and auto-compiles; with unsaved edits a dialog asks "Keep editing" (default, saves over it) or "Revert". Saves wait while it asks. A save that starts during a check makes the check stand down; its own change notice checks again.
+    - Messages have a short title and the detail (`MainWindow.Report(title, message)`, the InfoBar's Title), e.g. "Couldn’t rename “x”".
+    - The status bar drops whole items as it narrows: the engine, then the counts, then the save state (hidden while compiling, as the Mac).
 - **Windows design pass (Fluent 2):**
   - The Windows App SDK `TitleBar` control, over Mica, with back and pane buttons.
   - A card layer for the document area. Spacing on the 4 px grid, and theme resources only (no hard-coded colours).
@@ -220,6 +231,49 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Access keys on every menu and on the main toolbar buttons. Context menus in the standard order, with F2 and Delete.
   - `InfoBar`, `ProgressRing` and `InfoBadge` for feedback.
   - A Settings page in the Windows 11 style, with cards and an expander.
+  - **The 2026-09 redesign.** The macOS app's features, laid out as a native Windows app at WinUI's standard density. The spec, Microsoft's numbers and measurements of the inbox apps were worked up during the redesign; the decisions are summarised here.
+    - **Title bar: the Tall 48 px bar, with the system's own 48 × 48 caption buttons.**
+      - Left to right:
+        - back and the sidebar toggle;
+        - the icon, with the project (or the app, or Settings) as the title;
+        - the default 40 px MenuBar, on every screen, as Visual Studio keeps its menus in its title bar;
+        - one search box, centred on the window as Windows 11 apps centre theirs (`PlaceSearch`). It searches the projects on the library and the open project in a workspace, with results shown in place;
+        - the PDF and Details toggles.
+      - The open file is named by the jump bar below.
+      - WinUI's TitleBar makes only the menus, the search box and the toggles non-draggable. Hit-testing confirms that the gaps between them still drag the window.
+      - TitleBar sizes its caption-button column from `AppWindow.TitleBar.RightInset`, which is in physical pixels, as if it were in effective ones, so at 200% it reserved twice the buttons' width. `FitCaptionInset` corrects the column on load and whenever the scale changes. The 48 px left between the toggles and the buttons is TitleBar's own minimum drag area.
+      - A 40 px bar with Terminal-style caption buttons drawn by the app was tried and dropped: at 40, the toolbars under it had to be cramped to match.
+    - **Rhythm: 48 px rows, 32 px detail rows.**
+      - 48 px: title bar, pane toolbars, panel header, the Details pane's name row.
+      - 32 px: jump bar, PDF location row (and the folder row of the Details pane, which carries their divider across), status bar, the sidebar's section headings.
+      - Every control stays its standard size: 32 px buttons, 14 px text, 16 px icons, with 8 px between buttons.
+      - The source and PDF toolbars are `CommandBar`s (icon buttons, labels in tooltips), whose own overflow folds them into "See more" as they narrow. Hand-folded rows of buttons were tried first and took far more code.
+    - **Layers.**
+      - The sidebar sits on Mica, 280 wide by default (200–360), in an inline `SplitView` pane. It has no footer: Add is the Files heading's action (Settings stays in the File menu, Ctrl+,).
+      - The trees' expander column is narrowed from 40 to 24 at runtime (`OnTreeItemLoaded`), since the template hard-codes its padding. Rows then start 12 in from their heading.
+      - The main file's name is semibold, as Visual Studio shows its startup project, with a "Main file" tooltip and accessible name. The Mac's yellow star was dropped on Windows as not native.
+      - The content layer has an 8 px top-left corner and a 1 px stroke on its top and left edges, like NavigationView's content area. It contains the source, the PDF, the bottom panel, the status bar under the document only, and the Details pane.
+      - The Details pane is File Explorer's pattern: Alt+Shift+P, 220–320 wide, in a right-hand inline `SplitView` pane inside the layer.
+      - Pane sizes are remembered in `Preferences`.
+    - **Motion** (`Motion.cs`) uses the Windows animation library's theme animations:
+      - DrillIn and DrillOut between the library, a project and Settings, as Settings and File Explorer do;
+      - the sidebar and the Details pane are inline `SplitView` panes, so they slide open *and* closed with WinUI's own storyboards (about 200 ms open, 120 ms close), the content moving with them; frame captures confirmed both directions. Their dividers set `OpenPaneLength`;
+      - PopIn from its own edge for the PDF, the panel and the File Outline;
+      - FadeIn for search results and the trees they replace.
+      - Theme *transitions* (such as PaneThemeTransition) were tried, but they play only when an element joins the tree, not when it is shown again, and these panes are shown by Visibility. Frame captures confirmed they did nothing on a toggle. `Motion.Show` starts the animation as an element goes from collapsed to visible. None of it runs when Windows' animation effects are off.
+    - **Toggles are subtle everywhere.** `SubtleToggles.xaml` is merged by App.xaml and again by the title bar's toggle group, because the title-bar toggles didn't pick it up from the app's resources.
+    - **Library and Settings** are WinUI Gallery pages: a column at most 1064 wide with 36 px gutters, centred inside a full-width grid. Given to the ScrollViewer directly, that column landed off-centre.
+    - **Parity additions:**
+      - Cut, Copy, Paste and Select all; Exit; Add folder…;
+      - Full screen (F11) and Stop (Ctrl+Break);
+      - one-click Reference and Citation;
+      - project search grouped by file;
+      - a minimum window of 960 × 600, and "Open folder location";
+      - an About card in Settings;
+      - WebView2 context menus trimmed to editing commands;
+      - PDF find fixes;
+      - 700 ms autosave, and forward search that saves first.
+    - **Metrics** come from WinUI's `generic.xaml`, the Windows UI Kit in code, since the Figma kit needs a sign-in.
   - Accessibility:
     - accessible names on icon-only buttons and on tree, log and project rows;
     - the dividers take focus and resize with the arrow keys;
@@ -227,18 +281,14 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 - **Deliberate deviations:**
   - The settings cards and the divider are hand-written, rather than taken from the Community Toolkit, to avoid adding NuGet packages.
   - Interface size scales only the editor page. Native controls follow Windows text size.
-  - The file tree uses a copy of WinUI's own TreeViewItem template (`CompactTree.xaml`) with a 16 px expander column instead of 40 px. Re-copy it from the new `generic.xaml` when the Windows App SDK is upgraded.
-- **Not done yet:**
-  - recovery when the whole WebView2 browser process dies;
-  - trimming the output size (the Windows App SDK brings its AI/ML parts);
-  - an installer. For now, run `cargo build --release -p texlocal-ffi`, then `dotnet publish apps/windows/TeXLocal/TeXLocal.csproj -c Release -p:Platform=x64 -r win-x64 -o %LOCALAPPDATA%\Programs\TeXLocal`, and add a Start-menu shortcut to the exe. The owner's PC is set up this way, with no desktop shortcut.
+- **Installer:** `apps/windows/installer/TeXLocal.iss` (Inno Setup 6): per user, no admin rights, into `%LOCALAPPDATA%\Programs\TeXLocal` (where the owner's PC already has it) with a Start-menu shortcut and an entry in Settings › Apps; an update replaces the whole folder, and projects and settings stay on uninstall. The Windows app workflow's "Installer" job builds it (`cargo build --release -p texlocal-ffi`, `dotnet publish … -c Release -o release/windows`, `iscc`) and uploads `TeXLocal-<version>-setup.exe` as an artifact. Inno Setup isn't installed on the owner's PC, so it was first built in CI. By hand: build the Rust core with `--release` first (a stale `target\release\texlocal_ffi.dll` from 25 Sep was being published).
 - **Verified by hand on Windows 11 (build 26340), with TeX Live 2026:**
   - The PDF loads and renders with a text layer, and find works.
   - Compiling works, including a recompile after a failed run (latexmk now gets `-g`). A new TeX install is found without restarting the app.
   - Choosing the TeX folder works in both versions:
     - in the app, with Settings' Browse… and Use automatic;
     - in the browser version, with its folder browser. The browser version still creates, compiles and shows a project.
-  - The title bar uses the tall height, with its content and the caption buttons on one line.
+  - The Tall title bar was measured with UI Automation and hit-testing. Menu clicks reach the menus and empty space drags the window.
   - The library, the workspace and Settings were measured with UI Automation:
     - one left edge in the sidebar, and 16 px per tree level;
     - no band under the title bar;
@@ -247,7 +297,10 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The sidebar toggle, folders expanding and collapsing, the outline's disclosure, and the settings and engine footer.
   - Moving between the library, a project and Settings animates.
   - The installed Release build starts from the Start menu.
+  - **2026-09-26, evening, a Debug build against a scratch `TEXLOCAL_DATA`:** the source bar at full width and folding as the PDF divider moves, "See more"'s contents, the section level menu turning `\section` into `\subsection` (and the outline nesting it), the symbol palette inserting `$\alpha$` in text, undo after both, the outline's current section following wheel-scrolling, choosing a heading, a file changed by another program reloading and rebuilding, the semibold main file, and the sidebar and Details pane sliding both ways.
+  - Launching the installed build while a Debug build runs breaks the Debug build's WebView2 pages (the two share `%LOCALAPPDATA%\TeXLocal\WebView2` with different options); run one at a time.
 - **Known issues:**
+  - Once (2026-09-26, 22:29), a Release build crashed while idle with a fail-fast in `ucrtbase.dll` (0xc0000409, abort). That build linked a stale `target\release\texlocal_ffi.dll` from 25 Sep; rebuilt against the current core, it ran 8 minutes of editing, compiling and idling without a crash. Not reproduced since.
   - Once, a window kept showing a frozen frame while it went on working. Fresh launches never did. It may be a GPU device loss on this Insider build, but that is unconfirmed.
 - **Still to check by hand on Windows:**
   - Every shortcut fires exactly once whether focus is in the editor, the PDF or the sidebar.
@@ -260,7 +313,9 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Settings apply straight away and survive a restart.
   - Editor size and Windows text size scale the editor, and CodeMirror still measures correctly.
   - Dark paper.
-  - The status bar.
+  - The status bar, and its items dropping as the window narrows.
+  - The unsaved-edits conflict dialog (a change on disk within 700 ms of typing).
+  - The InfoBar's title and message on a real failure.
   - Drag-and-drop onto a folder.
   - Saving and closing:
     - typing while a save is in progress loses nothing;
@@ -288,7 +343,7 @@ Behaviour-preserving, with no public API, C ABI or server-check change:
 ## Remaining plan
 
 1. **Run both apps by hand** using the checklists above, and fix what they turn up.
-2. **Windows:** the items under "Not done yet" above.
+2. **Windows:** the installer on a real install and uninstall.
 3. **The full-screen assertion** (above), if it recurs.
 4. **Small follow-ups:** in the web version, `contextMenu` / `menuUnder` in `web/src/dom.js` place menus with unscaled rects, so under Interface Size ≠ 100% they may land offset (`popoverUnder` already converts); the web outline has no per-section folding; the server has no cap on concurrent connections (local only, so low value); a light One Dark variant for Syntax Colors. A later run (2026-09-26, night) had `a_timed_out_compile_keeps_the_output_it_wrote` (`crates/texlocal-core/tests/compile_stub.rs:128`) fail once; three reruns passed.
 5. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.

@@ -2,18 +2,17 @@ using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
 namespace TeXLocal;
 
-/// <summary>
-/// An open project: menus and toolbar, the sidebar, the editor, the PDF or
-/// the compile log beside it, and a status bar. It renders a ProjectModel and
-/// sends every action through the window's commands.
-/// </summary>
+/// <summary>An open project, laid out as apps/macos lays it out. It renders a ProjectModel.</summary>
 public sealed partial class WorkspaceView : UserControl
 {
     private static MainWindow Main => MainWindow.Instance;
@@ -21,70 +20,146 @@ public sealed partial class WorkspaceView : UserControl
     private ProjectModel? project;
     private readonly Splitter sidebarSplitter;
     private readonly Splitter previewSplitter;
-    private GridLength sidebarWidth = new(260);
-    private GridLength previewWidth = new(1, GridUnitType.Star);
-    private readonly Dictionary<MenuCommand, MenuFlyoutItem> menuItems = [];
+    private readonly Splitter panelSplitter;
+    private readonly Splitter inspectorSplitter;
+    private readonly Splitter outlineSplitter;
 
-    /// <summary>The menu bar, after web/src/commands.js MENU.</summary>
+    // The limits the panes keep, after macOS's.
+    private const double SidebarMinimum = 200;
+    private const double SidebarMaximum = 360;
+    private const double PaneMinimum = 240;
+    private const double PanelMinimum = 80;
+    private const double EditorsMinimum = 120;
+    private const double InspectorMinimum = 220;
+    private const double InspectorMaximum = 320;
+    private const double OutlineMinimum = 80;
+    private const double FilesMinimum = 100;
+
+    // The layout as last dragged, remembered in Preferences.
+    private double sidebarWidth;
+    private double pdfSplit;
+    private double panelHeight;
+    private double inspectorWidth;
+    private double outlineHeight;
+
+    private readonly Dictionary<MenuCommand, MenuFlyoutItem> menuItems = [];
+    private readonly List<MenuFlyoutItemBase> latexMenuItems = [];
+    private readonly List<RadioMenuFlyoutItem> engineMenuItems = [];
+    private MenuFlyoutSubItem? engineMenu;
+
+    /// <summary>web/src/commands.js MENU, with macOS's Format menu and a Windows menu bar's Exit, clipboard and full screen.</summary>
     private static readonly (string Title, MenuCommand?[] Items)[] MenuLayout =
     [
         ("File", [
-            MenuCommand.ProjectNew, null,
-            MenuCommand.FileNew, MenuCommand.FileNewFolder, MenuCommand.FileUpload, null,
+            MenuCommand.ProjectNew, MenuCommand.FileNew, MenuCommand.FileNewFolder, null,
+            MenuCommand.FileUpload, MenuCommand.FileUploadFolder, null,
             MenuCommand.FileSave, null,
-            MenuCommand.PdfSave, MenuCommand.ProjectExport, null,
+            MenuCommand.PdfSave, MenuCommand.PdfShare, MenuCommand.ProjectExport, null,
             MenuCommand.AppSettings, null,
-            MenuCommand.ProjectClose,
+            MenuCommand.ProjectClose, MenuCommand.AppExit,
         ]),
         ("Edit", [
             MenuCommand.EditUndo, MenuCommand.EditRedo, null,
-            MenuCommand.EditFind, MenuCommand.EditFindNext, MenuCommand.EditFindPrevious, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine, null,
-            MenuCommand.EditBold, MenuCommand.EditItalic, MenuCommand.EditMath, MenuCommand.EditComment,
+            MenuCommand.EditCut, MenuCommand.EditCopy, MenuCommand.EditPaste, MenuCommand.EditSelectAll, null,
+            MenuCommand.EditFind, MenuCommand.EditFindNext, MenuCommand.EditFindPrevious, MenuCommand.ProjectSearch, MenuCommand.PdfFind, MenuCommand.EditGotoLine,
+        ]),
+        // The second break holds the source bar's templates (AddFormatTemplates).
+        ("Format", [
+            MenuCommand.EditBold, MenuCommand.EditItalic, MenuCommand.EditMath, null,
+            null,
+            MenuCommand.EditComment,
         ]),
         ("View", [
-            MenuCommand.ViewToggleSidebar, MenuCommand.ViewTogglePdf, MenuCommand.ViewToggleLogs, null,
+            MenuCommand.ViewToggleSidebar, MenuCommand.ViewTogglePdf, MenuCommand.ViewToggleLogs, MenuCommand.ViewToggleInspector, null,
             MenuCommand.ViewZoomIn, MenuCommand.ViewZoomOut, MenuCommand.ViewFitWidth, MenuCommand.ViewFitHeight, null,
-            MenuCommand.ViewUiScaleUp, MenuCommand.ViewUiScaleDown,
+            MenuCommand.ViewUiScaleUp, MenuCommand.ViewUiScaleDown, null,
+            MenuCommand.ViewFullScreen,
         ]),
         ("Compile", [
-            MenuCommand.CompileRun, MenuCommand.CompileToggleAuto, null,
+            MenuCommand.CompileRun, MenuCommand.CompileStop, MenuCommand.CompileToggleAuto, null,
             MenuCommand.SyncForward, MenuCommand.SyncInverse,
         ]),
     ];
 
-    /// <summary>web/src/workspace.js INSERT_TEMPLATES; "$0" marks where the cursor lands.</summary>
-    private static readonly (string Label, string Template)[] InsertTemplates =
-    [
-        ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-        ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-        ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-        ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-        ("Bulleted list", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-        ("Numbered list", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-        ("Code block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
-    ];
+    /// <summary>Icons Segoe Fluent Icons lacks, on its 16 px grid: π, and a list numbered 1, 2, 3.</summary>
+    private const string PiIconData = "M1,3 H15 V5 H11.5 V12 C11.5,12.8 11.9,13.2 12.6,13.2 H14 V15 H12.2 C10.6,15 9.5,14 9.5,12.4 V5 H6.5 V15 H4.5 V5 H1 Z";
+    private const string NumberedListIconData =
+        "M2.4,0.4 H3.4 V4.6 H2.4 Z M1.4,1.2 L2.4,0.4 V1.5 L1.9,1.9 Z"
+        + " M0.8,5.9 H3.8 V8.45 H1.7 V9.2 H3.8 V10.1 H0.8 V7.55 H2.9 V6.8 H0.8 Z"
+        + " M0.8,11.4 H3.8 V15.6 H0.8 V14.7 H2.9 V13.95 H1.4 V13.05 H2.9 V12.3 H0.8 Z"
+        + " M6,1.9 H15.5 V3.1 H6 Z M6,7.4 H15.5 V8.6 H6 Z M6,12.9 H15.5 V14.1 H6 Z";
 
     public WorkspaceView()
     {
         InitializeComponent();
         EditorHost.Children.Insert(0, Main.Editor.View);
 
-        sidebarSplitter = new Splitter(SidebarColumn, targetIsBefore: true, minimum: 160, "Resize the sidebar");
-        sidebarSplitter.Resized += width => sidebarWidth = new GridLength(width);
-        Grid.SetColumn(sidebarSplitter, 1);
-        Panes.Children.Add(sidebarSplitter);
-        previewSplitter = new Splitter(PreviewColumn, targetIsBefore: false, minimum: 240, "Resize the PDF");
-        previewSplitter.Resized += width => previewWidth = new GridLength(width);
-        Grid.SetColumn(previewSplitter, 1);
-        Document.Children.Add(previewSplitter);
+        var preferences = Main.Preferences;
+        sidebarWidth = Math.Clamp(preferences.SidebarWidth ?? 280, SidebarMinimum, SidebarMaximum);
+        pdfSplit = Math.Clamp(preferences.PdfSplit ?? 0.5, 0.1, 0.9);
+        panelHeight = Math.Max(preferences.PanelHeight ?? 220, PanelMinimum);
+        inspectorWidth = Math.Clamp(preferences.InspectorWidth ?? 260, InspectorMinimum, InspectorMaximum);
+        outlineHeight = Math.Max(preferences.OutlineHeight ?? 240, OutlineMinimum);
+        foldedSections = [.. preferences.OutlineFolded];
+
+        // Added last, so each grip lies over the panes it overhangs.
+        sidebarSplitter = Add(SidebarContent, new Splitter(() => Panes.OpenPaneLength, w => Panes.OpenPaneLength = w,
+            targetIsBefore: true, SidebarMinimum, () => SidebarMaximum, "Resize the sidebar", line: false)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+        }, w => sidebarWidth = w, p => p.SidebarWidth = sidebarWidth);
+        // The PDF keeps its share of the width as the window resizes.
+        previewSplitter = Add(Document, new Splitter(PreviewColumn, targetIsBefore: false, PaneMinimum,
+            () => Document.ActualWidth - PaneMinimum, "Resize the PDF"), w =>
+        {
+            if (Document.ActualWidth > 0)
+            {
+                pdfSplit = w / Document.ActualWidth;
+                Layout();
+            }
+        }, p => p.PdfSplit = pdfSplit, column: 1);
+        panelSplitter = Add(Editors, new Splitter(PanelRow, targetIsBefore: false, PanelMinimum,
+            () => Editors.ActualHeight - EditorsMinimum, "Resize the panel"), h => panelHeight = h, p => p.PanelHeight = panelHeight, row: 1);
+        inspectorSplitter = Add(DetailsContent, new Splitter(() => Details.OpenPaneLength, w => Details.OpenPaneLength = w,
+            targetIsBefore: false, InspectorMinimum, () => InspectorMaximum, "Resize the details pane")
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+        }, w => inspectorWidth = w, p => p.InspectorWidth = inspectorWidth);
+        outlineSplitter = Add(Browse, new Splitter(OutlineRow, targetIsBefore: false, OutlineMinimum, () => OutlineRoom,
+            "Resize the file outline", line: false), h => outlineHeight = h, p => p.OutlineHeight = outlineHeight, row: 2);
 
         BuildMenu();
-        foreach (var (label, template) in InsertTemplates)
+        PiIcon.Data = Icon(PiIconData);
+        NumberedListIcon.Data = Icon(NumberedListIconData);
+        SymbolGrid.ItemsSource = new CollectionViewSource
         {
-            InsertMenu.Items.Add(ContextMenus.Item(label, () => Format("insert", template)));
-        }
+            IsSourceGrouped = true,
+            Source = LatexTemplates.SymbolGroups
+                .Select(g => new PaletteGroup(g.Title, g.Symbols.Select(s => new PaletteSymbol(s.Glyph, s.Command))))
+                .ToList(),
+        }.View;
         Pdf.Command = command => Main.Perform(command);
+        Main.WatchTextFocus();
     }
+
+    private static Splitter Add(Panel parent, Splitter splitter, Action<double> resized, Action<Preferences> remember, int row = 0, int column = 0)
+    {
+        splitter.Resized += resized;
+        splitter.Committed += () => Remember(remember);
+        Grid.SetRow(splitter, row);
+        Grid.SetColumn(splitter, column);
+        parent.Children.Add(splitter);
+        return splitter;
+    }
+
+    private static void Remember(Action<Preferences> set)
+    {
+        set(Main.Preferences);
+        Main.SavePreferences();
+    }
+
+    /// <summary>A geometry draws in only one icon, so each gets its own.</summary>
+    private static Geometry Icon(string data) => (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), data);
 
     // ---------- the project ----------
 
@@ -93,8 +168,9 @@ public sealed partial class WorkspaceView : UserControl
         project = model;
         Pdf.Project = Logs.Project = model;
         model.PropertyChanged += OnModelChanged;
-        SearchBox.Text = "";
+        Main.SearchBox.Text = "";
         Files.ItemsSource = null;
+        shownSections = null;
         RenderTree();
         RenderOutline();
         Logs.Render();
@@ -117,9 +193,12 @@ public sealed partial class WorkspaceView : UserControl
     {
         switch (e.PropertyName)
         {
+            // These change on every caret move and scroll: only what follows them.
             case nameof(ProjectModel.CursorLine):
-                // On every cursor move: only the breadcrumb follows it.
-                RenderStatusBar();
+                RenderLocation();
+                return;
+            case nameof(ProjectModel.TopLine):
+                FollowTopLine();
                 return;
             case nameof(ProjectModel.Tree):
             case nameof(ProjectModel.Settings):
@@ -127,6 +206,7 @@ public sealed partial class WorkspaceView : UserControl
                 break;
             case nameof(ProjectModel.OpenPath):
                 SelectOpenFile();
+                RenderOutline();
                 break;
             case nameof(ProjectModel.Stats):
                 RenderOutline();
@@ -135,6 +215,7 @@ public sealed partial class WorkspaceView : UserControl
                 RenderResults();
                 break;
             case nameof(ProjectModel.Result):
+            case nameof(ProjectModel.PanelTab):
                 Logs.Render();
                 break;
             case nameof(ProjectModel.PdfVersion):
@@ -153,7 +234,6 @@ public sealed partial class WorkspaceView : UserControl
         Render();
     }
 
-    /// <summary>TeX was found or lost: the PDF pane says what to do about it.</summary>
     internal void TexChanged()
     {
         if (project is { PdfVersion: 0 } p)
@@ -163,50 +243,45 @@ public sealed partial class WorkspaceView : UserControl
         Render();
     }
 
-    internal void SetAppearance(bool dark, string accent, bool darkPaper) => Pdf.SetAppearance(dark, accent, darkPaper);
-
-    internal void FocusSearch() => SearchBox.Focus(FocusState.Programmatic);
-
     // ---------- rendering ----------
 
-    /// <summary>Everything cheap to recompute: states, badges, layout, the menus.</summary>
+    /// <summary>Everything cheap to recompute: states, counts, layout, the menus.</summary>
     internal void Render()
     {
+        RenderMenus();
         if (project is not { } p)
         {
             return;
         }
         Main.UpdateTitle();
+        SetToggle(Main.PdfToggle, MenuCommand.ViewTogglePdf, "PDF");
+        SetToggle(Main.InspectorToggle, MenuCommand.ViewToggleInspector, "details pane");
+        SetToggle(PanelToggle, MenuCommand.ViewToggleLogs, "panel");
 
-        CompileButton.IsEnabled = p.TexAvailable && !p.Compiling;
-        CompileProgress.IsActive = p.Compiling;
-        CompileIcon.Visibility = p.Compiling ? Visibility.Collapsed : Visibility.Visible;
-        SetToolTip(CompileButton, p.TexAvailable ? "Compile (Ctrl+Enter)" : "Install TeX to compile");
-        var engine = p.Settings?.Engine ?? "pdflatex";
-        EnginePdf.IsChecked = engine == "pdflatex";
-        EngineXe.IsChecked = engine == "xelatex";
-        EngineLua.IsChecked = engine == "lualatex";
-        AutoCompileItem.IsChecked = Main.Preferences.AutoCompile;
-
-        ErrorBadge.Value = p.ErrorCount;
-        ErrorBadge.Visibility = p.ErrorCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        LogButton.IsChecked = p.ShowLogs;
-        var log = p.Result is null
-            ? "Compile log (Ctrl+Shift+L)"
-            : $"Compile log: {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")} (Ctrl+Shift+L)";
-        SetToolTip(LogButton, log);
-        AutomationProperties.SetHelpText(LogButton, log);
-        PdfToggle.IsChecked = Main.Preferences.PdfVisible;
-        EngineText.Text = p.TexAvailable ? EngineName(engine) : "No TeX";
-        EngineWarning.Visibility = p.TexAvailable ? Visibility.Collapsed : Visibility.Visible;
-        EngineProgress.IsActive = p.Compiling;
-        EngineProgress.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
-        SetToolTip(EngineStatus, p.TexAvailable ? "TeX engine: open Settings to change it" : "TeX wasn’t found: open Settings");
-        SavePdfItem.IsEnabled = Main.IsEnabled(MenuCommand.PdfSave);
+        UndoButton.IsEnabled = RedoButton.IsEnabled = p.OpenPath is not null;
+        // Another text file keeps only its history.
+        var tex = IsTex(p.OpenPath);
+        foreach (var command in SourceBar.PrimaryCommands.Skip(2).Concat(SourceBar.SecondaryCommands))
+        {
+            ((UIElement)command).Visibility = tex ? Visibility.Visible : Visibility.Collapsed;
+        }
         EditorPlaceholder.Visibility = p.OpenPath is null ? Visibility.Visible : Visibility.Collapsed;
 
-        RenderStatusBar();
+        Pdf.Render(p, Main.IsEnabled(MenuCommand.CompileRun));
+        if (Main.Preferences.InspectorVisible)
+        {
+            Inspector.Render(p);
+        }
+        RenderStatusBar(p);
+        RenderLocation();
         Layout();
+    }
+
+    private static bool IsTex(string? path) => path?.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>What can run now and what is on; the LaTeX items only for a .tex file. The window calls this as the screen changes.</summary>
+    internal void RenderMenus()
+    {
         foreach (var (command, item) in menuItems)
         {
             item.IsEnabled = Main.IsEnabled(command);
@@ -215,59 +290,124 @@ public sealed partial class WorkspaceView : UserControl
                 toggle.IsChecked = Main.IsChecked(command);
             }
         }
-    }
-
-    /// <summary>
-    /// Render runs on every edit; setting a tooltip replaces it, closing one
-    /// the pointer has open, so it is set only when its text changes.
-    /// </summary>
-    private static void SetToolTip(DependencyObject element, string text)
-    {
-        if (ToolTipService.GetToolTip(element) as string != text)
+        // Bold is enabled exactly while a document is open on screen.
+        var latex = Main.IsEnabled(MenuCommand.EditBold) && IsTex(project?.OpenPath);
+        foreach (var item in latexMenuItems)
         {
-            ToolTipService.SetToolTip(element, text);
+            item.IsEnabled = latex;
+        }
+        engineMenu?.IsEnabled = Main.IsEnabled(MenuCommand.CompileToggleAuto);
+        var engine = project?.Settings?.Engine ?? "pdflatex";
+        foreach (var item in engineMenuItems)
+        {
+            item.IsChecked = (string)item.Tag == engine;
         }
     }
 
-    private void RenderStatusBar()
+    /// <summary>A pane's toggle: on while it shows, its tooltip saying what a click does.</summary>
+    private static void SetToggle(ToggleButton toggle, MenuCommand command, string pane)
     {
-        if (project is not { } p)
-        {
-            return;
-        }
-        CrumbsText.Text = string.Join(" › ", p.Breadcrumb);
-        CountsText.Text = Main.Preferences.ShowWordCount && p.Stats is { } stats
+        var shown = Main.IsChecked(command);
+        toggle.IsChecked = shown;
+        var tip = $"{(shown ? "Hide" : "Show")} {pane} ({Accelerators.Label(command.Accel()!)})";
+        PdfPane.SetToolTip(toggle, tip);
+        AutomationProperties.SetHelpText(toggle, tip);
+    }
+
+    private void RenderStatusBar(ProjectModel p)
+    {
+        BuildProgress.IsActive = p.Compiling;
+        BuildProgress.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
+        BuildSucceeded.Visibility = !p.Compiling && p.Result is { Ok: true } ? Visibility.Visible : Visibility.Collapsed;
+        BuildFailed.Visibility = !p.Compiling && p.Result is { Ok: false } ? Visibility.Visible : Visibility.Collapsed;
+        BuildText.Text = p.Compiling ? "Compiling…"
+            : p.Result is { Ok: true } ok ? $"Compiled in {ok.DurationMs / 1000.0:0.0} s"
+            : p.Result is not null ? "Build failed"
+            // A PDF from an earlier session, but no build from this one.
+            : p.PdfVersion > 0 ? "Ready" : "Not compiled";
+        ErrorCount.Visibility = p.ErrorCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ErrorCountText.Text = $"{p.ErrorCount:N0}";
+        WarningCount.Visibility = p.WarningCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WarningCountText.Text = $"{p.WarningCount:N0}";
+        AutomationProperties.SetName(BuildStatus, $"{BuildText.Text}, {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")}");
+
+        // While a build runs, the build status says so.
+        Show(StatusText, p.OpenPath is null || p.Compiling ? "" : p.Saving ? "Saving…" : p.Dirty ? "Unsaved changes" : "Saved");
+        Show(CountsText, Main.Preferences.ShowWordCount && p.Stats is { } stats
             ? $"{Count(stats.Words, "word")} · {Count(stats.Lines, "line")}"
-            : "";
-        StatusText.Text = p.Status;
+            : "");
+        EngineText.Text = p.TexAvailable ? LatexTemplates.EngineName(p.Settings?.Engine ?? "pdflatex") : "No TeX";
+        EngineWarning.Visibility = p.TexAvailable ? Visibility.Collapsed : Visibility.Visible;
+        PdfPane.SetToolTip(EngineStatus, p.TexAvailable ? "Choose the engine" : "TeX wasn’t found: open Settings");
+        AutomationProperties.SetName(EngineStatus, $"Engine: {EngineText.Text}");
+        FoldStatusBar();
+    }
+
+    private void OnStatusBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldStatusBar();
+
+    /// <summary>A narrow status bar drops whole items, as macOS's does: the engine, then the counts, then the save state.</summary>
+    private void FoldStatusBar()
+    {
+        var available = StatusBar.ActualWidth - StatusBar.Padding.Left - StatusBar.Padding.Right;
+        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        for (var dropped = 0; available > 0 && dropped <= 3; dropped++)
+        {
+            EngineStatus.Visibility = dropped < 1 ? Visibility.Visible : Visibility.Collapsed;
+            CountsText.Visibility = dropped < 2 && CountsText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            StatusText.Visibility = dropped < 3 && StatusText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            StatusStart.Measure(infinite);
+            StatusEnd.Measure(infinite);
+            if (StatusStart.DesiredSize.Width + StatusEnd.DesiredSize.Width + 12 <= available)
+            {
+                return;
+            }
+        }
     }
 
     private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
-    private static string EngineName(string engine) => engine switch
+    /// <summary>A status-bar text, collapsed while empty so it leaves no gap.</summary>
+    private static void Show(TextBlock block, string text)
     {
-        "xelatex" => "XeLaTeX",
-        "lualatex" => "LuaLaTeX",
-        _ => "pdfLaTeX",
-    };
+        block.Text = text;
+        block.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
 
-    /// <summary>Which panes show: the sidebar, and the PDF or the log beside the editor.</summary>
+    /// <summary>Which panes show, at the sizes last dragged to.</summary>
     private void Layout()
     {
         var sidebar = Main.Preferences.SidebarVisible;
-        Sidebar.Visibility = sidebarSplitter.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
-        SidebarColumn.Width = sidebar ? sidebarWidth : new GridLength(0);
+        Panes.OpenPaneLength = sidebarWidth;
+        Panes.IsPaneOpen = sidebar;
+        sidebarSplitter.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
         // Without the sidebar the layer meets the window's edge: no corner.
         Layer.CornerRadius = sidebar ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
         Layer.BorderThickness = sidebar ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
 
-        var logs = project?.ShowLogs == true;
-        var preview = logs || Main.Preferences.PdfVisible;
-        Preview.Visibility = previewSplitter.Visibility = preview ? Visibility.Visible : Visibility.Collapsed;
-        PreviewColumn.Width = preview ? previewWidth : new GridLength(0);
-        Logs.Visibility = logs ? Visibility.Visible : Visibility.Collapsed;
-        Pdf.Visibility = logs ? Visibility.Collapsed : Visibility.Visible;
+        var pdf = Main.Preferences.PdfVisible;
+        Motion.Show(Pdf, pdf, Motion.Pane(40, 0));
+        previewSplitter.Visibility = Pdf.Visibility;
+        // Shares, not lengths, so the split holds as the window resizes.
+        PreviewColumn.MinWidth = pdf ? PaneMinimum : 0;
+        PreviewColumn.Width = new GridLength(pdf ? pdfSplit : 0, GridUnitType.Star);
+        SourceColumn.Width = new GridLength(pdf ? 1 - pdfSplit : 1, GridUnitType.Star);
+
+        var panel = project?.ShowLogs == true;
+        Motion.Show(Logs, panel, Motion.Pane(0, 40));
+        panelSplitter.Visibility = Logs.Visibility;
+        // A height remembered from a taller window leaves the editors theirs.
+        var height = Editors.ActualHeight > 0
+            ? Math.Min(panelHeight, Math.Max(PanelMinimum, Editors.ActualHeight - EditorsMinimum))
+            : panelHeight;
+        PanelRow.Height = new GridLength(panel ? height : 0);
+
+        var inspector = Main.Preferences.InspectorVisible;
+        Details.OpenPaneLength = inspectorWidth;
+        Details.IsPaneOpen = inspector;
+        inspectorSplitter.Visibility = inspector ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    // ---------- menus ----------
 
     private void BuildMenu()
     {
@@ -278,10 +418,15 @@ public sealed partial class WorkspaceView : UserControl
             var menu = new MenuBarItem { Title = title, AccessKey = menuKeys[m] };
             var commands = items.OfType<MenuCommand>().ToList();
             var keys = AccessKeys.Assign(commands.Select(c => c.Title()).ToList());
+            var separators = 0;
             foreach (var entry in items)
             {
                 if (entry is not { } command)
                 {
+                    if (title == "Format" && ++separators == 2)
+                    {
+                        AddFormatTemplates(menu.Items);
+                    }
                     menu.Items.Add(new MenuFlyoutSeparator());
                     continue;
                 }
@@ -296,10 +441,191 @@ public sealed partial class WorkspaceView : UserControl
                 item.Click += (_, _) => Main.Perform(command);
                 menu.Items.Add(item);
                 menuItems[command] = item;
+                if (command == MenuCommand.EditMath)
+                {
+                    AddLatex(menu.Items, ContextMenus.Item("Display math", () => Format("displayMath")));
+                    AddLatex(menu.Items, SymbolMenu());
+                }
+                if (command == MenuCommand.CompileToggleAuto)
+                {
+                    engineMenu = new MenuFlyoutSubItem { Text = "Engine" };
+                    AddEngines(engineMenu.Items, engineMenuItems);
+                    menu.Items.Add(engineMenu);
+                }
             }
-            Menu.Items.Add(menu);
+            Main.Menu.Items.Add(menu);
         }
     }
+
+    private void AddLatex(IList<MenuFlyoutItemBase> items, MenuFlyoutItemBase item)
+    {
+        items.Add(item);
+        latexMenuItems.Add(item);
+    }
+
+    private void AddFormatTemplates(IList<MenuFlyoutItemBase> items)
+    {
+        var level = new MenuFlyoutSubItem { Text = "Section level" };
+        AddLevels(level.Items, current: null);
+        AddLatex(items, level);
+        AddLatex(items, Submenu("Reference", LatexTemplates.References, "inline"));
+        AddLatex(items, Submenu("List", LatexTemplates.Lists));
+        items.Add(new MenuFlyoutSeparator());
+        foreach (var (label, template) in LatexTemplates.Environments)
+        {
+            AddLatex(items, ContextMenus.Item(label, () => Format("insert", template)));
+        }
+    }
+
+    private void AddEngines(IList<MenuFlyoutItemBase> items, List<RadioMenuFlyoutItem>? keep)
+    {
+        foreach (var (id, name) in LatexTemplates.Engines)
+        {
+            var item = new RadioMenuFlyoutItem { Text = name, Tag = id, GroupName = keep is null ? "StatusEngine" : "MenuEngine" };
+            item.IsChecked = id == (project?.Settings?.Engine ?? "pdflatex");
+            item.Click += (_, _) => _ = project?.SetEngineAsync(id);
+            items.Add(item);
+            keep?.Add(item);
+        }
+    }
+
+    /// <summary>A menu of templates: blocks inserted, or, for "inline", put around the selection.</summary>
+    private MenuFlyoutSubItem Submenu(string title, IReadOnlyList<(string Label, string Template)> templates, string how = "insert")
+    {
+        var submenu = new MenuFlyoutSubItem { Text = title };
+        foreach (var (label, template) in templates)
+        {
+            submenu.Items.Add(ContextMenus.Item(label, () => Format(how, template)));
+        }
+        return submenu;
+    }
+
+    /// <summary>The section levels; the source bar's checks the caret line's.</summary>
+    private void AddLevels(IList<MenuFlyoutItemBase> items, string? current)
+    {
+        foreach (var (label, command) in LatexTemplates.HeadingLevels)
+        {
+            MenuFlyoutItem item = current is null ? new MenuFlyoutItem() : new RadioMenuFlyoutItem { IsChecked = label == current };
+            item.Text = label;
+            item.Click += (_, _) => Format("heading", command);
+            items.Add(item);
+            if (command.Length == 0)
+            {
+                items.Add(new MenuFlyoutSeparator());
+            }
+        }
+    }
+
+    /// <summary>The symbol palette as a menu, for the Format menu.</summary>
+    private MenuFlyoutSubItem SymbolMenu()
+    {
+        var menu = new MenuFlyoutSubItem { Text = "Symbols" };
+        foreach (var (title, symbols) in LatexTemplates.SymbolGroups)
+        {
+            var group = new MenuFlyoutSubItem { Text = title };
+            foreach (var (glyph, command) in symbols)
+            {
+                group.Items.Add(ContextMenus.Item($"{glyph}   {command}", () => Format("symbol", command)));
+            }
+            menu.Items.Add(group);
+        }
+        return menu;
+    }
+
+    // ---------- the source's location ----------
+
+    private List<Crumb> crumbs = [];
+
+    /// <summary>Project › folders › file › section, as Xcode's jump bar; and the caret line's section level.</summary>
+    private void RenderLocation()
+    {
+        if (project is not { } p)
+        {
+            return;
+        }
+        Show(LineText, p.OpenPath is null ? "" : $"Line {p.CursorLine:N0}");
+        List<Crumb> next = [];
+        if (p.OpenPath is { } path)
+        {
+            var parts = path.Split('/');
+            next.Add(new Crumb(p.Id, "\uE8B7", CrumbKind.Folder, ""));
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                next.Add(new Crumb(parts[i], "\uE8B7", CrumbKind.Folder, string.Join('/', parts[..(i + 1)])));
+            }
+            var folder = string.Join('/', parts[..^1]);
+            next.Add(new Crumb(parts[^1], "\uE8A5", CrumbKind.File, folder));
+            if (p.Sections.Count > 0)
+            {
+                var section = Outline.Chain(p.Sections, p.CursorLine).LastOrDefault();
+                next.Add(new Crumb(section is null ? "Top of file" : Outline.DisplayTitle(section), "\uE8FD", CrumbKind.Section, folder));
+            }
+        }
+        if (!next.SequenceEqual(crumbs))
+        {
+            crumbs = next;
+            Crumbs.ItemsSource = crumbs;
+        }
+        var level = LatexTemplates.LevelAt(p.Sections, p.CursorLine);
+        LevelLabel.Text = level;
+        AutomationProperties.SetName(LevelButton, $"Section level: {level}");
+    }
+
+    /// <summary>A crumb opens a menu of its neighbours: the files in a folder, or the file's sections.</summary>
+    private void OnCrumbClicked(BreadcrumbBar sender, BreadcrumbBarItemClickedEventArgs args)
+    {
+        if (project is not { } p || args.Item is not Crumb crumb)
+        {
+            return;
+        }
+        var menu = new MenuFlyout();
+        if (crumb.Kind == CrumbKind.Section && p.OpenPath is { } path)
+        {
+            var depths = Outline.Depths(p.Sections);
+            for (var i = 0; i < p.Sections.Count; i++)
+            {
+                var section = p.Sections[i];
+                var item = ContextMenus.Item(Outline.DisplayTitle(section), () => _ = p.OpenAsync(path, section.Line));
+                item.Padding = new Thickness(11 + 16 * depths[i], item.Padding.Top, item.Padding.Right, item.Padding.Bottom);
+                menu.Items.Add(item);
+            }
+        }
+        else
+        {
+            foreach (var file in TextFilesIn(p.Tree).Where(f => Folder(f) == crumb.Folder))
+            {
+                menu.Items.Add(ContextMenus.Item(file[(file.LastIndexOf('/') + 1)..], () => _ = p.OpenAsync(file)));
+            }
+        }
+        if (menu.Items.Count == 0)
+        {
+            return;
+        }
+        // Beneath the crumb that was chosen, found by the data it shows.
+        var anchor = Descendants(sender).OfType<BreadcrumbBarItem>()
+            .FirstOrDefault(i => Descendants(i).OfType<FrameworkElement>().Any(e => ReferenceEquals(e.DataContext, crumb)));
+        menu.ShowAt(anchor ?? (FrameworkElement)sender, new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft });
+    }
+
+    private static string Folder(string path) => path.Contains('/') ? path[..path.LastIndexOf('/')] : "";
+
+    private static IEnumerable<string> TextFilesIn(IEnumerable<TreeNode> nodes) => nodes.SelectMany(n =>
+        n.IsDirectory ? TextFilesIn(n.Children ?? []) : TextFiles.IsText(n.Path) ? [n.Path] : []);
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var descendant in Descendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    // ---------- the sidebar ----------
 
     private List<FileItem> FileItems => Files.ItemsSource as List<FileItem> ?? [];
 
@@ -309,7 +635,7 @@ public sealed partial class WorkspaceView : UserControl
         {
             return;
         }
-        // Folders the reader opened stay open across a reload of the tree.
+        // Open folders stay open across a reload of the tree.
         var expanded = FileItems.SelectMany(i => i.SelfAndDescendants())
             .Where(i => i.IsExpanded).Select(i => i.Node.Path).ToHashSet();
         var mainFile = project.Settings?.MainFile;
@@ -327,31 +653,87 @@ public sealed partial class WorkspaceView : UserControl
     }
 
     private IReadOnlyList<OutlineItem>? shownSections;
+    private string? shownOutlineFile;
+    private OutlineEntry? currentSection;
+
+    /// <summary>Folded headings by OutlineEntry.Key, remembered in Preferences.</summary>
+    private readonly HashSet<string> foldedSections;
+
+    private List<OutlineEntry> OutlineEntries => OutlineTree.ItemsSource as List<OutlineEntry> ?? [];
 
     private void RenderOutline()
     {
-        // Every save analyses the file again; an unchanged outline keeps its
-        // rows rather than flashing new ones in.
+        ShowOutline();
+        // Every save analyses the file again; an unchanged outline keeps its rows.
         var sections = project?.Sections ?? [];
-        if (shownSections is not null && sections.SequenceEqual(shownSections))
+        var file = $"{project?.Id}/{project?.OpenPath}\t";
+        if (shownSections is not null && sections.SequenceEqual(shownSections) && file == shownOutlineFile)
         {
             return;
         }
         shownSections = sections;
-        var rows = sections.Select(s => new OutlineRow(s)).ToList();
-        OutlineList.ItemsSource = rows;
-        OutlineToggle.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        ShowOutline();
+        shownOutlineFile = file;
+        var keys = sections.Zip(Outline.FoldKeys(sections)).ToDictionary(k => k.First, k => file + k.Second);
+        OutlineTree.ItemsSource = Outline.Tree(sections).Select(n => new OutlineEntry(n, keys, foldedSections)).ToList();
+        NoSections.Visibility = sections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        currentSection = null;
+        FollowTopLine();
     }
 
-    /// <summary>The outline's disclosure: open or closed, remembered as the browser version does.</summary>
+    /// <summary>The section at the top of the source is current: its headings open, and it scrolls into view.</summary>
+    private void FollowTopLine()
+    {
+        if (project is not { } p)
+        {
+            return;
+        }
+        var chain = Outline.Chain(p.Sections, p.TopLine);
+        var entries = OutlineEntries.SelectMany(e => e.SelfAndDescendants()).ToList();
+        var current = chain.Count == 0 ? null : entries.FirstOrDefault(e => e.Item == chain[^1]);
+        if (current == currentSection)
+        {
+            return;
+        }
+        currentSection?.IsCurrent = false;
+        currentSection = current;
+        if (current is null)
+        {
+            return;
+        }
+        current.IsCurrent = true;
+        foreach (var entry in entries.Where(e => e != current && chain.Contains(e.Item)))
+        {
+            entry.IsExpanded = true;
+        }
+        // Once the opened headings have their rows.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (currentSection == current && OutlineTree.ContainerFromItem(current) is UIElement row)
+            {
+                row.StartBringIntoView();
+            }
+        });
+    }
+
+    /// <summary>The outline for a .tex file: open at its dragged height, or folded to its heading at the sidebar's foot.</summary>
     private void ShowOutline()
     {
+        var shown = project?.Stats is not null;
         var open = Main.Preferences.OutlineOpen;
-        OutlineList.Visibility = open && shownSections is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-        OutlineChevron.Glyph = open ? "" : "";
+        OutlineHeader.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+        Motion.Show(OutlinePane, shown && open, Motion.Pane(0, 40));
+        outlineSplitter.Visibility = OutlinePane.Visibility;
+        OutlineRow.Height = new GridLength(shown && open ? Math.Clamp(outlineHeight, OutlineMinimum, Math.Max(OutlineMinimum, OutlineRoom)) : 0);
+        // A state, not a direction: down while open, right while folded.
+        OutlineChevron.Glyph = open ? "\uE70D" : "\uE76C";
+        PdfPane.SetToolTip(OutlineToggle, open ? "Hide file outline" : "Show file outline");
         AutomationProperties.SetItemStatus(OutlineToggle, open ? "Expanded" : "Collapsed");
     }
+
+    /// <summary>The most the outline can take and leave the files their minimum under two headings.</summary>
+    private double OutlineRoom => Browse.ActualHeight - 2 * 32 - FilesMinimum;
+
+    private void OnBrowseSizeChanged(object sender, SizeChangedEventArgs e) => ShowOutline();
 
     private void OnToggleOutline(object sender, RoutedEventArgs e)
     {
@@ -360,120 +742,89 @@ public sealed partial class WorkspaceView : UserControl
         ShowOutline();
     }
 
+    private void OnOutlineExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(args.Item, folded: false);
+
+    private void OnOutlineCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(args.Item, folded: true);
+
+    private void Fold(object item, bool folded)
+    {
+        if (item is OutlineEntry entry && (folded ? foldedSections.Add(entry.Key) : foldedSections.Remove(entry.Key)))
+        {
+            Remember(p => p.OutlineFolded = [.. foldedSections.Order()]);
+        }
+    }
+
+    /// <summary>The trees' expander column 24 wide rather than 40; no resource reaches that padding.</summary>
+    private void OnTreeItemLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is TreeViewItem item && VisualTreeHelper.GetChildrenCount(item) > 0
+            && VisualTreeHelper.GetChild(item, 0) is FrameworkElement root
+            && root.FindName("ExpandCollapseChevron") is Grid chevron)
+        {
+            chevron.Padding = new Thickness(6, 0, 6, 0);
+        }
+    }
+
+    /// <summary>A heading goes to the top of the source, leaving focus here; its expander folds it.</summary>
+    private void OnOutlineInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (args.InvokedItem is OutlineEntry entry)
+        {
+            project?.Reveal(entry.Item.Line, atTop: true, focus: false);
+        }
+    }
+
     private void RenderResults()
     {
         var hits = project?.SearchHits ?? [];
-        Results.ItemsSource = hits;
-        ResultsHeader.Text = Count(hits.Count, "result");
-    }
-
-    // ---------- toolbar ----------
-
-    private void Format(string name, string? arg = null)
-    {
-        project?.Format(name, arg);
-        Main.Editor.Focus();
-    }
-
-    private void OnBold(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditBold);
-
-    private void OnItalic(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditItalic);
-
-    private void OnMath(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditMath);
-
-    private void OnCompile(SplitButton sender, SplitButtonClickEventArgs args) => Main.Perform(MenuCommand.CompileRun);
-
-    private void OnEngine(object sender, RoutedEventArgs e)
-    {
-        if (project is not null && sender is FrameworkElement { Tag: string engine })
+        Results.ItemsSource = new CollectionViewSource
         {
-            _ = project.SetEngineAsync(engine);
-        }
+            IsSourceGrouped = true,
+            Source = hits.GroupBy(h => h.File).Select(g => new SearchGroup(g.Key, g)).ToList(),
+        }.View;
+        NoResults.Visibility = hits.Count == 0 && Searching ? Visibility.Visible : Visibility.Collapsed;
+        NoResultsText.Text = $"Nothing in this project matches “{Main.SearchBox.Text.Trim()}”.";
     }
 
-    private void OnAutoCompile(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.CompileToggleAuto);
+    private bool Searching => !string.IsNullOrWhiteSpace(Main.SearchBox.Text);
 
-    private void OnToggleLogs(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ViewToggleLogs);
-
-    private void OnTogglePdf(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ViewTogglePdf);
-
-    private void OnSavePdf(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.PdfSave);
-
-    private void OnExportZip(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ProjectExport);
-
-    private void OnSettings(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.AppSettings);
-
-    // ---------- sidebar ----------
-
-    private void OnNewFile(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileNew);
-
-    private void OnNewFolder(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileNewFolder);
-
-    private void OnAddFiles(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.FileUpload);
-
-    private void OnSearchChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    /// <summary>The title bar's search box, while the project is on screen: results replace the trees.</summary>
+    internal void Search(string text)
     {
-        if (project is not null)
-        {
-            project.SearchQuery = sender.Text;
-        }
-        var searching = !string.IsNullOrWhiteSpace(sender.Text);
-        Browse.Visibility = searching ? Visibility.Collapsed : Visibility.Visible;
-        Results.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key == VirtualKey.Escape)
-        {
-            SearchBox.Text = "";
-            e.Handled = true;
-        }
+        project?.SearchQuery = text;
+        Motion.Show(Browse, !Searching, Motion.FadeIn);
+        Motion.Show(Results, Searching, Motion.FadeIn);
+        // Until this query's results arrive.
+        NoResults.Visibility = Visibility.Collapsed;
     }
 
     private void OnResultClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is SearchHit hit && project is not null)
+        if (e.ClickedItem is SearchHit hit)
         {
-            _ = project.OpenAsync(hit.File, hit.Line);
-        }
-    }
-
-    private void OnOutlineClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is OutlineRow row && project is not null)
-        {
-            project.Reveal(row.Line);
-            Main.Editor.Focus();
+            _ = project?.OpenAsync(hit.File, hit.Line);
         }
     }
 
     private void OnFileInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
         // Folders expand and collapse on their own.
-        if (args.InvokedItem is FileItem { Node.IsDirectory: false } item && project is not null)
+        if (args.InvokedItem is FileItem { Node.IsDirectory: false } item)
         {
-            _ = project.OpenAsync(item.Node.Path);
+            _ = project?.OpenAsync(item.Node.Path);
         }
     }
 
     /// <summary>F2 renames and Delete deletes, as in File Explorer.</summary>
     private void OnFilesKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (project is not { } p || Files.SelectedItem is not FileItem { Node: var node })
+        if (project is not { } p || Files.SelectedItem is not FileItem { Node: var node } || e.Key is not (VirtualKey.F2 or VirtualKey.Delete))
         {
             return;
         }
-        if (e.Key == VirtualKey.F2)
-        {
-            e.Handled = true;
-            _ = RenameAsync(p, node);
-        }
-        else if (e.Key == VirtualKey.Delete)
-        {
-            e.Handled = true;
-            _ = DeleteAsync(p, node);
-        }
+        e.Handled = true;
+        _ = e.Key == VirtualKey.F2 ? RenameAsync(p, node) : DeleteAsync(p, node);
     }
 
     private void OnFileContextRequested(UIElement sender, ContextRequestedEventArgs e)
@@ -484,14 +835,13 @@ public sealed partial class WorkspaceView : UserControl
         {
             return;
         }
-        // The usual order: open, then the file's own commands, then its
-        // location, and the destructive one last.
+        // Open, the file's own commands, its location, and the destructive one last.
         var menu = new MenuFlyout();
         if (!node.IsDirectory)
         {
             menu.Items.Add(ContextMenus.Item("Open", "\uE8E5", () => _ = p.OpenAsync(node.Path)));
         }
-        if (!node.IsDirectory && node.Path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) && node.Path != p.Settings?.MainFile)
+        if (!node.IsDirectory && IsTex(node.Path) && node.Path != p.Settings?.MainFile)
         {
             menu.Items.Add(ContextMenus.Item("Set as main file", "\uE735", () => _ = p.SetMainFileAsync(node.Path)));
         }
@@ -513,10 +863,10 @@ public sealed partial class WorkspaceView : UserControl
 
     private async Task DeleteAsync(ProjectModel p, TreeNode node)
     {
-        // Refuse before asking, not after the user has already confirmed.
+        // Refused before asking, not after the user has confirmed.
         if (ProjectPaths.Contains(node.Path, p.Settings?.MainFile))
         {
-            Main.Report("Choose a different main file before you delete this.", InfoBarSeverity.Warning);
+            Main.Report($"Can’t delete “{node.Name}”", "Choose a different main file before you delete this.", InfoBarSeverity.Warning);
             return;
         }
         var what = node.IsDirectory ? "This folder and everything in it" : "This file";
@@ -526,20 +876,74 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
+    // ---------- the bars ----------
+
+    private void Format(string name, string? arg = null)
+    {
+        project?.Format(name, arg);
+        Main.Editor.Focus();
+    }
+
+    /// <summary>A button that runs a menu command; its Tag is the command's id.</summary>
+    private void OnCommand(object sender, RoutedEventArgs e) => Main.Perform(MenuCommands.FromId((string)((FrameworkElement)sender).Tag)!.Value);
+
+    private void OnDisplayMath(object sender, RoutedEventArgs e) => Format("displayMath");
+
+    /// <summary>A reference around the selection; the button's Tag is its label.</summary>
+    private void OnInline(object sender, RoutedEventArgs e) =>
+        Format("inline", LatexTemplates.References.First(r => r.Label == (string)((FrameworkElement)sender).Tag).Template);
+
+    /// <summary>An environment or a list; the button's Tag is its label.</summary>
+    private void OnInsert(object sender, RoutedEventArgs e) =>
+        Format("insert", LatexTemplates.Environments.Concat(LatexTemplates.Lists).First(t => t.Label == (string)((FrameworkElement)sender).Tag).Template);
+
+    private void OnLevelMenuOpening(object? sender, object e)
+    {
+        LevelMenu.Items.Clear();
+        AddLevels(LevelMenu.Items, LevelLabel.Text);
+    }
+
+    private void OnSymbolClick(object sender, ItemClickEventArgs e)
+    {
+        SymbolsFlyout.Hide();
+        if (e.ClickedItem is PaletteSymbol symbol)
+        {
+            Format("symbol", symbol.Command);
+        }
+    }
+
+    private void OnShowIssues(object sender, RoutedEventArgs e)
+    {
+        if (project is { } p)
+        {
+            p.PanelTab = PanelTab.Issues;
+            p.ShowLogs = true;
+        }
+    }
+
+    /// <summary>The engine: a menu of the others, or Settings when there is no TeX to run.</summary>
+    private void OnEngineStatus(object sender, RoutedEventArgs e)
+    {
+        if (project is not { TexAvailable: true })
+        {
+            Main.Perform(MenuCommand.AppSettings);
+            return;
+        }
+        var menu = new MenuFlyout { Placement = FlyoutPlacementMode.TopEdgeAlignedRight };
+        AddEngines(menu.Items, keep: null);
+        menu.ShowAt(EngineStatus);
+    }
+
     // ---------- dropping files in ----------
 
-    /// <summary>
-    /// The folder a drop lands in: the folder under the pointer, the folder
-    /// of the file under it, or the project's root.
-    /// </summary>
+    /// <summary>The folder under the pointer, the folder of the file under it, or the project's root.</summary>
     private string DropFolder(DragEventArgs e)
     {
-        var point = e.GetPosition(null);
-        foreach (var element in VisualTreeHelper.FindElementsInHostCoordinates(point, Files))
+        foreach (var element in VisualTreeHelper.FindElementsInHostCoordinates(e.GetPosition(null), Files))
         {
             if (element is TreeViewItem row && Files.ItemFromContainer(row) is FileItem { Node: var node })
             {
-                return node.IsDirectory ? node.Path : node.Path.Contains('/') ? node.Path[..node.Path.LastIndexOf('/')] : "";
+                return node.IsDirectory ? node.Path : Folder(node.Path);
             }
         }
         return "";

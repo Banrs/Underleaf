@@ -5,9 +5,7 @@ public sealed class CoreTests
     [Fact]
     public async Task CommandsRoundTripThroughTheRustCore()
     {
-        // The core picks its library folder from TEXLOCAL_DATA when it opens,
-        // exactly as the app's does; a scratch folder keeps the test out of the
-        // user's own library.
+        // The core reads TEXLOCAL_DATA when it opens; a scratch folder keeps out of the user's library.
         var data = Directory.CreateTempSubdirectory("texlocal-test-").FullName;
         Environment.SetEnvironmentVariable("TEXLOCAL_DATA", data);
         try
@@ -47,8 +45,7 @@ public sealed class CoreTests
         }
         finally
         {
-            // Not delete_project: that moves the folder to the Recycle Bin. The
-            // core's own tests cover it; here the scratch folder just goes.
+            // Not delete_project: that moves the folder to the Recycle Bin.
             Directory.Delete(data, recursive: true);
         }
     }

@@ -7,8 +7,17 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <ResourceDictionary Source="CompactTree.xaml" />
+                <ResourceDictionary Source="ms-appx:///SubtleToggles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="SplitterRuleStyle" TargetType="Rectangle">
+                <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            </Style>
+            <!-- The app's 40 x 32 subtle icon button, as Photos has them. -->
+            <Style x:Key="ToolbarIconButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="32" />
+                <Setter Property="Padding" Value="0" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

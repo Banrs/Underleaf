@@ -20,6 +20,8 @@ const PINCH_SETTLE_MS = 220;
 // settles into a sharp re-render. Beyond this the preview looks soft.
 const PINCH_MIN = 0.4;
 const PINCH_MAX = 2.5;
+// How long the pane's width must hold still before a resize re-renders.
+const RESIZE_SETTLE_MS = 150;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -70,6 +72,7 @@ export class PdfViewer {
     this._anchor = null;          // PDF point to pin across a pinch re-render
     this._pinch = null;           // live gesture, see #beginPinch
     this._pinchGeneration = 0;    // invalidates a settle render if the gesture resumes
+    this._resizePreview = null;   // { anchor, y } while the pane resizes, see #previewResize
     this._padL = this._padT = this._padR = this._padB = 0;   // scroller padding, cached by #metrics
 
     // Scrolling drives painting, since only the pages near the viewport hold
@@ -121,18 +124,27 @@ export class PdfViewer {
       this._pinchTimer = setTimeout(() => this.#settlePinch(g), PINCH_SETTLE_MS);
     }, { passive: false });
 
-    // Re-fit only on genuine pane-width changes. Guards: ignore while a render
-    // is in flight, ignore sub-scrollbar jitter, and debounce — together these
-    // prevent the scrollbar-toggles-width feedback loop.
+    // Re-fit when the pane's width changes: a window resize, or a host's
+    // splitter beside the page. The pages already painted are stretched to the
+    // new fit at once (#previewResize), and one re-render follows once the
+    // width has held still. That render supersedes any pass still in flight —
+    // it must not wait for one: skipping resizes while a pass painted is what
+    // left a slow document stuck at a stale width once the drag ended. There
+    // is no feedback loop to guard against, since the stable scrollbar gutter
+    // (styles.css) keeps the pages from changing the scroller's width.
     this.ro = new ResizeObserver(() => {
-      if (this.scale !== null || !this.doc || this.rendering || this._resizing || this._pinch) return;
+      if (this.scale !== null || !this.doc || this._resizing || this._pinch) return;
       const w = this.scrollEl.clientWidth;
       // Zero is the pane being hidden, not narrowed: there is nothing to fit, and
       // keeping lastFitW means showing it again at the same width costs nothing.
-      if (!w || Math.abs(w - this.lastFitW) < 16) return;
-      this.lastFitW = w;
+      if (!w || (w === this.lastFitW && !this._resizePreview)) return;
+      this.#previewResize();
       clearTimeout(this._roTimer);
-      this._roTimer = setTimeout(() => { if (!this.rendering) this.render(); }, 200);
+      this._roTimer = setTimeout(() => {
+        this._anchor = this._resizePreview?.anchor ?? this._anchor;
+        this._resizePreview = null;
+        void this.render();
+      }, RESIZE_SETTLE_MS);
     });
     this.ro.observe(scrollEl);
 
@@ -228,8 +240,8 @@ export class PdfViewer {
     this.rendering = true;
     this.#cancelPaints();
     // Every early return inside the pass means a newer pass took over. Clearing
-    // the flag in `finally` stops an abandoned pass from locking the re-fit
-    // observer out for the rest of the session.
+    // the flag in `finally` stops an abandoned pass from locking the scroll
+    // painter out for the rest of the session.
     try {
       await this.#renderPass(seq, pinchGeneration);
     } finally {
@@ -315,6 +327,7 @@ export class PdfViewer {
     // Committing ends any gesture: its preview transform lives on the element
     // this swap discards, and its cached geometry describes the old scale.
     this._pinch = null;
+    this._resizePreview = null;
     this.pagesEl = pagesEl;
     this.scrollEl.replaceChildren(pagesEl);
     this.pages = pages;
@@ -858,6 +871,28 @@ export class PdfViewer {
     // The preview transform stays until render() swaps the pages, so there is
     // no snap-back flash.
     if (this.scale === null && this.doc) this.fitWidth();
+  }
+
+  // The same preview for a resize only the observer sees (the Windows host's
+  // window and splitter), which also holds the reading position: the point at
+  // the centre of the view stays put, as a pinch holds the one under the
+  // fingers, and the settle render restores it as the anchor. Content
+  // coordinates, as #toContent; the scroll position is left alone throughout.
+  #previewResize() {
+    if (!this._resizePreview) {
+      const anchor = this.#centerAnchor();
+      if (!anchor) return;
+      this._resizePreview = { anchor, y: this.scrollEl.scrollTop + anchor.viewY };
+    }
+    const first = this.pages[0];
+    const k = this.#fitScale(first.page) / this.currentScale();
+    // The pages keep their layout size, but the pages element tracks the pane,
+    // so their centring offset is read live. The page block lands centred, or
+    // at the left edge once it is wider than the pane.
+    const tx = Math.max(0, (this.#contentBox().w - k * first.wrap.offsetWidth) / 2) - k * first.wrap.offsetLeft;
+    const ty = this._resizePreview.y * (1 - k);
+    this.pagesEl.style.transformOrigin = '0 0';
+    this.pagesEl.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
   }
 
   // ---------- page tracking ----------

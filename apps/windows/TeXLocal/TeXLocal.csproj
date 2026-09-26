@@ -16,8 +16,12 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
 
+  <!-- The parts of the Windows App SDK the app uses, not the metapackage,
+       which also ships its AI, ML, search and widgets runtimes (~60 MB). -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.3.12" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.9" />
   </ItemGroup>
 
   <ItemGroup>

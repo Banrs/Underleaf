@@ -36,15 +36,15 @@ public sealed record Symbols(IReadOnlyList<string> Citations, IReadOnlyList<stri
 
 public sealed record SearchHit(string File, int Line, string Before, string Match, string After)
 {
-    public string Location => $"{File}:{Line}";
+    /// <summary>Under its file's heading in the results, a match needs only its line.</summary>
+    public string LineLabel => $"Line {Line:N0}";
 }
 
 public sealed record FileText(string Text);
 
 /// <summary>
-/// A SyncTeX box in PDF points, origin at the page's top-left: the baseline
-/// point (H, V) and the box's width and height above it — the shape the PDF
-/// page's highlight() takes.
+/// A SyncTeX box in PDF points from the page's top-left: baseline point (H, V),
+/// width and height above it, as the PDF page's highlight() takes it.
 /// </summary>
 public sealed record ForwardLoc(double Page, double? H, double? V, double? Width, double? Height);
 
@@ -57,10 +57,7 @@ public sealed record RenameResult(string From, string To, string MainFile);
 
 public static class TextFiles
 {
-    /// <summary>
-    /// The extensions the core treats as text (projects.rs TEXT_EXT); anything
-    /// else opens in its own app rather than the editor.
-    /// </summary>
+    /// <summary>The core's text extensions (projects.rs TEXT_EXT); anything else opens in its own app.</summary>
     private static readonly HashSet<string> Extensions =
     [
         "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",

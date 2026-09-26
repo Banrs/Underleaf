@@ -4,34 +4,52 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <UserControl.Resources>
-        <!-- A settings card as Windows 11 Settings draws one: icon, header and
-             description on the left, the control on the right. -->
+        <!-- The Windows Community Toolkit's SettingsCard metrics. -->
         <Style x:Key="Card" TargetType="Grid">
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
-            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="Padding" Value="16" />
             <Setter Property="MinHeight" Value="68" />
-            <Setter Property="ColumnSpacing" Value="16" />
         </Style>
         <Style x:Key="CardIcon" TargetType="FontIcon">
             <Setter Property="FontSize" Value="20" />
+            <Setter Property="Margin" Value="2,0,20,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="CardHeader" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,24,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <Style x:Key="CardDescription" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
             <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
+        <!-- A row in an expander card, with SettingsExpander's item metrics. -->
+        <Style x:Key="ExpanderItem" TargetType="Grid">
+            <Setter Property="MinHeight" Value="52" />
+            <Setter Property="Padding" Value="58,8,44,8" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="ColumnSpacing" Value="24" />
+        </Style>
         <Style x:Key="SectionHeader" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
-            <Setter Property="Margin" Value="1,28,0,8" />
+            <Setter Property="Margin" Value="1,30,0,6" />
         </Style>
     </UserControl.Resources>
 
-    <ScrollViewer>
-        <StackPanel MaxWidth="1000" Padding="56,8,56,40" Spacing="4" KeyDown="OnKeyDown">
-            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,4" />
+    <Grid KeyDown="OnKeyDown">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="36,24,36,0" MaxWidth="1064" />
 
+        <!-- Centred inside a full-width grid: given straight to the ScrollViewer, a MaxWidth column sat off-centre. -->
+        <ScrollViewer Grid.Row="1">
+        <Grid>
+        <StackPanel MaxWidth="1064" Margin="36,0,36,36" Spacing="4">
             <TextBlock Text="Appearance" Style="{StaticResource SectionHeader}" />
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -40,12 +58,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE790;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="App theme" />
                     <TextBlock Text="Light, dark, or the same as Windows" Style="{StaticResource CardDescription}" />
                 </StackPanel>
-                <ComboBox x:Name="ThemeBox" Grid.Column="2" MinWidth="200" VerticalAlignment="Center"
-                          AutomationProperties.Name="App theme" SelectionChanged="OnSelectionChanged">
+                <ComboBox x:Name="ThemeBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
+                          AutomationProperties.Name="App theme" SelectionChanged="OnChanged">
                     <x:String>Use system setting</x:String>
                     <x:String>Light</x:String>
                     <x:String>Dark</x:String>
@@ -58,12 +76,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE8E9;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="Editor size" />
                     <TextBlock Text="Scales the editor, on top of the text size you set in Windows" Style="{StaticResource CardDescription}" />
                 </StackPanel>
-                <ComboBox x:Name="ScaleBox" Grid.Column="2" MinWidth="200" VerticalAlignment="Center"
-                          AutomationProperties.Name="Editor size" SelectionChanged="OnSelectionChanged" />
+                <ComboBox x:Name="ScaleBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
+                          AutomationProperties.Name="Editor size" SelectionChanged="OnChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -72,12 +90,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xEA90;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="PDF paper" />
                     <TextBlock Text="Dark inverts the pages' colors for reading at night" Style="{StaticResource CardDescription}" />
                 </StackPanel>
-                <ComboBox x:Name="PaperBox" Grid.Column="2" MinWidth="200" VerticalAlignment="Center"
-                          AutomationProperties.Name="PDF paper" SelectionChanged="OnSelectionChanged">
+                <ComboBox x:Name="PaperBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
+                          AutomationProperties.Name="PDF paper" SelectionChanged="OnChanged">
                     <x:String>White</x:String>
                     <x:String>Dark</x:String>
                     <x:String>Match app theme</x:String>
@@ -85,53 +103,54 @@
             </Grid>
 
             <TextBlock Text="Editor" Style="{StaticResource SectionHeader}" />
-            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="True"
-                      AutomationProperties.Name="Text">
+            <!-- SettingsExpander's metrics on the WinUI Expander (which pads its header 16 on the left). -->
+            <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="68" Padding="0"
+                      IsExpanded="True" AutomationProperties.Name="Text">
                 <Expander.Header>
-                    <Grid ColumnSpacing="16" Padding="0,12" MinHeight="44">
+                    <Grid Padding="0,16,4,16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Glyph="&#xE8D2;" Style="{StaticResource CardIcon}" />
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                             <TextBlock Text="Text" />
                             <TextBlock Text="Syntax colors, font, and font size" Style="{StaticResource CardDescription}" />
                         </StackPanel>
                     </Grid>
                 </Expander.Header>
-                <StackPanel Spacing="12" Padding="36,0,0,0">
-                    <Grid ColumnSpacing="16">
+                <StackPanel>
+                    <Grid Style="{StaticResource ExpanderItem}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Syntax colors" VerticalAlignment="Center" />
-                        <ComboBox x:Name="PaletteBox" Grid.Column="1" MinWidth="200"
-                                  AutomationProperties.Name="Syntax colors" SelectionChanged="OnSelectionChanged">
+                        <ComboBox x:Name="PaletteBox" Grid.Column="1" MinWidth="120" VerticalAlignment="Center"
+                                  AutomationProperties.Name="Syntax colors" SelectionChanged="OnChanged">
                             <x:String>One Dark</x:String>
                             <x:String>Xcode</x:String>
                         </ComboBox>
                     </Grid>
-                    <Grid ColumnSpacing="16">
+                    <Grid Style="{StaticResource ExpanderItem}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Font" VerticalAlignment="Center" />
-                        <ComboBox x:Name="FontBox" Grid.Column="1" MinWidth="200"
-                                  AutomationProperties.Name="Font" SelectionChanged="OnSelectionChanged">
+                        <ComboBox x:Name="FontBox" Grid.Column="1" MinWidth="120" VerticalAlignment="Center"
+                                  AutomationProperties.Name="Font" SelectionChanged="OnChanged">
                             <x:String>System monospace</x:String>
                             <x:String>JetBrains Mono</x:String>
                         </ComboBox>
                     </Grid>
-                    <Grid ColumnSpacing="16">
+                    <Grid Style="{StaticResource ExpanderItem}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Font size" VerticalAlignment="Center" />
-                        <NumberBox x:Name="SizeBox" Grid.Column="1" MinWidth="200" Minimum="10" Maximum="28"
+                        <NumberBox x:Name="SizeBox" Grid.Column="1" MinWidth="120" VerticalAlignment="Center" Minimum="10" Maximum="28"
                                    SpinButtonPlacementMode="Inline" AutomationProperties.Name="Font size"
                                    ValueChanged="OnSizeChanged" />
                     </Grid>
@@ -144,12 +163,13 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE8FD;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="Word count" />
                     <TextBlock Text="Show words and lines in the status bar" Style="{StaticResource CardDescription}" />
                 </StackPanel>
+                <!-- A switch keeps its own width, as SettingsCard leaves it. -->
                 <ToggleSwitch x:Name="WordCountSwitch" Grid.Column="2" MinWidth="0" VerticalAlignment="Center"
-                              AutomationProperties.Name="Word count" Toggled="OnToggled" />
+                              AutomationProperties.Name="Word count" Toggled="OnChanged" />
             </Grid>
 
             <TextBlock Text="Compiling" Style="{StaticResource SectionHeader}" />
@@ -160,12 +180,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE768;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="Compile automatically" />
                     <TextBlock Text="Save and compile when you stop typing" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ToggleSwitch x:Name="AutoCompileSwitch" Grid.Column="2" MinWidth="0" VerticalAlignment="Center"
-                              AutomationProperties.Name="Compile automatically" Toggled="OnToggled" />
+                              AutomationProperties.Name="Compile automatically" Toggled="OnChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -174,16 +194,12 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE9F5;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="TeX engine" />
                     <TextBlock x:Name="EngineDescription" Style="{StaticResource CardDescription}" />
                 </StackPanel>
-                <ComboBox x:Name="EngineBox" Grid.Column="2" MinWidth="200" VerticalAlignment="Center"
-                          AutomationProperties.Name="TeX engine" SelectionChanged="OnEngineChanged">
-                    <x:String>pdfLaTeX</x:String>
-                    <x:String>XeLaTeX</x:String>
-                    <x:String>LuaLaTeX</x:String>
-                </ComboBox>
+                <ComboBox x:Name="EngineBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
+                          AutomationProperties.Name="TeX engine" SelectionChanged="OnEngineChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>
@@ -192,7 +208,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE946;" Style="{StaticResource CardIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="TeX distribution" />
                     <TextBlock x:Name="TexDescription" Style="{StaticResource CardDescription}" IsTextSelectionEnabled="True" />
                 </StackPanel>
@@ -204,6 +220,25 @@
                             ToolTipService.ToolTip="Choose the folder with TeX’s programs, the one that contains latexmk" />
                 </StackPanel>
             </Grid>
+
+            <TextBlock Text="About" Style="{StaticResource SectionHeader}" />
+            <Grid Style="{StaticResource Card}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Image x:Name="AboutIcon" Width="20" Height="20" Margin="2,0,20,0" VerticalAlignment="Center"
+                       AutomationProperties.AccessibilityView="Raw" />
+                <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
+                    <TextBlock Text="TeXLocal" />
+                    <TextBlock Text="A LaTeX editor that works on this PC. Your files never leave it." Style="{StaticResource CardDescription}" />
+                </StackPanel>
+                <TextBlock x:Name="VersionText" Grid.Column="2" VerticalAlignment="Center" IsTextSelectionEnabled="True"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Grid>
         </StackPanel>
-    </ScrollViewer>
+        </Grid>
+        </ScrollViewer>
+    </Grid>
 </UserControl>

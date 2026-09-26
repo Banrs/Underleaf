@@ -3,9 +3,8 @@ using System.Text.Json;
 namespace TeXLocal;
 
 /// <summary>
-/// The app's own settings, remembered across launches (the browser version
-/// keeps the same ones in web/src/prefs.js). Kept in a JSON file because an
-/// unpackaged app has no ApplicationData container.
+/// The app's settings (web/src/prefs.js keeps the same), in a JSON file since
+/// an unpackaged app has no ApplicationData container.
 /// </summary>
 public sealed class Preferences
 {
@@ -31,17 +30,28 @@ public sealed class Preferences
     public bool SidebarVisible { get; set; } = true;
     public bool PdfVisible { get; set; } = true;
     public bool OutlineOpen { get; set; } = true;
+    public bool InspectorVisible { get; set; }
+
+    // The layout as last dragged; null until then, for the workspace's defaults.
+    public double? SidebarWidth { get; set; }
+
+    /// <summary>The PDF's share of the source and PDF's width, 0–1.</summary>
+    public double? PdfSplit { get; set; }
+
+    public double? OutlineHeight { get; set; }
+
+    /// <summary>The outline's folded headings, by project, file and <see cref="Outline.FoldKeys"/>.</summary>
+    public List<string> OutlineFolded { get; set; } = [];
+
+    public double? PanelHeight { get; set; }
+    public double? InspectorWidth { get; set; }
 
     /// <summary>web/src/prefs.js UI_SCALES, stepped by the interface-size commands.</summary>
     public static readonly int[] UiScales = [80, 90, 100, 110, 120, 130];
 
     /// <summary>One step along UiScales, stopping at either end; an unknown size starts from 100.</summary>
-    public static int StepUiScale(int current, int delta)
-    {
-        var i = Array.IndexOf(UiScales, current);
-        i = i < 0 ? Array.IndexOf(UiScales, 100) : Math.Clamp(i + delta, 0, UiScales.Length - 1);
-        return UiScales[i];
-    }
+    public static int StepUiScale(int current, int delta) =>
+        Array.IndexOf(UiScales, current) is var i and >= 0 ? UiScales[Math.Clamp(i + delta, 0, UiScales.Length - 1)] : 100;
 
     /// <summary>The saved settings, or the defaults when there are none or they cannot be read.</summary>
     public static Preferences Load(string path)
@@ -56,10 +66,7 @@ public sealed class Preferences
         }
     }
 
-    /// <summary>
-    /// Best effort: settings are a convenience, so a full disk or a locked
-    /// file costs the change, not the session.
-    /// </summary>
+    /// <summary>Best effort: a full disk or a locked file costs the change, not the session.</summary>
     public void Save(string path)
     {
         try
