@@ -132,8 +132,10 @@ private struct FilePreview: View {
 /// The status bar, as Finder's is: a little text about the window's
 /// contents (HIG, Windows). How the build went (choose it for the panel's
 /// issues), the save state and where the cursor is, then, past a line, the
-/// build panel's toggle. Borderless, as the controls in Xcode's bottom
-/// bars are: no hover bezels, and the toggle tinted while the panel shows.
+/// build panel's toggle. Both are accessory-bar buttons, as the location
+/// row's crumbs and Xcode's jump bar are: flat at rest, a fill under the
+/// pointer so what can be clicked shows, and the toggle filled while the
+/// panel shows (NSBezelStyleAccessoryBar, "buttons with togglable state").
 /// The one place the build's summary shows. A narrow window drops whole
 /// items, never cutting one short: the engine first (the inspector and the
 /// Compile menu show it too), then the counts, then the save state.
@@ -159,7 +161,7 @@ private struct StatusBar: View {
                 items(save: true, counts: false, engine: false)
                 items(save: false, counts: false, engine: false)
             }
-            // The text only: on the toggle, it would hide its tint.
+            // The text only: the toggle keeps its style's own on state.
             .foregroundStyle(.secondary)
             ToolSeparator()
             Toggle(isOn: $project.showLogs) {
@@ -169,7 +171,7 @@ private struct StatusBar: View {
             .labelStyle(.iconOnly)
             .help(app.title(.viewToggleLogs))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.accessoryBar)
         // What the bar shows is chosen where it shows, as Pages' word count
         // is (View › Show Word Count too), not in Settings.
         .contextMenu {
