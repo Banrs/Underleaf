@@ -155,6 +155,9 @@ private struct IssueList: View {
         } primaryAction: { rows in
             if let row = rows.first { open(items[row]) }
         }
+        // Edit › Copy (⌘C) copies the selected issue, as Xcode's issue
+        // navigator does.
+        .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
         .onChange(of: items.count) { _, _ in selection = nil }
     }
 
