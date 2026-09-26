@@ -131,17 +131,16 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile at the leading edge; zoom, then Share, at the trailing.
+    /// Compile at the leading edge; zoom, then Share, at the trailing: all
+    /// bordered, so one height, set apart by space rather than a line.
     private func actions(compact: Bool, zoom: Bool) -> some View {
-        HStack(spacing: BarMetrics.spacing) {
+        HStack(spacing: BarMetrics.groupSpacing) {
             compileControls(compact: compact)
-            Spacer(minLength: BarMetrics.groupSpacing)
-            if zoom {
-                zoomControls
-                ToolSeparator()
-            }
+            Spacer(minLength: 0)
+            if zoom { zoomControls }
             ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
                 .labelStyle(.iconOnly)
+                .buttonStyle(.bordered)
                 .fixedSize()
         }
     }
