@@ -65,8 +65,20 @@ enum Outline {
         }
     }
 
-    /// The outline as a tree by how the headings nest. The sidebar lists the
-    /// headings flat, indented by `depths`; only the tests use this now.
+    /// Each heading's key for remembering its fold: its level and title,
+    /// and which of the headings with both it is ("1:Results#2"), so a fold
+    /// stays with its heading as others come and go above it.
+    static func foldKeys(_ outline: [OutlineItem]) -> [String] {
+        var seen: [String: Int] = [:]
+        return outline.map { item in
+            let key = "\(item.level):\(item.title)"
+            seen[key, default: 0] += 1
+            return "\(key)#\(seen[key]!)"
+        }
+    }
+
+    /// The outline as a tree by how the headings nest, for the sidebar's
+    /// disclosure triangles.
     static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
         let depths = depths(outline)
         var index = 0

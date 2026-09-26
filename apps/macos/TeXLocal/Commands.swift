@@ -330,6 +330,7 @@ extension AppModel {
 
 struct AppCommands: Commands {
     let app: AppModel
+    @AppStorage(NavigatorView.outlineCollapsedKey) private var outlineCollapsed = false
 
     private func item(_ command: MenuCommand) -> some View {
         Button(app.title(command)) { app.perform(command) }
@@ -415,6 +416,10 @@ struct AppCommands: Commands {
         // The panes left to right, then the build panel below them.
         CommandGroup(after: .sidebar) {
             item(.viewToggleSidebar)
+            // The sidebar's outline section, folded from its header too; here
+            // it is a keyboard's and VoiceOver's way to it.
+            Button(outlineCollapsed ? "Show File Outline" : "Hide File Outline") { outlineCollapsed.toggle() }
+                .disabled(app.project?.openPath?.hasSuffix(".tex") != true || !app.sidebarVisible)
             item(.viewTogglePdf)
             Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .option])

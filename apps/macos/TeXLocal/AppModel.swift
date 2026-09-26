@@ -33,13 +33,10 @@ final class AppModel {
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
-    /// The open project's PDF view, for its pane and the window toolbar's
-    /// zoom; a new one for each project.
-    var pdf = PDFController()
 
     init() {
-        // The pane bars' size setting (Settings › General › Toolbar Size)
-        // is gone with the pane bars: the window toolbar is the system's.
+        // The pane bars' Large size (Settings › General › Toolbar Size) is
+        // gone: the bars have the one, standard size.
         UserDefaults.standard.removeObject(forKey: "paneBarSize")
     }
 
@@ -142,7 +139,6 @@ final class AppModel {
 
     func open(_ id: String) async {
         guard await close() else { return }
-        pdf = PDFController()
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
         await model.load()

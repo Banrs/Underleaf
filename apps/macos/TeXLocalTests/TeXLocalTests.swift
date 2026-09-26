@@ -129,15 +129,31 @@ final class OutlineDisplayTests: XCTestCase {
         XCTAssertNil(tree[2].children)
     }
 
+    /// A fold is keyed by the heading's level, title and which of its
+    /// namesakes it is, so headings added above leave it where it was.
+    func testFoldKeysSurviveRenumbering() {
+        let text = "\\section{A}\n\\subsection{Results}\n\\section{B}\n\\subsection{Results}"
+        let keys = Outline.foldKeys(Outline.parse(text))
+        XCTAssertEqual(keys, ["2:A#1", "3:Results#1", "2:B#1", "3:Results#2"])
+        let later = Outline.foldKeys(Outline.parse("\\section{New}\n\\subsection{Other}\n" + text))
+        XCTAssertEqual(Array(later.dropFirst(2)), keys)
+    }
+
     func testEmptyHeadingsAreNamedByKind() {
         let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
     }
 }
 
-/// A bar's group measured off screen, with no window shown.
+/// The pane bar's groups measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
+    /// The UI kit's Unified Compact toolbar, the bars' one size.
+    func testTheBarIsTheKitsCompactToolbarHeight() {
+        XCTAssertEqual(BarMetrics.barHeight, 40)
+        XCTAssertEqual(BarMetrics.controlSize, .regular)
+    }
+
     /// Controls sit 8 pt from the bar's top and bottom, as in the kit's
     /// Unified Compact toolbar. The accessory-bar bezel measures 22 pt, 2 pt
     /// under the kit's 24, so the group keeps within 8 to 9 pt of each edge.
@@ -206,54 +222,6 @@ final class FileWatcherTests: XCTestCase {
     }
 }
 
-/// The window toolbar as AppKit is given it.
-@MainActor
-final class WorkspaceToolbarTests: XCTestCase {
-    /// The source's tools, then Compile, zoom and Share, then the panes'
-    /// toggles; the templates with buttons of their own are only in
-    /// Customize Toolbar…. The defaults, not the toolbar as shown, which
-    /// follows any customization saved in this app's preferences.
-    func testTheDefaultItemsAndTheirOrder() throws {
-        let app = AppModel()
-        let project = ProjectModel(id: "toolbar-test", editor: app.editor, app: app)
-        let root = NavigationStack {
-            Color.clear.toolbar(id: WorkspaceToolbar.id) { WorkspaceToolbar(app: app, project: project) }
-        }
-        .environment(app)
-        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
-        window.setContentSize(NSSize(width: 1600, height: 400))
-        window.orderFront(nil)
-        defer { window.close() }
-        var toolbar: NSToolbar?
-        for _ in 0..<50 where toolbar?.items.isEmpty != false {
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-            toolbar = window.toolbar
-        }
-        let bar = try XCTUnwrap(toolbar)
-        XCTAssertEqual(bar.identifier, WorkspaceToolbar.id)
-        XCTAssertTrue(bar.allowsUserCustomization)
-        let delegate = try XCTUnwrap(bar.delegate)
-        let ours = { (ids: [NSToolbarItem.Identifier]) in
-            ids.compactMap { WorkspaceToolbar.Item(rawValue: $0.rawValue) }
-        }
-        // The items and the spaces: the flexible one puts the PDF's tools over the PDF;
-        // fixed ones keep Compile's tinted glass apart from zoom's, the zoom
-        // group's apart from Share's, and the panes' toggles apart from the
-        // PDF's tools.
-        let spaced = (delegate.toolbarDefaultItemIdentifiers?(bar) ?? []).map { id in
-            switch id {
-            case .flexibleSpace: "flexible"
-            case .space: "fixed"
-            default: id.rawValue
-            }
-        }
-        XCTAssertEqual(spaced, ["back", "undoRedo", "sectionLevel", "format", "symbols", "insert", "flexible",
-                                "fixed", "compile", "fixed", "zoom", "fixed", "share", "fixed", "pdf", "inspector"])
-        let allowed = Set(ours(delegate.toolbarAllowedItemIdentifiers?(bar) ?? []))
-        XCTAssertTrue(WorkspaceToolbar.hiddenByDefault.isSubset(of: allowed))
-    }
-}
-
 @MainActor
 final class SplitLayoutTests: XCTestCase {
     /// Two panes in a split of `size`, the second dragged to `last` points.
@@ -262,7 +230,7 @@ final class SplitLayoutTests: XCTestCase {
         let split = NSSplitView(frame: NSRect(origin: .zero, size: size))
         split.isVertical = vertical
         split.dividerStyle = .thin
-        let coordinator = SplitController.Coordinator()
+        let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
         coordinator.panes = panes
         coordinator.views = [NSView(), NSView()]
         coordinator.views.forEach(split.addArrangedSubview)
@@ -304,6 +272,31 @@ final class SplitLayoutTests: XCTestCase {
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
         split.setFrameSize(NSSize(width: 400, height: 1000))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
+    }
+
+    /// The sidebar's outline folded to its header: the files take the
+    /// room, the header stays as the window resizes, its divider doesn't
+    /// drag, and unfolding brings back the height it had.
+    func testAFoldedPaneKeepsItsHeaderAndUnfoldsToItsHeight() {
+        let panes = [
+            SplitPane(minimum: 100) { EmptyView() },
+            SplitPane(minimum: 80, fraction: 0.45, keepsSize: true) { EmptyView() },
+        ]
+        let (split, coordinator) = split(NSSize(width: 250, height: 600), vertical: false, panes, last: 240)
+        defer { UserDefaults.standard.removeObject(forKey: "\(coordinator.autosave) Unfolded 1") }
+        var folded = panes
+        folded[1].collapsed = 28
+        coordinator.panes = folded
+        coordinator.fold(split, 1, to: 28)
+        XCTAssertEqual(split.arrangedSubviews.map(\.frame.height), [571, 28])
+        XCTAssertEqual(coordinator.splitView(split, effectiveRect: NSRect(x: 0, y: 571, width: 250, height: 1),
+                                             forDrawnRect: .zero, ofDividerAt: 0), .zero)
+        split.setFrameSize(NSSize(width: 250, height: 800))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 28)
+        split.setFrameSize(NSSize(width: 250, height: 600))
+        coordinator.panes = panes
+        coordinator.fold(split, 1, to: nil)
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 240)
     }
 }
 

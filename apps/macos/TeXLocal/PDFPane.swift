@@ -12,31 +12,35 @@ struct PDFPane: View {
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @Environment(\.colorScheme) private var colorScheme
-
-    /// The app's, so the window toolbar's zoom acts on this view.
-    private var controller: PDFController { app.pdf }
+    @State private var controller = PDFController()
 
     var body: some View {
-        // The pages run to the top of the pane; what acts on them floats
-        // over them on glass: find at the top, the page and freshness at
-        // the foot. Compile, zoom and Share are the window toolbar's.
-        // The capsules take the paper's appearance, not the window's: the
-        // glass shows the page through it, so on white paper in a dark
-        // window its labels are drawn dark, as over any light content.
-        pages
-            .overlay(alignment: .top) {
-                if finding, project.pdfVersion > 0 {
-                    findBar.padding(FloatingMetrics.margin)
-                        .environment(\.colorScheme, paperScheme)
+        // The pane's actions (Compile, zoom, Share) in a bar stacked over
+        // the pages, as the source's are over the source: the bar is
+        // opaque, so a page under it would only be hidden. What acts on
+        // the pages themselves floats over them on glass: find at the top,
+        // the page and freshness at the foot. The capsules take the paper's
+        // appearance, not the window's: the glass shows the page through
+        // it, so on white paper in a dark window its labels are drawn dark,
+        // as over any light content.
+        VStack(spacing: 0) {
+            bar
+            Divider()
+            pages
+                .overlay(alignment: .top) {
+                    if finding, project.pdfVersion > 0 {
+                        findBar.padding(FloatingMetrics.margin)
+                            .environment(\.colorScheme, paperScheme)
+                    }
                 }
-            }
-            .overlay(alignment: .bottom) {
-                if project.pdfVersion > 0 {
-                    PageControls(project: project, controller: controller)
-                        .padding(FloatingMetrics.margin)
-                        .environment(\.colorScheme, paperScheme)
+                .overlay(alignment: .bottom) {
+                    if project.pdfVersion > 0 {
+                        PageControls(project: project, controller: controller)
+                            .padding(FloatingMetrics.margin)
+                            .environment(\.colorScheme, paperScheme)
+                    }
                 }
-            }
+        }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -121,6 +125,126 @@ struct PDFPane: View {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
+    }
+
+    /// Compile, zoom and Share, the PDF's actions, lined up with the
+    /// source's bar beside it. Narrow panes shorten Compile to its symbol,
+    /// then leave zoom to the View menu.
+    private var bar: some View {
+        PaneBar {
+            ViewThatFits(in: .horizontal) {
+                actions(compact: false, zoom: true)
+                actions(compact: true, zoom: true)
+                actions(compact: true, zoom: false)
+            }
+        }
+    }
+
+    /// Compile at the leading edge; zoom, then Share, at the trailing.
+    private func actions(compact: Bool, zoom: Bool) -> some View {
+        HStack(spacing: BarMetrics.spacing) {
+            compileControls(compact: compact)
+            Spacer(minLength: BarMetrics.groupSpacing)
+            if zoom {
+                zoomControls
+                ToolSeparator()
+            }
+            ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
+                .labelStyle(.iconOnly)
+                .fixedSize()
+        }
+    }
+
+    /// Overleaf's Recompile, the pane's one prominent control; while a build
+    /// runs, a spinner and Stop in its place.
+    @ViewBuilder
+    private func compileControls(compact: Bool) -> some View {
+        if project.compiling {
+            HStack(spacing: BarMetrics.groupSpacing) {
+                ProgressView().controlSize(.small)
+                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
+                    .labelStyle(.iconOnly)
+                    .help("Stop")
+            }
+            .fixedSize()
+        } else {
+            Button { app.perform(.compileRun) } label: {
+                if compact {
+                    Label("Compile", systemImage: "play.fill").labelStyle(.iconOnly)
+                } else {
+                    Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .fixedSize()
+            .disabled(!app.isEnabled(.compileRun))
+            .help("Compile")
+        }
+    }
+
+    /// The scale, a menu of ways to fit and preset scales, the one in use
+    /// checked. A menu rather than a pop-up, as the scale is any percentage;
+    /// bordered, as the bars' values are.
+    private var zoomMenu: some View {
+        Menu {
+            // The fitting in use is checked, as Preview's is; while fitting,
+            // no preset is, even at a preset's scale.
+            Picker("Fit", selection: Binding(
+                get: { controller.fit },
+                set: { fit in
+                    switch fit {
+                    case .width: controller.fitWidth()
+                    case .height: controller.fitHeight()
+                    case nil: break
+                    }
+                }
+            )) {
+                Text("Fit Width").tag(Optional(PDFController.Fit.width))
+                Text("Fit Height").tag(Optional(PDFController.Fit.height))
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Picker("Zoom", selection: Binding(
+                get: { controller.fit == nil ? Self.zoomPresets.first { "\($0)%" == controller.zoomLabel } : nil },
+                set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
+            )) {
+                ForEach(Self.zoomPresets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            // As wide at 68% as at 400% (figure spaces are a digit wide), so
+            // the group keeps its width and Zoom Out stays under the pointer
+            // as the scale changes.
+            Text(String(repeating: "\u{2007}", count: max(0, 4 - controller.zoomLabel.count))
+                 + controller.zoomLabel)
+                .monospacedDigit()
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .fixedSize()
+        .help("Zoom")
+        .accessibilityLabel("Zoom")
+        .accessibilityValue(controller.zoomLabel)
+    }
+
+    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
+
+    /// Zoom out, the scale, zoom in: one group, as Preview's zoom is.
+    private var zoomControls: some View {
+        // Not the View menu's commands: their route (`requestPDF`) also
+        // hides the panel.
+        HStack(spacing: 0) {
+            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
+                .help("Zoom Out")
+            zoomMenu
+            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
+                .help("Zoom In")
+        }
+        .labelStyle(.iconOnly)
+        .fixedSize()
+        .disabled(project.pdfVersion == 0)
     }
 
     /// Find in PDF, floating over the top of the pages: the field, the
@@ -768,108 +892,31 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 }
 
-/// Compile, the window's one prominent action (Overleaf's Recompile), over
-/// the PDF; while a build runs, Stop in its place.
-struct CompileTool: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
+/// Shares the PDF with AppKit's picker, opened from the button itself.
+private struct ShareButton: View {
+    let url: URL?
+    @State private var anchor: NSView?
 
     var body: some View {
-        if project.compiling {
-            // Prominent as Compile is, while stopping is the action: a plain
-            // button here joined its neighbours' glass (Symbols, the panes'
-            // toggles) in a narrow window, and the item changed its look
-            // under the pointer.
-            Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
-                .labelStyle(.titleAndIcon)
-                .buttonStyle(.borderedProminent)
-                .help("Stop Compiling")
-        } else {
-            Button(MenuCommand.compileRun.title, systemImage: "play.fill") { app.perform(.compileRun) }
-                .labelStyle(.titleAndIcon)
-                .buttonStyle(.borderedProminent)
-                .disabled(!app.isEnabled(.compileRun))
-                .help("Compile")
+        Button("Share PDF", systemImage: "square.and.arrow.up") {
+            guard let url, let anchor else { return }
+            NSSharingServicePicker(items: [url]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
         }
+        .disabled(url == nil)
+        .background(ViewAnchor(view: $anchor))
+        .help("Share PDF")
     }
 }
 
-/// Zoom out, the scale, zoom in: one group, as Preview's zoom is. The scale
-/// is a menu of ways to fit and preset scales, the one in use checked; a
-/// menu rather than a pop-up, as the scale is any percentage.
-struct ZoomTools: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
+/// An AppKit view where a SwiftUI view is, for AppKit to anchor to.
+private struct ViewAnchor: NSViewRepresentable {
+    @Binding var view: NSView?
 
-    private static let presets = [50, 75, 100, 125, 150, 200]
-
-    var body: some View {
-        let controller = app.pdf
-        // Not the View menu's commands: their route (`requestPDF`) also
-        // hides the build panel.
-        ControlGroup {
-            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
-                .help("Zoom Out")
-            Menu {
-                // The fitting in use is checked, as Preview's is; while
-                // fitting, no preset is, even at a preset's scale.
-                Picker("Fit", selection: Binding(
-                    get: { controller.fit },
-                    set: { fit in
-                        switch fit {
-                        case .width: controller.fitWidth()
-                        case .height: controller.fitHeight()
-                        case nil: break
-                        }
-                    }
-                )) {
-                    Text("Fit Width").tag(Optional(PDFController.Fit.width))
-                    Text("Fit Height").tag(Optional(PDFController.Fit.height))
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                Divider()
-                Picker("Zoom", selection: Binding(
-                    get: { controller.fit == nil ? Self.presets.first { "\($0)%" == controller.zoomLabel } : nil },
-                    set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
-                )) {
-                    ForEach(Self.presets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
-                // As wide at 68% as at 400% (figure spaces are a digit
-                // wide), so the group keeps its width and Zoom Out stays
-                // under the pointer as the scale changes. The toolbar
-                // draws a menu's label as its title, so a frame wouldn't hold.
-                Text(String(repeating: "\u{2007}", count: max(0, 4 - controller.zoomLabel.count))
-                     + controller.zoomLabel)
-                    .monospacedDigit()
-            }
-            .help("Zoom")
-            .accessibilityLabel("Zoom")
-            .accessibilityValue(controller.zoomLabel)
-            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
-                .help("Zoom In")
-        } label: {
-            Label("Zoom", systemImage: "plus.magnifyingglass")
-        }
-        .disabled(project.pdfVersion == 0 || !project.showPDF)
+    func makeNSView(context: Context) -> NSView {
+        let anchor = NSView()
+        Task { @MainActor in view = anchor }
+        return anchor
     }
-}
 
-/// The system's share item for the PDF.
-struct ShareTool: View {
-    let project: ProjectModel
-
-    var body: some View {
-        if project.pdfVersion > 0, let url = project.pdfURL {
-            ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }
-                .help("Share PDF")
-        } else {
-            Button("Share", systemImage: "square.and.arrow.up") {}
-                .help("Share PDF")
-                .disabled(true)
-        }
-    }
+    func updateNSView(_ anchor: NSView, context: Context) {}
 }

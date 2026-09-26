@@ -88,16 +88,16 @@ private struct SourceAndPDF: View {
     }
 }
 
-/// The source under its location row, stacked, not overlaid: the row is
-/// opaque, so text scrolled beneath it was only hidden. The source's tools
-/// are the window toolbar's, over this pane. The find bar, while it shows,
-/// goes between the row and the text, as TextEdit's and Xcode's do.
+/// The source's bars stacked over it, not overlaid: they are opaque, so
+/// text scrolled beneath them was only hidden. The find bar, while it
+/// shows, goes between them and the text, as TextEdit's and Xcode's do.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         VStack(spacing: 0) {
+            SourceBar(project: project)
             SourceLocation(project: project)
             if project.findShown {
                 Divider()

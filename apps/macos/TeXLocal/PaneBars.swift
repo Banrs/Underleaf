@@ -2,9 +2,10 @@ import SwiftUI
 
 /// The one set of metrics every in-window bar shares, from the kit's
 /// toolbars: 8 pt around the controls, 4 pt between the controls of a
-/// group, 8 pt between groups, and 16 pt separator lines. The window
-/// toolbar is the system's, at the system's size; these are the bars under
-/// it (the build panel's header and the find bars) and the secondary rows.
+/// group, 8 pt between groups, and 16 pt separator lines. One size, the
+/// standard one: the bars under the window toolbar (the source's and the
+/// PDF's actions, the find bar, the build panel's header) and the
+/// secondary rows.
 enum BarMetrics {
     /// A bar of actions: regular 24 pt controls with 8 pt above and below,
     /// the kit's Unified Compact toolbar.
@@ -35,9 +36,9 @@ enum BarMetrics {
 
 /// Controls that float over a pane's content (the PDF's page controls and
 /// its find bar): Liquid Glass capsules, as the toolbar's items are, at the
-/// toolbar's size, so the two read as one control layer. The kit's XL
-/// toolbar pill: large (28 pt) controls with 4 pt of glass around them, a
-/// 36 pt capsule.
+/// window toolbar's size, so the two read as one control layer. The kit's
+/// XL toolbar pill: large (28 pt) controls with 4 pt of glass around them,
+/// a 36 pt capsule.
 enum FloatingMetrics {
     static let controlSize: ControlSize = .large
     static let padding: CGFloat = 4
@@ -126,10 +127,11 @@ private struct OnGlass: ViewModifier {
     }
 }
 
-/// A row of a pane's own actions (the build panel's header), in AppKit's
-/// accessory-bar controls, as Finder's and Mail's in-window bars have
-/// them: flat buttons that highlight on hover, a line between groups. Not glass: these bars sit above content, not over it.
-/// What acts on the window's panes is in the window toolbar instead.
+/// A pane's actions: the row under the window toolbar (over the source,
+/// over the PDF, the build panel's header), in AppKit's accessory-bar
+/// controls, as Finder's and Mail's in-window bars have them: flat buttons
+/// that highlight on hover, a line between groups. Not glass: these bars
+/// sit above content, not over it.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -179,6 +181,15 @@ struct Segment: Identifiable {
     let systemImage: String
     var enabled = true
     let action: () -> Void
+}
+
+extension Segment {
+    /// A menu command; its shortcut shows in the menu, not the tooltip.
+    @MainActor
+    init(_ command: MenuCommand, _ systemImage: String, app: AppModel) {
+        self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
+                  enabled: app.isEnabled(command)) { app.perform(command) }
+    }
 }
 
 /// Related icon actions side by side, icons only.

@@ -15,10 +15,14 @@ struct SplitPane {
     /// On edge-to-edge system glass, as an inspector sits beside the
     /// content (`NSGlassEffectView`, the pane its content view).
     var glass = false
+    /// Folded to this size (its header), its divider fixed; unfolding
+    /// brings back the size it had, remembered across launches.
+    var collapsed: CGFloat?
     let content: AnyView
 
     init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
-         keepsSize: Bool = false, shown: Bool = true, glass: Bool = false, @ViewBuilder content: () -> some View) {
+         keepsSize: Bool = false, shown: Bool = true, glass: Bool = false, collapsed: CGFloat? = nil,
+         @ViewBuilder content: () -> some View) {
         self.minimum = minimum
         self.maximum = maximum
         self.maxFraction = maxFraction
@@ -26,6 +30,7 @@ struct SplitPane {
         self.keepsSize = keepsSize
         self.shown = shown
         self.glass = glass
+        self.collapsed = collapsed
         self.content = AnyView(content())
     }
 }
@@ -44,7 +49,7 @@ struct SplitController: NSViewRepresentable {
     let autosave: String
     let panes: [SplitPane]
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(autosave: autosave) }
 
     func makeNSView(context: Context) -> NSSplitView {
         let split = NSSplitView()
@@ -83,10 +88,17 @@ struct SplitController: NSViewRepresentable {
     /// Shows and hides panes. A hidden pane leaves the split (AppKit kept
     /// room for a merely hidden one); coming back, it gets the share of the
     /// split it had (a pane that keeps its size, that size), or its share
-    /// the first time.
+    /// the first time. Folds and unfolds panes too (`SplitPane.collapsed`).
     func updateNSView(_ split: NSSplitView, context: Context) {
         let coordinator = context.coordinator
+        let was = coordinator.panes
         coordinator.panes = panes
+        for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() {
+            let before = was.indices.contains(index) ? was[index].collapsed : pane.collapsed
+            if before != pane.collapsed, pane.shown, view.superview === split {
+                coordinator.fold(split, index, to: pane.collapsed, keeping: before == nil)
+            }
+        }
         for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() where (view.superview === split) != pane.shown {
             let total = split.length
             if pane.shown {
@@ -94,7 +106,8 @@ struct SplitController: NSViewRepresentable {
                 split.insertArrangedSubview(view, at: before)
                 split.adjustSubviews()
                 if before > 0 {
-                    let size = coordinator.hidden[index].map { pane.keepsSize ? $0 : $0 * total }
+                    let size = pane.collapsed
+                        ?? coordinator.hidden[index].map { pane.keepsSize ? $0 : $0 * total }
                         ?? (pane.fraction ?? 0.5) * total
                     split.setPosition(total - size - split.dividerThickness, ofDividerAt: before - 1)
                 }
@@ -121,6 +134,7 @@ struct SplitController: NSViewRepresentable {
     /// small window gets its share back as the window grows.
     @MainActor
     final class Coordinator: NSObject, NSSplitViewDelegate {
+        let autosave: String
         var panes: [SplitPane] = []
         var views: [NSView] = []
         /// Hidden panes' shares of the split, or sizes for a pane that keeps
@@ -133,6 +147,35 @@ struct SplitController: NSViewRepresentable {
         /// since, and are the ones to keep.
         private var laidOut: [CGFloat] = []
 
+        init(autosave: String) {
+            self.autosave = autosave
+        }
+
+        /// Where a folded pane's unfolded size is kept: the split's own
+        /// autosave holds the folded one.
+        private func unfoldedKey(_ index: Int) -> String { "\(autosave) Unfolded \(index)" }
+
+        /// Folds a pane to `size`, keeping the size it had to come back
+        /// to (`keeping`: it was unfolded), or (`size` nil) unfolds it to
+        /// that size. Only a pane after the first: it moves the divider
+        /// before it.
+        func fold(_ split: NSSplitView, _ index: Int, to size: CGFloat?, keeping: Bool = true) {
+            let view = views[index]
+            guard let place = split.arrangedSubviews.firstIndex(of: view), place > 0 else { return }
+            let end = span(split, place).1
+            let target: CGFloat
+            if let size {
+                if keeping { UserDefaults.standard.set(Double(split.length(of: view)), forKey: unfoldedKey(index)) }
+                target = size
+            } else {
+                let kept = UserDefaults.standard.double(forKey: unfoldedKey(index))
+                let pane = panes[index]
+                target = kept > pane.minimum ? kept : (pane.fraction ?? 0.5) * split.length
+            }
+            split.setPosition(end - target - split.dividerThickness, ofDividerAt: place - 1)
+            split.adjustSubviews()
+        }
+
         /// The pane shown at a place in the split.
         private func pane(_ split: NSSplitView, _ place: Int) -> SplitPane {
             panes[views.firstIndex(of: split.arrangedSubviews[place]) ?? place]
@@ -142,9 +185,13 @@ struct SplitController: NSViewRepresentable {
         /// or its largest share, whichever is less, and never under its
         /// minimum.
         private func maximum(_ split: NSSplitView, _ pane: SplitPane) -> CGFloat {
+            if let folded = pane.collapsed { return folded }
             let share = pane.maxFraction.map { $0 * split.length } ?? .infinity
             return max(min(pane.maximum ?? .infinity, share), pane.minimum)
         }
+
+        /// The least a pane may take: its folded size while folded.
+        private func minimum(_ pane: SplitPane) -> CGFloat { pane.collapsed ?? pane.minimum }
 
         private func span(_ split: NSSplitView, _ place: Int) -> (CGFloat, CGFloat) {
             let frame = split.arrangedSubviews[place].frame
@@ -180,7 +227,7 @@ struct SplitController: NSViewRepresentable {
             let room = split.length - split.dividerThickness * CGFloat(max(shown.count - 1, 0))
             let limits = places.map { place in
                 let pane = pane(split, place)
-                return (pane.minimum, maximum(split, pane), pane.keepsSize)
+                return (minimum(pane), maximum(split, pane), pane.keepsSize || pane.collapsed != nil)
             }
             let want = places.map { place in
                 views.firstIndex(of: shown[place]).flatMap { wanted[$0] } ?? split.length(of: shown[place])
@@ -222,19 +269,28 @@ struct SplitController: NSViewRepresentable {
         /// A pane that keeps its size leaves a window resize to the others.
         func splitView(_ split: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
             guard let index = views.firstIndex(of: view) else { return true }
-            return !panes[index].keepsSize
+            return !panes[index].keepsSize && panes[index].collapsed == nil
         }
 
+        /// A folded pane's divider doesn't drag, and shows no resize pointer.
+        func splitView(_ split: NSSplitView, effectiveRect proposed: NSRect, forDrawnRect drawn: NSRect,
+                       ofDividerAt place: Int) -> NSRect {
+            let beside = [place, place + 1].filter(split.arrangedSubviews.indices.contains)
+            return beside.contains { pane(split, $0).collapsed != nil } ? .zero : proposed
+        }
+
+        // The divider's position is where the pane before it ends; the pane
+        // after it starts a divider's thickness later.
         func splitView(_ split: NSSplitView, constrainMinCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            let low = max(span(split, place).0 + pane(split, place).minimum,
-                          span(split, place + 1).1 - maximum(split, pane(split, place + 1)))
+            let low = max(span(split, place).0 + minimum(pane(split, place)),
+                          span(split, place + 1).1 - maximum(split, pane(split, place + 1)) - split.dividerThickness)
             return max(proposed, low)
         }
 
         func splitView(_ split: NSSplitView, constrainMaxCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            let high = min(span(split, place + 1).1 - pane(split, place + 1).minimum,
+            let high = min(span(split, place + 1).1 - minimum(pane(split, place + 1)) - split.dividerThickness,
                            span(split, place).0 + maximum(split, pane(split, place)))
             return min(proposed, high)
         }
