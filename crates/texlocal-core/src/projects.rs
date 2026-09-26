@@ -602,21 +602,46 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+/// A thebibliography entry's key, which \cite takes as a .bib key.
+static BIBITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
+
+/// A line of TeX without its comment, which starts at the first % that no
+/// backslash escapes.
+fn uncommented(line: &str) -> &str {
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => return &line[..i],
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    line
+}
 
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     visit_files(root, &mut |abs, rel| {
-        let (re, out) = match ext_of(&rel).as_str() {
-            "bib" => (&*BIB_KEY, &mut keys),
-            "tex" => (&*LABEL, &mut labels),
-            _ => return Ok(true),
-        };
+        let ext = ext_of(&rel);
+        if ext != "bib" && ext != "tex" {
+            return Ok(true);
+        }
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
             return Ok(true);
         };
-        for m in re.captures_iter(&String::from_utf8_lossy(&bytes)) {
-            out.push(m[1].to_string());
+        let text = String::from_utf8_lossy(&bytes);
+        let found = |re: &Regex, text: &str, out: &mut Vec<String>| {
+            out.extend(re.captures_iter(text).map(|m| m[1].to_string()));
+        };
+        if ext == "bib" {
+            found(&BIB_KEY, &text, &mut keys);
+        } else {
+            for line in text.lines().map(uncommented) {
+                found(&LABEL, line, &mut labels);
+                found(&BIBITEM, line, &mut keys);
+            }
         }
         Ok(true)
     })?;

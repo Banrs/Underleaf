@@ -785,3 +785,18 @@ fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
     export_zip(&root, &out.path().join("out.zip")).unwrap();
     assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);
 }
+
+#[test]
+fn citations_include_bibitem_keys_and_commented_labels_are_left_out() {
+    let data = data_dir();
+    let root = project(data.path(), "bibitems");
+    fs::write(
+        root.join("main.tex"),
+        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent}\n\
+         \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
+    )
+    .unwrap();
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["kept", "after-percent"]);
+    assert_eq!(found.citations, ["knuth", "lamport"]);
+}
