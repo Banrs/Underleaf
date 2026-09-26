@@ -1,10 +1,11 @@
 # Design tokens
 
 Every value here was read out of **Apple's macOS 27 UI Kit** (Sketch, from
-[Apple Design Resources](https://developer.apple.com/design/resources/)) rather
-than eyeballed, so the app's chrome matches the platform it sits in. The kit
-lives outside the repo (`~/Documents/Design Resources/`); this file is the
-extracted spec that `web/styles.css` implements.
+[Apple Design Resources](https://developer.apple.com/design/resources/); on the
+owner's Mac at `~/Downloads/Apple macOS 27 UI Kit.sketch`) rather than
+eyeballed. This is the spec `web/styles.css` implements for the browser and
+Tauri UI; the native apps take their metrics from the system instead
+(`BarMetrics` and `Typography` on the Mac, Fluent on Windows).
 
 ## Typography — SF Pro
 

@@ -411,7 +411,7 @@ impl Service {
     /// The exception is the TeX folder: `set_tex_dir` and `list_dirs` take an
     /// absolute path by name, because a browser page has no native folder
     /// picker. That grants nothing new. The browser server listens on
-    /// 127.0.0.1 only, behind its token cookie and Host/Origin checks, and a
+    /// 127.0.0.1 only, behind its token header and Host/Origin checks, and a
     /// caller that can compile can already run code as this user, so choosing
     /// which latexmk runs adds no power; `list_dirs` returns folder names, never
     /// file contents.
