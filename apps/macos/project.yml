@@ -4,12 +4,12 @@ name: TeXLocal
 options:
   bundleIdPrefix: com.texlocal
   deploymentTarget:
-    macOS: "27.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "27.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
     ARCHS: arm64
 targets:
   TeXLocal:

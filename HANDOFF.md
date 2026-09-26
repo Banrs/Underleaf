@@ -16,7 +16,7 @@ Next:
 
 TeXLocal is moving from a single Tauri web UI to three clients over one Rust core:
 
-- **macOS app:** SwiftUI (macOS 27 design), in `apps/macos`.
+- **macOS app:** SwiftUI (macOS 27 design), in `apps/macos`. It runs on macOS 26 and later: 26 has Liquid Glass, so the look is the same there, and nothing uses a 27-only API (the compiler flags one at the 26.0 target).
 - **Windows app:** WinUI 3 in C# (Windows 11 Fluent 2), in `apps/windows`.
 - **Browser version:** the existing `web/` UI, served by `crates/texlocal-server`. It is local only, never exposed to the network.
 
@@ -96,7 +96,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
 
 - **`.github/workflows/macos-app.yml` ("macOS app")**, on `macos-26`:
   - It selects the newest Xcode on the image. Today that is 26.6 with the macOS 26.5 SDK.
-  - While the runner is older than macOS 27, it builds and tests with `MACOSX_DEPLOYMENT_TARGET` set to the older of the host and SDK versions. An API that needs 27 still fails the build.
+  - The app's deployment target is macOS 26.0 (`project.yml` and the pbxproj), which the runner meets, so CI builds exactly what ships. The Rust cache key names the target: cargo doesn't rebuild when `MACOSX_DEPLOYMENT_TARGET` changes, so after changing it locally run `cargo clean` once, or the linker warns that objects were built for a newer macOS.
   - It fails if the app loads the Rust core as a dylib (checked with `otool -L`).
   - Then it runs the XCTests.
 - **`.github/workflows/windows-app.yml` ("Windows app")**, on `windows-latest`:
