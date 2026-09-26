@@ -44,7 +44,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     @ObservationIgnored private var kept: [String: (body: String, args: [String: Any])] = [:]
     /// The last appearance from Settings, sent again with fresh system
     /// colours when the user changes the accent or highlight colour.
-    @ObservationIgnored private var appearance: (theme: String, palette: String, font: String, fontSize: Int)?
+    @ObservationIgnored private var appearance: EditorAppearance?
 
     override init() {
         var config = WebPage.Configuration()
@@ -62,8 +62,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
             forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let a = self.appearance else { return }
-                Task { await self.setAppearance(theme: a.theme, palette: a.palette, font: a.font, fontSize: a.fontSize) }
+                guard let self, let appearance = self.appearance else { return }
+                Task { await self.setAppearance(appearance) }
             }
         }
         page.load(URL(string: "\(Self.scheme)://app/embed/editor.html")!)
@@ -170,18 +170,16 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     /// find matches and completion lists, so the editor sits on the same
     /// surface as the native chrome around it. The colours are resolved in
     /// the theme's appearance.
-    func setAppearance(theme: String, palette: String, font: String, fontSize: Int) async {
-        appearance = (theme, palette, font, fontSize)
-        var colors: [String: String] = [:]
-        var host: [String: String] = [:]
-        let drawing = NSAppearance(named: theme == "dark" ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+    func setAppearance(_ appearance: EditorAppearance) async {
+        self.appearance = appearance
+        var settings: [String: Any] = ["theme": appearance.theme, "palette": appearance.palette,
+                                       "font": appearance.font, "fontSize": appearance.fontSize]
+        let drawing = NSAppearance(named: appearance.theme == "dark" ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
         drawing.performAsCurrentDrawingAppearance {
-            colors = [
-                "accent": Self.css(.controlAccentColor),
-                "selection": Self.css(.selectedTextBackgroundColor),
-                "inactiveSelection": Self.css(.unemphasizedSelectedTextBackgroundColor),
-            ]
-            host = [
+            settings["accent"] = Self.css(.controlAccentColor)
+            settings["selection"] = Self.css(.selectedTextBackgroundColor)
+            settings["inactiveSelection"] = Self.css(.unemphasizedSelectedTextBackgroundColor)
+            settings["host"] = [
                 "text-background": Self.css(.textBackgroundColor),
                 "text": Self.css(.textColor),
                 "secondary-label": Self.css(.secondaryLabelColor),
@@ -189,14 +187,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
                 "selected-content": Self.css(.selectedContentBackgroundColor),
                 "selected-text": Self.css(.alternateSelectedControlTextColor),
                 // The current line and other occurrences of the selection,
-                // a faint neutral fill as Xcode draws them (editor.html's
-                // :root[data-host] rules use them once the web side does).
+                // a faint neutral fill as Xcode draws them.
                 "current-line": Self.css(.quaternarySystemFill),
                 "selection-match": Self.css(.unemphasizedSelectedTextBackgroundColor),
             ]
         }
-        let settings: [String: Any] = ["theme": theme, "palette": palette, "font": font, "fontSize": fontSize, "host": host]
-        await keep("appearance", "texlocal.setAppearance(a)", ["a": settings.merging(colors) { $1 }])
+        await keep("appearance", "texlocal.setAppearance(a)", ["a": settings])
     }
 
     /// A colour as CSS, resolved in the current drawing appearance.
@@ -257,6 +253,25 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// How the editor looks: the system's appearance ("light" or "dark"), then
+/// Settings' syntax colours and font.
+struct EditorAppearance: Hashable {
+    var theme: String
+    var palette: String
+    var font: String
+    var fontSize: Int
+}
+
+/// The editor's settings, shared by Settings and the editor so their keys
+/// and defaults can't drift apart.
+enum EditorPrefs {
+    static let paletteKey = "editorPalette", fontKey = "editorFont", fontSizeKey = "editorFontSize"
+    /// "onedark" is the editor's own colours (EditorSettings says why).
+    static let palette = "onedark", font = "system"
+    /// The system's body size.
+    static let fontSize = 13
+}
+
 /// Links in the editor never navigate the editor page itself: web and
 /// mail links open in their apps.
 private struct Links: WebPage.NavigationDeciding {
@@ -293,16 +308,17 @@ extension FindQuery {
     }
 }
 
-/// How many matches the search has, and which one is selected (from 1; 0
-/// when the selection is not a match). `limited`: there are more than the
-/// page counts.
+/// How many matches a search has, and which one is selected (from 1; 0
+/// when the selection is not a match). `limited`: there are more than are
+/// counted.
 struct FindMatches: Equatable {
     var index = 0
     var total = 0
     var limited = false
 
-    /// "3 of 12", "12 matches" when none is selected, "Not found", or
-    /// nothing before a search.
+    /// A find bar's count, as the web's (workspace.js `showCount`) and
+    /// Xcode's read: "3 of 12", "12 matches" when none is selected,
+    /// "1 of 5000+" past a cap, "Not found", or nothing before a search.
     func label(for query: String) -> String {
         if query.isEmpty { return "" }
         if total == 0 { return "Not found" }

@@ -34,12 +34,12 @@ struct NavigatorView: View {
 
     /// Search results take the whole sidebar.
     private var showsOutline: Bool {
-        project.searchQuery.isEmpty && project.openPath?.hasSuffix(".tex") == true
+        project.searchQuery.isEmpty && project.isLaTeX
     }
 }
 
-/// The project's files, with adding at the header as Overleaf has it, or
-/// the project search's results while there is a query.
+/// The project's files, or the project search's results while there is a
+/// query.
 private struct FilesList: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -49,7 +49,6 @@ private struct FilesList: View {
     /// The row whose name is being edited in place, and the name so far.
     @State private var renaming: String?
     @State private var newName = ""
-    @FocusState private var renameFocused: Bool
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
 
@@ -64,17 +63,8 @@ private struct FilesList: View {
             Task { await project.importFiles(urls) }
             return true
         }
-        .confirmationDialog(
-            "Move “\((deleting.map { ($0 as NSString).lastPathComponent }) ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { path in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await project.deleteEntry(path) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
+        .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
+            Task { await project.deleteEntry(path) }
         }
     }
 
@@ -99,11 +89,13 @@ private struct FilesList: View {
         } primaryAction: { paths in
             // Double-click or Return on a folder opens or closes it, as
             // Xcode's navigator does; a file is open once it's chosen.
-            guard let path = paths.first, isFolder(path, in: project.tree) else { return }
+            guard let path = paths.first, project.tree.flattened.contains(where: { $0.path == path && $0.isDirectory }) else { return }
             if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
+            if let path, path != project.openPath, isTextFile(path) || isPreviewFile(path) {
+                Task { await project.open(path, focus: false) }
+            }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         // ⌫, as Finder and the projects table take it.
@@ -166,16 +158,12 @@ private struct FilesList: View {
         })
     }
 
-    private func isFolder(_ path: String, in nodes: [TreeNode]) -> Bool {
-        nodes.contains { $0.path == path ? $0.isDirectory : isFolder(path, in: $0.children ?? []) }
-    }
-
     private func row(_ node: TreeNode) -> some View {
         let isMain = node.path == project.settings?.mainFile
         return Label {
             HStack {
                 if renaming == node.path {
-                    nameField(node)
+                    RenameField(text: $newName) { commitRename(node) } cancel: { renaming = nil }
                 } else {
                     Text(node.name)
                 }
@@ -189,10 +177,18 @@ private struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: icon(for: node))
+            Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
         }
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
+        // Into the folder dropped on, or the one the file dropped on is in,
+        // as Windows' tree takes them; elsewhere the list's own drop adds
+        // them at the top.
+        .dropDestination(for: URL.self) { urls, _ in
+            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            Task { await project.importFiles(urls, into: folder) }
+            return true
+        }
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
@@ -209,25 +205,6 @@ private struct FilesList: View {
         }
     }
 
-    /// The row's name, edited in place: Return or clicking away renames,
-    /// Escape leaves it as it was.
-    private func nameField(_ node: TreeNode) -> some View {
-        TextField("Name", text: $newName)
-            .labelsHidden()
-            .focused($renameFocused)
-            .onSubmit { commitRename(node) }
-            .onExitCommand { renaming = nil }
-            .onChange(of: renameFocused) { was, focused in
-                if was, !focused { commitRename(node) }
-            }
-            // Once the context menu has closed and handed the list its
-            // focus back, or the list takes it straight from the field.
-            .task {
-                try? await Task.sleep(for: .milliseconds(150))
-                renameFocused = true
-            }
-    }
-
     private func commitRename(_ node: TreeNode) {
         guard renaming == node.path else { return }
         renaming = nil
@@ -235,18 +212,6 @@ private struct FilesList: View {
         guard !name.isEmpty, name != node.name, !name.contains("/") else { return }
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
-    }
-
-    /// The file kind's symbol, as every list of the project's files shows it.
-    private func icon(for node: TreeNode) -> String {
-        if node.isDirectory { return "folder" }
-        switch (node.name as NSString).pathExtension.lowercased() {
-        case "tex": return "doc.text"
-        case "bib": return "books.vertical"
-        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg": return "photo"
-        case "pdf": return "doc.richtext"
-        default: return "doc"
-        }
     }
 }
 
@@ -318,7 +283,8 @@ private struct OutlineList: View {
                 }
             }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            .onChange(of: project.topLine) { _, top in line = top }            // The current heading always shows: its sections open, then the
+            .onChange(of: project.topLine) { _, top in line = top }
+            // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in
                 let chain = Outline.chain(outline, at: line).dropLast()
@@ -415,7 +381,7 @@ private struct HeadingRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
-        .accessibilityValue(headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "")
+        .accessibilityValue(item.kind)
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

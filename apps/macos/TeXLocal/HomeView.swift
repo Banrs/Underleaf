@@ -6,7 +6,9 @@ import SwiftUI
 /// and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
-    @State private var selection: Set<ProjectInfo.ID> = []
+    /// One project at a time, as Xcode's welcome list: every action here
+    /// acts on one.
+    @State private var selection: ProjectInfo.ID?
     /// The project whose name is being edited in place, and the name so far.
     @State private var renaming: ProjectInfo.ID?
     @State private var newName = ""
@@ -23,31 +25,25 @@ struct HomeView: View {
             Divider()
             recents
         }
+        // A folder, .tex file or .zip dropped on the window opens as Open…
+        // opens it, as Apple's start windows take a dropped document.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first, AppModel.canOpen(url) else { return false }
+            Task { await app.importProject(from: url) }
+            return true
+        }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button("Open", systemImage: "folder") { app.chooseProjectToOpen() }
+                Button("Open", systemImage: "folder") { app.openingProject = true }
                     .help("Open a Folder, .tex File or .zip as a Project")
                 Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        .task(id: app.tex?.available) { await app.watchForTeX() }
-        // `presenting`, so the title keeps its name while the dialog closes.
-        .confirmationDialog(
-            "Move “\(deleting?.name ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { project in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await app.delete(project) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
-        }
+        .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
     /// The window's margin: where the inset table starts its column titles
@@ -112,7 +108,7 @@ struct HomeView: View {
             }
             // Delete, as Finder's ⌘⌫ and every list's Delete key do.
             .onDeleteCommand {
-                if let project = app.projects.first(where: { selection.contains($0.id) }) { deleting = project }
+                if let project = app.projects.first(where: { $0.id == selection }) { deleting = project }
             }
             .overlay {
                 if !query.isEmpty, shown.isEmpty {
@@ -135,10 +131,9 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
+    /// Newest first, as `AppModel.refresh` sorts them.
     private var shown: [ProjectInfo] {
-        let matching = query.isEmpty
-            ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        return matching.sorted { $0.mtime > $1.mtime }
+        query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
     private var texMissing: some View {
@@ -164,27 +159,12 @@ private struct ProjectRow: View {
     @Binding var renaming: ProjectInfo.ID?
     @Binding var newName: String
     let commit: () -> Void
-    @FocusState private var focused: Bool
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 if renaming == project.id {
-                    TextField("Name", text: $newName)
-                        .labelsHidden()
-                        .focused($focused)
-                        .onSubmit(commit)
-                        .onExitCommand { renaming = nil }
-                        .onChange(of: focused) { was, now in
-                            if was, !now { commit() }
-                        }
-                        // Once the context menu has closed and handed the
-                        // list its focus back, or the list takes it from the
-                        // field.
-                        .task {
-                            try? await Task.sleep(for: .milliseconds(150))
-                            focused = true
-                        }
+                    RenameField(text: $newName, commit: commit) { renaming = nil }
                 } else {
                     Text(project.name).font(.headline)
                 }
@@ -246,15 +226,24 @@ private struct TemplateCard: View {
 
     var body: some View {
         GroupBox {
-            content
+            VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
+                page
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.title).font(.headline)
+                    Text(template.detail)
+                        .font(Typography.secondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2, reservesSpace: true)
+                        .frame(width: Self.page.width, alignment: .leading)
+                }
+            }
         }
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
     }
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
-            PagePreview(page: template.page)
+    private var page: some View {
+        PagePreview(page: template.page)
                 .frame(width: Self.page.width, height: Self.page.height)
                 // Paper is white in either appearance, dimmed a little in
                 // dark mode as the HIG dims a white PDF page; its drawing in
@@ -266,15 +255,9 @@ private struct TemplateCard: View {
                         .strokeBorder(.separator)
                 }
                 .environment(\.colorScheme, .light)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(template.title).font(.headline)
-                Text(template.detail)
-                    .font(Typography.secondary)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2, reservesSpace: true)
-                    .frame(width: Self.page.width, alignment: .leading)
-            }
-        }
+                // A drawing: the card is read by its name ("Blank", not
+                // "Add, Blank").
+                .accessibilityHidden(true)
     }
 }
 
@@ -342,8 +325,12 @@ private struct PagePreview: View {
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name = "Untitled"
-    @State private var template = "article"
+    @State private var template: String
     @FocusState private var nameFocused: Bool
+
+    init(template: String) {
+        _template = State(initialValue: template)
+    }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
 
@@ -359,9 +346,6 @@ struct NewProjectSheet: View {
                 ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
             }
         }
-        .onAppear {
-            template = app.newProjectTemplate
-            nameFocused = true
-        }
+        .onAppear { nameFocused = true }
     }
 }

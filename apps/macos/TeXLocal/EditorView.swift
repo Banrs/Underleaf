@@ -6,21 +6,14 @@ import WebKit
 struct EditorView: View {
     let bridge: EditorBridge
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("editorPalette") private var palette = "onedark"
-    @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 13
+    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @FocusState private var focused: Bool
 
-    private struct Appearance: Hashable {
-        let theme: String
-        let palette: String
-        let font: String
-        let fontSize: Int
-    }
-
     var body: some View {
-        let appearance = Appearance(theme: colorScheme == .dark ? "dark" : "light",
-                                    palette: palette, font: font, fontSize: fontSize)
+        let appearance = EditorAppearance(theme: colorScheme == .dark ? "dark" : "light",
+                                          palette: palette, font: font, fontSize: fontSize)
         WebView(bridge.page)
             // The page draws the text's surface itself.
             .webViewContentBackground(.hidden)
@@ -30,10 +23,7 @@ struct EditorView: View {
             .webViewLinkPreviews(.disabled)
             .focused($focused)
             .onChange(of: bridge.focusRequest) { focused = true }
-            .task(id: appearance) {
-                await bridge.setAppearance(theme: appearance.theme, palette: appearance.palette,
-                                           font: appearance.font, fontSize: appearance.fontSize)
-            }
+            .task(id: appearance) { await bridge.setAppearance(appearance) }
     }
 }
 
@@ -85,6 +75,7 @@ private struct SourceAndPDF: View {
 /// shows, goes between them and the text, as TextEdit's and Xcode's do.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: ProjectModel
 
     var body: some View {
@@ -95,10 +86,12 @@ private struct SourcePane: View {
             if project.findShown {
                 Divider()
                 SourceFindBar(project: project)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.findBar(reduceMotion: reduceMotion))
             }
             Divider()
-            if project.openPath != nil {
+            if project.openPath != nil, !project.editsText, let url = project.openURL {
+                FilePreview(url: url)
+            } else if project.openPath != nil {
                 EditorView(bridge: app.editor)
             } else {
                 // No file open, or it was deleted: nothing to type into
@@ -109,6 +102,30 @@ private struct SourcePane: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: project.findShown)
+    }
+}
+
+/// An image or a PDF figure in place of the editor, as the web previews
+/// one: fitted to the pane but never enlarged past its own size, as Xcode
+/// shows an image. A PDF is a page, so on white paper as the PDF pane's.
+private struct FilePreview: View {
+    let url: URL
+
+    var body: some View {
+        if let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
+                .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel(url.lastPathComponent)
+        } else {
+            ContentUnavailableView("No Preview", systemImage: "photo",
+                                   description: Text("“\(url.lastPathComponent)” couldn’t be read as an image."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
@@ -130,7 +147,9 @@ private struct StatusBar: View {
         // leading one with the sidebar hidden, the trailing one with the
         // inspector hidden), by the system's own corner insets.
         let corners = app.windowCorners
-        SecondaryBar(spacing: BarMetrics.itemSpacing,
+        // The items, the line and the toggle a group's 8 pt apart: the
+        // line has the same room either side.
+        SecondaryBar(spacing: BarMetrics.groupSpacing,
                      leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
                      trailingInset: app.showInspector ? BarMetrics.inset
                          : max(BarMetrics.inset, corners.bottomTrailing.width)) {
@@ -142,16 +161,13 @@ private struct StatusBar: View {
             }
             // The text only: on the toggle, it would hide its tint.
             .foregroundStyle(.secondary)
-            // A group of its own: the kit's 8 pt either side of the line.
-            HStack(spacing: BarMetrics.groupSpacing) {
-                ToolSeparator()
-                Toggle(isOn: $project.showLogs) {
-                    Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
-                }
-                .toggleStyle(.button)
-                .labelStyle(.iconOnly)
-                .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
+            ToolSeparator()
+            Toggle(isOn: $project.showLogs) {
+                Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .help(app.title(.viewToggleLogs))
         }
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows, as Pages' word count
@@ -163,23 +179,21 @@ private struct StatusBar: View {
 
     private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            Button {
-                project.panelTab = .issues
-                project.showLogs = true
-            } label: {
+            Button { project.showBuildPanel() } label: {
                 buildStatus
             }
             .help("Show Issues")
             // While a build runs the build status says so; the save state
-            // would repeat it.
-            if save, !project.compiling {
+            // would repeat it. A preview has none, as the web's.
+            if save, !project.compiling, project.editsText {
                 Text(project.status)
             }
             Spacer(minLength: BarMetrics.itemSpacing)
-            if project.openPath != nil {
+            if project.editsText {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showCounts, app.showWordCount, let counts = project.counts {
-                    Text("\(counts.words, format: .number) words · \(counts.lines, format: .number) lines")
+                    // Singular for one, by Foundation's grammar agreement.
+                    Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
                         .monospacedDigit()
                 }
             }
@@ -238,5 +252,13 @@ private struct StatusBar: View {
             Image(systemName: systemImage).foregroundStyle(color)
         }
         .labelStyle(.titleAndIcon)
+    }
+}
+
+extension AnyTransition {
+    /// A find bar sliding down from the bar over it; a dissolve with Reduce
+    /// Motion, as the HIG asks of slides.
+    static func findBar(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 }

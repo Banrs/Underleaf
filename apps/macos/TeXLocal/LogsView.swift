@@ -41,7 +41,7 @@ struct PanelView: View {
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
-            Spacer(minLength: BarMetrics.groupSpacing)
+            Spacer(minLength: 0)
             if project.panelTab == .issues {
                 // Only when there are warnings to hide.
                 if project.warningCount > 0 {
@@ -155,6 +155,9 @@ private struct IssueList: View {
         } primaryAction: { rows in
             if let row = rows.first { open(items[row]) }
         }
+        // Edit › Copy (⌘C) copies the selected issue, as Xcode's issue
+        // navigator does.
+        .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
         .onChange(of: items.count) { _, _ in selection = nil }
     }
 
@@ -214,7 +217,8 @@ private struct LogTextView: NSViewRepresentable {
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        view.textContainerInset = NSSize(width: 8, height: 8)
+        // The bars' inset, so the log's text lines up with the header's controls.
+        view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
         view.font = Typography.secondaryMono
         view.textColor = .labelColor
         return scroll

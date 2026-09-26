@@ -44,7 +44,7 @@ final class OutlineTests: XCTestCase {
         \\subsection*[short]{Details}
         text \\section{}
         """
-        let items = Outline.parse(text)
+        let items = Outline.analyze(text).outline
         XCTAssertEqual(items.map(\.title), ["Intro", "Details", "(untitled)"])
         XCTAssertEqual(items.map(\.level), [2, 3, 2])
         XCTAssertEqual(items.map(\.line), [2, 4, 5])
@@ -86,13 +86,13 @@ final class OutlineTests: XCTestCase {
     }
 
     func testTheBreadcrumbIsTheChainOfEnclosingHeadings() {
-        let outline = Outline.parse("""
+        let outline = Outline.analyze("""
         \\chapter{A}
         \\section{B}
         \\subsection{C}
         \\section{D}
         text
-        """)
+        """).outline
         XCTAssertEqual(Outline.chain(outline, at: 3).map(\.title), ["A", "B", "C"])
         XCTAssertEqual(Outline.chain(outline, at: 5).map(\.title), ["A", "D"])
         XCTAssertEqual(Outline.chain(outline, at: 0).map(\.title), [])
@@ -104,24 +104,24 @@ final class OutlineDisplayTests: XCTestCase {
         // A subsection before any section has no parent: it sits flush, as
         // does the section after it; the subsection under that section is
         // one in.
-        let outline = Outline.parse("""
+        let outline = Outline.analyze("""
         \\subsection{}
         \\section{First Section}
         \\subsection{Detail}
         \\subsubsection{Finer}
         \\section{Second}
-        """)
+        """).outline
         XCTAssertEqual(Outline.depths(outline), [0, 0, 1, 2, 0])
     }
 
     func testTheTreeNestsAsTheHeadingsDo() {
-        let outline = Outline.parse("""
+        let outline = Outline.analyze("""
         \\subsection{}
         \\section{A}
         \\subsection{A1}
         \\subsection{A2}
         \\section{B}
-        """)
+        """).outline
         let tree = Outline.tree(outline)
         XCTAssertEqual(tree.map(\.item.title), ["(untitled)", "A", "B"])
         XCTAssertNil(tree[0].children)
@@ -133,14 +133,14 @@ final class OutlineDisplayTests: XCTestCase {
     /// namesakes it is, so headings added above leave it where it was.
     func testFoldKeysSurviveRenumbering() {
         let text = "\\section{A}\n\\subsection{Results}\n\\section{B}\n\\subsection{Results}"
-        let keys = Outline.foldKeys(Outline.parse(text))
+        let keys = Outline.foldKeys(Outline.analyze(text).outline)
         XCTAssertEqual(keys, ["2:A#1", "3:Results#1", "2:B#1", "3:Results#2"])
-        let later = Outline.foldKeys(Outline.parse("\\section{New}\n\\subsection{Other}\n" + text))
+        let later = Outline.foldKeys(Outline.analyze("\\section{New}\n\\subsection{Other}\n" + text).outline)
         XCTAssertEqual(Array(later.dropFirst(2)), keys)
     }
 
     func testEmptyHeadingsAreNamedByKind() {
-        let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
+        let outline = Outline.analyze("\\subsection{}\n\\chapter{}\n\\section{Named}").outline
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
     }
 }
@@ -331,15 +331,6 @@ final class SplitLayoutTests: XCTestCase {
 }
 
 final class CompileResultTests: XCTestCase {
-    func testTheSourceFindCountReadsAsXcodesDoes() {
-        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
-        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
-        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
-        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
-        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
-        XCTAssertEqual(FindMatches().label(for: ""), "")
-    }
-
     func testDurationsReadTheSameEverywhere() throws {
         let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
         let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
@@ -358,12 +349,14 @@ final class RenameTests: XCTestCase {
     }
 }
 
-final class PDFFindTests: XCTestCase {
-    func testTheCountReadsAsTheWebsDoes() {
-        XCTAssertEqual(PDFFind.countLabel(query: "", total: 0, index: 1, limited: false), "")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 0, index: 1, limited: false), "Not found")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 12, index: 3, limited: false), "3 of 12")
-        XCTAssertEqual(PDFFind.countLabel(query: "e", total: 5000, index: 1, limited: true), "1 of 5000+")
+final class FindTests: XCTestCase {
+    func testTheCountReadsAsXcodesDoes() {
+        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
+        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
+        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
+        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
+        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
+        XCTAssertEqual(FindMatches().label(for: ""), "")
     }
 
     func testQueriesAreTrimmedAndCapped() {
@@ -469,8 +462,12 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
     }
 
-    func testTheSidebarToggleIsCommandBackslash() throws {
-        XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    /// Apple's chords where the shared table's differ (`MenuCommand.macAccel`).
+    func testTheViewMenuHasApplesChords() throws {
+        XCTAssertTrue(try XCTUnwrap(item("s", [.command, .control])).title.hasSuffix("Sidebar"))
+        XCTAssertEqual(try XCTUnwrap(item("0")).title, "Actual Size")
+        XCTAssertEqual(try XCTUnwrap(item("9")).title, "Fit Width")
+        XCTAssertEqual(try XCTUnwrap(item("9", [.command, .option])).title, "Fit Height")
     }
 
     func testTheBottomPanelIsTheBuildPanel() throws {

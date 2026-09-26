@@ -12,6 +12,7 @@ struct PDFPane: View {
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var controller = PDFController()
 
     var body: some View {
@@ -27,7 +28,7 @@ struct PDFPane: View {
             if finding, project.pdfVersion > 0 {
                 Divider()
                 findBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.findBar(reduceMotion: reduceMotion))
             }
             Divider()
             pages
@@ -79,12 +80,8 @@ struct PDFPane: View {
             } actions: {
                 // Nothing to offer while the panel already shows.
                 if !project.showLogs {
-                    Button("Show Build Panel") {
-                        // The log when no error was parsed out of it.
-                        project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
-                        project.showLogs = true
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Button("Show Build Panel") { project.showBuildPanel() }
+                        .buttonStyle(.borderedProminent)
                 }
             }
         } else {
@@ -172,8 +169,7 @@ struct PDFPane: View {
     /// keeps the width of its widest ("000%"), centred, so − and + stay put
     /// as it changes; a click opens its menu of ways to fit and preset
     /// scales, the one in use checked (while fitting, no preset is, even at
-    /// a preset's scale). Not the View menu's commands: their route
-    /// (`requestPDF`) also hides the panel.
+    /// a preset's scale).
     private var zoomControls: some View {
         let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
             .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
@@ -217,10 +213,8 @@ struct PDFPane: View {
             SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
                 .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
             FindSteps(enabled: !controller.matches.isEmpty, step: controller.step)
-            FindCount(label: PDFFind.countLabel(
-                query: controller.query, total: controller.matches.count,
-                index: controller.matchIndex + 1, limited: controller.limited
-            ))
+            FindCount(label: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
+                                         limited: controller.limited).label(for: controller.query))
             Button("Done") { closeFind() }
                 .buttonStyle(.bordered)
         }
@@ -254,7 +248,9 @@ private struct PageRow: View {
     var body: some View {
         SecondaryBar {
             if project.pdfVersion > 0, let freshness = project.pdfFreshness {
-                Button { fix(freshness) } label: {
+                Button {
+                    if freshness == .edited { app.perform(.compileRun) } else { project.showBuildPanel() }
+                } label: {
                     Label {
                         Text(freshness.title)
                     } icon: {
@@ -281,15 +277,6 @@ private struct PageRow: View {
         }
         .animation(.default, value: project.pdfFreshness)
     }
-
-    private func fix(_ freshness: PDFFreshness) {
-        switch freshness {
-        case .edited: app.perform(.compileRun)
-        case .lastSuccessful:
-            project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
-            project.showLogs = true
-        }
-    }
 }
 
 /// The find bar's rules, from the web's (web/src/findsession.js and
@@ -302,179 +289,6 @@ enum PDFFind {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
 
-    /// "3 of 12", "1 of 5000+" past the cap, "Not found", or nothing before a
-    /// search. `index` counts from 1.
-    static func countLabel(query: String, total: Int, index: Int, limited: Bool) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return "Not found" }
-        return "\(index) of \(total)\(limited ? "+" : "")"
-    }
-}
-
-/// A find bar's previous / next.
-struct FindSteps: View {
-    let enabled: Bool
-    let step: (Int) -> Void
-
-    var body: some View {
-        ToolGroup(items: [
-            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up", enabled: enabled) { step(-1) },
-            Segment(id: "next", title: "Next Match", systemImage: "chevron.down", enabled: enabled) { step(1) },
-        ])
-    }
-}
-
-/// A find bar's match count, left out when the bar hasn't the room.
-struct FindCount: View {
-    let label: String
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .fixedSize()
-            EmptyView()
-        }
-    }
-}
-
-/// A choice in a search field's own menu (Match Case, Whole Words…).
-struct SearchOption {
-    let title: String
-    let isOn: Binding<Bool>
-}
-
-/// AppKit's search field, which SwiftUI has only as `.searchable`, in the
-/// toolbar or sidebar. Return steps to the next match (Shift-Return the
-/// previous) and Escape closes the bar; without `step` or `close` those
-/// keys do what they usually do. `options` go in the magnifier's menu.
-struct SearchField: NSViewRepresentable {
-    @Binding var text: String
-    let prompt: String
-    var focus = 0
-    var options: [SearchOption] = []
-    var step: (@MainActor (Int) -> Void)?
-    var close: (@MainActor () -> Void)?
-
-    @MainActor
-    final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var field: SearchField
-        var focus = 0
-        /// The options' states the field's menu was last made with.
-        var optionStates: [Bool]?
-
-        init(_ field: SearchField) { self.field = field }
-
-        // Typing, and the field's clear button, both send the action.
-        @objc func search(_ sender: NSSearchField) {
-            field.text = sender.stringValue
-        }
-
-        @objc func toggleOption(_ sender: NSMenuItem) {
-            guard field.options.indices.contains(sender.tag) else { return }
-            field.options[sender.tag].isOn.wrappedValue.toggle()
-        }
-
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            switch selector {
-            case #selector(NSResponder.insertNewline(_:)):
-                guard let step = field.step else { return false }
-                step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
-                return true
-            case #selector(NSResponder.cancelOperation(_:)):
-                guard let close = field.close else { return false }
-                close()
-                return true
-            default:
-                return false
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    /// A search field that can be asked for focus before it is in a
-    /// window: a find bar shown by ⌘F is made in the same update that asks,
-    /// so it takes focus once it lands in its window.
-    final class FocusingSearchField: NSSearchField {
-        var wantsFocus = false
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if wantsFocus { takeFocus() }
-        }
-
-        /// Focus, its text selected, once in a window. After this turn:
-        /// the key press or menu item that asked is still being handled,
-        /// and the editor it came from would keep first responder.
-        func takeFocus() {
-            wantsFocus = true
-            guard window != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.wantsFocus, let window = self.window else { return }
-                self.wantsFocus = false
-                if window.firstResponder !== self.currentEditor() { window.makeFirstResponder(self) }
-                self.currentEditor()?.selectAll(nil)
-            }
-        }
-    }
-
-    func makeNSView(context: Context) -> NSSearchField {
-        let view = FocusingSearchField()
-        view.sendsSearchStringImmediately = true
-        view.delegate = context.coordinator
-        view.target = context.coordinator
-        view.action = #selector(Coordinator.search(_:))
-        return view
-    }
-
-    /// As wide as it is offered, however narrow: the frame around it sets
-    /// its least and ideal widths.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
-    }
-
-    func updateNSView(_ view: NSSearchField, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.field = self
-        view.placeholderString = prompt
-        view.controlSize = NSControl.ControlSize(context.environment.controlSize)
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
-        if view.stringValue != text { view.stringValue = text }
-        // The field copies its menu, so it is made again when a state changes.
-        let states = options.map(\.isOn.wrappedValue)
-        if !options.isEmpty, coordinator.optionStates != states {
-            coordinator.optionStates = states
-            let menu = NSMenu(title: "Find Options")
-            for (index, option) in options.enumerated() {
-                let item = NSMenuItem(title: option.title, action: #selector(Coordinator.toggleOption(_:)), keyEquivalent: "")
-                item.target = coordinator
-                item.tag = index
-                item.state = option.isOn.wrappedValue ? .on : .off
-                menu.addItem(item)
-            }
-            view.searchMenuTemplate = menu
-        }
-        if coordinator.focus != focus {
-            coordinator.focus = focus
-            (view as? FocusingSearchField)?.takeFocus()
-        }
-    }
-}
-
-extension NSControl.ControlSize {
-    /// AppKit's size for SwiftUI's, so a wrapped control matches its neighbours.
-    init(_ size: ControlSize) {
-        self = switch size {
-        case .mini: .mini
-        case .small: .small
-        case .regular: .regular
-        case .large: .large
-        case .extraLarge: .extraLarge
-        @unknown default: .regular
-        }
-    }
 }
 
 /// What the pane's controls and the menus ask of the PDF view.
@@ -494,6 +308,12 @@ final class PDFController {
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
+
+    func pageChanged() {
+        guard let view, let document = view.document, let page = view.currentPage else { return }
+        self.page = document.index(for: page) + 1
+        pageCount = document.pageCount
+    }
 
     func scaleChanged() {
         guard let view else { return }
@@ -634,7 +454,8 @@ private struct PDFRepresentable: NSViewRepresentable {
     final class Coordinator {
         var version = 0
         var highlightToken = 0
-        var observers: [NSObjectProtocol] = []
+        /// Following the view's page and scale, until the view goes.
+        var watches: [Task<Void, Never>] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -647,13 +468,14 @@ private struct PDFRepresentable: NSViewRepresentable {
         // one: the bars' 8 pt inset, so a page's edge lines up with the
         // controls over it. PDFKit's default left a sliver on one side only,
         // which beside the pane divider read as a thick, broken line.
-        view.pageBreakMargins = NSEdgeInsets(top: 0, left: 8, bottom: 8, right: 8)
+        let inset = BarMetrics.inset
+        view.pageBreakMargins = NSEdgeInsets(top: 0, left: inset, bottom: inset, right: inset)
         // The gap above page one is the scroll view's, not a page margin:
         // fitting the width, PDFKit re-anchors page one's top edge to the top
         // of the view on every resize, scrolling a page margin out of sight.
         if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
             scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+            scroll.contentInsets = NSEdgeInsets(top: inset, left: 0, bottom: 0, right: 0)
         }
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
@@ -661,16 +483,13 @@ private struct PDFRepresentable: NSViewRepresentable {
             Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
         controller.view = view
-        context.coordinator.observers = [
-            NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [controller] _ in
-                MainActor.assumeIsolated {
-                    guard let view = controller.view, let document = view.document, let page = view.currentPage else { return }
-                    controller.page = document.index(for: page) + 1
-                    controller.pageCount = document.pageCount
-                }
+        let center = NotificationCenter.default
+        context.coordinator.watches = [
+            Task { [controller] in
+                for await _ in center.notifications(named: .PDFViewPageChanged, object: view) { controller.pageChanged() }
             },
-            NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: view, queue: .main) { [controller] _ in
-                MainActor.assumeIsolated { controller.scaleChanged() }
+            Task { [controller] in
+                for await _ in center.notifications(named: .PDFViewScaleChanged, object: view) { controller.scaleChanged() }
             },
         ]
         return view
@@ -690,7 +509,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
-        coordinator.observers.forEach(NotificationCenter.default.removeObserver)
+        coordinator.watches.forEach { $0.cancel() }
     }
 
     /// Load a rebuilt PDF where the reader was: same spot on the same page,

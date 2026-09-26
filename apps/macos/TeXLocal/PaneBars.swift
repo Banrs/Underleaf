@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The one set of metrics every in-window bar shares, from the kit's
-/// toolbars: 8 pt around the controls, 4 pt between the controls of a
-/// group, 8 pt between groups, and 16 pt separator lines. One size, the
+/// toolbars: 8 pt around the controls, the controls of a group abutting,
+/// 8 pt between groups, and 16 pt separator lines. One size, the
 /// standard one: the bars under the window toolbar (the source's and the
 /// PDF's actions, the find bar, the build panel's header) and the
 /// secondary rows.
@@ -25,10 +25,8 @@ enum BarMetrics {
     /// bar's build, save state and position), wider than a group's so each
     /// reads as its own item.
     static let itemSpacing: CGFloat = 12
-    /// A search field in a bar: the width a find bar keeps before it folds
-    /// its other controls, the least any field shrinks to, and the widest a
-    /// filter grows.
-    static let fieldWidth: CGFloat = 160
+    /// A search field in a bar: the least any field shrinks to, and the
+    /// widest a filter grows.
     static let fieldMinWidth: CGFloat = 100
     static let fieldMaxWidth: CGFloat = 180
     /// Opaque, and what shows under the glass toolbar, so the toolbar and
@@ -54,12 +52,15 @@ enum BarMetrics {
 /// - Content and controls: `.body` (13 pt), the system's default.
 /// - Section titles over content (the start window's New and Recent) and
 ///   sheet titles: `sectionTitle`.
+/// - Titles of a pane's groups (the inspector's Project, Document and
+///   Build, bold as Xcode's inspectors have them): `groupTitle`.
 /// - Secondary rows, metadata and captions (the location row, the status
 ///   bar, line numbers beside search hits, template descriptions, sheet
 ///   messages): `secondary`, the small system size (11 pt) that `.small`
 ///   controls use.
 enum Typography {
     static let sectionTitle: Font = .title3.weight(.semibold)
+    static let groupTitle: Font = .headline
     static let secondary: Font = .subheadline
     static let secondaryControlSize: ControlSize = .small
     /// SF Mono at the secondary size, for AppKit text (the build log).
@@ -69,7 +70,7 @@ enum Typography {
 extension View {
     /// A pane bar's controls: AppKit's accessory-bar buttons at the bar's
     /// size, on the chrome's background, inset from the pane's edges.
-    fileprivate func paneBarControls() -> some View {
+    func paneBarControls() -> some View {
         controlSize(BarMetrics.controlSize)
             .buttonStyle(.accessoryBar)
             .lineLimit(1)
@@ -88,20 +89,10 @@ struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: BarMetrics.spacing) { content }
+        // Each child a group of its own (a group's controls abut), so
+        // groups apart, as the source's find bar spaces them.
+        HStack(spacing: BarMetrics.groupSpacing) { content }
             .frame(height: BarMetrics.barHeight)
-            .paneBarControls()
-    }
-}
-
-/// Several rows of a pane's actions in one bar (the source's find and
-/// replace): each row a pane bar's controls, 8 pt apart.
-struct PaneBarRows<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: BarMetrics.inset) { content }
-            .padding(.vertical, BarMetrics.inset)
             .paneBarControls()
     }
 }
@@ -173,6 +164,159 @@ struct ToolSeparator: View {
     }
 }
 
+/// A find bar's previous / next.
+struct FindSteps: View {
+    let enabled: Bool
+    let step: (Int) -> Void
+
+    var body: some View {
+        ToolGroup(items: [
+            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up", enabled: enabled) { step(-1) },
+            Segment(id: "next", title: "Next Match", systemImage: "chevron.down", enabled: enabled) { step(1) },
+        ])
+    }
+}
+
+/// A find bar's match count, left out when the bar hasn't the room.
+struct FindCount: View {
+    let label: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .fixedSize()
+            EmptyView()
+        }
+    }
+}
+
+/// A choice in a search field's own menu (Match Case, Whole Words…).
+struct SearchOption {
+    let title: String
+    let isOn: Binding<Bool>
+}
+
+/// AppKit's search field, which SwiftUI has only as `.searchable`, in the
+/// toolbar or sidebar. Return steps to the next match (Shift-Return the
+/// previous) and Escape closes the bar; without `step` or `close` those
+/// keys do what they usually do. `options` go in the magnifier's menu.
+struct SearchField: NSViewRepresentable {
+    @Binding var text: String
+    let prompt: String
+    var focus = 0
+    var options: [SearchOption] = []
+    var step: (@MainActor (Int) -> Void)?
+    var close: (@MainActor () -> Void)?
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var field: SearchField
+        var focus = 0
+        /// The options' states the field's menu was last made with.
+        var optionStates: [Bool]?
+
+        init(_ field: SearchField) { self.field = field }
+
+        // Typing, and the field's clear button, both send the action.
+        @objc func search(_ sender: NSSearchField) {
+            field.text = sender.stringValue
+        }
+
+        @objc func toggleOption(_ sender: NSMenuItem) {
+            guard field.options.indices.contains(sender.tag) else { return }
+            field.options[sender.tag].isOn.wrappedValue.toggle()
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                guard let step = field.step else { return false }
+                step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                guard let close = field.close else { return false }
+                close()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// A search field that can be asked for focus before it is in a
+    /// window: a find bar shown by ⌘F is made in the same update that asks,
+    /// so it takes focus once it lands in its window.
+    final class FocusingSearchField: NSSearchField {
+        var wantsFocus = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if wantsFocus { takeFocus() }
+        }
+
+        /// Focus, its text selected, once in a window. After this turn:
+        /// the key press or menu item that asked is still being handled,
+        /// and the editor it came from would keep first responder.
+        func takeFocus() {
+            wantsFocus = true
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.wantsFocus, let window = self.window else { return }
+                self.wantsFocus = false
+                if window.firstResponder !== self.currentEditor() { window.makeFirstResponder(self) }
+                self.currentEditor()?.selectAll(nil)
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let view = FocusingSearchField()
+        view.sendsSearchStringImmediately = true
+        view.delegate = context.coordinator
+        view.target = context.coordinator
+        view.action = #selector(Coordinator.search(_:))
+        return view
+    }
+
+    /// As wide as it is offered, however narrow: the frame around it sets
+    /// its least and ideal widths.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
+    }
+
+    func updateNSView(_ view: NSSearchField, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.field = self
+        view.placeholderString = prompt
+        // The SDK maps SwiftUI's sizes to AppKit's, so the field matches its neighbours.
+        view.controlSize = NSControl.ControlSize(context.environment.controlSize) ?? .regular
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
+        if view.stringValue != text { view.stringValue = text }
+        // The field copies its menu, so it is made again when a state changes.
+        let states = options.map(\.isOn.wrappedValue)
+        if !options.isEmpty, coordinator.optionStates != states {
+            coordinator.optionStates = states
+            let menu = NSMenu(title: "Find Options")
+            for (index, option) in options.enumerated() {
+                let item = NSMenuItem(title: option.title, action: #selector(Coordinator.toggleOption(_:)), keyEquivalent: "")
+                item.target = coordinator
+                item.tag = index
+                item.state = option.isOn.wrappedValue ? .on : .off
+                menu.addItem(item)
+            }
+            view.searchMenuTemplate = menu
+        }
+        if coordinator.focus != focus {
+            coordinator.focus = focus
+            (view as? FocusingSearchField)?.takeFocus()
+        }
+    }
+}
+
 /// A small sheet that asks for a few values (a new file's name and folder,
 /// a line to go to, a new project): its title and message over a grouped
 /// form, Cancel and the action at its foot, the action the default
@@ -187,8 +331,8 @@ struct DialogSheet<Fields: View>: View {
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
 
-    /// The kit's dialogs are 390–400 pt wide.
-    static var width: CGFloat { 400 }
+    /// A grouped form's own inset, so the title lines up with its sections.
+    private static var formInset: CGFloat { 20 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -201,9 +345,7 @@ struct DialogSheet<Fields: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // The grouped form's own inset, so the title lines up with its
-            // sections.
-            .padding([.horizontal, .top], 20)
+            .padding([.horizontal, .top], Self.formInset)
             // On the sheet's own background: the grouped form's differs in
             // dark mode, a seam under the title and over the buttons.
             Form { fields }
@@ -212,7 +354,8 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: Self.width)
+        // The kit's dialogs are 390–400 pt wide.
+        .frame(width: 400)
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
@@ -225,6 +368,32 @@ struct DialogSheet<Fields: View>: View {
                 .disabled(!enabled)
             }
         }
+    }
+}
+
+/// A name edited in place, as Finder renames: Return or clicking away
+/// commits, Escape leaves it as it was.
+struct RenameField: View {
+    @Binding var text: String
+    let commit: () -> Void
+    let cancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $text)
+            .labelsHidden()
+            .focused($focused)
+            .onSubmit(commit)
+            .onExitCommand(perform: cancel)
+            .onChange(of: focused) { was, now in
+                if was, !now { commit() }
+            }
+            // Once the context menu has closed and handed the list its focus
+            // back, or the list takes it straight from the field.
+            .task {
+                try? await Task.sleep(for: .milliseconds(150))
+                focused = true
+            }
     }
 }
 
@@ -271,18 +440,15 @@ struct SegmentedControl: NSViewRepresentable {
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
         context.coordinator.segments = segments
         control.segmentCount = segments.count
-        var widths: [CGFloat] = []
         for (index, segment) in segments.enumerated() {
             let image = segment.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: segment.help) }
             control.setImage(image, forSegment: index)
             control.setLabel(segment.label ?? "", forSegment: index)
             control.setToolTip(segment.help, forSegment: index)
             control.setEnabled(segment.enabled && context.environment.isEnabled, forSegment: index)
-            let width = Self.width(label: segment.widest ?? segment.label, image: image, font: control.font)
-            control.setWidth(width, forSegment: index)
-            widths.append(width)
+            control.setWidth(Self.width(label: segment.widest ?? segment.label, symbol: segment.symbol, image: image,
+                                        font: control.font), forSegment: index)
         }
-        context.coordinator.widths = widths
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
@@ -290,28 +456,33 @@ struct SegmentedControl: NSViewRepresentable {
     }
 
     /// The width AppKit gives a segment with this content on its own: a
-    /// one-segment control is its segment's width.
-    private static func width(label: String?, image: NSImage?, font: NSFont?) -> CGFloat {
+    /// one-segment control is its segment's width. Measured once per
+    /// content, as the scale's label changes with every pinch.
+    private static func width(label: String?, symbol: String?, image: NSImage?, font: NSFont?) -> CGFloat {
+        let key = "\(label ?? "")|\(symbol ?? "")"
+        if let width = widths[key] { return width }
         let probe = NSSegmentedControl()
         probe.segmentCount = 1
         probe.font = font
         probe.setLabel(label ?? "", forSegment: 0)
         probe.setImage(image, forSegment: 0)
+        widths[key] = probe.intrinsicContentSize.width
         return probe.intrinsicContentSize.width
     }
+
+    private static var widths: [String: CGFloat] = [:]
 
     @MainActor
     final class Coordinator: NSObject {
         var segments: [Segment] = []
-        var widths: [CGFloat] = []
 
         @objc func clicked(_ control: NSSegmentedControl) {
             let index = control.selectedSegment
             guard segments.indices.contains(index) else { return }
             // The control is as wide as its segments, so each starts where
             // the ones before it end.
-            let x = widths.prefix(index).reduce(0, +)
-            let rect = NSRect(x: x, y: 0, width: widths[index], height: control.bounds.height)
+            let x = (0..<index).map(control.width(forSegment:)).reduce(0, +)
+            let rect = NSRect(x: x, y: 0, width: control.width(forSegment: index), height: control.bounds.height)
             let segment = segments[index]
             if segment.menu.isEmpty {
                 segment.action(control, rect)

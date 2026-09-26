@@ -26,7 +26,10 @@ struct WorkspaceView: View {
             ])
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            .frame(minWidth: Metrics.editorsMinWidth, minHeight: 280)
+            // Room for the inspector too, whether or not it shows: a minimum
+            // that changed mid-layout crashed AppKit before. The height is the
+            // window's minimum's (`WindowMetrics`).
+            .frame(minWidth: Metrics.detailMinWidth)
             .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: {
                 app.windowCorners = $0
             }
@@ -44,6 +47,22 @@ struct WorkspaceView: View {
         .background {
             if let url = project.openURL { Color.clear.navigationDocument(url) }
         }
+        .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
+                      allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await project.importFiles(urls) }
+            case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
+            }
+        }
+        .fileDialogConfirmationLabel("Add")
+        .fileExporter(isPresented: Binding(presenting: $app.exporting), item: app.exporting,
+                      contentTypes: app.exporting.map { [$0.type] } ?? [],
+                      defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
+            if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
+        }
+        // Save PDF As… saves, as every Save As does; a zip is exported.
+        .fileExporterFilenameLabel(app.exporting?.type == .pdf ? "Save As:" : "Export As:")
+        .fileDialogConfirmationLabel(app.exporting?.type == .pdf ? "Save" : "Export")
         .sheet(item: $app.prompt) { prompt in
             switch prompt {
             case .newFile: NewEntrySheet(project: project, directory: false)
@@ -60,10 +79,13 @@ struct WorkspaceView: View {
         } message: { path in
             Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-            // This window's only: closing Settings is no reason to save.
-            guard (note.object as? NSWindow) === NSApp.projectWindow else { return }
-            Task { await project.flush() }
+        .task {
+            for await note in NotificationCenter.default.notifications(named: NSWindow.willCloseNotification) {
+                // This window's only: closing Settings is no reason to save.
+                guard (note.object as? NSWindow) === NSApp.projectWindow else { continue }
+                // Its own task: the view's goes with the closing window.
+                Task { await project.flush() }
+            }
         }
     }
 
@@ -75,6 +97,9 @@ struct WorkspaceView: View {
         /// The source and the PDF, side by side at their smallest.
         static let editorsMinWidth: CGFloat = 441
         static let inspectorWidth: ClosedRange<CGFloat> = 220...320
+        /// The editors and the inspector at their smallest, and the
+        /// divider between them.
+        static let detailMinWidth = editorsMinWidth + 1 + inspectorWidth.lowerBound
     }
 
     // ---------- toolbar ----------
@@ -97,7 +122,7 @@ struct WorkspaceView: View {
 
         // The panes' toggles, sharing one piece of glass as related buttons
         // do. Nothing here acts on the PDF alone: Share is the PDF bar's.
-        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
+        ToolbarItem(placement: .primaryAction) { PDFToggle() }
         ToolbarItem(placement: .primaryAction) { InspectorToggle() }
     }
 }
@@ -130,16 +155,12 @@ private struct NewEntrySheet: View {
                 .focused($nameFocused)
             Picker("Where", selection: $folder) {
                 Label(project.id, systemImage: "folder").tag("")
-                ForEach(folders(project.tree), id: \.self) { path in
+                ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in
                     Label(path, systemImage: "folder").tag(path)
                 }
             }
         }
         .onAppear { nameFocused = true }
-    }
-
-    private func folders(_ nodes: [TreeNode]) -> [String] {
-        nodes.filter(\.isDirectory).flatMap { [$0.path] + folders($0.children ?? []) }
     }
 }
 
@@ -169,11 +190,11 @@ private struct GoToLineSheet: View {
 /// inspector button are: a toggle draws its on state accent-filled, which
 /// made the two toggles the toolbar's loudest controls.
 private struct PDFToggle: View {
-    @Bindable var project: ProjectModel
+    @Environment(AppModel.self) private var app
 
     var body: some View {
-        let title = project.showPDF ? "Hide PDF" : "Show PDF"
-        Button(title, systemImage: "doc.richtext") { project.showPDF.toggle() }
+        let title = app.title(.viewTogglePdf)
+        Button(title, systemImage: "doc.richtext") { app.perform(.viewTogglePdf) }
             .help(title)
     }
 }
@@ -184,59 +205,10 @@ private struct InspectorToggle: View {
 
     var body: some View {
         let title = app.showInspector ? "Hide Inspector" : "Show Inspector"
-        Button(title, systemImage: "sidebar.right") { app.showInspector.toggle() }
+        Button(title, systemImage: "sidebar.trailing") { app.showInspector.toggle() }
             .help(title)
     }
 }
-
-/// The Format menu's LaTeX tools, as the source bar offers them: the line's
-/// section level, math and symbols, references, then what inserts a block.
-struct InsertMenuItems<InlineMath: View>: View {
-    let project: ProjectModel?
-    /// The menu bar's Inline Math item, with its shortcut.
-    let inlineMath: InlineMath
-
-    var body: some View {
-        Menu("Section Level") {
-            ForEach(headingLevels, id: \.1) { title, command in
-                Button(title) { project?.format("heading", command) }
-            }
-        }
-        inlineMath
-        Button("Display Math") { project?.format("displayMath") }
-        SymbolMenu(project: project)
-        Menu("Reference") {
-            ForEach(referenceTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("inline", template) }
-            }
-        }
-        Divider()
-        ForEach(insertTemplates, id: \.0) { label, template in
-            Button(label) { project?.format("insert", template) }
-        }
-        Menu("List") {
-            ForEach(listTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("insert", template) }
-            }
-        }
-    }
-}
-
-/// The engines a project can compile with, for the compile menu and Settings.
-let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
-
-/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
-/// "$0" marks where the cursor lands. The source bar finds them by title
-/// (`ProjectModel.insert`). Titles are menu items here, so title case
-/// without the web's parenthetical: "Aligned Equations" is the web's
-/// "Align (multi-line math)".
-let insertTemplates: [(String, String)] = [
-    ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-    ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-    ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    ("Aligned Equations", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
-]
 
 /// The trailing inspector: the project's build settings, then facts about
 /// the open file and the PDF — what the web kept in its settings popover and
@@ -253,28 +225,9 @@ struct InspectorView: View {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: BarMetrics.groupSpacing,
                  verticalSpacing: BarMetrics.groupSpacing) {
                 header("Project")
-                GridRow {
-                    label("Main File")
-                    Picker("Main File", selection: Binding(
-                        get: { project.settings?.mainFile ?? "" },
-                        set: { path in Task { await project.setMainFile(path) } }
-                    )) {
-                        ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                GridRow {
-                    label("Engine")
-                    Picker("Engine", selection: Binding(
-                        get: { project.settings?.engine ?? "pdflatex" },
-                        set: { engine in Task { await project.setEngine(engine) } }
-                    )) {
-                        ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
+                pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
                 GridRow {
                     Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
                     Toggle(isOn: Binding(
@@ -326,7 +279,7 @@ struct InspectorView: View {
     }
 
     private func header(_ title: String) -> some View {
-        Text(title).font(.headline).gridCellColumns(2)
+        Text(title).font(Typography.groupTitle).gridCellColumns(2)
     }
 
     private var separator: some View {
@@ -335,6 +288,19 @@ struct InspectorView: View {
 
     private func label(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+    }
+
+    /// A setting's pop-up at its own width, as Xcode's inspectors have them.
+    private func pickerRow(_ title: String, _ value: String, _ options: [(String, String)],
+                           set: @escaping (String) async -> Void) -> some View {
+        GridRow {
+            label(title)
+            Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
+                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
     }
 
     private func row(_ name: String, _ value: String) -> some View {
@@ -347,11 +313,5 @@ struct InspectorView: View {
     private func folder(of path: String) -> String {
         let dir = (path as NSString).deletingLastPathComponent
         return dir.isEmpty ? project.id : dir
-    }
-
-    private func texFiles(_ nodes: [TreeNode]) -> [String] {
-        nodes.flatMap { node in
-            node.isDirectory ? texFiles(node.children ?? []) : (node.path.hasSuffix(".tex") ? [node.path] : [])
-        }
     }
 }

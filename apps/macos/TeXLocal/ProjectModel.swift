@@ -33,6 +33,13 @@ final class ProjectModel {
     var showLogs = false
     /// Which of the panel's tabs is showing.
     var panelTab: PanelTab = .issues
+
+    /// The build panel on its issues, or on the log after a failed build
+    /// with no error parsed out of it: the log says what went wrong.
+    func showBuildPanel() {
+        panelTab = result?.ok == false && result?.errors.isEmpty == true ? .log : .issues
+        showLogs = true
+    }
     /// Remembered across projects and launches, like the web's.
     var showPDF = UserDefaults.standard.object(forKey: "showPDF") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showPDF, forKey: "showPDF") }
@@ -90,6 +97,12 @@ final class ProjectModel {
         self.editor = editor
         self.app = app
     }
+
+    /// The open file is LaTeX: it has an outline, counts and the LaTeX tools.
+    var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+    /// The open file is text in the editor, rather than an image or a PDF
+    /// in its preview: what the editor's commands and saves act on.
+    var editsText: Bool { openPath.map(isTextFile) ?? false }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
@@ -183,11 +196,12 @@ final class ProjectModel {
 
     // ---------- editing ----------
 
-    /// Open a file: text in the editor, anything else in its own app.
-    /// Choosing in a sidebar list passes `focus: false`, so the arrow keys
-    /// stay in the list, as Xcode's navigator keeps them.
+    /// Open a file: text in the editor, an image or PDF figure in a preview
+    /// in its place (as the web previews one), anything else in its own
+    /// app. Choosing in a sidebar list passes `focus: false`, so the arrow
+    /// keys stay in the list, as Xcode's navigator keeps them.
     func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
-        guard isTextFile(path) else {
+        guard isTextFile(path) || isPreviewFile(path) else {
             if let url = await fileURL(path) { NSWorkspace.shared.open(url) }
             return
         }
@@ -196,7 +210,14 @@ final class ProjectModel {
         // file while `openPath` — where autosave writes — names the other.
         openGeneration += 1
         let generation = openGeneration
-        if path != openPath {
+        if path != openPath, isPreviewFile(path) {
+            guard await saveEdits(), generation == openGeneration else { return }
+            openPath = path
+            openURL = await fileURL(path)
+            diskText = nil
+            watchOpenFile()
+            analyze("")
+        } else if path != openPath {
             guard await saveEdits(), generation == openGeneration else { return }
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
@@ -213,7 +234,7 @@ final class ProjectModel {
                 return
             }
         }
-        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+        if let line, editsText, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
     func showInFinder(_ path: String) {
@@ -248,7 +269,7 @@ final class ProjectModel {
     }
 
     private func write() async -> Bool {
-        guard dirty, let path = openPath else { return true }
+        guard dirty, editsText, let path = openPath else { return true }
         // Not over another app's change until asked which to keep.
         guard diskConflict == nil else { return false }
         saving = true
@@ -309,7 +330,7 @@ final class ProjectModel {
     /// The outline, location row and word count read the open document; as in
     /// the web, only a .tex file has them.
     private func analyze(_ text: String) {
-        guard openPath?.hasSuffix(".tex") == true else {
+        guard isLaTeX else {
             outline = []
             counts = nil
             return
@@ -348,7 +369,7 @@ final class ProjectModel {
     /// Watch the open file, so a change made by another app (an editor, a
     /// sync, git) shows here rather than being saved over.
     private func watchOpenFile() {
-        guard let url = openURL else {
+        guard let url = openURL, editsText else {
             watcher = nil
             return
         }
@@ -449,7 +470,7 @@ final class ProjectModel {
                     pdfFreshness = dirty || writes != built ? .edited : nil
                 } else {
                     if pdfVersion > 0 { pdfFreshness = .lastSuccessful }
-                    if !result.errors.isEmpty { panelTab = .issues; showLogs = true }
+                    if !result.errors.isEmpty { showBuildPanel() }
                 }
                 notify(result)
             } catch {
@@ -622,9 +643,10 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    func importFiles(_ urls: [URL]) async {
+    /// Copies files in, at the top of the project or into `dir`.
+    func importFiles(_ urls: [URL], into dir: String = "") async {
         do {
-            try await core.perform("import_files", ["id": id, "dir": "", "paths": urls.map(\.path)])
+            try await core.perform("import_files", ["id": id, "dir": dir, "paths": urls.map(\.path)])
         } catch {
             report(error, "Couldn’t Add the Files")
         }
@@ -634,36 +656,13 @@ final class ProjectModel {
 
     // ---------- export ----------
 
-    func exportZip(to url: URL) async {
-        do {
-            try await core.perform("export_zip", ["id": id, "dest": url.path])
-        } catch {
-            report(error, "Couldn’t Export “\(id)”")
-        }
-    }
-
-    func savePDF(to url: URL) async {
-        guard let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) else {
-            app?.alert = AppAlert("No PDF to Save", "Compile the project first to make its PDF.")
-            return
-        }
-        let files = FileManager.default
-        do {
-            guard files.fileExists(atPath: url.path) else {
-                try files.copyItem(at: pdfURL, to: url)
-                return
-            }
-            // A copy beside it first, swapped in whole: a failed copy leaves
-            // the file being replaced as it was.
-            let scratch = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
-                                        appropriateFor: url, create: true)
-            defer { try? files.removeItem(at: scratch) }
-            let copy = scratch.appendingPathComponent(url.lastPathComponent)
-            try files.copyItem(at: pdfURL, to: copy)
-            _ = try files.replaceItemAt(url, withItemAt: copy)
-        } catch {
-            report(error, "Couldn’t Save the PDF")
-        }
+    /// The project as a zip in a temporary folder, for Export Project as ZIP….
+    func exportZip() async throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("\(id).zip")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await core.perform("export_zip", ["id": id, "dest": url.path])
+        return url
     }
 
     // ---------- search ----------
