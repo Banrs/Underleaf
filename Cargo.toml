@@ -11,3 +11,9 @@ license = "MIT"
 codegen-units = 1
 lto = true
 strip = true
+
+# Proc macros and build scripts only run on the build machine. Stripped for
+# a macOS 26.0 target by the macOS 27 toolchain, their dylibs fail to load
+# ("mis-aligned LINKEDIT string pool"), which breaks the app's release build.
+[profile.release.build-override]
+strip = false
