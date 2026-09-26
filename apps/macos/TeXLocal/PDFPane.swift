@@ -473,13 +473,14 @@ private struct PDFRepresentable: NSViewRepresentable {
         // one: the bars' 8 pt inset, so a page's edge lines up with the
         // controls over it. PDFKit's default left a sliver on one side only,
         // which beside the pane divider read as a thick, broken line.
-        view.pageBreakMargins = NSEdgeInsets(top: 0, left: 8, bottom: 8, right: 8)
+        let inset = BarMetrics.inset
+        view.pageBreakMargins = NSEdgeInsets(top: 0, left: inset, bottom: inset, right: inset)
         // The gap above page one is the scroll view's, not a page margin:
         // fitting the width, PDFKit re-anchors page one's top edge to the top
         // of the view on every resize, scrolling a page margin out of sight.
         if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
             scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+            scroll.contentInsets = NSEdgeInsets(top: inset, left: 0, bottom: 0, right: 0)
         }
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor

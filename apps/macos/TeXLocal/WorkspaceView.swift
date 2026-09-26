@@ -282,7 +282,7 @@ struct InspectorView: View {
     }
 
     private func header(_ title: String) -> some View {
-        Text(title).font(.headline).gridCellColumns(2)
+        Text(title).font(Typography.groupTitle).gridCellColumns(2)
     }
 
     private var separator: some View {

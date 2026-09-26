@@ -52,12 +52,15 @@ enum BarMetrics {
 /// - Content and controls: `.body` (13 pt), the system's default.
 /// - Section titles over content (the start window's New and Recent) and
 ///   sheet titles: `sectionTitle`.
+/// - Titles of a pane's groups (the inspector's Project, Document and
+///   Build, bold as Xcode's inspectors have them): `groupTitle`.
 /// - Secondary rows, metadata and captions (the location row, the status
 ///   bar, line numbers beside search hits, template descriptions, sheet
 ///   messages): `secondary`, the small system size (11 pt) that `.small`
 ///   controls use.
 enum Typography {
     static let sectionTitle: Font = .title3.weight(.semibold)
+    static let groupTitle: Font = .headline
     static let secondary: Font = .subheadline
     static let secondaryControlSize: ControlSize = .small
     /// SF Mono at the secondary size, for AppKit text (the build log).
@@ -354,6 +357,8 @@ struct DialogSheet<Fields: View>: View {
 
     /// The kit's dialogs are 390–400 pt wide.
     static var width: CGFloat { 400 }
+    /// A grouped form's own inset, so the title lines up with its sections.
+    static var formInset: CGFloat { 20 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -366,9 +371,7 @@ struct DialogSheet<Fields: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // The grouped form's own inset, so the title lines up with its
-            // sections.
-            .padding([.horizontal, .top], 20)
+            .padding([.horizontal, .top], Self.formInset)
             // On the sheet's own background: the grouped form's differs in
             // dark mode, a seam under the title and over the buttons.
             Form { fields }

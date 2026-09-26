@@ -217,7 +217,8 @@ private struct LogTextView: NSViewRepresentable {
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        view.textContainerInset = NSSize(width: 8, height: 8)
+        // The bars' inset, so the log's text lines up with the header's controls.
+        view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
         view.font = Typography.secondaryMono
         view.textColor = .labelColor
         return scroll
