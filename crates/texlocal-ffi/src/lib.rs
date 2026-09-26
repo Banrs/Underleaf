@@ -50,6 +50,10 @@ fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<
             )?;
             Ok(json!(imported))
         })(),
+        "import_project" => (|| {
+            let info = import::import_project(service, Path::new(&s("src")?))?;
+            Ok(json!(info))
+        })(),
         _ => return None,
     })
 }

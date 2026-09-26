@@ -273,26 +273,65 @@ pub fn create_project(
     name: &str,
     template: &str,
 ) -> Result<ProjectInfo, CoreError> {
+    let (clean, root) = new_project_dir(data_dir, name)?;
+    // Template paths are plain file names, fixed at build time.
+    for (file, content) in templates::files(template) {
+        fs::write(root.join(file), content)?;
+    }
+    finish_project(clean, &root, &json!({}))
+}
+
+/// A new, empty project folder for `name`, and the name as sanitized.
+pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
     let clean = sanitize_name(name)?;
     let root = data_dir.join(&clean);
     fs::create_dir_all(data_dir)?;
     // One create rather than a check and then a create: it cannot race, and
     // it refuses anything already there, a dangling link or case alias too.
     match fs::create_dir(&root) {
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => return Err(name_taken()),
-        created => created?,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(name_taken()),
+        created => Ok(created.map(|()| (clean, root))?),
     }
-    // Template paths are plain file names, fixed at build time.
-    for (file, content) in templates::files(template) {
-        fs::write(root.join(file), content)?;
-    }
-    let settings = write_settings(&root, &json!({}))?;
+}
+
+/// Write a new project's settings, and the project as the library lists it.
+pub(crate) fn finish_project(
+    name: String,
+    root: &Path,
+    settings: &serde_json::Value,
+) -> Result<ProjectInfo, CoreError> {
+    let settings = write_settings(root, settings)?;
     Ok(project_info(
-        clean,
-        &root,
-        &fs::metadata(&root)?,
+        name,
+        root,
+        &fs::metadata(root)?,
         settings.main_file,
     ))
+}
+
+/// The likely main file among a project's top-level .tex files: main.tex,
+/// else the first by name that starts a document, else the first by name.
+pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> {
+    let mut tex: Vec<String> = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // A name latexmk would read as an option can't be the main file.
+        if entry.file_type()?.is_file() && ext_of(&name) == "tex" && !name.starts_with('-') {
+            tex.push(name);
+        }
+    }
+    tex.sort();
+    let starts_document = |name: &&String| {
+        fs::read(root.join(name.as_str()))
+            .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains("\\documentclass"))
+    };
+    Ok(tex
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("main.tex"))
+        .or_else(|| tex.iter().find(starts_document))
+        .or(tex.first())
+        .cloned())
 }
 
 pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {

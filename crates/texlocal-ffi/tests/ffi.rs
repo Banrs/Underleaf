@@ -220,6 +220,19 @@ fn a_drop_onto_existing_files_asks_first_and_can_keep_both() {
     unsafe { tl_close(handle) };
 }
 
+#[test]
+fn file_open_imports_a_chosen_file_as_a_new_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open(&dir.path().join("data"));
+    let tex = dir.path().join("essay.tex");
+    std::fs::write(&tex, "\\documentclass{article}").unwrap();
+    let [src] = strings([tex]);
+    let out = call(handle, "import_project", Some(json!({ "src": src })));
+    assert_eq!(out["ok"]["id"], "essay");
+    assert_eq!(out["ok"]["mainFile"], "essay.tex");
+    unsafe { tl_close(handle) };
+}
+
 #[cfg(unix)]
 #[test]
 fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
