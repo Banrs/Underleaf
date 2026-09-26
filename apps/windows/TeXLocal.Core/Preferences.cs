@@ -35,17 +35,17 @@ public sealed class Preferences
 
     // The workspace's layout as the reader last dragged it, as macOS keeps
     // its splits; null until then, for the workspace's own defaults.
-
-    /// <summary>The sidebar's width.</summary>
     public double? SidebarWidth { get; set; }
 
     /// <summary>The PDF's share of the source and PDF's width, 0–1.</summary>
     public double? PdfSplit { get; set; }
 
-    /// <summary>The bottom panel's height.</summary>
-    public double? PanelHeight { get; set; }
+    public double? OutlineHeight { get; set; }
 
-    /// <summary>The inspector's width.</summary>
+    /// <summary>The outline's folded headings, by project, file and <see cref="Outline.FoldKeys"/>.</summary>
+    public List<string> OutlineFolded { get; set; } = [];
+
+    public double? PanelHeight { get; set; }
     public double? InspectorWidth { get; set; }
 
     /// <summary>web/src/prefs.js UI_SCALES, stepped by the interface-size commands.</summary>

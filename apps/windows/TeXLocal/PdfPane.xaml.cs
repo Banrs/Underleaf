@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -43,7 +44,7 @@ public sealed partial class PdfPane : UserControl
         findDelay.IsRepeating = false;
         findDelay.Tick += (_, _) => Search();
         page = new EmbeddedPage(View, "pdf.html", OnMessage);
-        _ = page.RunStickyAsync("hostKeys", $"texlocal.setHostKeys({L(MenuCommands.ClaimedChords.Select(k => new { id = k.Id, accel = k.Accel }))})");
+        _ = page.SetHostKeysAsync(MenuCommands.ClaimedChords);
     }
 
     private static string L(object? value) => EmbeddedPage.Literal(value);
@@ -306,14 +307,14 @@ public sealed partial class PdfPane : UserControl
 
     // ---------- zoom ----------
 
-    public void ZoomBy(double factor) => _ = page.RunAsync($"texlocal.zoomBy({factor.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+    public void ZoomBy(double factor) => _ = page.RunAsync($"texlocal.zoomBy({factor.ToString(CultureInfo.InvariantCulture)})");
 
     public void FitWidth() => _ = page.RunAsync("texlocal.fitWidth()");
 
     public void FitHeight() => _ = page.RunAsync("texlocal.fitHeight()");
 
     private void SetScale(double scale) =>
-        _ = page.RunAsync($"texlocal.setScale({scale.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        _ = page.RunAsync($"texlocal.setScale({scale.ToString(CultureInfo.InvariantCulture)})");
 
     private void OnZoomOut(object sender, RoutedEventArgs e) => ZoomBy(1 / 1.15);
 

@@ -115,16 +115,26 @@ public static partial class Outline
         return Children(0);
     }
 
-    /// <summary>An empty heading by its kind — "Untitled subsection" — where the web writes "(untitled)".</summary>
-    public static string DisplayTitle(OutlineItem item)
+    /// <summary>
+    /// A key per heading that survives edits renumbering the lines: level and
+    /// title, and which of the headings so named it is (apps/macos
+    /// Outline.swift foldKeys). A fold is remembered by it.
+    /// </summary>
+    public static IReadOnlyList<string> FoldKeys(IReadOnlyList<OutlineItem> outline)
     {
-        if (item.Title != "(untitled)")
+        var seen = new Dictionary<string, int>();
+        return outline.Select(item =>
         {
-            return item.Title;
-        }
-        string[] kinds = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph"];
-        return "Untitled " + (item.Level >= 0 && item.Level < kinds.Length ? kinds[item.Level] : "section");
+            var key = $"{item.Level}:{item.Title}";
+            seen[key] = seen.GetValueOrDefault(key) + 1;
+            return $"{key}#{seen[key]}";
+        }).ToList();
     }
+
+    /// <summary>An empty heading by its kind — "Untitled subsection" — where the web writes "(untitled)".</summary>
+    public static string DisplayTitle(OutlineItem item) =>
+        item.Title != "(untitled)" ? item.Title
+            : "Untitled " + (item.Level >= 0 && item.Level < Levels.Length ? Levels[item.Level] : "section");
 
     // ---------- word count ----------
 

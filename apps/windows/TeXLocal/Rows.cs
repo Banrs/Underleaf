@@ -1,3 +1,6 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 
 namespace TeXLocal;
@@ -12,7 +15,7 @@ public sealed class FileItem
         Node = node;
         Children = node.Children?.Select(c => new FileItem(c, mainFile, expanded)).ToList() ?? [];
         IsExpanded = expanded.Contains(node.Path);
-        MainVisibility = node.Path == mainFile ? Visibility.Visible : Visibility.Collapsed;
+        IsMain = node.Path == mainFile;
     }
 
     public TreeNode Node { get; }
@@ -22,11 +25,15 @@ public sealed class FileItem
     /// <summary>Written back by the tree, so a reload can keep folders open.</summary>
     public bool IsExpanded { get; set; }
 
-    public Visibility MainVisibility { get; }
+    private bool IsMain { get; }
+
+    public Windows.UI.Text.FontWeight Weight => IsMain ? FontWeights.SemiBold : FontWeights.Normal;
+
+    public string? ToolTip => IsMain ? "Main file" : null;
 
     /// <summary>What a screen reader says: the name, and what kind of entry it is.</summary>
     public string AccessibleName => Node.IsDirectory ? $"{Node.Name}, folder"
-        : MainVisibility == Visibility.Visible ? $"{Node.Name}, main file" : Node.Name;
+        : IsMain ? $"{Node.Name}, main file" : Node.Name;
 
     /// <summary>Segoe Fluent Icons glyphs by kind of file.</summary>
     public string Glyph => Node.IsDirectory ? "\uE8B7" : Path.GetExtension(Node.Name).ToLowerInvariant() switch
@@ -41,30 +48,77 @@ public sealed class FileItem
     public IEnumerable<FileItem> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 }
 
-/// <summary>A heading in the sidebar's outline, and the headings it encloses.</summary>
-public sealed class OutlineEntry
+/// <summary>
+/// A heading in the sidebar's outline, and the headings it encloses. The
+/// outline has no selection: the current section is drawn in the accent
+/// colour, semibold, instead.
+/// </summary>
+public sealed partial class OutlineEntry : INotifyPropertyChanged
 {
-    public OutlineEntry(OutlineNode node, IReadOnlySet<string> collapsed)
+    public OutlineEntry(OutlineNode node, IReadOnlyDictionary<OutlineItem, string> keys, IReadOnlySet<string> folded)
     {
         Item = node.Item;
-        Children = node.Children.Select(c => new OutlineEntry(c, collapsed)).ToList();
-        IsExpanded = !collapsed.Contains(Key);
+        Key = keys[node.Item];
+        Children = node.Children.Select(c => new OutlineEntry(c, keys, folded)).ToList();
+        isExpanded = !folded.Contains(Key);
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise([CallerMemberName] string name = "") => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
     public OutlineItem Item { get; }
     public List<OutlineEntry> Children { get; }
 
-    /// <summary>Headings start expanded; a fold is written back by the tree.</summary>
-    public bool IsExpanded { get; set; }
+    /// <summary>What its fold is remembered by: its project and file, and <see cref="Outline.FoldKeys"/>.</summary>
+    public string Key { get; }
 
-    /// <summary>Level and title, so a fold survives edits that renumber the headings.</summary>
-    public string Key => $"{Item.Level}:{Item.Title}";
+    /// <summary>Headings start expanded unless folded before; the tree writes a fold back.</summary>
+    public bool IsExpanded
+    {
+        get => isExpanded;
+        set
+        {
+            if (isExpanded != value)
+            {
+                isExpanded = value;
+                Raise();
+            }
+        }
+    }
+
+    private bool isExpanded;
+
+    /// <summary>The section at the top of the source.</summary>
+    public bool IsCurrent
+    {
+        get => isCurrent;
+        set
+        {
+            if (isCurrent != value)
+            {
+                isCurrent = value;
+                Raise(nameof(TitledVisibility));
+                Raise(nameof(UntitledVisibility));
+                Raise(nameof(CurrentVisibility));
+                Raise(nameof(Status));
+            }
+        }
+    }
+
+    private bool isCurrent;
 
     public string Title => Outline.DisplayTitle(Item);
 
-    /// <summary>A heading with no title reads "Untitled section", dimmed.</summary>
-    public Visibility TitledVisibility => Item.Title == "(untitled)" ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility UntitledVisibility => Item.Title == "(untitled)" ? Visibility.Visible : Visibility.Collapsed;
+    private bool Untitled => Item.Title == "(untitled)";
+
+    /// <summary>A heading with no title reads "Untitled section", dimmed; the current one in the accent colour.</summary>
+    public Visibility TitledVisibility => !IsCurrent && !Untitled ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility UntitledVisibility => !IsCurrent && Untitled ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility CurrentVisibility => IsCurrent ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>What a screen reader adds to the current heading's name.</summary>
+    public string Status => IsCurrent ? "Current section" : "";
 
     public IEnumerable<OutlineEntry> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 }
@@ -76,6 +130,18 @@ public sealed class OutlineEntry
 public sealed class SearchGroup(string file, IEnumerable<SearchHit> hits) : List<SearchHit>(hits)
 {
     public string Header => $"{file} — {Count:N0}";
+}
+
+/// <summary>A kind of symbol in the source bar's palette.</summary>
+public sealed class PaletteGroup(string title, IEnumerable<PaletteSymbol> symbols) : List<PaletteSymbol>(symbols)
+{
+    public string Title => title;
+}
+
+/// <summary>A symbol in the palette; a screen reader names it by its command.</summary>
+public sealed record PaletteSymbol(string Glyph, string Command)
+{
+    public override string ToString() => Command;
 }
 
 /// <summary>One step of the source's location: the project, a folder, the file or the section.</summary>

@@ -29,6 +29,7 @@ public sealed partial class WorkspaceView : UserControl
     private readonly Splitter previewSplitter;
     private readonly Splitter panelSplitter;
     private readonly Splitter inspectorSplitter;
+    private readonly Splitter outlineSplitter;
 
     // The limits the panes keep, after macOS's (parity C19, E19, F12, H1).
     private const double SidebarMinimum = 200;
@@ -38,12 +39,15 @@ public sealed partial class WorkspaceView : UserControl
     private const double EditorsMinimum = 120;
     private const double InspectorMinimum = 220;
     private const double InspectorMaximum = 320;
+    private const double OutlineMinimum = 80;
+    private const double FilesMinimum = 100;
 
     // The layout as the reader last dragged it, remembered in Preferences.
     private double sidebarWidth;
     private double pdfSplit;
     private double panelHeight;
     private double inspectorWidth;
+    private double outlineHeight;
 
     private readonly Dictionary<MenuCommand, MenuFlyoutItem> menuItems = [];
     private readonly List<MenuFlyoutItemBase> latexMenuItems = [];
@@ -99,14 +103,19 @@ public sealed partial class WorkspaceView : UserControl
         pdfSplit = Math.Clamp(preferences.PdfSplit ?? 0.5, 0.1, 0.9);
         panelHeight = Math.Max(preferences.PanelHeight ?? 220, PanelMinimum);
         inspectorWidth = Math.Clamp(preferences.InspectorWidth ?? 260, InspectorMinimum, InspectorMaximum);
+        outlineHeight = Math.Max(preferences.OutlineHeight ?? 240, OutlineMinimum);
+        foldedSections = [.. preferences.OutlineFolded];
 
         // Added last, so each grip lies over the panes it overhangs. The
         // content layer's own edge is the line beside the sidebar.
-        sidebarSplitter = new Splitter(SidebarColumn, targetIsBefore: true, SidebarMinimum, () => SidebarMaximum, "Resize the sidebar", line: false);
+        sidebarSplitter = new Splitter(() => Panes.OpenPaneLength, w => Panes.OpenPaneLength = w, targetIsBefore: true,
+            SidebarMinimum, () => SidebarMaximum, "Resize the sidebar", line: false)
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
         sidebarSplitter.Resized += width => sidebarWidth = width;
         sidebarSplitter.Committed += () => Remember(p => p.SidebarWidth = sidebarWidth);
-        Grid.SetColumn(sidebarSplitter, 1);
-        Panes.Children.Add(sidebarSplitter);
+        SidebarContent.Children.Add(sidebarSplitter);
         // The PDF keeps its share of the width as the window resizes.
         previewSplitter = new Splitter(PreviewColumn, targetIsBefore: false, PaneMinimum, () => Document.ActualWidth - PaneMinimum, "Resize the PDF");
         previewSplitter.Resized += width =>
@@ -125,16 +134,31 @@ public sealed partial class WorkspaceView : UserControl
         panelSplitter.Committed += () => Remember(p => p.PanelHeight = panelHeight);
         Grid.SetRow(panelSplitter, 1);
         Editors.Children.Add(panelSplitter);
-        inspectorSplitter = new Splitter(InspectorColumn, targetIsBefore: false, InspectorMinimum, () => InspectorMaximum, "Resize the details pane");
+        inspectorSplitter = new Splitter(() => Details.OpenPaneLength, w => Details.OpenPaneLength = w, targetIsBefore: false,
+            InspectorMinimum, () => InspectorMaximum, "Resize the details pane")
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
         inspectorSplitter.Resized += width => inspectorWidth = width;
         inspectorSplitter.Committed += () => Remember(p => p.InspectorWidth = inspectorWidth);
-        Grid.SetColumn(inspectorSplitter, 1);
-        Layer.Children.Add(inspectorSplitter);
+        DetailsContent.Children.Add(inspectorSplitter);
+        // The outline's heading draws the line between it and the files.
+        outlineSplitter = new Splitter(OutlineRow, targetIsBefore: false, OutlineMinimum, () => OutlineRoom, "Resize the file outline", line: false);
+        outlineSplitter.Resized += height => outlineHeight = height;
+        outlineSplitter.Committed += () => Remember(p => p.OutlineHeight = outlineHeight);
+        Grid.SetRow(outlineSplitter, 2);
+        Browse.Children.Add(outlineSplitter);
 
         BuildMenu();
-        AddTemplates(HeadingMenu.Items, LatexTemplates.Headings);
-        AddInserts(InsertMenu.Items);
-        MathIcon.Data = MathGeometry();
+        PiIcon.Data = Icon(PiIconData);
+        NumberedListIcon.Data = Icon(NumberedListIconData);
+        SymbolGrid.ItemsSource = new CollectionViewSource
+        {
+            IsSourceGrouped = true,
+            Source = LatexTemplates.SymbolGroups
+                .Select(g => new PaletteGroup(g.Title, g.Symbols.Select(s => new PaletteSymbol(s.Glyph, s.Command))))
+                .ToList(),
+        }.View;
         Pdf.Command = command => Main.Perform(command);
         Main.WatchTextFocus();
     }
@@ -155,7 +179,6 @@ public sealed partial class WorkspaceView : UserControl
         model.PropertyChanged += OnModelChanged;
         Main.SearchBox.Text = "";
         Files.ItemsSource = null;
-        collapsedSections.Clear();
         shownSections = null;
         RenderTree();
         RenderOutline();
@@ -183,12 +206,17 @@ public sealed partial class WorkspaceView : UserControl
                 // On every cursor move: only the location follows it.
                 RenderLocation();
                 return;
+            case nameof(ProjectModel.TopLine):
+                // On every scroll: only the outline follows it.
+                FollowTopLine();
+                return;
             case nameof(ProjectModel.Tree):
             case nameof(ProjectModel.Settings):
                 RenderTree();
                 break;
             case nameof(ProjectModel.OpenPath):
                 SelectOpenFile();
+                RenderOutline();
                 break;
             case nameof(ProjectModel.Stats):
                 RenderOutline();
@@ -225,8 +253,6 @@ public sealed partial class WorkspaceView : UserControl
         }
         Render();
     }
-
-    internal void SetAppearance(bool dark, string accent, bool darkPaper) => Pdf.SetAppearance(dark, accent, darkPaper);
 
     // ---------- rendering ----------
 
@@ -289,10 +315,7 @@ public sealed partial class WorkspaceView : UserControl
         {
             item.IsEnabled = latex;
         }
-        if (engineMenu is not null)
-        {
-            engineMenu.IsEnabled = Main.IsEnabled(MenuCommand.CompileToggleAuto);
-        }
+        engineMenu?.IsEnabled = Main.IsEnabled(MenuCommand.CompileToggleAuto);
         var engine = project?.Settings?.Engine ?? "pdflatex";
         foreach (var item in engineMenuItems)
         {
@@ -327,7 +350,8 @@ public sealed partial class WorkspaceView : UserControl
         WarningCountText.Text = $"{p.WarningCount:N0}";
         AutomationProperties.SetName(BuildStatus, $"{BuildText.Text}, {Count(p.ErrorCount, "error")}, {Count(p.WarningCount, "warning")}");
 
-        Show(StatusText, p.OpenPath is null ? "" : p.Saving ? "Saving…" : p.Dirty ? "Unsaved changes" : "Saved");
+        // While a build runs the build status says so; the save state would repeat it.
+        Show(StatusText, p.OpenPath is null || p.Compiling ? "" : p.Saving ? "Saving…" : p.Dirty ? "Unsaved changes" : "Saved");
         Show(CountsText, Main.Preferences.ShowWordCount && p.Stats is { } stats
             ? $"{Count(stats.Words, "word")} · {Count(stats.Lines, "line")}"
             : "");
@@ -335,6 +359,36 @@ public sealed partial class WorkspaceView : UserControl
         EngineWarning.Visibility = p.TexAvailable ? Visibility.Collapsed : Visibility.Visible;
         PdfPane.SetToolTip(EngineStatus, p.TexAvailable ? "Choose the engine" : "TeX wasn’t found: open Settings");
         AutomationProperties.SetName(EngineStatus, $"Engine: {EngineText.Text}");
+        FoldStatusBar();
+    }
+
+    private void OnStatusBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldStatusBar();
+
+    /// <summary>
+    /// A narrow status bar drops whole items, never cutting one short, as
+    /// the macOS app's does: the engine first (the details pane and the
+    /// Compile menu show it too), then the counts, then the save state.
+    /// </summary>
+    private void FoldStatusBar()
+    {
+        var available = StatusBar.ActualWidth - StatusBar.Padding.Left - StatusBar.Padding.Right;
+        if (available <= 0)
+        {
+            return;
+        }
+        var infinite = new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity);
+        for (var dropped = 0; dropped <= 3; dropped++)
+        {
+            EngineStatus.Visibility = dropped < 1 ? Visibility.Visible : Visibility.Collapsed;
+            CountsText.Visibility = dropped < 2 && CountsText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            StatusText.Visibility = dropped < 3 && StatusText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            StatusStart.Measure(infinite);
+            StatusEnd.Measure(infinite);
+            if (StatusStart.DesiredSize.Width + StatusEnd.DesiredSize.Width + 12 <= available)
+            {
+                return;
+            }
+        }
     }
 
     private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
@@ -350,16 +404,17 @@ public sealed partial class WorkspaceView : UserControl
     private void Layout()
     {
         var sidebar = Main.Preferences.SidebarVisible;
-        // Each pane comes in from the edge it's docked to.
-        Motion.Show(Sidebar, sidebar, Motion.Pane(-40, 0));
-        sidebarSplitter.Visibility = Sidebar.Visibility;
-        SidebarColumn.Width = new GridLength(sidebar ? sidebarWidth : 0);
+        Panes.OpenPaneLength = sidebarWidth;
+        Panes.IsPaneOpen = sidebar;
+        sidebarSplitter.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
         // Without the sidebar the layer meets the window's edge: no corner.
         Layer.CornerRadius = sidebar ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
         Layer.BorderThickness = sidebar ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
 
         var pdf = Main.Preferences.PdfVisible;
-        Pdf.Visibility = previewSplitter.Visibility = pdf ? Visibility.Visible : Visibility.Collapsed;
+        // The panes a SplitView doesn't hold come in from the edge they're docked to.
+        Motion.Show(Pdf, pdf, Motion.Pane(40, 0));
+        previewSplitter.Visibility = Pdf.Visibility;
         // Shares of the width rather than lengths, so the split holds as
         // the window resizes.
         PreviewColumn.MinWidth = pdf ? PaneMinimum : 0;
@@ -376,9 +431,9 @@ public sealed partial class WorkspaceView : UserControl
         PanelRow.Height = new GridLength(panel ? height : 0);
 
         var inspector = Main.Preferences.InspectorVisible;
-        Motion.Show(Inspector, inspector, Motion.Pane(40, 0));
-        inspectorSplitter.Visibility = Inspector.Visibility;
-        InspectorColumn.Width = new GridLength(inspector ? inspectorWidth : 0);
+        Details.OpenPaneLength = inspectorWidth;
+        Details.IsPaneOpen = inspector;
+        inspectorSplitter.Visibility = inspector ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ---------- menus ----------
@@ -416,9 +471,20 @@ public sealed partial class WorkspaceView : UserControl
                 item.Click += (_, _) => Main.Perform(command);
                 menu.Items.Add(item);
                 menuItems[command] = item;
+                if (command == MenuCommand.EditMath)
+                {
+                    // The rest of the source bar's math group.
+                    foreach (var extra in new MenuFlyoutItemBase[] { ContextMenus.Item("Display math", DisplayMath), SymbolMenu() })
+                    {
+                        menu.Items.Add(extra);
+                        latexMenuItems.Add(extra);
+                    }
+                }
                 if (command == MenuCommand.CompileToggleAuto)
                 {
-                    engineMenu = EngineMenu();
+                    // The engine, in the Compile menu as in the status bar.
+                    engineMenu = new MenuFlyoutSubItem { Text = "Engine" };
+                    AddEngines(engineMenu.Items, engineMenuItems);
                     menu.Items.Add(engineMenu);
                 }
             }
@@ -430,8 +496,8 @@ public sealed partial class WorkspaceView : UserControl
     {
         foreach (var submenu in new[]
         {
-            Submenu("Heading", LatexTemplates.Headings),
-            Submenu("Reference", LatexTemplates.References),
+            LevelSubmenu(current: null),
+            Submenu("Reference", LatexTemplates.References, "inline"),
             Submenu("List", LatexTemplates.Lists),
         })
         {
@@ -447,14 +513,6 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    /// <summary>The engine a project compiles with, in the Compile menu as in the status bar.</summary>
-    private MenuFlyoutSubItem EngineMenu()
-    {
-        var submenu = new MenuFlyoutSubItem { Text = "Engine" };
-        AddEngines(submenu.Items, engineMenuItems);
-        return submenu;
-    }
-
     private void AddEngines(IList<MenuFlyoutItemBase> items, List<RadioMenuFlyoutItem>? keep)
     {
         foreach (var (id, name) in LatexTemplates.Engines)
@@ -467,32 +525,59 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    /// <summary>The references other than Reference and Citation, which have buttons of their own.</summary>
-    private static List<(string Label, string Template)> OtherReferences =>
-        LatexTemplates.References.Where(r => r.Label is not ("Reference" or "Citation")).ToList();
-
-    /// <summary>Insert's menu: the environments, the lists, then the references the bar has no button for.</summary>
-    private void AddInserts(IList<MenuFlyoutItemBase> items)
-    {
-        AddTemplates(items, LatexTemplates.Environments);
-        items.Add(Submenu("List", LatexTemplates.Lists));
-        items.Add(new MenuFlyoutSeparator());
-        AddTemplates(items, OtherReferences);
-    }
-
-    private MenuFlyoutSubItem Submenu(string title, IReadOnlyList<(string Label, string Template)> templates)
+    /// <summary>A menu of templates: blocks inserted, or, for "inline", put around the selection.</summary>
+    private MenuFlyoutSubItem Submenu(string title, IReadOnlyList<(string Label, string Template)> templates, string how = "insert")
     {
         var submenu = new MenuFlyoutSubItem { Text = title };
-        AddTemplates(submenu.Items, templates);
+        AddTemplates(submenu.Items, templates, how);
         return submenu;
     }
 
-    private void AddTemplates(IList<MenuFlyoutItemBase> items, IReadOnlyList<(string Label, string Template)> templates)
+    private void AddTemplates(IList<MenuFlyoutItemBase> items, IEnumerable<(string Label, string Template)> templates, string how = "insert")
     {
         foreach (var (label, template) in templates)
         {
-            items.Add(ContextMenus.Item(label, () => Format("insert", template)));
+            items.Add(ContextMenus.Item(label, () => Format(how, template)));
         }
+    }
+
+    /// <summary>The section levels; the source bar's checks the caret line's.</summary>
+    private void AddLevels(IList<MenuFlyoutItemBase> items, string? current)
+    {
+        foreach (var (label, command) in LatexTemplates.HeadingLevels)
+        {
+            MenuFlyoutItem item = current is null ? new MenuFlyoutItem() : new RadioMenuFlyoutItem { IsChecked = label == current };
+            item.Text = label;
+            item.Click += (_, _) => Format("heading", command);
+            items.Add(item);
+            if (command.Length == 0)
+            {
+                items.Add(new MenuFlyoutSeparator());
+            }
+        }
+    }
+
+    private MenuFlyoutSubItem LevelSubmenu(string? current)
+    {
+        var submenu = new MenuFlyoutSubItem { Text = "Section level" };
+        AddLevels(submenu.Items, current);
+        return submenu;
+    }
+
+    /// <summary>The palette as a menu, for the Format menu and "See more".</summary>
+    private MenuFlyoutSubItem SymbolMenu()
+    {
+        var menu = new MenuFlyoutSubItem { Text = "Symbols" };
+        foreach (var (title, symbols) in LatexTemplates.SymbolGroups)
+        {
+            var group = new MenuFlyoutSubItem { Text = title };
+            foreach (var (glyph, command) in symbols)
+            {
+                group.Items.Add(ContextMenus.Item($"{glyph}   {command}", () => Format("symbol", command)));
+            }
+            menu.Items.Add(group);
+        }
+        return menu;
     }
 
     // ---------- the source's location ----------
@@ -533,7 +618,9 @@ public sealed partial class WorkspaceView : UserControl
             crumbs = next;
             Crumbs.ItemsSource = crumbs;
         }
-        SelectCurrentSection();
+        var level = LatexTemplates.LevelAt(p.Sections, p.CursorLine);
+        LevelLabel.Text = level;
+        AutomationProperties.SetName(LevelButton, $"Section level: {level}");
     }
 
     /// <summary>A crumb opens a menu of its neighbours: the files in a folder, or the file's sections.</summary>
@@ -621,74 +708,116 @@ public sealed partial class WorkspaceView : UserControl
     }
 
     private IReadOnlyList<OutlineItem>? shownSections;
+    private string? shownOutlineFile;
+    private OutlineEntry? currentSection;
 
-    /// <summary>Sections the reader folded, by level and title (OutlineEntry.Key).</summary>
-    private readonly HashSet<string> collapsedSections = [];
+    /// <summary>The headings the reader folded, by OutlineEntry.Key, remembered in Preferences.</summary>
+    private readonly HashSet<string> foldedSections;
 
     private List<OutlineEntry> OutlineEntries => OutlineTree.ItemsSource as List<OutlineEntry> ?? [];
 
     private void RenderOutline()
     {
+        ShowOutline();
         // Every save analyses the file again; an unchanged outline keeps its
         // rows rather than flashing new ones in.
         var sections = project?.Sections ?? [];
-        if (shownSections is not null && sections.SequenceEqual(shownSections))
+        var file = $"{project?.Id}/{project?.OpenPath}\t";
+        if (shownSections is not null && sections.SequenceEqual(shownSections) && file == shownOutlineFile)
         {
             return;
         }
         shownSections = sections;
-        foreach (var entry in OutlineEntries.SelectMany(e => e.SelfAndDescendants()))
-        {
-            if (entry.IsExpanded)
-            {
-                collapsedSections.Remove(entry.Key);
-            }
-            else
-            {
-                collapsedSections.Add(entry.Key);
-            }
-        }
-        OutlineTree.ItemsSource = Outline.Tree(sections).Select(n => new OutlineEntry(n, collapsedSections)).ToList();
-        OutlineToggle.Visibility = sections.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        ShowOutline();
-        SelectCurrentSection();
+        shownOutlineFile = file;
+        var keys = sections.Zip(Outline.FoldKeys(sections)).ToDictionary(k => k.First, k => file + k.Second);
+        OutlineTree.ItemsSource = Outline.Tree(sections).Select(n => new OutlineEntry(n, keys, foldedSections)).ToList();
+        NoSections.Visibility = sections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        currentSection = null;
+        FollowTopLine();
     }
 
-    /// <summary>The section the cursor is in shows selected, as the open file does above it.</summary>
-    private void SelectCurrentSection()
+    /// <summary>
+    /// The section at the top of the source is the current one, as Overleaf's
+    /// outline follows where you are reading: its headings open, and the
+    /// least scroll that brings it into view.
+    /// </summary>
+    private void FollowTopLine()
     {
-        if (project is not { } p || OutlineTree.Visibility != Visibility.Visible)
+        if (project is not { } p)
         {
             return;
         }
-        var current = Outline.Chain(p.Sections, p.CursorLine).LastOrDefault();
-        var entry = OutlineEntries.SelectMany(e => e.SelfAndDescendants()).FirstOrDefault(e => e.Item == current);
-        if (OutlineTree.SelectedItem != entry)
+        var chain = Outline.Chain(p.Sections, p.TopLine);
+        var entries = OutlineEntries.SelectMany(e => e.SelfAndDescendants()).ToList();
+        var current = chain.Count == 0 ? null : entries.FirstOrDefault(e => e.Item == chain[^1]);
+        if (current == currentSection)
         {
-            OutlineTree.SelectedItem = entry;
+            return;
         }
+        currentSection?.IsCurrent = false;
+        currentSection = current;
+        if (current is null)
+        {
+            return;
+        }
+        current.IsCurrent = true;
+        foreach (var entry in entries.Where(e => e != current && chain.Contains(e.Item)))
+        {
+            entry.IsExpanded = true;
+        }
+        // Once the opened headings have their rows.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (currentSection == current && OutlineTree.ContainerFromItem(current) is UIElement row)
+            {
+                row.StartBringIntoView();
+            }
+        });
     }
 
-    /// <summary>The outline's disclosure: open or closed, remembered as the browser version does.</summary>
+    /// <summary>
+    /// The outline for a .tex file: open at the height it was dragged to, or
+    /// folded to its heading at the sidebar's foot, the files taking the room.
+    /// </summary>
     private void ShowOutline()
     {
-        var open = Main.Preferences.OutlineOpen;
-        OutlineTree.Visibility = open && shownSections is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-        OutlineChevron.Glyph = open ? "" : "";
-        AutomationProperties.SetItemStatus(OutlineToggle, open ? "Expanded" : "Collapsed");
+        var shown = project?.Stats is not null;
+        var open = shown && Main.Preferences.OutlineOpen;
+        OutlineHeader.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+        Motion.Show(OutlinePane, open, Motion.Pane(0, 40));
+        outlineSplitter.Visibility = OutlinePane.Visibility;
+        OutlineRow.Height = new GridLength(open ? Math.Clamp(outlineHeight, OutlineMinimum, Math.Max(OutlineMinimum, OutlineRoom)) : 0);
+        // Its state, not a direction: down while open, right while folded.
+        OutlineChevron.Glyph = Main.Preferences.OutlineOpen ? "\uE70D" : "\uE76C";
+        var tip = Main.Preferences.OutlineOpen ? "Hide file outline" : "Show file outline";
+        PdfPane.SetToolTip(OutlineToggle, tip);
+        AutomationProperties.SetItemStatus(OutlineToggle, Main.Preferences.OutlineOpen ? "Expanded" : "Collapsed");
     }
+
+    /// <summary>The most the outline can take and leave the files their minimum.</summary>
+    private double OutlineRoom => Browse.ActualHeight - 2 * 32 - FilesMinimum;
+
+    private void OnBrowseSizeChanged(object sender, SizeChangedEventArgs e) => ShowOutline();
 
     private void OnToggleOutline(object sender, RoutedEventArgs e)
     {
         Main.Preferences.OutlineOpen = !Main.Preferences.OutlineOpen;
         Main.SavePreferences();
         ShowOutline();
-        SelectCurrentSection();
     }
 
-    /// <summary>The outline takes at most a little under half the sidebar, leaving the files the rest.</summary>
-    private void OnSidebarSizeChanged(object sender, SizeChangedEventArgs e) =>
-        OutlineTree.MaxHeight = Math.Max(96, e.NewSize.Height * 0.45);
+    private void OnOutlineExpanding(TreeView sender, TreeViewExpandingEventArgs args) => Fold(args.Item, folded: false);
+
+    private void OnOutlineCollapsed(TreeView sender, TreeViewCollapsedEventArgs args) => Fold(args.Item, folded: true);
+
+    /// <summary>A heading's fold, remembered for the next time the file is open.</summary>
+    private void Fold(object item, bool folded)
+    {
+        if (item is OutlineEntry entry && (folded ? foldedSections.Add(entry.Key) : foldedSections.Remove(entry.Key)))
+        {
+            Remember(p => p.OutlineFolded = [.. foldedSections.Order()]);
+        }
+    }
 
     /// <summary>
     /// The tree's expander column, 24 wide rather than 40, so a row's content
@@ -707,12 +836,12 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnOutlineInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
-        // Choosing a heading goes to it; its expander folds it.
+        // Choosing a heading scrolls it to the top of the source, leaving
+        // focus in the outline; its expander folds it.
         args.Handled = true;
         if (args.InvokedItem is OutlineEntry entry && project is not null)
         {
-            project.Reveal(entry.Item.Line);
-            Main.Editor.Focus();
+            project.Reveal(entry.Item.Line, atTop: true, focus: false);
         }
     }
 
@@ -736,27 +865,36 @@ public sealed partial class WorkspaceView : UserControl
     /// <summary>Whether the bar shows the LaTeX tools, or only history for another text file.</summary>
     private bool latexTools = true;
 
-    /// <summary>How many of FoldOrder's groups are in "See more".</summary>
-    private int sourceFolded;
+    /// <summary>How many of Groups show; the rest are in "See more".</summary>
+    private int shownGroups;
+    private bool levelFolded;
+    private bool redoFolded;
 
-    /// <summary>The groups "See more" takes as the bar narrows, first to go first. History never folds.</summary>
-    private FrameworkElement[] FoldOrder => [ReferenceTools, InsertButton, HeadingButton, FormatTools];
+    /// <summary>The groups that fold, in the bar's order; they fold from the end.</summary>
+    private FrameworkElement[] Groups => [FormatTools, MathTools, ReferenceTools, FigureTools, ListTools];
 
-    /// <summary>The inline-math icon, for its button and for "See more": Segoe Fluent Icons has none.</summary>
-    private const string MathIconData = "M1,3 H15 V5 H11.5 V12 C11.5,12.8 11.9,13.2 12.6,13.2 H14 V15 H12.2 C10.6,15 9.5,14 9.5,12.4 V5 H6.5 V15 H4.5 V5 H1 Z";
+    /// <summary>
+    /// Icons Segoe Fluent Icons has none of, on its 16 px grid: π for the
+    /// symbols, and a list numbered 1, 2, 3.
+    /// </summary>
+    private const string PiIconData = "M1,3 H15 V5 H11.5 V12 C11.5,12.8 11.9,13.2 12.6,13.2 H14 V15 H12.2 C10.6,15 9.5,14 9.5,12.4 V5 H6.5 V15 H4.5 V5 H1 Z";
+    private const string NumberedListIconData =
+        "M2.4,0.4 H3.4 V4.6 H2.4 Z M1.4,1.2 L2.4,0.4 V1.5 L1.9,1.9 Z"
+        + " M0.8,5.9 H3.8 V8.45 H1.7 V9.2 H3.8 V10.1 H0.8 V7.55 H2.9 V6.8 H0.8 Z"
+        + " M0.8,11.4 H3.8 V15.6 H0.8 V14.7 H2.9 V13.95 H1.4 V13.05 H2.9 V12.3 H0.8 Z"
+        + " M6,1.9 H15.5 V3.1 H6 Z M6,7.4 H15.5 V8.6 H6 Z M6,12.9 H15.5 V14.1 H6 Z";
 
-    /// <summary>A geometry can draw in only one icon, so each gets its own.</summary>
-    private static Geometry MathGeometry() => (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), MathIconData);
+    /// <summary>A geometry draws in only one icon, so each gets its own.</summary>
+    private static Geometry Icon(string data) => (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), data);
 
     private void OnSourceBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldSourceBar();
 
     /// <summary>
     /// The widest form of the bar that fits, as the macOS bar's ViewThatFits
-    /// chooses one: everything labelled; then icons only, the tooltips
-    /// keeping the names; then whole groups into "See more", in FoldOrder.
-    /// Each form is measured as it would lay out, so text scaling needs no
-    /// table of widths; there are at most six, and the width changes only
-    /// as the pane is resized.
+    /// chooses one: every group; then groups into "See more" from the end;
+    /// then the section level, then redo, so undo is never clipped. Each
+    /// form is measured as it would lay out, so text scaling needs no table
+    /// of widths.
     /// </summary>
     private void FoldSourceBar()
     {
@@ -766,10 +904,10 @@ public sealed partial class WorkspaceView : UserControl
             // Not laid out yet: SizeChanged folds it when it is.
             return;
         }
-        var folds = latexTools ? FoldOrder.Length : 0;
-        for (var form = 0; form <= folds + 1; form++)
+        var groups = Groups.Length;
+        for (var form = 0; form <= groups + 2; form++)
         {
-            ShowSourceTools(labelled: form == 0, folded: Math.Max(0, form - 1));
+            ShowSourceTools(shown: Math.Max(0, groups - form), level: form <= groups, redo: form <= groups + 1);
             SourceTools.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
             if (SourceTools.DesiredSize.Width <= available)
             {
@@ -778,63 +916,96 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    private void ShowSourceTools(bool labelled, int folded)
+    private void ShowSourceTools(int shown, bool level, bool redo)
     {
-        foreach (var label in new[] { HeadingLabel, ReferenceLabel, CitationLabel, InsertLabel })
-        {
-            label.Visibility = labelled ? Visibility.Visible : Visibility.Collapsed;
-        }
-        sourceFolded = folded;
-        var groups = FoldOrder;
+        shownGroups = shown;
+        levelFolded = !level;
+        redoFolded = latexTools && !redo;
+        LatexTools.Visibility = latexTools ? Visibility.Visible : Visibility.Collapsed;
+        var groups = Groups;
         for (var i = 0; i < groups.Length; i++)
         {
-            groups[i].Visibility = latexTools && i >= folded ? Visibility.Visible : Visibility.Collapsed;
+            groups[i].Visibility = i < shown ? Visibility.Visible : Visibility.Collapsed;
         }
-        HistorySeparator.Visibility = latexTools ? Visibility.Visible : Visibility.Collapsed;
-        // Between the formatting tools and the inserting ones, while both show.
-        var formatting = HeadingButton.Visibility == Visibility.Visible || FormatTools.Visibility == Visibility.Visible;
-        var inserting = ReferenceTools.Visibility == Visibility.Visible || InsertButton.Visibility == Visibility.Visible;
-        FormatSeparator.Visibility = formatting && inserting ? Visibility.Visible : Visibility.Collapsed;
-        SourceMore.Visibility = latexTools && folded > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LevelTools.Visibility = level ? Visibility.Visible : Visibility.Collapsed;
+        RedoButton.Visibility = redoFolded ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    /// <summary>"See more": the folded groups in the bar's order, with the shortcuts their tooltips name.</summary>
+    /// <summary>"See more": what has folded, in the bar's order, then the templates with no button.</summary>
     private void OnSourceMoreOpening(object? sender, object e)
     {
         var items = SourceMoreMenu.Items;
         items.Clear();
-        var folded = FoldOrder[..sourceFolded];
-        void Group(FrameworkElement group, params MenuFlyoutItemBase[] entries)
+        void Add(params MenuFlyoutItemBase[] entries)
         {
-            if (!folded.Contains(group))
-            {
-                return;
-            }
-            if (items.Count > 0)
-            {
-                items.Add(new MenuFlyoutSeparator());
-            }
             foreach (var entry in entries)
             {
                 items.Add(entry);
             }
+            items.Add(new MenuFlyoutSeparator());
         }
 
-        var heading = Submenu("Heading", LatexTemplates.Headings);
-        heading.Icon = new FontIcon { Glyph = "" };
-        Group(HeadingButton, heading);
-        var math = ContextMenus.Item("Inline math", () => Main.Perform(MenuCommand.EditMath), "Ctrl+Shift+M");
-        math.Icon = new PathIcon { Data = MathGeometry() };
-        Group(FormatTools,
-            ContextMenus.Item("Bold", "", () => Main.Perform(MenuCommand.EditBold), "Ctrl+B"),
-            ContextMenus.Item("Italic", "", () => Main.Perform(MenuCommand.EditItalic), "Ctrl+I"),
-            math);
-        Group(ReferenceTools,
-            ContextMenus.Item("Reference", "", () => InsertReference("Reference")),
-            ContextMenus.Item("Citation", "", () => InsertReference("Citation")));
-        var insert = new MenuFlyoutSubItem { Text = "Insert", Icon = new FontIcon { Glyph = "" } };
-        AddInserts(insert.Items);
-        Group(InsertButton, insert);
+        if (redoFolded)
+        {
+            var redo = ContextMenus.Item("Redo", "\uE7A6", () => Main.Perform(MenuCommand.EditRedo), "Ctrl+Shift+Z");
+            redo.IsEnabled = Main.IsEnabled(MenuCommand.EditRedo);
+            Add(redo);
+        }
+        if (levelFolded)
+        {
+            Add(LevelSubmenu(LevelLabel.Text));
+        }
+        var groups = Groups;
+        for (var i = shownGroups; i < groups.Length; i++)
+        {
+            var group = groups[i];
+            if (group == FormatTools)
+            {
+                Add(ContextMenus.Item("Bold", "\uE8DD", () => Main.Perform(MenuCommand.EditBold), "Ctrl+B"),
+                    ContextMenus.Item("Italic", "\uE8DB", () => Main.Perform(MenuCommand.EditItalic), "Ctrl+I"));
+            }
+            else if (group == MathTools)
+            {
+                Add(ContextMenus.Item("Inline math", "\uE94B", () => Main.Perform(MenuCommand.EditMath), "Ctrl+Shift+M"),
+                    ContextMenus.Item("Display math", DisplayMath),
+                    SymbolMenu());
+            }
+            else if (group == ReferenceTools)
+            {
+                Add(ContextMenus.Item("Link", "\uE71B", () => Inline("Link")),
+                    ContextMenus.Item("Reference", () => Inline("Reference")),
+                    ContextMenus.Item("Citation", "\uE9B1", () => Inline("Citation")));
+            }
+            else if (group == FigureTools)
+            {
+                Add(ContextMenus.Item("Figure", "\uE8B9", () => Insert("Figure")),
+                    ContextMenus.Item("Table", "\uE80A", () => Insert("Table")));
+            }
+            else
+            {
+                Add(ContextMenus.Item("Bulleted list", "\uE8FD", () => Insert("Bulleted list")),
+                    ContextMenus.Item("Numbered list", () => Insert("Numbered list")));
+            }
+        }
+        string[] buttoned = ["Figure", "Table", "Bulleted list", "Numbered list", "Link", "Reference", "Citation"];
+        AddTemplates(items, LatexTemplates.Environments.Concat(LatexTemplates.Lists).Where(t => !buttoned.Contains(t.Label)));
+        items.Add(new MenuFlyoutSeparator());
+        AddTemplates(items, LatexTemplates.References.Where(t => !buttoned.Contains(t.Label)), "inline");
+    }
+
+    private void OnLevelMenuOpening(object? sender, object e)
+    {
+        LevelMenu.Items.Clear();
+        AddLevels(LevelMenu.Items, LevelLabel.Text);
+    }
+
+    private void OnSymbolClick(object sender, ItemClickEventArgs e)
+    {
+        SymbolsFlyout.Hide();
+        if (e.ClickedItem is PaletteSymbol symbol)
+        {
+            Format("symbol", symbol.Command);
+        }
     }
 
     // ---------- the bars ----------
@@ -855,12 +1026,22 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnMath(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.EditMath);
 
-    private void OnReference(object sender, RoutedEventArgs e) => InsertReference("Reference");
+    private void OnDisplayMath(object sender, RoutedEventArgs e) => DisplayMath();
 
-    private void OnCitation(object sender, RoutedEventArgs e) => InsertReference("Citation");
+    private void DisplayMath() => Format("displayMath");
 
-    private void InsertReference(string label) =>
-        Format("insert", LatexTemplates.References.First(r => r.Label == label).Template);
+    /// <summary>A reference or block button: its Tag is the template's label.</summary>
+    private void OnInline(object sender, RoutedEventArgs e) => Inline((string)((FrameworkElement)sender).Tag);
+
+    private void OnInsert(object sender, RoutedEventArgs e) => Insert((string)((FrameworkElement)sender).Tag);
+
+    /// <summary>A reference template around the selection, by its label.</summary>
+    private void Inline(string label) =>
+        Format("inline", LatexTemplates.References.First(r => r.Label == label).Template);
+
+    /// <summary>A block from the environments or the lists, by its label.</summary>
+    private void Insert(string label) =>
+        Format("insert", LatexTemplates.Environments.Concat(LatexTemplates.Lists).First(t => t.Label == label).Template);
 
     private void OnTogglePanel(object sender, RoutedEventArgs e) => Main.Perform(MenuCommand.ViewToggleLogs);
 
@@ -900,10 +1081,7 @@ public sealed partial class WorkspaceView : UserControl
     /// <summary>The title bar's search box, while the project is on screen: results replace the trees.</summary>
     internal void Search(string text)
     {
-        if (project is not null)
-        {
-            project.SearchQuery = text;
-        }
+        project?.SearchQuery = text;
         // The results and the trees fade in in each other's place.
         Motion.Show(Browse, !Searching, Motion.FadeIn);
         Motion.Show(Results, Searching, Motion.FadeIn);
@@ -987,7 +1165,7 @@ public sealed partial class WorkspaceView : UserControl
         // Refuse before asking, not after the user has already confirmed.
         if (ProjectPaths.Contains(node.Path, p.Settings?.MainFile))
         {
-            Main.Report("Choose a different main file before you delete this.", InfoBarSeverity.Warning);
+            Main.Report($"Can’t delete “{node.Name}”", "Choose a different main file before you delete this.", InfoBarSeverity.Warning);
             return;
         }
         var what = node.IsDirectory ? "This folder and everything in it" : "This file";

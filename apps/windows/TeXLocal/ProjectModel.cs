@@ -61,6 +61,10 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public int CursorLine { get => cursorLine; private set => Set(ref cursorLine, value); }
     private int cursorLine = 1;
 
+    /// <summary>The first line showing at the top of the editor: the outline follows it.</summary>
+    public int TopLine { get => topLine; private set => Set(ref topLine, value); }
+    private int topLine = 1;
+
     public bool Dirty { get => dirty; private set => Set(ref dirty, value); }
     private bool dirty;
 
@@ -116,7 +120,11 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public bool TexAvailable => app.Tex?.Available ?? false;
     private bool AutoCompile => app.Preferences.AutoCompile;
 
-    private void Report(CoreException error) => app.Report(error.Message);
+    /// <summary>A failure: what couldn't be done, then the core's reason.</summary>
+    private void Report(CoreException error, string title) => app.Report(title, error.Message);
+
+    /// <summary>A project path's last part, as a title names a file or folder.</summary>
+    private static string Name(string path) => path[(path.LastIndexOf('/') + 1)..];
 
     // Set once the project is closed: its late results and queued follow-ups
     // must not act on the next project.
@@ -128,6 +136,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     {
         editor.Changed = Edited;
         editor.CursorMoved = line => CursorLine = line;
+        editor.Scrolled = line => TopLine = line;
         editor.Command = id =>
         {
             if (MenuCommands.FromId(id) is { } command)
@@ -147,7 +156,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, "Couldn’t open the project");
         }
         var pdf = await CompiledPdfAsync();
         if (pdf is not null && File.Exists(pdf))
@@ -167,8 +176,12 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         closed = true;
         autosave?.Cancel();
         searchCancel?.Cancel();
+        diskCheck?.Cancel();
+        watcher?.Dispose();
+        watcher = null;
         editor.Changed = null;
         editor.CursorMoved = null;
+        editor.Scrolled = null;
         editor.Command = null;
         editor.Crashed -= OnEditorCrashed;
         editor.Reloaded -= OnEditorReloaded;
@@ -182,7 +195,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            app.Report($"Couldn’t refresh the file list: {e.Message}");
+            Report(e, "Couldn’t refresh the file list");
         }
     }
 
@@ -226,7 +239,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             }
             catch (CoreException e)
             {
-                Report(e);
+                Report(e, $"Couldn’t open “{Name(path)}”");
             }
             return;
         }
@@ -256,7 +269,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         {
             if (request == openRequest)
             {
-                Report(e);
+                Report(e, $"Couldn’t open “{Name(path)}”");
             }
             return false;
         }
@@ -267,7 +280,9 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             return false;
         }
         OpenPath = path;
-        CursorLine = 1;
+        CursorLine = TopLine = 1;
+        diskText = file.Text;
+        _ = WatchOpenFileAsync();
         Analyze(path, file.Text);
         await editor.OpenAsync($"{Id}/{path}", file.Text);
         return true;
@@ -296,11 +311,18 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             return;
         }
         OpenPath = null;
+        // The open waits for a save that read its text before the crash.
         await OpenAsync(path);
+        // The editor shows the file as it is on disk again, which is what
+        // the PDF was built from unless a save has landed since.
+        if (Freshness == PdfFreshness.Edited && writes == builtWrites)
+        {
+            Freshness = null;
+        }
         if (lostInCrash)
         {
             lostInCrash = false;
-            app.Report($"The editor stopped unexpectedly. Changes to {path} since it was last saved were lost.");
+            app.Report("Unsaved changes were lost", $"The editor stopped unexpectedly. Changes to {path} since it was last saved were lost.");
         }
     }
 
@@ -340,6 +362,12 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     // and a flush that returns true means the latest text is on disk.
     private Task<bool> saves = Task.FromResult(true);
 
+    // Writes to the open file, this app's and other apps', and how many of
+    // them the PDF on screen was built after: the preview is current only
+    // while they match.
+    private int writes;
+    private int builtWrites;
+
     private Task<bool> SaveAsync()
     {
         var previous = saves;
@@ -353,7 +381,8 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         {
             return true;
         }
-        if (OpenPath is not { } path)
+        // Not over another app's change until the user says which to keep.
+        if (OpenPath is not { } path || diskConflict)
         {
             return false;
         }
@@ -377,10 +406,13 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                     return true;
                 }
                 Dirty = true;
-                app.Report("TeXLocal couldn’t read the document from the editor, so it was not saved.");
+                app.Report($"“{Name(path)}” wasn’t saved", "The editor’s text couldn’t be read. Your changes are still in the editor, and TeXLocal saves them again after your next edit.");
                 return false;
             }
+            // Before the write, whose own change notice then matches it.
+            diskText = text;
             await core.PerformAsync("write_file", new { id = Id, path, text });
+            writes++;
             if (path == OpenPath)
             {
                 Analyze(path, text);
@@ -391,7 +423,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         catch (CoreException e)
         {
             Dirty = true;
-            app.Report($"Save failed: {e.Message}");
+            Report(e, $"“{Name(path)}” wasn’t saved");
             return false;
         }
         finally
@@ -409,17 +441,14 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public async Task<bool> FlushAsync()
     {
         autosave?.Cancel();
-        if (!await SaveAsync())
-        {
-            return false;
-        }
-        while (Dirty)
+        do
         {
             if (!await SaveAsync())
             {
                 return false;
             }
         }
+        while (Dirty);
         return true;
     }
 
@@ -437,6 +466,147 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             _ = CompileIfAutoAsync();
         }
         return saved;
+    }
+
+    // ---------- changes on disk ----------
+
+    private FileSystemWatcher? watcher;
+    private CancellationTokenSource? diskCheck;
+
+    // The open file's text as this app last read or wrote it, which tells
+    // another app's change from its own save.
+    private string? diskText;
+
+    // Asking which to keep: saves wait for the answer.
+    private bool diskConflict;
+
+    /// <summary>
+    /// Watch the open file, so a change another app makes (an editor, a
+    /// sync, git) shows here rather than being saved over.
+    /// </summary>
+    private async Task WatchOpenFileAsync()
+    {
+        var path = OpenPath;
+        string full;
+        try
+        {
+            full = await core.CallAsync<string>("raw_path", new { id = Id, path });
+        }
+        catch (CoreException)
+        {
+            return;
+        }
+        if (path != OpenPath || closed)
+        {
+            return;
+        }
+        watcher?.Dispose();
+        watcher = new FileSystemWatcher(Path.GetDirectoryName(full)!, Path.GetFileName(full))
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+        };
+        // Editors that save by writing a new file and moving it over this
+        // one raise Created or Renamed rather than Changed.
+        void Changed(object sender, FileSystemEventArgs e) => app.DispatcherQueue.TryEnqueue(ScheduleDiskCheck);
+        watcher.Changed += Changed;
+        watcher.Created += Changed;
+        watcher.Renamed += Changed;
+        watcher.EnableRaisingEvents = true;
+    }
+
+    /// <summary>Changes come in bursts (the text, then its size and date): read once they settle.</summary>
+    private async void ScheduleDiskCheck()
+    {
+        diskCheck?.Cancel();
+        var pending = diskCheck = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(250, pending.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        await CheckDiskAsync();
+    }
+
+    /// <summary>Nothing unsaved: the editor takes the text on disk. Unsaved edits: ask which to keep.</summary>
+    private async Task CheckDiskAsync()
+    {
+        var before = saves;
+        await before;
+        if (OpenPath is not { } path || closed || diskConflict)
+        {
+            return;
+        }
+        FileText file;
+        try
+        {
+            file = await core.CallAsync<FileText>("read_file", new { id = Id, path });
+        }
+        catch (CoreException)
+        {
+            // Gone or locked for now; the tree shows a delete.
+            return;
+        }
+        // A save that started meanwhile may be what was read, half written;
+        // its own change notice checks again.
+        if (path != OpenPath || closed || saves != before || file.Text == diskText)
+        {
+            return;
+        }
+        diskText = file.Text;
+        // The PDF no longer matches what is on disk.
+        writes++;
+        if (PdfVersion > 0)
+        {
+            Freshness = PdfFreshness.Edited;
+        }
+        if (Dirty)
+        {
+            autosave?.Cancel();
+            await ResolveConflictAsync(path);
+        }
+        else
+        {
+            await ShowDiskTextAsync(path, file.Text);
+            await CompileIfAutoAsync();
+        }
+    }
+
+    /// <summary>The file changed on disk while it has edits here: revert, or keep editing and save over it.</summary>
+    private async Task ResolveConflictAsync(string path)
+    {
+        diskConflict = true;
+        var revert = await Dialogs.ConfirmAsync(app.Content.XamlRoot, $"“{Path.GetFileName(path)}” changed on disk",
+            $"Another app changed {path} while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.",
+            "Revert", cancel: "Keep editing");
+        diskConflict = false;
+        if (closed || path != OpenPath)
+        {
+            return;
+        }
+        if (revert)
+        {
+            await ShowDiskTextAsync(path, diskText!);
+            await CompileIfAutoAsync();
+        }
+        else
+        {
+            await SaveNowAsync();
+        }
+    }
+
+    /// <summary>The editor shows the file as it is on disk, at the same place, keeping focus where it is.</summary>
+    private async Task ShowDiskTextAsync(string path, string text)
+    {
+        var top = TopLine;
+        autosave?.Cancel();
+        Dirty = false;
+        Analyze(path, text);
+        await editor.OpenAsync($"{Id}/{path}", text, focus: false);
+        await editor.RevealAsync(top, atTop: true, focus: false);
+        CursorLine = await editor.CurrentLineAsync();
     }
 
     // ---------- compile ----------
@@ -472,6 +642,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             {
                 return;
             }
+            var built = writes;
             var result = await core.CallAsync<CompileResult>("compile", new { id = Id });
             if (closed)
             {
@@ -482,8 +653,10 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             {
                 PdfPath = pdf;
                 PdfVersion++;
-                // Edits made while it built still aren't in it.
-                Freshness = Dirty ? PdfFreshness.Edited : null;
+                builtWrites = built;
+                // Edits made while it built still aren't in it, nor may a
+                // save that landed meanwhile be.
+                Freshness = Dirty || writes != built ? PdfFreshness.Edited : null;
             }
             else if (!result.Ok)
             {
@@ -506,7 +679,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             }
             else
             {
-                Report(e);
+                Report(e, "Couldn’t compile");
             }
         }
         finally
@@ -533,33 +706,39 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
-    public async Task SetShellEscapeAsync(bool on)
+    // ---------- settings ----------
+
+    private async Task<bool> PatchSettingsAsync(object patch, string failure)
     {
         try
         {
-            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { shellEscape = on } });
+            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch });
+            return true;
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, failure);
+            return false;
         }
     }
 
+    public Task SetShellEscapeAsync(bool on) => PatchSettingsAsync(new { shellEscape = on }, "Couldn’t change shell escape");
+
     public async Task SetEngineAsync(string engine)
     {
-        if (engine == Settings?.Engine)
+        // A new engine only means something once a build uses it.
+        if (engine != Settings?.Engine && await PatchSettingsAsync(new { engine }, "Couldn’t change the engine"))
         {
-            return;
-        }
-        try
-        {
-            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { engine } });
-            // A new engine only means something once a build uses it.
             await CompileAsync(auto: true);
         }
-        catch (CoreException e)
+    }
+
+    /// <summary>The PDF is named after the main file, so a new main file means a new build.</summary>
+    public async Task SetMainFileAsync(string path)
+    {
+        if (await PatchSettingsAsync(new { mainFile = path }, "Couldn’t change the main file"))
         {
-            Report(e);
+            await CompileAsync(auto: true);
         }
     }
 
@@ -582,7 +761,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException)
         {
-            app.Report("No PDF location found. Compile first, then try again.", Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational);
+            app.Report("No PDF location found", "Compile first, then try again.", Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational);
         }
     }
 
@@ -595,7 +774,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException)
         {
-            app.Report("No source location found for this part of the PDF.", Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational);
+            app.Report("No source location found", "Nothing in the source matches this part of the PDF.", Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational);
             return;
         }
         await OpenAsync(loc.File);
@@ -622,7 +801,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, $"Couldn’t create “{Name(path)}”");
         }
     }
 
@@ -642,6 +821,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 var moved = ProjectPaths.Remap(OpenPath, renamed.From, renamed.To)!;
                 await editor.RenameAsync($"{Id}/{OpenPath}", $"{Id}/{moved}");
                 OpenPath = moved;
+                _ = WatchOpenFileAsync();
             }
             else
             {
@@ -660,7 +840,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, $"Couldn’t rename “{Name(from)}”");
         }
     }
 
@@ -681,26 +861,14 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 Dirty = false;
                 OpenPath = null;
                 Stats = null;
+                watcher?.Dispose();
+                watcher = null;
             }
             await ReloadTreeAsync();
         }
         catch (CoreException e)
         {
-            Report(e);
-        }
-    }
-
-    /// <summary>The PDF is named after the main file, so a new main file means a new build.</summary>
-    public async Task SetMainFileAsync(string path)
-    {
-        try
-        {
-            Settings = await core.CallAsync<ProjectSettings>("set_settings", new { id = Id, patch = new { mainFile = path } });
-            await CompileAsync(auto: true);
-        }
-        catch (CoreException e)
-        {
-            Report(e);
+            Report(e, $"Couldn’t move “{Name(path)}” to the Recycle Bin");
         }
     }
 
@@ -713,7 +881,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, "Couldn’t add the files");
         }
         // Even after a failure: the files copied before it are there.
         await ReloadTreeAsync();
@@ -728,7 +896,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, "Couldn’t open the file location");
         }
     }
 
@@ -743,7 +911,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (CoreException e)
         {
-            Report(e);
+            Report(e, "Couldn’t export the project");
         }
     }
 
@@ -760,7 +928,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            app.Report(e.Message);
+            app.Report("Couldn’t save the PDF", e.Message);
         }
     }
 
@@ -800,7 +968,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
 
     public void Format(string name, string? arg = null) => _ = editor.CommandAsync(name, arg);
 
-    public void Reveal(int line) => _ = editor.RevealAsync(line);
+    public void Reveal(int line, bool atTop = false, bool focus = true) => _ = editor.RevealAsync(line, atTop, focus);
 }
 
 /// <summary>How the PDF on screen differs from the source.</summary>

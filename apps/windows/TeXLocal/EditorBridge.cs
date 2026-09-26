@@ -16,6 +16,9 @@ internal sealed class EditorBridge
 
     public Action? Changed { get; set; }
     public Action<int>? CursorMoved { get; set; }
+
+    /// <summary>The first line showing at the top of the editor, as it scrolls.</summary>
+    public Action<int>? Scrolled { get; set; }
     public Action<string>? Command { get; set; }
 
     /// <summary>The page's renderer failed, taking the document with it.</summary>
@@ -37,10 +40,8 @@ internal sealed class EditorBridge
     public EditorBridge()
     {
         page = new EmbeddedPage(View, "editor.html", OnMessage);
-        // The chords the page gives back instead of handling (Ctrl+Enter
-        // would otherwise insert a line); they arrive as Command.
-        _ = page.RunStickyAsync("hostKeys",
-            $"texlocal.setHostKeys({L(MenuCommands.HostKeys.Select(k => new { id = k.Id, accel = k.Accel }))})");
+        // Handed back, or Ctrl+Enter would insert a line; they arrive as Command.
+        _ = page.SetHostKeysAsync(MenuCommands.HostKeys);
     }
 
     private void OnMessage(string type, JsonElement body)
@@ -53,6 +54,9 @@ internal sealed class EditorBridge
             case "cursor" when body.TryGetProperty("line", out var line) && line.ValueKind == JsonValueKind.Number:
                 CursorMoved?.Invoke(line.GetInt32());
                 break;
+            case "scroll" when body.TryGetProperty("line", out var top) && top.ValueKind == JsonValueKind.Number:
+                Scrolled?.Invoke(top.GetInt32());
+                break;
             case "command" when body.TryGetProperty("id", out var id) && id.GetString() is { } command:
                 Command?.Invoke(command);
                 break;
@@ -61,7 +65,9 @@ internal sealed class EditorBridge
 
     private static string L(object? value) => EmbeddedPage.Literal(value);
 
-    public Task OpenAsync(string path, string text) => page.RunAsync($"texlocal.open({L(path)}, {L(text)})");
+    /// <summary>Show a file; <paramref name="focus"/> false leaves keyboard focus where it is.</summary>
+    public Task OpenAsync(string path, string text, bool focus = true) =>
+        page.RunAsync($"texlocal.open({L(path)}, {L(text)}, 0, {L(focus)})");
 
     /// <summary>The document's text, or null when the page has none to give.</summary>
     public async Task<string?> GetTextAsync()
@@ -76,7 +82,12 @@ internal sealed class EditorBridge
         return line.ValueKind == JsonValueKind.Number ? line.GetInt32() : 1;
     }
 
-    public Task RevealAsync(int line) => page.RunAsync($"texlocal.reveal({line})");
+    /// <summary>
+    /// Go to a line: centred, or at the top as the outline shows a heading;
+    /// <paramref name="focus"/> false leaves keyboard focus where it is.
+    /// </summary>
+    public Task RevealAsync(int line, bool atTop = false, bool focus = true) =>
+        page.RunAsync($"texlocal.reveal({line}, {L(atTop)}, {L(focus)})");
 
     public Task CommandAsync(string name, string? arg = null) =>
         page.RunAsync($"texlocal.command({L(name)}, {L(arg)})");

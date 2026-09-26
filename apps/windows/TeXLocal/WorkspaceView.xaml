@@ -6,13 +6,12 @@
     xmlns:local="using:TeXLocal">
     <Grid>
 
-        <Grid x:Name="Panes">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SidebarColumn" Width="280" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
+        <!-- The sidebar and the details pane are inline SplitView panes, so
+             they slide open and closed as WinUI's own do, the content moving
+             with them; their dividers set the panes' lengths. -->
+        <SplitView x:Name="Panes" DisplayMode="Inline" PanePlacement="Left" IsPaneOpen="True"
+                   OpenPaneLength="280" PaneBackground="Transparent">
+            <SplitView.Pane>
             <!-- A writer's sidebar, on the base layer as NavigationView's pane
                  is: the files, the open document's outline beneath them (as
                  Overleaf pairs them) or, while the title bar's search box has
@@ -21,19 +20,23 @@
                  Explorer and Visual Studio. 8 above, so the first heading
                  sits level with the toolbar's buttons. Files dropped here
                  are added to the project, or to the folder under them. -->
-            <Grid x:Name="Sidebar" Padding="0,8,0,0" Background="Transparent" AllowDrop="True"
-                  DragOver="OnDragOver" Drop="OnDrop" SizeChanged="OnSidebarSizeChanged">
+            <Grid Padding="0,8,0,0" Background="Transparent" AllowDrop="True"
+                  DragOver="OnDragOver" Drop="OnDrop">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Grid x:Name="Browse" Grid.Row="1">
+                <!-- The files over the open document's outline, with a
+                     divider between them; the outline folds to its heading,
+                     docked at the sidebar's foot, and the files take the room. -->
+                <Grid x:Name="Browse" Grid.Row="1" SizeChanged="OnBrowseSizeChanged">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="32" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition x:Name="OutlineRow" Height="0" />
                     </Grid.RowDefinitions>
                     <!-- Body Strong for a section header, 16 from the pane's
                          edge; its one action at the other end, 8 in as the
@@ -77,53 +80,58 @@
                                 <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
                                               AutomationProperties.Name="{x:Bind AccessibleName}"
                                               HorizontalContentAlignment="Stretch" Loaded="OnTreeItemLoaded">
-                                    <!-- The main file's star at the row's far end, as a
-                                         list marks an item's state after its name. -->
-                                    <Grid ColumnSpacing="8" Padding="0,0,8,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
+                                    <!-- The main file in bold, as Visual Studio shows its
+                                         startup project. -->
+                                    <StackPanel Orientation="Horizontal" Spacing="8" ToolTipService.ToolTip="{x:Bind ToolTip}">
                                         <FontIcon Glyph="{x:Bind Glyph}" FontSize="16" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
-                                        <FontIcon Grid.Column="2" Glyph="&#xE735;" FontSize="16" Visibility="{x:Bind MainVisibility}"
-                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                                                  ToolTipService.ToolTip="Main file" />
-                                    </Grid>
+                                        <TextBlock Text="{x:Bind Name}" FontWeight="{x:Bind Weight}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                 </TreeViewItem>
                             </DataTemplate>
                         </TreeView.ItemTemplate>
                     </TreeView>
-                    <!-- The heading is its own disclosure button: 4 in, so its
-                         text lines up 16 from the edge as the Files heading's. -->
-                    <Button x:Name="OutlineToggle" Grid.Row="2" Margin="4,0" Style="{StaticResource SubtleButtonStyle}"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                            Click="OnToggleOutline" AutomationProperties.Name="Outline">
-                        <Grid>
-                            <TextBlock Text="Outline" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                            <FontIcon x:Name="OutlineChevron" Glyph="&#xE70D;" FontSize="16" HorizontalAlignment="Right"
+                    <!-- A section heading as the Files one is, its line the
+                         divider above it; its one action, the disclosure,
+                         at the other end. The divider's grip overhangs it. -->
+                    <Grid x:Name="OutlineHeader" Grid.Row="3" Height="32"
+                          BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+                        <TextBlock Text="File outline" Margin="16,0" VerticalAlignment="Center"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}" AutomationProperties.AccessibilityView="Raw" />
+                        <Button x:Name="OutlineToggle" Style="{StaticResource ToolbarIconButtonStyle}" Margin="0,0,8,0"
+                                HorizontalAlignment="Right" Click="OnToggleOutline" AutomationProperties.Name="File outline">
+                            <FontIcon x:Name="OutlineChevron" Glyph="&#xE70D;" FontSize="16"
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </Grid>
-                    </Button>
+                        </Button>
+                    </Grid>
                     <!-- The headings as they nest, with the tree's own
-                         expanders, as the files above; the section the cursor
-                         is in shows selected. -->
-                    <TreeView x:Name="OutlineTree" Grid.Row="3" SelectionMode="Single" CanDragItems="False"
-                              CanReorderItems="False" AutomationProperties.Name="Outline" ItemInvoked="OnOutlineInvoked">
-                        <TreeView.ItemTemplate>
-                            <DataTemplate x:DataType="local:OutlineEntry">
-                                <TreeViewItem ItemsSource="{x:Bind Children}" Loaded="OnTreeItemLoaded"
-                                              IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" AutomationProperties.Name="{x:Bind Title}">
-                                    <Grid>
-                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind TitledVisibility}" />
-                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind UntitledVisibility}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </Grid>
-                                </TreeViewItem>
-                            </DataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
+                         expanders, as the files above: a table of contents
+                         with no selection, following the top of the source. -->
+                    <Grid x:Name="OutlinePane" Grid.Row="4">
+                        <TreeView x:Name="OutlineTree" SelectionMode="None" CanDragItems="False" CanReorderItems="False"
+                                  AutomationProperties.Name="File outline" ItemInvoked="OnOutlineInvoked"
+                                  Expanding="OnOutlineExpanding" Collapsed="OnOutlineCollapsed">
+                            <TreeView.ItemTemplate>
+                                <DataTemplate x:DataType="local:OutlineEntry">
+                                    <TreeViewItem ItemsSource="{x:Bind Children}" Loaded="OnTreeItemLoaded"
+                                                  IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" AutomationProperties.Name="{x:Bind Title}"
+                                                  AutomationProperties.ItemStatus="{x:Bind Status, Mode=OneWay}">
+                                        <Grid>
+                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis"
+                                                       Visibility="{x:Bind TitledVisibility, Mode=OneWay}" />
+                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis"
+                                                       Visibility="{x:Bind UntitledVisibility, Mode=OneWay}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"
+                                                       Visibility="{x:Bind CurrentVisibility, Mode=OneWay}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        </Grid>
+                                    </TreeViewItem>
+                                </DataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                        <TextBlock x:Name="NoSections" Text="No sections" Margin="16,8" Visibility="Collapsed"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
                 </Grid>
 
                 <!-- The matches, grouped under their files as macOS lists them. -->
@@ -163,21 +171,23 @@
                 </StackPanel>
 
             </Grid>
+            </SplitView.Pane>
 
+            <Grid x:Name="SidebarContent">
             <!-- The content layer, as NavigationView's content area: one
                  surface, its top and leading edges stroked and the corner
                  where they meet rounded. Inside it: the source and the PDF
                  over the build panel, then the inspector, divided by the
                  splitters' 1 px lines. -->
-            <Grid x:Name="Layer" Grid.Column="2" Background="{ThemeResource LayerFillColorDefaultBrush}"
+            <Grid x:Name="Layer" Background="{ThemeResource LayerFillColorDefaultBrush}"
                   BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0"
                   CornerRadius="8,0,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition x:Name="InspectorColumn" Width="260" />
-                </Grid.ColumnDefinitions>
-
+                <SplitView x:Name="Details" DisplayMode="Inline" PanePlacement="Right" IsPaneOpen="False"
+                           OpenPaneLength="260" PaneBackground="Transparent">
+                    <SplitView.Pane>
+                        <local:InspectorView x:Name="Inspector" />
+                    </SplitView.Pane>
+                <Grid x:Name="DetailsContent">
                 <Grid x:Name="Editors">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" MinHeight="120" />
@@ -195,7 +205,7 @@
 
                         <!-- The source: a writer's tools over it, then where the
                              cursor is, then the editor. -->
-                        <Grid x:Name="Source">
+                        <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="32" />
@@ -205,10 +215,12 @@
                             <!-- A writer's tools: a row 48 tall, as the title bar
                                  is, of standard 32 px buttons 8 apart and 8 in
                                  from the edge.
-                                 As the pane narrows the labels go first, then
-                                 whole groups fold into "See more" (FoldSourceBar):
-                                 references, Insert, Heading, the formats; history
-                                 never folds. -->
+                                 Overleaf's tools in its order: history; the
+                                 section level; bold and italic; math and symbols;
+                                 links, references and citations; figures and
+                                 tables; lists; then the rest in "See more". As the
+                                 pane narrows, groups fold into it from the end,
+                                 then the section level, then redo (FoldSourceBar). -->
                             <Grid x:Name="SourceBar" Height="48" Padding="8,0" SizeChanged="OnSourceBarSizeChanged">
                                 <Grid.Resources>
                                     <!-- The drop-downs subtle, as the buttons beside
@@ -235,68 +247,143 @@
                                             AutomationProperties.Name="Redo" ToolTipService.ToolTip="Redo (Ctrl+Shift+Z)">
                                         <FontIcon Glyph="&#xE7A6;" FontSize="16" />
                                     </Button>
-                                    <Rectangle x:Name="HistorySeparator" Style="{StaticResource ToolbarSeparatorStyle}" />
-                                    <DropDownButton x:Name="HeadingButton" Height="32" AutomationProperties.Name="Heading"
-                                                    ToolTipService.ToolTip="Insert a part, chapter, section or subsection">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon Glyph="&#xE8D2;" FontSize="16" />
-                                            <TextBlock x:Name="HeadingLabel" Text="Heading" />
+                                    <!-- Each group carries the separator before it, so a
+                                         group folded into "See more" takes its own. -->
+                                    <StackPanel x:Name="LatexTools" Orientation="Horizontal" Spacing="8">
+                                        <!-- The caret line's level, as a word processor shows
+                                             a paragraph's style; as wide as its widest value,
+                                             so the bar holds still as the caret moves. -->
+                                        <StackPanel x:Name="LevelTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <DropDownButton x:Name="LevelButton" Height="32" AutomationProperties.Name="Section level"
+                                                            ToolTipService.ToolTip="Section level">
+                                                <Grid>
+                                                    <TextBlock x:Name="LevelLabel" Text="Normal text" />
+                                                    <TextBlock Text="Subsubsection" Opacity="0" AutomationProperties.AccessibilityView="Raw" />
+                                                </Grid>
+                                                <DropDownButton.Flyout>
+                                                    <MenuFlyout x:Name="LevelMenu" Placement="BottomEdgeAlignedLeft" Opening="OnLevelMenuOpening" />
+                                                </DropDownButton.Flyout>
+                                            </DropDownButton>
                                         </StackPanel>
-                                        <DropDownButton.Flyout>
-                                            <MenuFlyout x:Name="HeadingMenu" Placement="BottomEdgeAlignedLeft" />
-                                        </DropDownButton.Flyout>
-                                    </DropDownButton>
-                                    <StackPanel x:Name="FormatTools" Orientation="Horizontal" Spacing="8">
-                                        <Button x:Name="BoldButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnBold"
-                                                AutomationProperties.Name="Bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
-                                            <FontIcon Glyph="&#xE8DD;" FontSize="16" />
-                                        </Button>
-                                        <Button x:Name="ItalicButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnItalic"
-                                                AutomationProperties.Name="Italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
-                                            <FontIcon Glyph="&#xE8DB;" FontSize="16" />
-                                        </Button>
-                                        <Button x:Name="MathButton" Style="{StaticResource ToolbarIconButtonStyle}" Click="OnMath"
-                                                AutomationProperties.Name="Inline math" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
-                                            <!-- Its path is set from MathIconData, which "See more" shares. -->
-                                            <PathIcon x:Name="MathIcon" />
-                                        </Button>
-                                    </StackPanel>
-                                    <Rectangle x:Name="FormatSeparator" Style="{StaticResource ToolbarSeparatorStyle}" />
-                                    <!-- The two references a writer makes most, a click
-                                         each, as macOS has them; the rest under Insert. -->
-                                    <StackPanel x:Name="ReferenceTools" Orientation="Horizontal" Spacing="8">
-                                        <Button x:Name="ReferenceButton" Style="{StaticResource SubtleButtonStyle}" Height="32" Click="OnReference"
-                                                AutomationProperties.Name="Reference" ToolTipService.ToolTip="Insert a reference (\ref)">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <StackPanel x:Name="FormatTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnBold"
+                                                    AutomationProperties.Name="Bold" ToolTipService.ToolTip="Bold (Ctrl+B)">
+                                                <FontIcon Glyph="&#xE8DD;" FontSize="16" />
+                                            </Button>
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnItalic"
+                                                    AutomationProperties.Name="Italic" ToolTipService.ToolTip="Italic (Ctrl+I)">
+                                                <FontIcon Glyph="&#xE8DB;" FontSize="16" />
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MathTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnMath"
+                                                    AutomationProperties.Name="Inline math" ToolTipService.ToolTip="Inline math (Ctrl+Shift+M)">
+                                                <FontIcon Glyph="&#xE94B;" FontSize="16" />
+                                            </Button>
+                                            <!-- Segoe Fluent Icons has no sigma or pi: Σ from the
+                                                 UI font, and π drawn (PiIconData). -->
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnDisplayMath"
+                                                    AutomationProperties.Name="Display math" ToolTipService.ToolTip="Display math">
+                                                <FontIcon Glyph="Σ" FontFamily="Segoe UI" FontSize="16" />
+                                            </Button>
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}"
+                                                    AutomationProperties.Name="Symbols" ToolTipService.ToolTip="Symbols">
+                                                <PathIcon x:Name="PiIcon" />
+                                                <Button.Flyout>
+                                                    <!-- A grid per kind, each symbol named by its
+                                                         command: one tab stop, the arrow keys
+                                                         moving through it. -->
+                                                    <Flyout x:Name="SymbolsFlyout" Placement="BottomEdgeAlignedLeft">
+                                                        <GridView x:Name="SymbolGrid" SelectionMode="None" IsItemClickEnabled="True"
+                                                                  ItemClick="OnSymbolClick" AutomationProperties.Name="Symbols">
+                                                            <GridView.GroupStyle>
+                                                                <GroupStyle>
+                                                                    <GroupStyle.HeaderTemplate>
+                                                                        <DataTemplate x:DataType="local:PaletteGroup">
+                                                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                                        </DataTemplate>
+                                                                    </GroupStyle.HeaderTemplate>
+                                                                </GroupStyle>
+                                                            </GridView.GroupStyle>
+                                                            <GridView.ItemsPanel>
+                                                                <ItemsPanelTemplate>
+                                                                    <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="10" />
+                                                                </ItemsPanelTemplate>
+                                                            </GridView.ItemsPanel>
+                                                            <GridView.ItemContainerStyle>
+                                                                <Style TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+                                                                    <Setter Property="Width" Value="36" />
+                                                                    <Setter Property="Height" Value="36" />
+                                                                    <Setter Property="MinWidth" Value="36" />
+                                                                    <Setter Property="MinHeight" Value="36" />
+                                                                    <Setter Property="Margin" Value="0" />
+                                                                    <Setter Property="Padding" Value="0" />
+                                                                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                                                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                                                                </Style>
+                                                            </GridView.ItemContainerStyle>
+                                                            <GridView.ItemTemplate>
+                                                                <DataTemplate x:DataType="local:PaletteSymbol">
+                                                                    <TextBlock Text="{x:Bind Glyph}" FontSize="20" ToolTipService.ToolTip="{x:Bind Command}" />
+                                                                </DataTemplate>
+                                                            </GridView.ItemTemplate>
+                                                        </GridView>
+                                                    </Flyout>
+                                                </Button.Flyout>
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ReferenceTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Link"
+                                                    AutomationProperties.Name="Link" ToolTipService.ToolTip="Link (\href)">
                                                 <FontIcon Glyph="&#xE71B;" FontSize="16" />
-                                                <TextBlock x:Name="ReferenceLabel" Text="Reference" />
-                                            </StackPanel>
-                                        </Button>
-                                        <Button x:Name="CitationButton" Style="{StaticResource SubtleButtonStyle}" Height="32" Click="OnCitation"
-                                                AutomationProperties.Name="Citation" ToolTipService.ToolTip="Insert a citation (\cite)">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <FontIcon Glyph="&#xE8F1;" FontSize="16" />
-                                                <TextBlock x:Name="CitationLabel" Text="Citation" />
-                                            </StackPanel>
+                                            </Button>
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Reference"
+                                                    AutomationProperties.Name="Reference" ToolTipService.ToolTip="Reference (\ref)">
+                                                <FontIcon Glyph="#" FontFamily="Segoe UI" FontSize="16" />
+                                            </Button>
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInline" Tag="Citation"
+                                                    AutomationProperties.Name="Citation" ToolTipService.ToolTip="Citation (\cite)">
+                                                <FontIcon Glyph="&#xE9B1;" FontSize="16" />
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel x:Name="FigureTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Figure"
+                                                    AutomationProperties.Name="Figure" ToolTipService.ToolTip="Figure">
+                                                <FontIcon Glyph="&#xE8B9;" FontSize="16" />
+                                            </Button>
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Table"
+                                                    AutomationProperties.Name="Table" ToolTipService.ToolTip="Table">
+                                                <FontIcon Glyph="&#xE80A;" FontSize="16" />
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel x:Name="ListTools" Orientation="Horizontal" Spacing="8">
+                                            <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Bulleted list"
+                                                    AutomationProperties.Name="Bulleted list" ToolTipService.ToolTip="Bulleted list">
+                                                <FontIcon Glyph="&#xE8FD;" FontSize="16" />
+                                            </Button>
+                                            <!-- None in Segoe Fluent Icons either (NumberedListIconData). -->
+                                            <Button Style="{StaticResource ToolbarIconButtonStyle}" Click="OnInsert" Tag="Numbered list"
+                                                    AutomationProperties.Name="Numbered list" ToolTipService.ToolTip="Numbered list">
+                                                <PathIcon x:Name="NumberedListIcon" />
+                                            </Button>
+                                        </StackPanel>
+                                        <Rectangle Style="{StaticResource ToolbarSeparatorStyle}" />
+                                        <!-- What has folded, then what has no button. -->
+                                        <Button Style="{StaticResource ToolbarIconButtonStyle}"
+                                                AutomationProperties.Name="See more" ToolTipService.ToolTip="See more">
+                                            <FontIcon Glyph="&#xE712;" FontSize="16" />
+                                            <Button.Flyout>
+                                                <MenuFlyout x:Name="SourceMoreMenu" Placement="BottomEdgeAlignedLeft" Opening="OnSourceMoreOpening" />
+                                            </Button.Flyout>
                                         </Button>
                                     </StackPanel>
-                                    <DropDownButton x:Name="InsertButton" Height="32" AccessKey="I" AutomationProperties.Name="Insert"
-                                                    ToolTipService.ToolTip="Insert a figure, table, equation, list or reference">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon Glyph="&#xE710;" FontSize="16" />
-                                            <TextBlock x:Name="InsertLabel" Text="Insert" />
-                                        </StackPanel>
-                                        <DropDownButton.Flyout>
-                                            <MenuFlyout x:Name="InsertMenu" Placement="BottomEdgeAlignedLeft" />
-                                        </DropDownButton.Flyout>
-                                    </DropDownButton>
-                                    <Button x:Name="SourceMore" Style="{StaticResource ToolbarIconButtonStyle}" Visibility="Collapsed"
-                                            AutomationProperties.Name="See more" ToolTipService.ToolTip="See more">
-                                        <FontIcon Glyph="&#xE712;" FontSize="16" />
-                                        <Button.Flyout>
-                                            <MenuFlyout x:Name="SourceMoreMenu" Placement="BottomEdgeAlignedLeft" Opening="OnSourceMoreOpening" />
-                                        </Button.Flyout>
-                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -342,14 +429,14 @@
                      window's full height. How the build went (choose it for the
                      panel's issues) and the save state; where the cursor is, the
                      counts and the engine; the panel's toggle at the end. -->
-                <Grid x:Name="StatusBar" Grid.Row="3" Height="32" Padding="12,0"
+                <Grid x:Name="StatusBar" Grid.Row="3" Height="32" Padding="12,0" SizeChanged="OnStatusBarSizeChanged"
                       BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
+                    <StackPanel x:Name="StatusStart" Orientation="Horizontal" Spacing="12">
                         <Button x:Name="BuildStatus" Style="{StaticResource SubtleButtonStyle}" Padding="8,0" Height="32"
                                 Click="OnShowIssues" ToolTipService.ToolTip="Show issues">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -374,7 +461,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                    AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12">
+                    <StackPanel x:Name="StatusEnd" Grid.Column="2" Orientation="Horizontal" Spacing="12">
                         <TextBlock x:Name="LineText" VerticalAlignment="Center"
                                    Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -397,9 +484,10 @@
                     </StackPanel>
                 </Grid>
                 </Grid>
-
-                <local:InspectorView x:Name="Inspector" Grid.Column="2" />
+                </Grid>
+                </SplitView>
             </Grid>
-        </Grid>
+            </Grid>
+        </SplitView>
     </Grid>
 </UserControl>

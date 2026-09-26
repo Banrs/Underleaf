@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace TeXLocal.Tests;
 
 public sealed class OutlineTests
@@ -32,6 +34,37 @@ public sealed class OutlineTests
         Assert.Empty(tree[0].Children);
         Assert.Equal("Untitled chapter", Outline.DisplayTitle(tree[2].Item));
         Assert.Equal("B", Outline.DisplayTitle(tree[1].Item));
+    }
+
+    [Fact]
+    public void FoldKeysTellHeadingsOfTheSameNameApart()
+    {
+        var items = Outline.Parse("\\section{A}\n\\subsection{B}\n\\section{A}\n\\section{}");
+        Assert.Equal(new[] { "2:A#1", "3:B#1", "2:A#2", "2:(untitled)#1" }, Outline.FoldKeys(items));
+        // A line added above keeps every key.
+        Assert.Equal(Outline.FoldKeys(items), Outline.FoldKeys(Outline.Parse("x\n\\section{A}\n\\subsection{B}\n\\section{A}\n\\section{}")));
+    }
+
+    [Fact]
+    public void TheSectionLevelIsTheCaretLinesHeading()
+    {
+        var items = Outline.Parse("intro\n\\section{A}\ntext\n\\paragraph{B} more");
+        Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 1));
+        Assert.Equal("Section", LatexTemplates.LevelAt(items, 2));
+        Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 3));
+        Assert.Equal("Paragraph", LatexTemplates.LevelAt(items, 4));
+    }
+
+    [Fact]
+    public void TheSymbolsAreTheBrowserVersions()
+    {
+        var source = WebSource.Read("sourcebar.js");
+        var table = source[source.IndexOf("SYMBOL_GROUPS", StringComparison.Ordinal)..];
+        table = table[..table.IndexOf("];", StringComparison.Ordinal)];
+        var web = Regex.Matches(table, @"\['([^']+)', '((?:[^'\\]|\\.)+)'\]")
+            .Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value)))
+            .ToList();
+        Assert.Equal(web, LatexTemplates.SymbolGroups.SelectMany(g => g.Symbols));
     }
 
     [Fact]

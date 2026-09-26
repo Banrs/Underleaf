@@ -223,6 +223,10 @@ internal sealed class EmbeddedPage
         return RunAsync(script);
     }
 
+    /// <summary>The chords the page gives back instead of handling; they arrive as "command" messages.</summary>
+    public Task SetHostKeysAsync(IEnumerable<(string Id, string Accel)> keys) =>
+        RunStickyAsync("hostKeys", $"texlocal.setHostKeys({Literal(keys.Select(k => new { id = k.Id, accel = k.Accel }))})");
+
     /// <summary>A value as a JavaScript literal (JSON is one).</summary>
     public static string Literal(object? value) => JsonSerializer.Serialize(value, Core.Json);
 }

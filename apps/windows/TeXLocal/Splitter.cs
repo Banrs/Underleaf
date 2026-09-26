@@ -43,8 +43,14 @@ internal sealed partial class Splitter : ContentControl
     }
 
     /// <summary>Between two rows, resizing <paramref name="target"/>.</summary>
-    public Splitter(RowDefinition target, bool targetIsBefore, double minimum, Func<double> maximum, string name)
-        : this(() => target.ActualHeight, h => target.Height = new GridLength(h), vertical: true, targetIsBefore, minimum, maximum, name, line: true)
+    public Splitter(RowDefinition target, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line = true)
+        : this(() => target.ActualHeight, h => target.Height = new GridLength(h), vertical: true, targetIsBefore, minimum, maximum, name, line)
+    {
+    }
+
+    /// <summary>Beside a SplitView's pane, resizing it through <paramref name="set"/>.</summary>
+    public Splitter(Func<double> actual, Action<double> set, bool targetIsBefore, double minimum, Func<double> maximum, string name, bool line = true)
+        : this(actual, set, vertical: false, targetIsBefore, minimum, maximum, name, line)
     {
     }
 

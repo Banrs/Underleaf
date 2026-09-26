@@ -1,5 +1,6 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -75,7 +76,7 @@ public sealed partial class HomeView : UserControl
         text.Children.Add(new TextBlock { Text = template.Detail, Style = (Style)Resources["TemplateDetailStyle"] });
         card.Children.Add(text);
         ToolTipService.SetToolTip(card, $"New {template.Title.ToLowerInvariant()} project");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(card, $"New {template.Title.ToLowerInvariant()} project: {template.Detail}");
+        AutomationProperties.SetName(card, $"New {template.Title.ToLowerInvariant()} project: {template.Detail}");
         return card;
     }
 
@@ -184,7 +185,6 @@ public sealed partial class HomeView : UserControl
         Render();
     }
 
-    /// <summary>Enter opens the first match.</summary>
     internal void OpenFirstMatch()
     {
         if ((Projects.ItemsSource as List<ProjectRow>)?.FirstOrDefault() is { } row)
@@ -218,7 +218,7 @@ public sealed partial class HomeView : UserControl
                 header.Children.Add(new FontIcon { Glyph = descending ? "" : "", FontSize = 10 });
             }
             button.Content = header;
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, column == sortBy
+            AutomationProperties.SetName(button, column == sortBy
                 ? $"{title}, sorted {(descending ? "descending" : "ascending")}"
                 : $"Sort by {title.ToLowerInvariant()}");
         }
@@ -290,7 +290,7 @@ public sealed partial class HomeView : UserControl
         }
         catch (CoreException e)
         {
-            Main.Report(e.Message);
+            Main.Report("Couldn’t open the folder location", e.Message);
         }
     }
 

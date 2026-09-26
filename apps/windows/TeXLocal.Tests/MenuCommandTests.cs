@@ -12,19 +12,10 @@ public sealed partial class MenuCommandTests
     /// Every (id, accel) pair in the browser version's commandDefs
     /// (web/src/workspace.js), read from the source so the two cannot drift.
     /// </summary>
-    private static List<(string Id, string Accel)> CommandDefs()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "web", "src", "workspace.js")))
-        {
-            dir = dir.Parent;
-        }
-        Assert.NotNull(dir);
-        var source = File.ReadAllText(Path.Combine(dir.FullName, "web", "src", "workspace.js"));
-        return CommandDef().Matches(source)
+    private static List<(string Id, string Accel)> CommandDefs() =>
+        CommandDef().Matches(WebSource.Read("workspace.js"))
             .Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value)))
             .ToList();
-    }
 
     [Fact]
     public void EveryCommandDefsAcceleratorParses()
@@ -194,5 +185,20 @@ public sealed partial class MenuCommandTests
         Assert.True(MenuCommand.ViewFullScreen.ClaimsChord());
         Assert.True(MenuCommand.CompileStop.ClaimsChord());
         Assert.False(MenuCommand.CompileRun.IsNativeOnly());
+    }
+}
+
+/// <summary>The browser version's sources (web/src), found above the test's output folder.</summary>
+internal static class WebSource
+{
+    public static string Read(string name)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "web", "src", name)))
+        {
+            dir = dir.Parent;
+        }
+        Assert.NotNull(dir);
+        return File.ReadAllText(Path.Combine(dir.FullName, "web", "src", name));
     }
 }

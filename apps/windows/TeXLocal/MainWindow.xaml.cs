@@ -100,7 +100,7 @@ public sealed partial class MainWindow : Window
             await RefreshTexAsync();
             if (Tex is { Available: true })
             {
-                Report("TeX was found. You can compile now.", InfoBarSeverity.Success);
+                Report("TeX was found", "You can compile now.", InfoBarSeverity.Success);
             }
         }
     }
@@ -131,7 +131,7 @@ public sealed partial class MainWindow : Window
         }
         catch (CoreException e)
         {
-            Report(e.Message);
+            Report("Couldn’t use this folder", e.Message);
             return;
         }
         TexChanged();
@@ -152,31 +152,33 @@ public sealed partial class MainWindow : Window
         }
         catch (CoreException e)
         {
-            Report(e.Message);
+            Report("Couldn’t list the projects", e.Message);
         }
         Home.Render();
     }
 
     /// <summary>
-    /// Show a message above the content: errors by default. An InfoBar, not
-    /// a dialog, so it never interrupts typing.
+    /// Show a message above the content: errors by default. A short title —
+    /// what happened, "Couldn’t rename “x”" — then the detail. An InfoBar,
+    /// not a dialog, so it never interrupts typing.
     /// </summary>
-    internal void Report(string message, InfoBarSeverity severity = InfoBarSeverity.Error)
+    internal void Report(string title, string? message = null, InfoBarSeverity severity = InfoBarSeverity.Error)
     {
         MessageBar.Severity = severity;
-        MessageBar.Message = message;
+        MessageBar.Title = title;
+        MessageBar.Message = message ?? "";
         MessageBar.IsOpen = true;
         if (severity == InfoBarSeverity.Success)
         {
-            _ = DismissLaterAsync(message);
+            _ = DismissLaterAsync(title);
         }
     }
 
     /// <summary>Good news goes away by itself; errors stay until read.</summary>
-    private async Task DismissLaterAsync(string message)
+    private async Task DismissLaterAsync(string title)
     {
         await Task.Delay(TimeSpan.FromSeconds(6));
-        if (MessageBar.Message == message)
+        if (MessageBar.Title == title)
         {
             MessageBar.IsOpen = false;
         }
@@ -378,7 +380,7 @@ public sealed partial class MainWindow : Window
         }
         catch (CoreException e)
         {
-            Report(e.Message);
+            Report($"Couldn’t create “{name}”", e.Message);
             return;
         }
         await OpenAsync(info.Id);
@@ -392,7 +394,7 @@ public sealed partial class MainWindow : Window
         }
         catch (CoreException e)
         {
-            Report(e.Message);
+            Report($"Couldn’t rename “{project.Name}”", e.Message);
         }
         await RefreshProjectsAsync();
     }
@@ -405,7 +407,7 @@ public sealed partial class MainWindow : Window
         }
         catch (CoreException e)
         {
-            Report(e.Message);
+            Report($"Couldn’t delete “{project.Name}”", e.Message);
         }
         await RefreshProjectsAsync();
     }
@@ -446,7 +448,7 @@ public sealed partial class MainWindow : Window
         _ = Editor.SetAppearanceAsync(dark, Preferences, accent);
         _ = Editor.SetZoomAsync(Preferences.UiScale / 100.0 * uiSettings.TextScaleFactor);
         var darkPaper = Preferences.PdfPaper == "dark" || (Preferences.PdfPaper == "auto" && dark);
-        Workspace.SetAppearance(dark, accent, darkPaper);
+        Workspace.Pdf.SetAppearance(dark, accent, darkPaper);
         Workspace.Render();
     }
 

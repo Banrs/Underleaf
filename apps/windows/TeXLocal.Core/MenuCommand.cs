@@ -218,17 +218,8 @@ public static class MenuCommands
             or MenuCommand.FileUploadFolder or MenuCommand.EditCut or MenuCommand.EditCopy or MenuCommand.EditPaste
             or MenuCommand.EditSelectAll or MenuCommand.ViewFullScreen or MenuCommand.AppExit;
 
-    public static MenuCommand? FromId(string id)
-    {
-        foreach (var command in Enum.GetValues<MenuCommand>())
-        {
-            if (command.Id() == id)
-            {
-                return command;
-            }
-        }
-        return null;
-    }
+    public static MenuCommand? FromId(string id) =>
+        Enum.GetValues<MenuCommand>().Where(c => c.Id() == id).Select(c => (MenuCommand?)c).FirstOrDefault();
 
     /// <summary>
     /// Undo, redo and the clipboard belong to whichever text field has focus
@@ -347,11 +338,7 @@ public static class Accelerators
             >= VirtualKey.Number0 and <= VirtualKey.Number9 => VirtualKey.NumberPad0 + (chord.Key - VirtualKey.Number0),
             _ => null,
         };
-        if (keypad is { } key)
-        {
-            return [chord, chord with { Key = key }];
-        }
-        return [chord];
+        return keypad is { } key ? [chord, chord with { Key = key }] : [chord];
     }
 
     /// <summary>

@@ -209,11 +209,7 @@
                     <TextBlock x:Name="EngineDescription" Style="{StaticResource CardDescription}" />
                 </StackPanel>
                 <ComboBox x:Name="EngineBox" Grid.Column="2" MinWidth="120" VerticalAlignment="Center"
-                          AutomationProperties.Name="TeX engine" SelectionChanged="OnEngineChanged">
-                    <x:String>pdfLaTeX</x:String>
-                    <x:String>XeLaTeX</x:String>
-                    <x:String>LuaLaTeX</x:String>
-                </ComboBox>
+                          AutomationProperties.Name="TeX engine" SelectionChanged="OnEngineChanged" />
             </Grid>
             <Grid Style="{StaticResource Card}">
                 <Grid.ColumnDefinitions>

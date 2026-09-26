@@ -1,18 +1,48 @@
 namespace TeXLocal;
 
 /// <summary>
-/// What the source's format bar and the Format menu insert — the web editor
-/// bar's heading, reference, list and insert menus (web/src/workspace.js
-/// editorToolbar, INSERT_TEMPLATES), as apps/macos has them. "$0" marks where
-/// the cursor lands.
+/// What the source bar and the Format menu insert — the web's source bar
+/// (web/src/sourcebar.js), as apps/macos has it. "$0" marks where the
+/// cursor lands.
 /// </summary>
 public static class LatexTemplates
 {
-    /// <summary>The sectioning commands, in the order the outline ranks them.</summary>
-    public static readonly IReadOnlyList<(string Label, string Template)> Headings =
+    /// <summary>
+    /// The section levels, as the caret line's style: plain text, then the
+    /// sectioning commands in the order the outline ranks them, so an
+    /// outline level is its index less one.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Label, string Command)> HeadingLevels =
     [
-        ("Part", "\\part{$0}\n"), ("Chapter", "\\chapter{$0}\n"), ("Section", "\\section{$0}\n"),
-        ("Subsection", "\\subsection{$0}\n"), ("Subsubsection", "\\subsubsection{$0}\n"), ("Paragraph", "\\paragraph{$0} "),
+        ("Normal text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
+        ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
+    ];
+
+    /// <summary>The level of the heading on a line, by its label in <see cref="HeadingLevels"/>.</summary>
+    public static string LevelAt(IReadOnlyList<OutlineItem> outline, int line) =>
+        HeadingLevels[outline.FirstOrDefault(o => o.Line == line) is { } heading ? heading.Level + 1 : 0].Label;
+
+    /// <summary>
+    /// Symbols by kind, each inserted as its command: bare in math, in $…$
+    /// in text (web/src/sourcebar.js SYMBOL_GROUPS).
+    /// </summary>
+    public static readonly IReadOnlyList<(string Title, IReadOnlyList<(string Glyph, string Command)> Symbols)> SymbolGroups =
+    [
+        ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
+            ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
+            ("μ", "\\mu"), ("ν", "\\nu"), ("ξ", "\\xi"), ("π", "\\pi"), ("ρ", "\\rho"), ("σ", "\\sigma"),
+            ("τ", "\\tau"), ("φ", "\\phi"), ("χ", "\\chi"), ("ψ", "\\psi"), ("ω", "\\omega"),
+            ("Γ", "\\Gamma"), ("Δ", "\\Delta"), ("Θ", "\\Theta"), ("Λ", "\\Lambda"), ("Π", "\\Pi"),
+            ("Σ", "\\Sigma"), ("Φ", "\\Phi"), ("Ψ", "\\Psi"), ("Ω", "\\Omega")]),
+        ("Operators", [("±", "\\pm"), ("×", "\\times"), ("÷", "\\div"), ("·", "\\cdot"), ("∑", "\\sum"),
+            ("∏", "\\prod"), ("∫", "\\int"), ("∮", "\\oint"), ("√", "\\sqrt{}"), ("∂", "\\partial"),
+            ("∇", "\\nabla"), ("∞", "\\infty"), ("∘", "\\circ"), ("⊗", "\\otimes"), ("⊕", "\\oplus")]),
+        ("Relations", [("≤", "\\leq"), ("≥", "\\geq"), ("≠", "\\neq"), ("≈", "\\approx"), ("≡", "\\equiv"),
+            ("∼", "\\sim"), ("∝", "\\propto"), ("∈", "\\in"), ("∉", "\\notin"), ("⊂", "\\subset"),
+            ("⊆", "\\subseteq"), ("∪", "\\cup"), ("∩", "\\cap"), ("∅", "\\emptyset")]),
+        ("Arrows and logic", [("→", "\\rightarrow"), ("←", "\\leftarrow"), ("↔", "\\leftrightarrow"),
+            ("⇒", "\\Rightarrow"), ("⇐", "\\Leftarrow"), ("⇔", "\\Leftrightarrow"), ("↦", "\\mapsto"),
+            ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
     ];
 
     /// <summary>Cross-references, citations and links; each opens completion inside its braces.</summary>

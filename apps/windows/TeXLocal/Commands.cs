@@ -155,7 +155,7 @@ public sealed partial class MainWindow
                 }
                 break;
             case MenuCommand.FileUploadFolder:
-                if (await PickFolderAsync() is { } added)
+                if (await PickFolderAsync(new FolderPicker { CommitButtonText = "Add" }) is { } added)
                 {
                     await project.ImportFilesAsync([added]);
                 }
@@ -169,26 +169,11 @@ public sealed partial class MainWindow
                     project.SavePdf(pdf);
                 }
                 break;
-            case MenuCommand.EditFind:
-                Format(project, "find");
-                break;
-            case MenuCommand.EditFindNext:
-                Format(project, "findNext");
-                break;
-            case MenuCommand.EditFindPrevious:
-                Format(project, "findPrevious");
-                break;
-            case MenuCommand.EditBold:
-                Format(project, "bold");
-                break;
-            case MenuCommand.EditItalic:
-                Format(project, "italic");
-                break;
-            case MenuCommand.EditMath:
-                Format(project, "math");
-                break;
-            case MenuCommand.EditComment:
-                Format(project, "comment");
+            case MenuCommand.EditFind or MenuCommand.EditFindNext or MenuCommand.EditFindPrevious
+                or MenuCommand.EditBold or MenuCommand.EditItalic or MenuCommand.EditMath or MenuCommand.EditComment:
+                // The editor page names these as the ids do: edit.findNext is findNext.
+                project.Format(command.Id()["edit.".Length..]);
+                Editor.Focus();
                 break;
             case MenuCommand.EditGotoLine:
                 if (await Dialogs.PromptAsync(Root.XamlRoot, "Go to line", "Line number", "Go") is { } text
@@ -269,12 +254,6 @@ public sealed partial class MainWindow
         }
     }
 
-    private void Format(ProjectModel project, string name)
-    {
-        project.Format(name);
-        Editor.Focus();
-    }
-
     private void ShowPane(bool sidebar)
     {
         Preferences.SidebarVisible = sidebar;
@@ -288,10 +267,7 @@ public sealed partial class MainWindow
     /// </summary>
     internal void ShowPdf()
     {
-        if (Project is { } project)
-        {
-            project.ShowLogs = false;
-        }
+        Project?.ShowLogs = false;
         if (!Preferences.PdfVisible)
         {
             Preferences.PdfVisible = true;
@@ -471,7 +447,7 @@ public sealed partial class MainWindow
         }
         catch (COMException e)
         {
-            Report(e.Message);
+            Report("Couldn’t choose where to save", e.Message);
             return null;
         }
     }
@@ -479,32 +455,22 @@ public sealed partial class MainWindow
     /// <summary>Choose the folder with TeX's programs; a TeX Live or MiKTeX root works too.</summary>
     internal async Task ChooseTexFolderAsync()
     {
-        var picker = Owned(new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder, CommitButtonText = "Use this folder" });
-        picker.FileTypeFilter.Add("*");
-        try
+        if (await PickFolderAsync(new FolderPicker { SuggestedStartLocation = PickerLocationId.ComputerFolder, CommitButtonText = "Use this folder" }) is { } folder)
         {
-            if (await picker.PickSingleFolderAsync() is { } folder)
-            {
-                await SetTexDirAsync(folder.Path);
-            }
-        }
-        catch (COMException e)
-        {
-            Report(e.Message);
+            await SetTexDirAsync(folder);
         }
     }
 
-    private async Task<string?> PickFolderAsync()
+    private async Task<string?> PickFolderAsync(FolderPicker picker)
     {
-        var picker = Owned(new FolderPicker { CommitButtonText = "Add" });
-        picker.FileTypeFilter.Add("*");
+        Owned(picker).FileTypeFilter.Add("*");
         try
         {
             return (await picker.PickSingleFolderAsync())?.Path;
         }
         catch (COMException e)
         {
-            Report(e.Message);
+            Report("Couldn’t choose a folder", e.Message);
             return null;
         }
     }
@@ -519,7 +485,7 @@ public sealed partial class MainWindow
         }
         catch (COMException e)
         {
-            Report(e.Message);
+            Report("Couldn’t choose files", e.Message);
             return null;
         }
     }

@@ -153,10 +153,7 @@ public sealed partial class LogsView : UserControl
         CopyButton.Visibility = log ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetName(FilterBox, log ? "Filter log" : "Filter issues");
         ShowState();
-        if (Project is { } project)
-        {
-            project.PanelTab = log ? PanelTab.Log : PanelTab.Issues;
-        }
+        Project?.PanelTab = log ? PanelTab.Log : PanelTab.Issues;
     }
 
     private void OnFilterChanged(object sender, TextChangedEventArgs e) => Filter();
@@ -191,11 +188,5 @@ public sealed partial class LogsView : UserControl
         }
     }
 
-    private void OnClose(object sender, RoutedEventArgs e)
-    {
-        if (Project is { } project)
-        {
-            project.ShowLogs = false;
-        }
-    }
+    private void OnClose(object sender, RoutedEventArgs e) => Project?.ShowLogs = false;
 }

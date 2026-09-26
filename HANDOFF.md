@@ -8,9 +8,11 @@ All checks pass: Debug build with no Swift warnings, 30 XCTests, `cargo fmt`, cl
 
 Crashes (18 reports, 25–26 Sep): 15 were one update-constraints loop that `d08f82b` (AppKit splits) fixed, and the editor view no longer adds constraints mid-layout; the startup-alert crash was already fixed; one was a debugger's leftover breakpoint. **Still open: an AppKit assertion leaving full screen** (`-[_NSFullScreenMenuBarCompanionController _relinquishTitlebar]`, 26 Sep 11:03, a window restored into full screen at launch). Not reproduced in many tries; if it recurs, break on `__assert_rtn` under lldb (developer mode is now on, so lldb attaches without a prompt).
 
+**Windows session (2026-09-26, evening, on the owner's PC), branch `claude/windows-parity`.** The uncommitted 2026-09 Fluent redesign found in the Windows checkout is committed as `53e4a1e` and merged with `main`; then the parity gaps from issue #10 (Banrs/Underleaf), a native-motion pass and a WinUI deflation, described under the Windows app below. The Windows build (warnings as errors), its xUnit tests and `npm test` pass.
+
 Next:
-- The Windows app, which the owner is picking up from `main`.
-- The on-screen checks that need TeXLocal frontmost (below).
+- The on-screen checks that need TeXLocal frontmost (below), on both apps.
+- Windows: the items under "Not done yet".
 
 ## Goal
 
@@ -211,7 +213,15 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Closing flushes first and then calls `kill_all`. A crashed editor page recovers.
   - Both macOS reviews' bug fixes are applied here too. The app uses `texlocal.rename` and the undo fallback from `web/src/embed/editor.js`.
   - On Windows, CmdOrCtrl+Return and Ctrl+Return are the same keys. Compile keeps the shortcut, and Go to PDF position is on the Compile menu only.
-  - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`, unbuilt so far; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
+  - Find Next / Find Previous (Ctrl+G, Ctrl+Shift+G) are in `MenuCommand`, the Edit menu and `Commands.cs`; F3 / Shift+F3 still work inside the editor page. Showing F3 in the menu would need a Windows-only shortcut in the table and its test.
+  - **Issue #10's parity gaps (2026-09-26, evening):**
+    - The source bar has the Mac's and the browser's groups and order: undo, redo | section level (a `DropDownButton` naming the caret line's level, as wide as "Subsubsection"; `setHeading`) | bold, italic | inline math, display math, symbols (a `Flyout` holding a grouped `GridView`, 10 columns, one tab stop; `insertSymbol` via the `symbol` command) | link, reference, citation | figure, table | bulleted, numbered list | "See more". Groups fold into "See more" from the end, then the section level, then redo (`FoldSourceBar` measures each form). The Format menu gains Display math, Symbols and Section level. `LatexTemplates` holds the levels and symbols; a test reads `SYMBOL_GROUPS` from `web/src/sourcebar.js` so the tables can't drift.
+    - Segoe Fluent Icons has no sigma, pi, number sign or numbered list: Σ and # come from Segoe UI, π and the numbered list are 16 px `PathIcon`s (`PiIconData`, `NumberedListIconData`). The glyph sheets were rendered from `SegoeIcons.ttf` to check.
+    - The File Outline is docked under Files: a 32 px "File outline" heading (its line is the divider) with a chevron that folds it to the sidebar's foot, a divider whose height is remembered (`OutlineHeight`), folds remembered per project and file (`OutlineFolded`, by `Outline.FoldKeys`). It has no selection: the current section is accent semibold, follows the editor's top visible line (the page's `scroll` message → `ProjectModel.TopLine`), and opens its parents and scrolls into view. Choosing a heading reveals it at the top of the editor without taking focus (`reveal(line, atTop, focus)`).
+    - "Out of date" by save counting (`writes` / `builtWrites`), as the Mac: it clears after the lost-edits message when nothing was saved since the last good build.
+    - The open file is watched (`FileSystemWatcher` on its folder, filtered to its name, for editors that save by renaming). A change with no unsaved edits reloads at the same top line, marks the preview out of date and auto-compiles; with unsaved edits a dialog asks "Keep editing" (default, saves over it) or "Revert". Saves wait while it asks. A save that starts during a check makes the check stand down; its own change notice checks again.
+    - Messages have a short title and the detail (`MainWindow.Report(title, message)`, the InfoBar's Title), e.g. "Couldn’t rename “x”".
+    - The status bar drops whole items as it narrows: the engine, then the counts, then the save state (hidden while compiling, as the Mac).
 - **Windows design pass (Fluent 2):**
   - The Windows App SDK `TitleBar` control, over Mica, with back and pane buttons.
   - A card layer for the document area. Spacing on the 4 px grid, and theme resources only (no hard-coded colours).
@@ -236,17 +246,18 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
       - 48 px: title bar, pane toolbars, panel header, the Details pane's name row.
       - 32 px: jump bar, PDF location row (and the folder row of the Details pane, which carries their divider across), status bar, the sidebar's section headings.
       - Every control stays its standard size: 32 px buttons, 14 px text, 16 px icons, with 8 px between buttons.
-      - The pane toolbars are rows of standard buttons rather than CommandBars, so their labels are Body text like the rest of the app. When narrow, their labels drop first, then whole groups fold into "See more", as the macOS app's ViewThatFits does.
+      - The pane toolbars are rows of standard buttons rather than CommandBars, so their labels are Body text like the rest of the app. When narrow, whole groups fold into "See more", as the macOS app's ViewThatFits does.
     - **Layers.**
-      - The sidebar sits on Mica, 280 wide by default (200–360). It has no footer: Add is the Files heading's action (Settings stays in the File menu, Ctrl+,), so nothing at its foot needs to line up with the status bar.
-      - The trees' expander column is narrowed from 40 to 24 at runtime (`OnTreeItemLoaded`), since the template hard-codes its padding. Rows then start 12 in from their heading. The main file's star sits at the far end of its row.
-      - The references with no button of their own (equation reference, label, link, URL) are in the Insert menu, so the toolbar has no bare chevron button.
+      - The sidebar sits on Mica, 280 wide by default (200–360), in an inline `SplitView` pane. It has no footer: Add is the Files heading's action (Settings stays in the File menu, Ctrl+,).
+      - The trees' expander column is narrowed from 40 to 24 at runtime (`OnTreeItemLoaded`), since the template hard-codes its padding. Rows then start 12 in from their heading.
+      - The main file's name is semibold, as Visual Studio shows its startup project, with a "Main file" tooltip and accessible name. The Mac's yellow star was dropped on Windows as not native.
       - The content layer has an 8 px top-left corner and a 1 px stroke on its top and left edges, like NavigationView's content area. It contains the source, the PDF, the bottom panel, the status bar under the document only, and the Details pane.
-      - The Details pane is File Explorer's pattern: Alt+Shift+P, 220–320 wide.
+      - The Details pane is File Explorer's pattern: Alt+Shift+P, 220–320 wide, in a right-hand inline `SplitView` pane inside the layer.
       - Pane sizes are remembered in `Preferences`.
     - **Motion** (`Motion.cs`) uses the Windows animation library's theme animations:
       - DrillIn and DrillOut between the library, a project and Settings, as Settings and File Explorer do;
-      - PopIn from its own edge for the sidebar, the Details pane and the panel;
+      - the sidebar and the Details pane are inline `SplitView` panes, so they slide open *and* closed with WinUI's own storyboards (about 200 ms open, 120 ms close), the content moving with them; frame captures confirmed both directions. Their dividers set `OpenPaneLength`;
+      - PopIn from its own edge for the PDF, the panel and the File Outline;
       - FadeIn for search results and the trees they replace.
       - Theme *transitions* (such as PaneThemeTransition) were tried, but they play only when an element joins the tree, not when it is shown again, and these panes are shown by Visibility. Frame captures confirmed they did nothing on a toggle. `Motion.Show` starts the animation as an element goes from collapsed to visible. None of it runs when Windows' animation effects are off.
     - **Toggles are subtle everywhere.** `SubtleToggles.xaml` is merged by App.xaml and again by the title bar's toggle group, because the title-bar toggles didn't pick it up from the app's resources.
@@ -288,6 +299,8 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The sidebar toggle, folders expanding and collapsing, the outline's disclosure, and the settings and engine footer.
   - Moving between the library, a project and Settings animates.
   - The installed Release build starts from the Start menu.
+  - **2026-09-26, evening, a Debug build against a scratch `TEXLOCAL_DATA`:** the source bar at full width and folding as the PDF divider moves, "See more"'s contents, the section level menu turning `\section` into `\subsection` (and the outline nesting it), the symbol palette inserting `$\alpha$` in text, undo after both, the outline's current section following wheel-scrolling, choosing a heading, a file changed by another program reloading and rebuilding, the semibold main file, and the sidebar and Details pane sliding both ways.
+  - Launching the installed build while a Debug build runs breaks the Debug build's WebView2 pages (the two share `%LOCALAPPDATA%\TeXLocal\WebView2` with different options); run one at a time.
 - **Known issues:**
   - Once, a window kept showing a frozen frame while it went on working. Fresh launches never did. It may be a GPU device loss on this Insider build, but that is unconfirmed.
 - **Still to check by hand on Windows:**
@@ -301,7 +314,9 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Settings apply straight away and survive a restart.
   - Editor size and Windows text size scale the editor, and CodeMirror still measures correctly.
   - Dark paper.
-  - The status bar.
+  - The status bar, and its items dropping as the window narrows.
+  - The unsaved-edits conflict dialog (a change on disk within 700 ms of typing).
+  - The InfoBar's title and message on a real failure.
   - Drag-and-drop onto a folder.
   - Saving and closing:
     - typing while a save is in progress loses nothing;

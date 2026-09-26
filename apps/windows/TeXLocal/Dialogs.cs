@@ -63,14 +63,14 @@ internal static class Dialogs
     }
 
     /// <summary>A destructive action, which Cancel guards by default.</summary>
-    public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string action)
+    public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string action, string cancel = "Cancel")
     {
         var dialog = new ContentDialog
         {
             Title = title,
             Content = new TextBlock { Text = body, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = action,
-            CloseButtonText = "Cancel",
+            CloseButtonText = cancel,
             DefaultButton = ContentDialogButton.Close,
         };
         return await ShowAsync(dialog, root) == ContentDialogResult.Primary;

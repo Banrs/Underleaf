@@ -19,7 +19,7 @@ public sealed partial class SettingsView : UserControl
     private static readonly string[] Papers = ["white", "dark", "auto"];
     private static readonly string[] Palettes = ["onedark", "xcode"];
     private static readonly string[] Fonts = ["system", "jetbrains"];
-    private static readonly string[] Engines = ["pdflatex", "xelatex", "lualatex"];
+    private static readonly string[] Engines = [.. LatexTemplates.Engines.Select(e => e.Id)];
 
     // Set while Render fills the controls, whose change events would
     // otherwise write the values straight back.
@@ -32,18 +32,22 @@ public sealed partial class SettingsView : UserControl
         {
             ScaleBox.Items.Add($"{scale}%");
         }
+        foreach (var (_, name) in LatexTemplates.Engines)
+        {
+            EngineBox.Items.Add(name);
+        }
         AboutIcon.Source = new BitmapImage(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "TeXLocal.png")));
         VersionText.Text = $"Version {typeof(App).Assembly.GetName().Version?.ToString(3)}";
     }
 
-    private static int Index(string[] values, string value) => Math.Max(0, Array.IndexOf(values, value));
+    private static int Index<T>(T[] values, T value) => Math.Max(0, Array.IndexOf(values, value));
 
     internal void Render()
     {
         rendering = true;
         var prefs = Main.Preferences;
         ThemeBox.SelectedIndex = Index(Themes, prefs.Theme);
-        ScaleBox.SelectedIndex = Math.Max(0, Array.IndexOf(Preferences.UiScales, prefs.UiScale));
+        ScaleBox.SelectedIndex = Index(Preferences.UiScales, prefs.UiScale);
         PaperBox.SelectedIndex = Index(Papers, prefs.PdfPaper);
         PaletteBox.SelectedIndex = Index(Palettes, prefs.EditorPalette);
         FontBox.SelectedIndex = Index(Fonts, prefs.EditorFont);

@@ -6,33 +6,6 @@
     xmlns:local="using:TeXLocal">
     <!-- The panel below the editors, shown and hidden as VS Code's is: the
          build's issues, or its whole log. -->
-    <UserControl.Resources>
-        <!-- The header's icon buttons, 40 × 32, subtle as a toolbar's are; a
-             switched-on toggle takes App.xaml's subtle checked fill. -->
-        <Style x:Key="PanelIconButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
-            <Setter Property="Width" Value="40" />
-            <Setter Property="Height" Value="32" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="EmptyGlyphStyle" TargetType="FontIcon">
-            <Setter Property="FontSize" Value="32" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
-            <Setter Property="AutomationProperties.AccessibilityView" Value="Raw" />
-        </Style>
-        <Style x:Key="EmptyTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="TextAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="EmptyDetailStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="TextAlignment" Value="Center" />
-            <Setter Property="TextWrapping" Value="Wrap" />
-            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
-        </Style>
-    </UserControl.Resources>
-
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -72,13 +45,14 @@
                               AutomationProperties.Name="Hide warnings" ToolTipService.ToolTip="Hide warnings">
                     <FontIcon Glyph="&#xE7BA;" FontSize="16" />
                 </ToggleButton>
-                <Button x:Name="CopyButton" Grid.Column="2" Style="{StaticResource PanelIconButtonStyle}" Visibility="Collapsed" Click="OnCopy"
+                <Button x:Name="CopyButton" Grid.Column="2" Style="{StaticResource ToolbarIconButtonStyle}" VerticalAlignment="Center"
+                        Visibility="Collapsed" Click="OnCopy"
                         AutomationProperties.Name="Copy log" ToolTipService.ToolTip="Copy log">
                     <FontIcon Glyph="&#xE8C8;" FontSize="16" />
                 </Button>
                 <TextBox x:Name="FilterBox" Grid.Column="3" Width="180" VerticalAlignment="Center" PlaceholderText="Filter"
                          IsSpellCheckEnabled="False" AutomationProperties.Name="Filter issues" TextChanged="OnFilterChanged" />
-                <Button Grid.Column="4" Style="{StaticResource PanelIconButtonStyle}" Click="OnClose"
+                <Button Grid.Column="4" Style="{StaticResource ToolbarIconButtonStyle}" VerticalAlignment="Center" Click="OnClose"
                         ToolTipService.ToolTip="Hide panel (Ctrl+Shift+L)" AutomationProperties.Name="Hide panel">
                     <FontIcon Glyph="&#xE711;" FontSize="16" />
                 </Button>
@@ -134,10 +108,13 @@
             <!-- What's missing, said where the list or log would be. -->
             <StackPanel x:Name="EmptyState" Spacing="8" Margin="24,12" MaxWidth="360"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <FontIcon x:Name="EmptyGlyph" Style="{StaticResource EmptyGlyphStyle}" />
+                <FontIcon x:Name="EmptyGlyph" FontSize="32" HorizontalAlignment="Center"
+                          Foreground="{ThemeResource TextFillColorTertiaryBrush}" AutomationProperties.AccessibilityView="Raw" />
                 <StackPanel>
-                    <TextBlock x:Name="EmptyTitle" Style="{StaticResource EmptyTitleStyle}" />
-                    <TextBlock x:Name="EmptyDetail" Style="{StaticResource EmptyDetailStyle}" />
+                    <TextBlock x:Name="EmptyTitle" Style="{StaticResource BodyStrongTextBlockStyle}"
+                               HorizontalAlignment="Center" TextAlignment="Center" />
+                    <TextBlock x:Name="EmptyDetail" Style="{StaticResource CaptionTextBlockStyle}" HorizontalAlignment="Center"
+                               TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
             </StackPanel>
         </Grid>
