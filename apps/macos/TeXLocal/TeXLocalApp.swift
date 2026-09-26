@@ -113,3 +113,10 @@ enum WindowMetrics {
     static let toolbarHeight: CGFloat = 52
     static var contentMinHeight: CGFloat { minimum.height - toolbarHeight }
 }
+
+extension NSApplication {
+    /// The project window (the "main" scene's), even while Settings is key.
+    var projectWindow: NSWindow? {
+        windows.first { $0.identifier?.rawValue == "main" }
+    }
+}

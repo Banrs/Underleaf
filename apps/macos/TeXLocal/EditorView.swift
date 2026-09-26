@@ -1,47 +1,39 @@
 import SwiftUI
 import WebKit
 
-/// Hosts the app's one editor web view, and keeps its appearance in step with
-/// the system and Settings.
-struct EditorView: NSViewRepresentable {
+/// The app's one editor page, in SwiftUI's web view, its appearance kept
+/// in step with the system and Settings.
+struct EditorView: View {
     let bridge: EditorBridge
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("editorPalette") private var palette = "onedark"
     @AppStorage("editorFont") private var font = "system"
     @AppStorage("editorFontSize") private var fontSize = 13
+    @FocusState private var focused: Bool
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        attach(to: container)
-        return container
+    private struct Appearance: Hashable {
+        let theme: String
+        let palette: String
+        let font: String
+        let fontSize: Int
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        attach(to: container)
-        let (theme, palette, font, fontSize) = (colorScheme == .dark ? "dark" : "light", palette, font, fontSize)
-        Task { await bridge.setAppearance(theme: theme, palette: palette, font: font, fontSize: fontSize) }
-    }
-
-    /// The whole proposal, as the split's panes. Otherwise SwiftUI measures
-    /// the container through Auto Layout, updating its constraints inside
-    /// the window's constraint pass: the path of the 25 Sep crashes ("more
-    /// Update Constraints in Window passes than there are views").
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
-    }
-
-    /// The web view outlives any one container (it moves between projects),
-    /// so it is re-parented rather than recreated. It follows the container
-    /// by its autoresizing mask: constraints added here would land in
-    /// whatever layout pass SwiftUI is updating in.
-    private func attach(to container: NSView) {
-        let web = bridge.webView
-        guard web.superview !== container else { return }
-        web.removeFromSuperview()
-        web.translatesAutoresizingMaskIntoConstraints = true
-        web.frame = container.bounds
-        web.autoresizingMask = [.width, .height]
-        container.addSubview(web)
+    var body: some View {
+        let appearance = Appearance(theme: colorScheme == .dark ? "dark" : "light",
+                                    palette: palette, font: font, fontSize: fontSize)
+        WebView(bridge.page)
+            // The page draws the text's surface itself.
+            .webViewContentBackground(.hidden)
+            // A text editor: no page zoom, history swipes or link previews.
+            .webViewMagnificationGestures(.disabled)
+            .webViewBackForwardNavigationGestures(.disabled)
+            .webViewLinkPreviews(.disabled)
+            .focused($focused)
+            .onChange(of: bridge.focusRequest) { focused = true }
+            .task(id: appearance) {
+                await bridge.setAppearance(theme: appearance.theme, palette: appearance.palette,
+                                           font: appearance.font, fontSize: appearance.fontSize)
+            }
     }
 }
 

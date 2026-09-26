@@ -59,7 +59,7 @@ struct WorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
             // This window's only: closing Settings is no reason to save.
-            guard (note.object as? NSWindow) === app.editor.webView.window else { return }
+            guard (note.object as? NSWindow) === NSApp.projectWindow else { return }
             Task { await project.flush() }
         }
     }

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 
 /// The app's commands, with the browser version's ids and accelerators
 /// (web/src/workspace.js `commandDefs`). The accelerator string is the one
@@ -244,7 +245,8 @@ extension AppModel {
     /// The first responder when it is a native text field's editor (the find
     /// field, a rename, the project search, the build log), not the editor's.
     private var nativeText: NSText? {
-        guard let text = NSApp.keyWindow?.firstResponder as? NSText, !text.isDescendant(of: editor.webView) else { return nil }
+        guard let text = NSApp.keyWindow?.firstResponder as? NSText,
+              !sequence(first: text as NSView, next: \.superview).contains(where: { $0 is WKWebView }) else { return nil }
         return text
     }
 
@@ -299,7 +301,7 @@ extension AppModel {
 
     /// The project's window, even while Settings is key (it can be main
     /// too): the editor's, or, with the source pane hidden, the main window.
-    private var documentWindow: NSWindow? { editor.webView.window ?? NSApp.mainWindow ?? NSApp.keyWindow }
+    private var documentWindow: NSWindow? { NSApp.projectWindow ?? NSApp.mainWindow ?? NSApp.keyWindow }
 
     /// No starting folder: the panel opens where the user last saved, as
     /// every Mac app's Save As does.
