@@ -68,7 +68,8 @@ impl Export<'_> {
                 continue;
             }
             let name = file_name.to_string_lossy();
-            if prefix.is_empty() && (name == BUILD_DIR || name == SETTINGS_FILE) {
+            if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
+            {
                 continue;
             }
             let rel = if prefix.is_empty() {

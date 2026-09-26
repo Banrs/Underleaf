@@ -520,6 +520,21 @@ fn top_level_build_output_stays_out_of_every_scan() {
 }
 
 #[test]
+fn the_build_folder_name_is_reserved_at_the_top_in_any_case() {
+    let data = data_dir();
+    let root = project(data.path(), "reserved-build");
+    create_file(&root, "figs/a.png", false).unwrap();
+    fails_with(create_file(&root, "build", true), "compiled PDF");
+    fails_with(create_file(&root, "BUILD/x.tex", false), "compiled PDF");
+    fails_with(rename_entry(&root, "figs", "Build"), "compiled PDF");
+    // Deeper, the name is the author's.
+    create_file(&root, "figs/build", true).unwrap();
+    // A folder made elsewhere in another case stays hidden as output.
+    fs::create_dir(root.join("Build")).unwrap();
+    assert!(file_tree(&root).unwrap().iter().all(|n| n.name != "Build"));
+}
+
+#[test]
 fn search_stops_at_the_limit_and_skips_build_output() {
     let data = data_dir();
     let root = project(data.path(), "limits");

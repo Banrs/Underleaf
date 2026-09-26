@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::CoreError;
-use crate::SETTINGS_FILE;
+use crate::{BUILD_DIR, SETTINGS_FILE};
 
 /// True for `/x`, `\\x`, and `C:...` forms — anything that doesn't stay
 /// relative to the base it's joined onto.
@@ -163,6 +163,20 @@ fn join_within(root: &Path, segments: &[&str]) -> Result<PathBuf, CoreError> {
 /// Absolute path for a user-supplied relative path inside a project.
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     join_within(root, &safe_segments(rel)?)
+}
+
+/// `safe_path` for a path about to be created or written. The project's
+/// top-level `build` folder holds compile output, so no file or folder of the
+/// author's may take that name, in any case: on a case-insensitive volume
+/// `Build` is the same folder, and the tree hides it.
+pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+    let segments = safe_segments(rel)?;
+    if segments[0].eq_ignore_ascii_case(BUILD_DIR) {
+        return Err(CoreError::bad_request(
+            "“build” holds the compiled PDF. Choose another name.",
+        ));
+    }
+    join_within(root, &segments)
 }
 
 /// The normalized forward-slash spelling of a user-supplied project path, for

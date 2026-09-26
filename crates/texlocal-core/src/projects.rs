@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::error::CoreError;
-use crate::paths::{project_root, rel_key, safe_path, sanitize_name};
+use crate::paths::{project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
 use crate::BUILD_DIR;
@@ -171,10 +171,11 @@ fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>
         } else {
             format!("{prefix}/{name}")
         };
-        // Only the project's own build directory holds compile output. A
-        // `build` deeper in the tree is the author's, and the ZIP export keeps
-        // it, so every walk here must too.
-        if rel == BUILD_DIR {
+        // Only the project's own build directory holds compile output, in
+        // any case, as safe_write_path reserves it. A `build` deeper in the
+        // tree is the author's, and the ZIP export keeps it, so every walk
+        // here must too.
+        if rel.eq_ignore_ascii_case(BUILD_DIR) {
             continue;
         }
         if let Some(kind) = classify_entry(root_canonical, &entry)? {
@@ -379,7 +380,7 @@ const TEXT_EXT: &[&str] = &[
 ];
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
-    let abs = safe_path(root, rel)?;
+    let abs = safe_write_path(root, rel)?;
     if abs.exists() {
         return Err(CoreError::conflict("Already exists"));
     }
@@ -409,7 +410,7 @@ fn main_file_key(root: &Path) -> String {
 
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
-    let dest = safe_path(root, to)?;
+    let dest = safe_write_path(root, to)?;
     // Only compared with the main file, never passed to a tool, so a name
     // starting with "-" is as renameable here as create_entry made it.
     let from_rel = rel_key(from)?;

@@ -297,7 +297,7 @@ impl Service {
 
     pub fn write_file(&self, id: &str, path: &str, text: &str) -> Result<(), CoreError> {
         self.edit(id, |root| {
-            write_creating(&paths::safe_path(root, path)?, text)
+            write_creating(&paths::safe_write_path(root, path)?, text)
         })
     }
 
@@ -327,7 +327,7 @@ impl Service {
             if file.size > UPLOAD_MAX_BYTES {
                 return Err(too_large());
             }
-            let abs = paths::safe_path(&root, &upload_rel(dir, &file.path))?;
+            let abs = paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
             let key = if cfg!(any(windows, target_os = "macos")) {
                 abs.to_string_lossy().to_ascii_lowercase()
             } else {
@@ -356,7 +356,7 @@ impl Service {
         }
         let rel = upload_rel(dir, path);
         self.edit(id, |root| {
-            write_creating(&paths::safe_path(root, &rel)?, bytes)
+            write_creating(&paths::safe_write_path(root, &rel)?, bytes)
         })?;
         Ok(rel)
     }
