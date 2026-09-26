@@ -256,8 +256,13 @@ struct SymbolMenu: View {
         Menu("Symbols") {
             ForEach(symbolGroups, id: \.0) { title, symbols in
                 Menu(title) {
+                    // The glyph over its command, the menu's own title and
+                    // subtitle, rather than the two spaced apart in one title.
                     ForEach(symbols, id: \.1) { glyph, command in
-                        Button("\(glyph)   \(command)") { project?.format("symbol", command) }
+                        Button { project?.format("symbol", command) } label: {
+                            Text(glyph)
+                            Text(command)
+                        }
                     }
                 }
             }
@@ -352,12 +357,9 @@ private struct SectionCrumb: View {
 
     var body: some View {
         let chain = Outline.chain(project.outline, at: project.cursorLine)
-        let depths = Outline.depths(project.outline)
         Menu {
-            ForEach(project.outline) { item in
-                Button(String(repeating: "    ", count: depths[item.id]) + Outline.displayTitle(item)) {
-                    if let path = project.openPath { Task { await project.open(path, line: item.line) } }
-                }
+            SectionMenuItems(nodes: Outline.tree(project.outline)) { item in
+                if let path = project.openPath { Task { await project.open(path, line: item.line) } }
             }
         } label: {
             // On the label's text, not the menu: the pop-up takes its colour
@@ -374,6 +376,29 @@ private struct SectionCrumb: View {
         .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help("Go to a Section")
+    }
+}
+
+/// The sections as the outline nests them: a heading with subsections is
+/// a submenu, itself its first item, as a menu can't both open a submenu
+/// and act.
+private struct SectionMenuItems: View {
+    let nodes: [OutlineNode]
+    let go: (OutlineItem) -> Void
+
+    var body: some View {
+        ForEach(nodes) { node in
+            let title = Outline.displayTitle(node.item)
+            if let children = node.children {
+                Menu(title) {
+                    Button(title) { go(node.item) }
+                    Divider()
+                    SectionMenuItems(nodes: children, go: go)
+                }
+            } else {
+                Button(title) { go(node.item) }
+            }
+        }
     }
 }
 
