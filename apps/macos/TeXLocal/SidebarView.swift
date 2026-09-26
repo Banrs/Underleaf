@@ -79,10 +79,20 @@ private struct FilesList: View {
                     row(node).tag(node.path)
                 }
             } header: {
-                filesHeader
+                Text("Files")
             }
         }
         .listStyle(.sidebar)
+        // Adding, where Finder and Apple's lists keep it: the File menu, and
+        // the list's own menu on its empty space.
+        .contextMenu(forSelectionType: String.self) { paths in
+            if paths.isEmpty {
+                Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
+                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                Divider()
+                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+            }
+        }
         .onChange(of: selection) { _, path in
             if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
         }
@@ -97,29 +107,6 @@ private struct FilesList: View {
             .overlay {
                 if project.searchHits.isEmpty { ContentUnavailableView.search(text: project.searchQuery) }
             }
-    }
-
-    /// Adding, at the header, as Overleaf has it.
-    private var filesHeader: some View {
-        HStack {
-            Text("Files")
-            Spacer()
-            Menu("Add", systemImage: "plus") {
-                Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
-                Divider()
-                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
-            }
-            // A sidebar header's accessory: a plain small glyph, not a pane
-            // bar's button.
-            .menuStyle(.button)
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .menuIndicator(.hidden)
-            .labelStyle(.iconOnly)
-            .fixedSize()
-            .help("Add Files")
-        }
     }
 
     /// Hits grouped by file, each line with its match picked out.

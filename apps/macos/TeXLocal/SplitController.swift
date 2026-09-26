@@ -99,23 +99,46 @@ struct SplitController: NSViewRepresentable {
                 coordinator.fold(split, index, to: pane.collapsed, keeping: before == nil)
             }
         }
-        for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() where (view.superview === split) != pane.shown {
+        for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() {
+            // A pane sliding shut still sits in the split until it's closed.
+            let hiding = coordinator.hiding.contains(index)
+            guard (view.superview === split && !hiding) != pane.shown else { continue }
             let total = split.length
+            let closed = total - split.dividerThickness
             if pane.shown {
-                let before = coordinator.views[..<index].filter { $0.superview === split }.count
-                split.insertArrangedSubview(view, at: before)
-                split.adjustSubviews()
-                if before > 0 {
+                let place: Int
+                if hiding, let at = split.arrangedSubviews.firstIndex(of: view) {
+                    coordinator.hiding.remove(index)
+                    place = at
+                } else {
+                    place = coordinator.views[..<index].filter { $0.superview === split }.count
+                    split.insertArrangedSubview(view, at: place)
+                    split.adjustSubviews()
+                    // It opens from nothing.
+                    if place > 0 { coordinator.slide(split, divider: place - 1, to: closed, animated: false) }
+                }
+                if place > 0 {
                     let size = pane.collapsed
                         ?? coordinator.hidden[index].map { pane.keepsSize ? $0 : $0 * total }
                         ?? (pane.fraction ?? 0.5) * total
-                    split.setPosition(total - size - split.dividerThickness, ofDividerAt: before - 1)
+                    coordinator.slide(split, divider: place - 1, to: total - size - split.dividerThickness)
                 }
             } else {
                 coordinator.hidden[index] = coordinator.share(split, of: index)
-                split.removeArrangedSubview(view)
-                view.removeFromSuperview()
-                split.adjustSubviews()
+                let remove = { [weak split] in
+                    view.removeFromSuperview()
+                    split?.adjustSubviews()
+                }
+                guard let place = split.arrangedSubviews.firstIndex(of: view), place > 0 else {
+                    remove()
+                    continue
+                }
+                coordinator.hiding.insert(index)
+                coordinator.slide(split, divider: place - 1, to: closed) {
+                    // Shown again while it closed: it stays.
+                    guard coordinator.hiding.remove(index) != nil else { return }
+                    remove()
+                }
             }
         }
     }
@@ -147,8 +170,49 @@ struct SplitController: NSViewRepresentable {
         /// since, and are the ones to keep.
         private var laidOut: [CGFloat] = []
 
+        /// Panes sliding shut, by index: still in the split until closed.
+        var hiding: Set<Int> = []
+        /// A divider moving: the limits stand aside until it arrives.
+        private var sliding: (timer: Timer, finish: () -> Void)?
+
         init(autosave: String) {
             self.autosave = autosave
+        }
+
+        /// Moves a divider to `position` as the system slides a pane, eased
+        /// over a quarter second (at once off screen or with Reduce Motion),
+        /// then runs `done`. A slide under way arrives first.
+        func slide(_ split: NSSplitView, divider: Int, to position: CGFloat, animated: Bool = true,
+                   done: @escaping () -> Void = {}) {
+            sliding?.timer.invalidate()
+            sliding?.finish()
+            let from = span(split, divider).1
+            let finish = { [weak self, weak split] in
+                self?.sliding = nil
+                split?.setPosition(position, ofDividerAt: divider)
+                done()
+            }
+            guard animated, abs(position - from) > 1, split.window?.isVisible == true,
+                  !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+                finish()
+                return
+            }
+            let start = CACurrentMediaTime()
+            let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self, weak split] timer in
+                let t = min((CACurrentMediaTime() - start) / 0.25, 1)
+                if t >= 1 || self == nil || split == nil { timer.invalidate() }
+                MainActor.assumeIsolated {
+                    guard let self, let split else { return }
+                    guard t < 1 else {
+                        self.sliding?.finish()
+                        return
+                    }
+                    let eased = t < 0.5 ? 2 * t * t : 1 - pow(2 - 2 * t, 2) / 2
+                    split.setPosition(from + (position - from) * eased, ofDividerAt: divider)
+                }
+            }
+            sliding = (timer, finish)
+            RunLoop.main.add(timer, forMode: .common)
         }
 
         /// Where a folded pane's unfolded size is kept: the split's own
@@ -172,8 +236,9 @@ struct SplitController: NSViewRepresentable {
                 let pane = panes[index]
                 target = kept > pane.minimum ? kept : (pane.fraction ?? 0.5) * split.length
             }
-            split.setPosition(end - target - split.dividerThickness, ofDividerAt: place - 1)
-            split.adjustSubviews()
+            slide(split, divider: place - 1, to: end - target - split.dividerThickness) { [weak split] in
+                split?.adjustSubviews()
+            }
         }
 
         /// The pane shown at a place in the split.
@@ -276,13 +341,14 @@ struct SplitController: NSViewRepresentable {
         func splitView(_ split: NSSplitView, effectiveRect proposed: NSRect, forDrawnRect drawn: NSRect,
                        ofDividerAt place: Int) -> NSRect {
             let beside = [place, place + 1].filter(split.arrangedSubviews.indices.contains)
-            return beside.contains { pane(split, $0).collapsed != nil } ? .zero : proposed
+            return sliding != nil || beside.contains { pane(split, $0).collapsed != nil } ? .zero : proposed
         }
 
         // The divider's position is where the pane before it ends; the pane
         // after it starts a divider's thickness later.
         func splitView(_ split: NSSplitView, constrainMinCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
+            if sliding != nil { return proposed }
             let low = max(span(split, place).0 + minimum(pane(split, place)),
                           span(split, place + 1).1 - maximum(split, pane(split, place + 1)) - split.dividerThickness)
             return max(proposed, low)
@@ -290,6 +356,7 @@ struct SplitController: NSViewRepresentable {
 
         func splitView(_ split: NSSplitView, constrainMaxCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
+            if sliding != nil { return proposed }
             let high = min(span(split, place + 1).1 - minimum(pane(split, place + 1)) - split.dividerThickness,
                            span(split, place).0 + maximum(split, pane(split, place)))
             return min(proposed, high)

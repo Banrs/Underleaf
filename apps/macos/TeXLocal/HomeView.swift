@@ -2,12 +2,11 @@ import SwiftUI
 
 /// The start window, as Word's and Overleaf's open: new documents from
 /// templates across the top, each with a preview of its page, then recent
-/// projects as a table — name, main file, when last changed — to search,
-/// sort and open.
+/// projects as a list — name, main file, when last changed — to search
+/// and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var selection: Set<ProjectInfo.ID> = []
-    @State private var sortOrder = [KeyPathComparator(\ProjectInfo.mtime, order: .reverse)]
     /// The project whose name is being edited in place, and the name so far.
     @State private var renaming: ProjectInfo.ID?
     @State private var newName = ""
@@ -27,7 +26,9 @@ struct HomeView: View {
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Open", systemImage: "folder") { app.chooseProjectToOpen() }
+                    .help("Open a Folder, .tex File or .zip as a Project")
                 Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
             }
@@ -97,27 +98,14 @@ struct HomeView: View {
             Text("Recent")
                 .font(Typography.sectionTitle)
                 .padding([.horizontal, .top], Self.margin)
-            Table(shown, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("Name", value: \.name) { project in
-                    // A view of its own that reads the rename through
-                    // bindings: the table redraws a cell only when its
-                    // row's value changes.
-                    ProjectNameCell(project: project, renaming: $renaming, newName: $newName) {
-                        commitRename(project)
-                    }
+            List(shown, selection: $selection) { project in
+                // A view of its own that reads the rename through bindings:
+                // the list redraws a row only when its value changes.
+                ProjectRow(project: project, renaming: $renaming, newName: $newName) {
+                    commitRename(project)
                 }
-                .width(min: 180, ideal: 320)
-                TableColumn("Main File", value: \.mainFile) { project in
-                    Text(project.mainFile).foregroundStyle(.secondary)
-                }
-                .width(min: 100, ideal: 160)
-                TableColumn("Modified", value: \.mtime) { project in
-                    Text(project.modified, format: .relative(presentation: .named))
-                        .foregroundStyle(.secondary)
-                }
-                .width(min: 100, ideal: 140)
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .listStyle(.inset)
             .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
                 if let project = app.projects.first(where: { ids.contains($0.id) }) {
                     Button("Open") { Task { await app.open(project.id) } }
@@ -163,7 +151,7 @@ struct HomeView: View {
     private var shown: [ProjectInfo] {
         let matching = query.isEmpty
             ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        return matching.sorted(using: sortOrder)
+        return matching.sorted { $0.mtime > $1.mtime }
     }
 
     private var texMissing: some View {
@@ -180,9 +168,11 @@ struct HomeView: View {
     }
 }
 
-/// A project's name in the table, or, while it is renamed, a field in its
-/// place: Return or clicking away renames, Escape leaves it as it was.
-private struct ProjectNameCell: View {
+/// A recent project as Xcode's and Keynote's welcome windows list them: its
+/// name over its main file and when it last changed. While it is renamed,
+/// a field takes the name's place: Return or clicking away renames, Escape
+/// leaves it as it was.
+private struct ProjectRow: View {
     let project: ProjectInfo
     @Binding var renaming: ProjectInfo.ID?
     @Binding var newName: String
@@ -191,27 +181,36 @@ private struct ProjectNameCell: View {
 
     var body: some View {
         Label {
-            if renaming == project.id {
-                TextField("Name", text: $newName)
-                    .labelsHidden()
-                    .focused($focused)
-                    .onSubmit(commit)
-                    .onExitCommand { renaming = nil }
-                    .onChange(of: focused) { was, now in
-                        if was, !now { commit() }
-                    }
-                    // Once the context menu has closed and handed the table
-                    // its focus back, or the table takes it from the field.
-                    .task {
-                        try? await Task.sleep(for: .milliseconds(150))
-                        focused = true
-                    }
-            } else {
-                Text(project.name)
+            VStack(alignment: .leading, spacing: 2) {
+                if renaming == project.id {
+                    TextField("Name", text: $newName)
+                        .labelsHidden()
+                        .focused($focused)
+                        .onSubmit(commit)
+                        .onExitCommand { renaming = nil }
+                        .onChange(of: focused) { was, now in
+                            if was, !now { commit() }
+                        }
+                        // Once the context menu has closed and handed the
+                        // list its focus back, or the list takes it from the
+                        // field.
+                        .task {
+                            try? await Task.sleep(for: .milliseconds(150))
+                            focused = true
+                        }
+                } else {
+                    Text(project.name).font(.headline)
+                }
+                Text("\(project.mainFile) · \(project.modified.formatted(.relative(presentation: .named)))")
+                    .font(Typography.secondary)
+                    .foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: "doc.text")
+                .font(.title2)
+                .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 4)
     }
 }
 

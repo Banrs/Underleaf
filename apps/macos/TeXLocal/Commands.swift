@@ -349,6 +349,9 @@ struct AppCommands: Commands {
         }
         CommandGroup(replacing: .newItem) {
             item(.projectNew)
+            // Mac only: the browser can't read a folder from disk.
+            Button("Open…") { app.chooseProjectToOpen() }
+                .keyboardShortcut("o")
             Divider()
             item(.fileNew)
             item(.fileNewFolder)
