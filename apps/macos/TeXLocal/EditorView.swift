@@ -113,10 +113,10 @@ private struct SourcePane: View {
 }
 
 /// The status bar, as Finder's is: a little text about the window's
-/// contents (HIG, Windows). How the build went, which shows and hides the
-/// build panel (a toggle, its bezel on while the panel shows, as the kit's
-/// borderless buttons are), then the save state and where the cursor is.
-/// The one place the build's summary shows. A narrow window drops whole
+/// contents (HIG, Windows). How the build went (choose it for the panel's
+/// issues), the save state and where the cursor is, then, past a line, the
+/// build panel's toggle, its bezel on while the panel shows, as the kit's
+/// borderless buttons are. The one place the build's summary shows. A narrow window drops whole
 /// items, never cutting one short: the engine first (the inspector and the
 /// Compile menu show it too), then the counts, then the save state.
 private struct StatusBar: View {
@@ -132,6 +132,16 @@ private struct StatusBar: View {
                 items(save: true, counts: false, engine: false)
                 items(save: false, counts: false, engine: false)
             }
+            ToolSeparator()
+            // The large symbol scale: the status item's height, so the two
+            // sit level.
+            Toggle(isOn: $project.showLogs) {
+                Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .imageScale(.large)
+            .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
         }
         .buttonStyle(.accessoryBar)
         .foregroundStyle(.secondary)
@@ -144,18 +154,13 @@ private struct StatusBar: View {
 
     private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            // Opening, it shows the issues.
-            Toggle(isOn: Binding(
-                get: { project.showLogs },
-                set: { show in
-                    if show { project.panelTab = .issues }
-                    project.showLogs = show
-                }
-            )) {
+            Button {
+                project.panelTab = .issues
+                project.showLogs = true
+            } label: {
                 buildStatus
             }
-            .toggleStyle(.button)
-            .help(project.showLogs ? "Hide Build Panel" : "Show Issues")
+            .help("Show Issues")
             // While a build runs the build status says so; the save state
             // would repeat it.
             if save, !project.compiling {
