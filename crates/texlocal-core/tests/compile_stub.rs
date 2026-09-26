@@ -13,6 +13,7 @@ use tempfile::TempDir;
 use texlocal_core::compile::{tex_available, CompileManager, CompileOverrides, CompileResult};
 use texlocal_core::paths::project_root;
 use texlocal_core::projects::create_project;
+use texlocal_core::service::Service;
 use texlocal_core::settings::write_settings;
 use texlocal_core::synctex::synctex_inverse;
 
@@ -155,7 +156,14 @@ async fn a_timed_out_compile_is_killed_and_reported_failed() {
     let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
+    assert!(!result.stopped, "a timeout is a failure, not a Stop");
     assert_eq!(result.pdf, None);
+    assert_eq!(result.errors.len(), 1);
+    assert!(
+        result.errors[0].message.contains("stopped after"),
+        "{:?}",
+        result.errors
+    );
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "kill did not take effect"
@@ -273,6 +281,155 @@ async fn a_cancelled_compile_takes_its_whole_tree_down() {
         !root.join("late").exists(),
         "a descendant outlived the cancel"
     );
+}
+
+/// The arguments the stub latexmk was given.
+const RECORD_ARGS: &str =
+    "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n";
+
+fn args(root: &Path) -> Vec<String> {
+    let args = fs::read_to_string(root.join("build/args")).unwrap();
+    args.split_whitespace().map(str::to_string).collect()
+}
+
+#[tokio::test]
+async fn a_build_compiles_past_errors_unless_the_project_stops_on_the_first() {
+    let (_tmp, root, mgr) = setup(RECORD_ARGS);
+    compile(&mgr, &root).await;
+    let passed = args(&root);
+    assert!(passed.contains(&"-f".into()), "{passed:?}");
+    assert!(!passed.contains(&"-halt-on-error".into()), "{passed:?}");
+
+    write_settings(&root, &json!({ "stopOnFirstError": true })).unwrap();
+    compile(&mgr, &root).await;
+    let passed = args(&root);
+    assert!(passed.contains(&"-halt-on-error".into()), "{passed:?}");
+    assert!(!passed.contains(&"-f".into()), "{passed:?}");
+}
+
+#[tokio::test]
+async fn a_projects_own_latexmkrc_runs_only_with_shell_escape() {
+    // -norc turns off every rc file latexmk would read by itself, the
+    // project's included; a trusted project keeps them.
+    let (_tmp, root, mgr) = setup(RECORD_ARGS);
+    compile(&mgr, &root).await;
+    assert!(args(&root).contains(&"-norc".into()));
+
+    write_settings(&root, &json!({ "shellEscape": true })).unwrap();
+    compile(&mgr, &root).await;
+    let passed = args(&root);
+    assert!(!passed.contains(&"-norc".into()), "{passed:?}");
+    assert!(passed.contains(&"-shell-escape".into()), "{passed:?}");
+}
+
+#[tokio::test]
+async fn a_failed_run_shows_the_pdf_it_wrote_with_its_errors() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Undefined control sequence.\\nl.4 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit 12\n",
+    );
+    let result = compile(&mgr, &root).await;
+
+    assert!(!result.ok);
+    assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
+    assert_eq!(result.errors.len(), 1);
+    assert_eq!(result.errors[0].line, Some(4));
+}
+
+#[tokio::test]
+async fn a_bibtex_error_is_reported_from_its_own_log() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf \"I was expecting a \\`,' or a \\`}'---line 1 of file refs.bib\\n\" > build/main.blg\nexit 12\n",
+    );
+    let result = compile(&mgr, &root).await;
+
+    assert!(!result.ok);
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].file.as_deref(), Some("refs.bib"));
+    assert_eq!(result.errors[0].line, Some(1));
+}
+
+#[tokio::test]
+async fn a_failure_the_log_doesnt_explain_names_latexmks_summary() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nprintf 'No errors here.\\n' > build/main.log\nprintf 'Collected error summary (may duplicate other messages):\\n  biber build/main: Could not find build/main.bcf\\n'\nexit 12\n",
+    );
+    let result = compile(&mgr, &root).await;
+
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(
+        result.errors[0].message,
+        "biber build/main: Could not find build/main.bcf"
+    );
+    // The Build Log keeps latexmk's own output after the engine's log.
+    assert!(
+        result.log.starts_with("No errors here."),
+        "{:?}",
+        result.log
+    );
+    assert!(
+        result.log.contains("Collected error summary"),
+        "{:?}",
+        result.log
+    );
+
+    // With no summary either, the exit code.
+    let (_tmp, root, mgr) = setup("#!/bin/sh\nexit 12\n");
+    let result = compile(&mgr, &root).await;
+    assert_eq!(result.errors.len(), 1);
+    assert!(result.errors[0].message.contains("exit code 12"));
+}
+
+#[tokio::test]
+async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
+    let tmp = TempDir::new().unwrap();
+    let mut service = Service::new(tmp.path().to_path_buf());
+    service.compile.path_env = Some(stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\nif [ -f fast ]; then mkdir -p build; printf 'new' > build/main.pdf; exit 0; else sleep 20; fi\n",
+    ));
+    for id in ["one", "two"] {
+        create_project(tmp.path(), id, "blank").unwrap();
+    }
+    let service = Arc::new(service);
+    let build = |id: &'static str| {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move { service.call("compile", &json!({ "id": id })).await })
+    };
+    let (one, two) = (build("one"), build("two"));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let started = Instant::now();
+    let stop = |id: &str| {
+        let service = Arc::clone(&service);
+        let args = json!({ "id": id });
+        async move { service.call("stop_compile", &args).await }
+    };
+    assert_eq!(stop("one").await.unwrap(), true);
+    let one = one.await.unwrap().unwrap();
+    assert_eq!(one["stopped"], true);
+    assert_eq!(one["ok"], false);
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(
+        !two.is_finished(),
+        "the other project's build was stopped too"
+    );
+
+    // The project builds again after a Stop.
+    fs::write(project_root(tmp.path(), "one").unwrap().join("fast"), "").unwrap();
+    let again = service
+        .call("compile", &json!({ "id": "one" }))
+        .await
+        .unwrap();
+    assert_eq!(
+        (again["ok"].clone(), again["stopped"].clone()),
+        (json!(true), json!(false))
+    );
+
+    assert_eq!(stop("one").await.unwrap(), false, "nothing is running");
+
+    // Quitting stops the rest, and they say so too.
+    service.compile.kill_all();
+    assert_eq!(two.await.unwrap().unwrap()["stopped"], true);
 }
 
 #[tokio::test]

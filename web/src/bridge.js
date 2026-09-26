@@ -44,6 +44,10 @@ export function setQuitInteractionLocked(locked, body = (typeof document !== 'un
   body.toggleAttribute?.('aria-busy', locked);
 }
 
+// The desktop shell's own commands; every other command is the core's, which
+// the shell dispatches by name as the browser server does.
+const SHELL_COMMANDS = new Set(['upload_file', 'compile', 'export_project', 'save_pdf_as']);
+
 function tauriBridge() {
   const { invoke } = tauri.core;
   const { listen } = tauri.event;
@@ -53,7 +57,10 @@ function tauriBridge() {
   return {
     kind: 'tauri',
     platform,
-    invoke: (command, args, options) => invoke(command, args, options).catch((err) => {
+    invoke: (command, args, options) => (SHELL_COMMANDS.has(command)
+      ? invoke(command, args, options)
+      : invoke('call', { command, args: args ?? {} })
+    ).catch((err) => {
       throw new Error(errorMessage(err));
     }),
     accent: () => invoke('system_accent').catch(() => null),

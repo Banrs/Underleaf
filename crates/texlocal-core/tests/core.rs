@@ -5,11 +5,10 @@ use std::path::Path;
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, file_tree, list_projects, rename_entry,
-    rename_project, scan_symbols, search_project, symbols_fingerprint,
+    create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
+    scan_symbols, search_project, symbols_fingerprint,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
@@ -80,22 +79,6 @@ fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
     assert_eq!(err.status, 500);
     assert!(root.join("main.tex").is_file());
     assert!(!root.join("paper.tex").exists());
-}
-
-#[test]
-fn the_active_main_file_and_its_parent_cannot_be_deleted() {
-    let data = data_dir();
-    let root = project(data.path(), "delete-test");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-    fails_with(
-        delete_entry(&root, "chapters/main.tex"),
-        "different main file",
-    );
-    fails_with(delete_entry(&root, "chapters"), "different main file");
-    let raw: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
-    assert_eq!(raw["mainFile"], "chapters/main.tex");
 }
 
 #[test]
@@ -317,35 +300,6 @@ fn renaming_an_unrelated_entry_leaves_the_main_file_alone() {
 }
 
 #[test]
-fn parse_log_extracts_errors_warnings_and_deduplicates_reruns() {
-    let log = [
-        "./main.tex:12: Undefined control sequence.",
-        "l.12 \\badcommand",
-        "",
-        "! Emergency stop.",
-        "l.40 \\end{document}",
-        "",
-        "LaTeX Warning: Reference `fig:x' on page 1 undefined",
-        "on input line 10.",
-        "",
-        "./main.tex:12: Undefined control sequence.",
-        "l.12 \\badcommand",
-    ]
-    .join("\n");
-    let items = parse_log(&log, "main.tex");
-    let errors: Vec<_> = items.iter().filter(|i| i.kind == "error").collect();
-    let warnings: Vec<_> = items.iter().filter(|i| i.kind == "warning").collect();
-    assert_eq!(errors.len(), 2);
-    assert_eq!(errors[0].file.as_deref(), Some("main.tex"));
-    assert_eq!(errors[0].line, Some(12));
-    assert_eq!(errors[1].message, "Emergency stop.");
-    assert_eq!(errors[1].line, Some(40));
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].line, Some(10));
-    assert!(warnings[0].message.contains("fig:x"));
-}
-
-#[test]
 fn a_backslash_main_file_from_an_old_settings_file_still_works() {
     let data = data_dir();
     let root = project(data.path(), "backslash-test");
@@ -437,6 +391,58 @@ fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
 }
 
 #[test]
+fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
+    let data = data_dir();
+    let root = project(data.path(), "dated-zip");
+    fs::create_dir_all(root.join("figs")).unwrap();
+    for litter in [
+        ".DS_Store",
+        "figs/.DS_Store",
+        "figs/Thumbs.db",
+        "Desktop.ini",
+    ] {
+        fs::write(root.join(litter), "x").unwrap();
+    }
+    fs::write(root.join(".latexmkrc"), "$pdf_mode = 1;").unwrap();
+    let dest = data.path().join("out.zip");
+    export_zip(&root, &dest).unwrap();
+
+    let names = zip_names(&dest);
+    assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
+    for litter in ["DS_Store", "Thumbs.db", "Desktop.ini"] {
+        assert!(!names.iter().any(|n| n.contains(litter)), "{names:?}");
+    }
+    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+    let dated = archive
+        .by_name("main.tex")
+        .unwrap()
+        .last_modified()
+        .unwrap();
+    let modified = fs::metadata(root.join("main.tex"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let local = chrono::DateTime::<chrono::Local>::from(modified);
+    use chrono::{Datelike, Timelike};
+    assert_eq!(
+        (
+            dated.year(),
+            dated.month(),
+            dated.day(),
+            dated.hour(),
+            dated.minute()
+        ),
+        (
+            local.year() as u16,
+            local.month() as u8,
+            local.day() as u8,
+            local.hour() as u8,
+            local.minute() as u8
+        )
+    );
+}
+
+#[test]
 fn search_is_case_insensitive_in_both_folding_branches() {
     let data = data_dir();
     let root = project(data.path(), "search");
@@ -517,6 +523,39 @@ fn top_level_build_output_stays_out_of_every_scan() {
         .unwrap()
         .iter()
         .all(|(rel, _, _)| !rel.starts_with("build/")));
+}
+
+#[test]
+fn the_build_folder_name_is_reserved_at_the_top_in_any_case() {
+    let data = data_dir();
+    let root = project(data.path(), "reserved-build");
+    create_file(&root, "figs/a.png", false).unwrap();
+    fails_with(create_file(&root, "build", true), "compiled PDF");
+    fails_with(create_file(&root, "BUILD/x.tex", false), "compiled PDF");
+    fails_with(rename_entry(&root, "figs", "Build"), "compiled PDF");
+    // Deeper, the name is the author's.
+    create_file(&root, "figs/build", true).unwrap();
+    // A folder made elsewhere in another case stays hidden as output.
+    fs::create_dir(root.join("Build")).unwrap();
+    assert!(file_tree(&root).unwrap().iter().all(|n| n.name != "Build"));
+}
+
+#[test]
+fn a_project_is_dated_by_its_newest_file() {
+    let data = data_dir();
+    let root = project(data.path(), "dated");
+    // Saving a file in place leaves its folder's date alone.
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    let main = fs::File::options()
+        .write(true)
+        .open(root.join("main.tex"))
+        .unwrap();
+    main.set_modified(later).unwrap();
+    let expected = later
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    assert_eq!(list_projects(data.path()).unwrap()[0].mtime, expected);
 }
 
 #[test]
@@ -784,4 +823,19 @@ fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
     let out = tempfile::tempdir().unwrap();
     export_zip(&root, &out.path().join("out.zip")).unwrap();
     assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);
+}
+
+#[test]
+fn citations_include_bibitem_keys_and_commented_labels_are_left_out() {
+    let data = data_dir();
+    let root = project(data.path(), "bibitems");
+    fs::write(
+        root.join("main.tex"),
+        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent}\n\
+         \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
+    )
+    .unwrap();
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["kept", "after-percent"]);
+    assert_eq!(found.citations, ["knuth", "lamport"]);
 }

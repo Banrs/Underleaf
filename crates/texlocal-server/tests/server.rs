@@ -121,6 +121,15 @@ async fn foreign_hosts_and_origins_are_refused_even_with_the_cookie() {
     );
     assert_eq!(f.app.handle(cross_site).await.status, 403);
 
+    // Another loopback port is same-site, but not this server.
+    let other_port = authed(
+        "POST",
+        "/api/list_projects",
+        &[("origin", "http://127.0.0.1:9999")],
+        b"",
+    );
+    assert_eq!(f.app.handle(other_port).await.status, 403);
+
     let same_site = authed(
         "POST",
         "/api/list_projects",
@@ -128,6 +137,27 @@ async fn foreign_hosts_and_origins_are_refused_even_with_the_cookie() {
         b"",
     );
     assert_eq!(f.app.handle(same_site).await.status, 200);
+}
+
+#[tokio::test]
+async fn no_page_may_frame_the_app() {
+    let f = fixture();
+    let index = f.app.handle(authed("GET", "/", &[], b"")).await;
+    assert_eq!(
+        index.header("content-security-policy"),
+        Some("frame-ancestors 'none'")
+    );
+    assert_eq!(index.header("x-frame-options"), Some("DENY"));
+    // A project file keeps its sandbox, the stricter policy.
+    let raw = f
+        .app
+        .handle(authed("GET", "/__raw/P/img/a.svg", &[], b""))
+        .await;
+    assert_eq!(
+        raw.header("content-security-policy"),
+        Some("sandbox; default-src 'none'")
+    );
+    assert_eq!(raw.header("x-frame-options"), Some("DENY"));
 }
 
 #[tokio::test]
@@ -268,6 +298,18 @@ async fn project_files_are_sandboxed_and_support_ranges() {
         ))
         .await;
     assert_eq!(beyond.status, 416);
+
+    // A unit the server doesn't know is ignored, as RFC 9110 has it.
+    let unknown = f
+        .app
+        .handle(authed(
+            "GET",
+            "/__raw/P/img/a.svg",
+            &[("range", "items=0-1")],
+            b"",
+        ))
+        .await;
+    assert_eq!((unknown.status, unknown.body.len()), (200, 10));
 
     let escape = f
         .app

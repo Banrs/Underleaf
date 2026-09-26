@@ -5,22 +5,23 @@
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use chrono::{Datelike, Timelike};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use crate::atomic::{create_temp, replace};
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+const LITTER: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
-    let (temp_path, file) = create_sibling_temp(dest)?;
+    let (temp_path, file) = create_temp(dest)?;
 
     let result = (|| -> Result<(), CoreError> {
         // The folder the archive is written into, resolved the way the walk
@@ -37,72 +38,12 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         };
         export.add_dir(root, &root_canonical, "")?;
         export.writer.finish()?.sync_all()?;
-        Ok(replace_completed(&temp_path, dest)?)
+        Ok(replace(&temp_path, dest)?)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
     result
-}
-
-/// A fresh hidden name beside `dest`, ending in `.{ext}`.
-fn sibling(dest: &Path, ext: &str) -> PathBuf {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    let name = dest
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_else(|| "archive.zip".into());
-    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(".{name}.texlocal-{}-{n}.{ext}", std::process::id()))
-}
-
-fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
-    for _ in 0..100 {
-        let candidate = sibling(dest, "tmp");
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((candidate, file)),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "could not allocate a temporary ZIP path",
-    ))
-}
-
-fn replace_completed(temp: &Path, dest: &Path) -> io::Result<()> {
-    match fs::rename(temp, dest) {
-        Ok(()) => Ok(()),
-        #[cfg(windows)]
-        Err(err)
-            if dest.exists()
-                && matches!(
-                    err.kind(),
-                    io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
-                ) =>
-        {
-            let backup = sibling(dest, "bak");
-            fs::rename(dest, &backup)?;
-            match fs::rename(temp, dest) {
-                Ok(()) => {
-                    let _ = fs::remove_file(backup);
-                    Ok(())
-                }
-                Err(replace_err) => {
-                    // Best effort rollback; return the replacement error because
-                    // it describes why the requested archive was not installed.
-                    let _ = fs::rename(&backup, dest);
-                    Err(replace_err)
-                }
-            }
-        }
-        Err(err) => Err(err),
-    }
 }
 
 /// The parts of an export that do not change as the walk descends: where the
@@ -130,7 +71,12 @@ impl Export<'_> {
                 continue;
             }
             let name = file_name.to_string_lossy();
-            if prefix.is_empty() && (name == BUILD_DIR || name == SETTINGS_FILE) {
+            // What Finder and Explorer leave in folders is nobody's content.
+            if LITTER.iter().any(|l| name.eq_ignore_ascii_case(l)) {
+                continue;
+            }
+            if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
+            {
                 continue;
             }
             let rel = if prefix.is_empty() {
@@ -167,7 +113,8 @@ impl Export<'_> {
                 if !self.visited.insert(canonical.clone()) {
                     continue;
                 }
-                self.writer.add_directory(format!("{rel}/"), self.options)?;
+                let options = dated(self.options, &path);
+                self.writer.add_directory(format!("{rel}/"), options)?;
                 self.add_dir(&path, &canonical, &rel)?;
             } else if entry_type.is_file() {
                 self.add_file(&rel, &path)?;
@@ -177,10 +124,32 @@ impl Export<'_> {
     }
 
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
-        self.writer.start_file(rel, self.options)?;
+        self.writer.start_file(rel, dated(self.options, path))?;
         // No flush per file: on a deflated entry that forces a sync block
         // into the stream, and the next start_file or finish ends it anyway.
         io::copy(&mut File::open(path)?, &mut self.writer)?;
         Ok(())
     }
+}
+
+/// `options` with the entry dated as `path` is. ZIP stores local time, as
+/// unzipping tools show it; undated, every entry would say 1 January 1980.
+fn dated(options: SimpleFileOptions, path: &Path) -> SimpleFileOptions {
+    let Ok(modified) = fs::metadata(path).and_then(|meta| meta.modified()) else {
+        return options;
+    };
+    let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
+    // Outside ZIP's 1980–2107, the entry keeps the default.
+    let date = u16::try_from(local.year()).ok().and_then(|year| {
+        zip::DateTime::from_date_and_time(
+            year,
+            local.month() as u8,
+            local.day() as u8,
+            local.hour() as u8,
+            local.minute() as u8,
+            local.second() as u8,
+        )
+        .ok()
+    });
+    date.map_or(options, |date| options.last_modified_time(date))
 }

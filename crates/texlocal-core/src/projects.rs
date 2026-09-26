@@ -3,7 +3,6 @@
 
 use std::cmp::Reverse;
 use std::collections::HashSet;
-use std::fmt::Display;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -14,8 +13,9 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::atomic;
 use crate::error::CoreError;
-use crate::paths::{project_root, rel_key, safe_path, sanitize_name};
+use crate::paths::{project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
 use crate::templates;
 use crate::BUILD_DIR;
@@ -171,10 +171,11 @@ fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>
         } else {
             format!("{prefix}/{name}")
         };
-        // Only the project's own build directory holds compile output. A
-        // `build` deeper in the tree is the author's, and the ZIP export keeps
-        // it, so every walk here must too.
-        if rel == BUILD_DIR {
+        // Only the project's own build directory holds compile output, in
+        // any case, as safe_write_path reserves it. A `build` deeper in the
+        // tree is the author's, and the ZIP export keeps it, so every walk
+        // here must too.
+        if rel.eq_ignore_ascii_case(BUILD_DIR) {
             continue;
         }
         if let Some(kind) = classify_entry(root_canonical, &entry)? {
@@ -225,11 +226,21 @@ fn ext_of(rel: &str) -> String {
         .unwrap_or_default()
 }
 
-fn project_info(name: String, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+/// A project as the library lists it. Its date is the newest of its folder's
+/// and its content files': a folder's own date moves only when entries come
+/// or go directly in it, not when a file in it is saved or compiled.
+fn project_info(name: String, root: &Path, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+    let mut mtime = mtime_ms(meta);
+    let _ = visit_files(root, &mut |abs, _| {
+        if let Ok(meta) = fs::metadata(abs) {
+            mtime = mtime.max(mtime_ms(&meta));
+        }
+        Ok(true)
+    });
     ProjectInfo {
         id: name.clone(),
         name,
-        mtime: mtime_ms(meta),
+        mtime,
         main_file,
     }
 }
@@ -251,7 +262,7 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             continue;
         };
         let main_file = read_settings(&root).main_file;
-        projects.push(project_info(name, &meta, main_file));
+        projects.push(project_info(name, &root, &meta, main_file));
     }
     projects.sort_by_key(|p| Reverse(p.mtime));
     Ok(projects)
@@ -262,25 +273,65 @@ pub fn create_project(
     name: &str,
     template: &str,
 ) -> Result<ProjectInfo, CoreError> {
+    let (clean, root) = new_project_dir(data_dir, name)?;
+    // Template paths are plain file names, fixed at build time.
+    for (file, content) in templates::files(template) {
+        fs::write(root.join(file), content)?;
+    }
+    finish_project(clean, &root, &json!({}))
+}
+
+/// A new, empty project folder for `name`, and the name as sanitized.
+pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
     let clean = sanitize_name(name)?;
     let root = data_dir.join(&clean);
     fs::create_dir_all(data_dir)?;
     // One create rather than a check and then a create: it cannot race, and
     // it refuses anything already there, a dangling link or case alias too.
     match fs::create_dir(&root) {
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => return Err(name_taken()),
-        created => created?,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(name_taken()),
+        created => Ok(created.map(|()| (clean, root))?),
     }
-    // Template paths are plain file names, fixed at build time.
-    for (file, content) in templates::files(template) {
-        fs::write(root.join(file), content)?;
-    }
-    let settings = write_settings(&root, &json!({}))?;
+}
+
+/// Write a new project's settings, and the project as the library lists it.
+pub(crate) fn finish_project(
+    name: String,
+    root: &Path,
+    settings: &serde_json::Value,
+) -> Result<ProjectInfo, CoreError> {
+    let settings = write_settings(root, settings)?;
     Ok(project_info(
-        clean,
-        &fs::metadata(&root)?,
+        name,
+        root,
+        &fs::metadata(root)?,
         settings.main_file,
     ))
+}
+
+/// The likely main file among a project's top-level .tex files: main.tex,
+/// else the first by name that starts a document, else the first by name.
+pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> {
+    let mut tex: Vec<String> = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // A name latexmk would read as an option can't be the main file.
+        if entry.file_type()?.is_file() && ext_of(&name) == "tex" && !name.starts_with('-') {
+            tex.push(name);
+        }
+    }
+    tex.sort();
+    let starts_document = |name: &&String| {
+        fs::read(root.join(name.as_str()))
+            .is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains("\\documentclass"))
+    };
+    Ok(tex
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("main.tex"))
+        .or_else(|| tex.iter().find(starts_document))
+        .or(tex.first())
+        .cloned())
 }
 
 pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
@@ -292,7 +343,7 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     }
     fs::rename(&root, &dest)?;
     let main_file = read_settings(&dest).main_file;
-    Ok(project_info(clean, &fs::metadata(&dest)?, main_file))
+    Ok(project_info(clean, &dest, &fs::metadata(&dest)?, main_file))
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
@@ -319,23 +370,15 @@ fn same_entry(a: &Path, b: &Path) -> bool {
         && matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
-fn discard_using<E, F>(path: &Path, move_to_trash: F) -> Result<(), CoreError>
-where
-    E: Display,
-    F: FnOnce(&Path) -> Result<(), E>,
-{
-    move_to_trash(path).map_err(|err| {
-        CoreError::internal(format!(
-            "Could not move the item to Trash or Recycle Bin: {err}"
-        ))
-    })
-}
-
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 fn discard(path: &Path) -> Result<(), CoreError> {
-    discard_using(path, |path| trash::delete(path))
+    trash::delete(path).map_err(|err| {
+        CoreError::internal(format!(
+            "Could not move the item to Trash or Recycle Bin: {err}"
+        ))
+    })
 }
 
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
@@ -379,19 +422,23 @@ const TEXT_EXT: &[&str] = &[
 ];
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
-    let abs = safe_path(root, rel)?;
+    let abs = safe_write_path(root, rel)?;
     if abs.exists() {
         return Err(CoreError::conflict("Already exists"));
     }
     if dir {
-        fs::create_dir_all(&abs)?;
+        Ok(fs::create_dir_all(&abs)?)
     } else {
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&abs, "")?;
+        write_creating(&abs, b"")
     }
-    Ok(())
+}
+
+/// Write a file whole, creating the folders it sits in.
+pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<(), CoreError> {
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(atomic::write(abs, contents)?)
 }
 
 /// Whether `path` lies strictly inside the folder `dir`; both are
@@ -409,7 +456,7 @@ fn main_file_key(root: &Path) -> String {
 
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
-    let dest = safe_path(root, to)?;
+    let dest = safe_write_path(root, to)?;
     // Only compared with the main file, never passed to a tool, so a name
     // starting with "-" is as renameable here as create_entry made it.
     let from_rel = rel_key(from)?;
@@ -454,6 +501,27 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         to: to_rel,
         main_file,
     })
+}
+
+/// Move to the Trash an entry an incoming file of its name replaces. The main
+/// file may go, since the file taking its place keeps it valid; a folder
+/// holding it may not.
+pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> {
+    if is_under(&main_file_key(root), rel) {
+        return Err(CoreError::conflict(
+            "Choose a different main file before replacing this folder",
+        ));
+    }
+    discard(&safe_path(root, rel)?)
+}
+
+/// `name` with a copy's number, as Finder numbers them: "main 2.tex",
+/// "figures 2".
+pub(crate) fn numbered(name: &str, n: u32) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
+        _ => format!("{name} {n}"),
+    }
 }
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
@@ -602,21 +670,46 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+/// A thebibliography entry's key, which \cite takes as a .bib key.
+static BIBITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
+
+/// A line of TeX without its comment, which starts at the first % that no
+/// backslash escapes.
+fn uncommented(line: &str) -> &str {
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => return &line[..i],
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    line
+}
 
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     visit_files(root, &mut |abs, rel| {
-        let (re, out) = match ext_of(&rel).as_str() {
-            "bib" => (&*BIB_KEY, &mut keys),
-            "tex" => (&*LABEL, &mut labels),
-            _ => return Ok(true),
-        };
+        let ext = ext_of(&rel);
+        if ext != "bib" && ext != "tex" {
+            return Ok(true);
+        }
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
             return Ok(true);
         };
-        for m in re.captures_iter(&String::from_utf8_lossy(&bytes)) {
-            out.push(m[1].to_string());
+        let text = String::from_utf8_lossy(&bytes);
+        let found = |re: &Regex, text: &str, out: &mut Vec<String>| {
+            out.extend(re.captures_iter(text).map(|m| m[1].to_string()));
+        };
+        if ext == "bib" {
+            found(&BIB_KEY, &text, &mut keys);
+        } else {
+            for line in text.lines().map(uncommented) {
+                found(&LABEL, line, &mut labels);
+                found(&BIBITEM, line, &mut keys);
+            }
         }
         Ok(true)
     })?;
@@ -653,9 +746,10 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_file, create_project, delete_entry_using, discard_using};
+    use super::{create_file, create_project, delete_entry_using};
     use crate::paths::project_root;
     use crate::settings::write_settings;
+    use crate::CoreError;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -673,7 +767,7 @@ mod tests {
     fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
         let (_data, root) = project();
         create_file(&root, "notes/scratch.tex", false).unwrap();
-        let unavailable = |path: &_| discard_using(path, |_| Err::<(), _>("trash unavailable"));
+        let unavailable = |_: &_| Err(CoreError::internal("trash unavailable"));
         let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
         assert_eq!(err.status, 500);
         assert!(root.join("notes/scratch.tex").is_file());

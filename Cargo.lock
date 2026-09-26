@@ -3868,6 +3868,7 @@ dependencies = [
 name = "texlocal-core"
 version = "0.2.0"
 dependencies = [
+ "chrono",
  "libc",
  "regex",
  "serde",

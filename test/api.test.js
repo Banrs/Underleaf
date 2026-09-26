@@ -41,8 +41,10 @@ test('upload percent-encodes its header metadata', async () => {
 test('upload validates the whole set before sending any file', async () => {
   calls.length = 0;
   await api.upload('p', [fileLike('a.tex'), fileLike('b.tex')]);
-  assert.equal(calls[0].command, 'validate_uploads');
-  assert.deepEqual(calls[0].args.files, [
+  // A core command reaches the desktop shell through its one `call`.
+  assert.equal(calls[0].command, 'call');
+  assert.equal(calls[0].args.command, 'validate_uploads');
+  assert.deepEqual(calls[0].args.args.files, [
     { path: 'a.tex', size: 3 },
     { path: 'b.tex', size: 3 },
   ]);

@@ -216,13 +216,6 @@ window.texlocal = {
     if (path) path = moved(path);
   },
   getText: () => editor?.getContent() ?? null,
-  // A math symbol from the host's palette (\alpha): as it is in math, as
-  // $\alpha$ in text, the caret after it. False with no file open.
-  insertSymbol(text) {
-    if (!editor) return false;
-    editor.insertSymbol(text ?? '');
-    return true;
-  },
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },

@@ -1,0 +1,264 @@
+[
+  {
+    "name": "an empty document is one line",
+    "text": "",
+    "expected": {
+      "outline": [],
+      "words": 0,
+      "lines": 1
+    }
+  },
+  {
+    "name": "a trailing newline starts a line",
+    "text": "Hello world\n",
+    "expected": {
+      "outline": [],
+      "words": 2,
+      "lines": 2
+    }
+  },
+  {
+    "name": "CR LF, CR and LF each end a line",
+    "text": "one\r\ntwo\rthree\nfour\r\r\nfive",
+    "expected": {
+      "outline": [],
+      "words": 5,
+      "lines": 6
+    }
+  },
+  {
+    "name": "every sectioning level",
+    "text": "\\part{P}\n\\chapter{C}\n\\section{S}\n\\subsection{Sub}\n\\subsubsection{SubSub}\n\\paragraph{Para}\n\\subparagraph{Not in the outline}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 0,
+          "title": "P",
+          "line": 1
+        },
+        {
+          "depth": 1,
+          "title": "C",
+          "line": 2
+        },
+        {
+          "depth": 2,
+          "title": "S",
+          "line": 3
+        },
+        {
+          "depth": 3,
+          "title": "Sub",
+          "line": 4
+        },
+        {
+          "depth": 4,
+          "title": "SubSub",
+          "line": 5
+        },
+        {
+          "depth": 5,
+          "title": "Para",
+          "line": 6
+        }
+      ],
+      "words": 10,
+      "lines": 7
+    }
+  },
+  {
+    "name": "stars, short titles and spaces",
+    "text": "\\section*{Starred}\n\\section[Short]{Long title}\n\\subsection * [x] {Spaced}\n\\section {After a no-break space}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "Starred",
+          "line": 1
+        },
+        {
+          "depth": 2,
+          "title": "Long title",
+          "line": 2
+        },
+        {
+          "depth": 2,
+          "title": "After a no-break space",
+          "line": 4
+        }
+      ],
+      "words": 9,
+      "lines": 4
+    }
+  },
+  {
+    "name": "an empty title is untitled",
+    "text": "\\section{}\n\\chapter*{}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "(untitled)",
+          "line": 1
+        },
+        {
+          "depth": 1,
+          "title": "(untitled)",
+          "line": 2
+        }
+      ],
+      "words": 0,
+      "lines": 2
+    }
+  },
+  {
+    "name": "the first heading on a line wins",
+    "text": "Text \\section{A} and \\subsection{B}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "A",
+          "line": 1
+        }
+      ],
+      "words": 4,
+      "lines": 1
+    }
+  },
+  {
+    "name": "a commented-out heading is skipped",
+    "text": "% \\section{Hidden}\n  \t% \\section{Indented}\n\\section{Shown} % \\section{After}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "Shown",
+          "line": 3
+        }
+      ],
+      "words": 1,
+      "lines": 3
+    }
+  },
+  {
+    "name": "a heading inside a comment later on the line still counts",
+    "text": "Words % \\section{Trailing}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "Trailing",
+          "line": 1
+        }
+      ],
+      "words": 1,
+      "lines": 1
+    }
+  },
+  {
+    "name": "nested braces end the title early",
+    "text": "\\section{The {\\em best} way}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "The {\\em best",
+          "line": 1
+        }
+      ],
+      "words": 3,
+      "lines": 1
+    }
+  },
+  {
+    "name": "commands and their options are not words",
+    "text": "Hello \\textbf{bold} world \\cite[p.~3]{key} text \\\\ done",
+    "expected": {
+      "outline": [],
+      "words": 6,
+      "lines": 1
+    }
+  },
+  {
+    "name": "comments are not words",
+    "text": "one two % three four\n50\\% off % really\n\\\\% comment after a line break",
+    "expected": {
+      "outline": [],
+      "words": 8,
+      "lines": 3
+    }
+  },
+  {
+    "name": "specials separate words",
+    "text": "x^2 + y_1 = $a$ and~b & c{d}e",
+    "expected": {
+      "outline": [],
+      "words": 8,
+      "lines": 1
+    }
+  },
+  {
+    "name": "numbers alone are not words",
+    "text": "123 456 7.5 foo123",
+    "expected": {
+      "outline": [],
+      "words": 1,
+      "lines": 1
+    }
+  },
+  {
+    "name": "accented letters are letters",
+    "text": "Café naïve Ωmega ſ",
+    "expected": {
+      "outline": [],
+      "words": 3,
+      "lines": 1
+    }
+  },
+  {
+    "name": "JavaScript whitespace",
+    "text": "a﻿b c d ef",
+    "expected": {
+      "outline": [],
+      "words": 5,
+      "lines": 1
+    }
+  },
+  {
+    "name": "a line separator stops the comment",
+    "text": "a % b c",
+    "expected": {
+      "outline": [],
+      "words": 3,
+      "lines": 1
+    }
+  },
+  {
+    "name": "an unclosed option is kept",
+    "text": "\\foo[unclosed text",
+    "expected": {
+      "outline": [],
+      "words": 2,
+      "lines": 1
+    }
+  },
+  {
+    "name": "an emoji is part of a word",
+    "text": "😀word 😀",
+    "expected": {
+      "outline": [],
+      "words": 1,
+      "lines": 1
+    }
+  },
+  {
+    "name": "a starred command with an option",
+    "text": "\\includegraphics*[width=\\linewidth]{figure} caption",
+    "expected": {
+      "outline": [],
+      "words": 2,
+      "lines": 1
+    }
+  }
+]
