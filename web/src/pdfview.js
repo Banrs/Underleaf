@@ -29,6 +29,16 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // devicePixelRatio alone holds 77% of the detail the page is displayed at.
 const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
 
+// A text-layer span's natural width, measured on a canvas rather than read back
+// from the DOM: no layout per span, and it works while the pane is hidden (the
+// find bar rebuilds text layers behind the log), where offsetWidth reads 0.
+let measureCtx;
+function textWidth(str, size, family) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  measureCtx.font = `${size} ${family}`;
+  return measureCtx.measureText(str).width;
+}
+
 export class PdfViewer {
   constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
     this.scrollEl = scrollEl;
@@ -682,6 +692,12 @@ export class PdfViewer {
         span.style.top = `${top - fontH}px`;
         span.style.fontSize = `${fontH}px`;
         span.style.fontFamily = item.fontName?.includes('Mono') ? 'monospace' : 'sans-serif';
+        // The fallback font's natural width never matches the PDF's, so find
+        // highlights and selections would drift along the line: stretch the
+        // span to the width the PDF gives it.
+        const natural = textWidth(item.str, span.style.fontSize, span.style.fontFamily);
+        const target = item.width * p.viewport.scale;
+        if (natural && target) span.style.transform = `scaleX(${target / natural})`;
         frag.appendChild(span);
       }
 

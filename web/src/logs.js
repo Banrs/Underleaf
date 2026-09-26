@@ -59,8 +59,9 @@ export function renderLogs({ pdfScroll, logsButton }) {
     el('span', { class: 'spacer' }),
     r ? el('button', {
       class: 'btn small',
+      'aria-pressed': String(!!state.logShowRaw),
       onclick: () => { state.logShowRaw = !state.logShowRaw; renderLogs({ pdfScroll, logsButton }); },
-    }, state.logShowRaw ? 'Issues' : 'Raw Log') : null,
+    }, 'Raw log') : null,
   );
 
   const body = el('div', { class: 'logs-body' });
@@ -71,8 +72,10 @@ export function renderLogs({ pdfScroll, logsButton }) {
       const items = [...errs, ...warns];
       if (!items.length) body.appendChild(el('p', { class: 'placeholder' }, 'No issues'));
       for (const it of items) {
+        // Without a line there is nowhere to jump to.
         body.appendChild(el('button', {
           class: `log-item ${it.type}`,
+          disabled: it.line == null ? '' : null,
           onclick: () => onJump?.(it.file ?? state.settings.mainFile, it.line),
         },
           el('span', { class: 'log-kind' }, it.type === 'error' ? 'Error' : 'Warning'),

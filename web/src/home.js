@@ -4,7 +4,7 @@
 
 import { api } from './api.js';
 import { platform, trashName, deleteLabel } from './bridge.js';
-import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder } from './dom.js';
+import { $, el, toast, withTimeout, showModal, promptModal, confirmModal, menuUnder, contextMenu } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip, menuBar } from './commands.js';
@@ -35,40 +35,35 @@ function relativeDate(ms) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+const projectHref = (id) => `#/p/${encodeURIComponent(id)}`;
+
 function openProject(id) {
-  location.hash = `#/p/${encodeURIComponent(id)}`;
+  location.hash = projectHref(id);
 }
 
+// The row is a real link (open in a new tab, copy address), stretched over
+// the whole row by `.doc-name::after`; the actions button sits above it.
 function projectRow(p, reload) {
-  const actions = el('div', { class: 'row-actions' },
-    el('button', {
-      class: 'icon-btn small', title: 'More actions', 'aria-label': `Actions for ${p.name}`,
-      onclick: (e) => {
-        e.stopPropagation();
-        menuUnder(e.currentTarget, [
-          { label: 'Rename…', action: () => renameProject(p, reload) },
-          '-',
-          { label: `${deleteLabel}…`, danger: true, action: () => deleteProject(p, reload) },
-        ]);
-      },
-    }, icon('ellipsis')),
-  );
-
+  const items = () => [
+    { label: 'Rename…', action: () => renameProject(p, reload) },
+    '-',
+    { label: `${deleteLabel}…`, danger: true, action: () => deleteProject(p, reload) },
+  ];
   return el('div', {
     class: 'doc-row',
-    role: 'button',
-    tabindex: '0',
-    onclick: () => openProject(p.id),
-    onkeydown: (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openProject(p.id); }
-    },
+    oncontextmenu: (e) => { e.preventDefault(); contextMenu(e.clientX, e.clientY, items()); },
   },
     el('span', { class: 'doc-icon' }, icon('doc-tex')),
     el('span', { class: 'doc-text' },
-      el('span', { class: 'doc-name' }, p.name),
+      el('a', { class: 'doc-name', href: projectHref(p.id) }, p.name),
       el('span', { class: 'doc-meta' }, relativeDate(p.mtime)),
     ),
-    actions,
+    el('div', { class: 'row-actions' },
+      el('button', {
+        class: 'icon-btn small', title: 'More actions', 'aria-label': `Actions for ${p.name}`,
+        onclick: (e) => menuUnder(e.currentTarget, items()),
+      }, icon('ellipsis')),
+    ),
   );
 }
 
@@ -162,7 +157,6 @@ export async function renderHome() {
           banner,
           el('div', { class: 'brand-actions' },
             el('button', { class: 'btn primary', onclick: newProjectFlow }, icon('plus'), 'New Project'),
-            el('button', { class: 'btn', onclick: settings }, icon('gear'), 'Settings'),
           ),
         ),
         el('div', { class: 'home-recents' },

@@ -170,9 +170,9 @@ function buildChrome(id) {
   // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
   // and other interactive elements on its own.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
-    menuBar(menuUnder),
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
+    menuBar(menuUnder),
     el('span', { class: 'window-title' }, state.settings?.title || id),
     el('span', { class: 'title-separator' }),
     crumbs,
@@ -192,7 +192,7 @@ function buildChrome(id) {
     iconButton('edit.math', 'sigma', 'small'),
     el('span', { class: 'toolbar-separator' }),
     el('button', {
-      class: 'btn small', title: 'Insert an environment',
+      class: 'btn small', title: 'Insert an environment', 'aria-haspopup': 'menu',
       onclick: (e) => menuUnder(e.currentTarget, INSERT_TEMPLATES.map(([label, tpl]) => ({
         label, action: () => state.editor?.insertTemplate(tpl),
       }))),
@@ -203,7 +203,7 @@ function buildChrome(id) {
   );
 
   const editorHost = el('div', { class: 'editor-host' });
-  const wordCountPill = el('span', { class: 'word-count', role: 'status' });
+  const wordCountPill = el('span', { class: 'word-count' });
   const editorPane = el('div', { class: 'pane editor-pane' }, editorToolbar, editorHost, wordCountPill);
 
   // --- PDF pane ---
@@ -214,7 +214,7 @@ function buildChrome(id) {
   });
   const zoomLabel = el('span', { class: 'zoom-value' }, '—');
   const zoomButton = el('button', {
-    class: 'btn small zoom-btn', title: 'Zoom', 'aria-label': 'Zoom',
+    class: 'btn small zoom-btn', title: 'Zoom', 'aria-haspopup': 'menu',
     onclick: (e) => menuUnder(e.currentTarget, [
       { label: 'Fit Width', action: () => state.pdf.fitWidth() },
       { label: 'Fit Height', action: () => state.pdf.fitHeight() },
@@ -240,7 +240,7 @@ function buildChrome(id) {
   });
 
   // --- PDF find bar (hidden until the command opens it) ---
-  const findCount = el('span', { class: 'find-count' });
+  const findCount = el('span', { class: 'find-count', role: 'status' });
   const findInput = el('input', {
     type: 'search', placeholder: 'Find in PDF', 'aria-label': 'Find in PDF',
   });
@@ -299,10 +299,9 @@ function buildChrome(id) {
   // --- dividers ---
   const sidebarDivider = el('div', { class: 'divider', role: 'separator', 'aria-orientation': 'vertical' });
   const syncPill = el('div', { class: 'sync-pill' },
-    el('button', { title: tooltip('sync.forward'), 'aria-label': 'Show cursor position in PDF', onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
-    el('button', { title: tooltip('sync.inverse'), 'aria-label': 'Show PDF position in source', onclick: () => runCommand('sync.inverse') }, icon('arrow-left')),
+    el('button', { dataset: { command: 'sync.forward' }, onclick: () => runCommand('sync.forward') }, icon('arrow-right')),
+    el('button', { dataset: { command: 'sync.inverse' }, onclick: () => runCommand('sync.inverse') }, icon('arrow-left')),
   );
-  makeSyncPillDraggable(syncPill);
   const paneDivider = el('div', { class: 'divider divider-sync', role: 'separator', 'aria-orientation': 'vertical' }, syncPill);
 
   const workspace = el('div', { class: 'workspace' }, editorPane, paneDivider, pdfPane);
@@ -325,9 +324,7 @@ function buildChrome(id) {
   setupResizer(paneDivider, pdfPane, 'flex', 240, null, 'pdfWidth');
 
   state.pdf = new PdfViewer(pdfScroll, {
-    onZoomChange: (pct, mode) => {
-      zoomLabel.textContent = mode === 'width' ? 'Fit W' : mode === 'height' ? 'Fit H' : `${pct}%`;
-    },
+    onZoomChange: (pct) => { zoomLabel.textContent = `${pct}%`; },
     onPageChange: (p, total) => { pageIndicator.textContent = `${p} of ${total}`; },
     onSyncClick: async (page, x, y) => {
       try {
@@ -432,6 +429,8 @@ function openProjectSettings() {
 
 function openPdfFind() {
   if (!ui?.findBar) return;
+  // The log takes the PDF's place, so matches would be highlighted out of sight.
+  if (state.logOpen) toggleLogs();
   ui.findBar.hidden = false;
   ui.findBar.parentElement?.classList.add('find-open');
   ui.findInput.focus();
@@ -909,8 +908,8 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     pane.style.width = `${w}px`;
   }
   handle.addEventListener('pointerdown', (e) => {
-    // The sync pill rides on this divider; a pointerdown there is a button click
-    // or a pill drag, never a resize.
+    // The sync pill rides on this divider; a pointerdown there is a button
+    // click, never a resize.
     if (e.target.closest('.sync-pill')) return;
     e.preventDefault();
     handle.classList.add('dragging');
@@ -942,37 +941,6 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
     handle.addEventListener('pointercancel', onUp);
-  });
-}
-
-// The sync pill slides vertically along the divider; its position persists.
-function makeSyncPillDraggable(pill) {
-  pill.style.top = `${prefs.syncPillTop}%`;
-  pill.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;   // arrows are their own controls
-    e.preventDefault();
-    e.stopPropagation();
-    const parent = pill.parentElement;
-    pill.setPointerCapture(e.pointerId);
-    pill.classList.add('dragging');
-    const onMove = (ev) => {
-      const r = parent.getBoundingClientRect();
-      const pct = Math.max(4, Math.min(92, ((ev.clientY - r.top) / r.height) * 100));
-      pill.style.top = `${pct}%`;
-    };
-    let done = false;
-    const onUp = () => {
-      if (done) return;
-      done = true;
-      pill.classList.remove('dragging');
-      pill.removeEventListener('pointermove', onMove);
-      pill.removeEventListener('pointerup', onUp);
-      pill.removeEventListener('pointercancel', onUp);
-      prefs.syncPillTop = Math.round(parseFloat(pill.style.top));
-    };
-    pill.addEventListener('pointermove', onMove);
-    pill.addEventListener('pointerup', onUp);
-    pill.addEventListener('pointercancel', onUp);
   });
 }
 
