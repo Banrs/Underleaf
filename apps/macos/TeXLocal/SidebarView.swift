@@ -49,7 +49,6 @@ private struct FilesList: View {
     /// The row whose name is being edited in place, and the name so far.
     @State private var renaming: String?
     @State private var newName = ""
-    @FocusState private var renameFocused: Bool
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
 
@@ -64,17 +63,8 @@ private struct FilesList: View {
             Task { await project.importFiles(urls) }
             return true
         }
-        .confirmationDialog(
-            "Move “\((deleting.map { ($0 as NSString).lastPathComponent }) ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { path in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await project.deleteEntry(path) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
+        .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
+            Task { await project.deleteEntry(path) }
         }
     }
 
@@ -171,7 +161,7 @@ private struct FilesList: View {
         return Label {
             HStack {
                 if renaming == node.path {
-                    nameField(node)
+                    RenameField(text: $newName) { commitRename(node) } cancel: { renaming = nil }
                 } else {
                     Text(node.name)
                 }
@@ -203,25 +193,6 @@ private struct FilesList: View {
             Divider()
             Button("Move to Trash") { deleting = node.path }
         }
-    }
-
-    /// The row's name, edited in place: Return or clicking away renames,
-    /// Escape leaves it as it was.
-    private func nameField(_ node: TreeNode) -> some View {
-        TextField("Name", text: $newName)
-            .labelsHidden()
-            .focused($renameFocused)
-            .onSubmit { commitRename(node) }
-            .onExitCommand { renaming = nil }
-            .onChange(of: renameFocused) { was, focused in
-                if was, !focused { commitRename(node) }
-            }
-            // Once the context menu has closed and handed the list its
-            // focus back, or the list takes it straight from the field.
-            .task {
-                try? await Task.sleep(for: .milliseconds(150))
-                renameFocused = true
-            }
     }
 
     private func commitRename(_ node: TreeNode) {

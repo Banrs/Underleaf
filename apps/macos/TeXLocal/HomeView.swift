@@ -35,19 +35,7 @@ struct HomeView: View {
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
         .task(id: app.tex?.available) { await app.watchForTeX() }
-        // `presenting`, so the title keeps its name while the dialog closes.
-        .confirmationDialog(
-            "Move “\(deleting?.name ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { project in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await app.delete(project) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
-        }
+        .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
     /// The window's margin: where the inset table starts its column titles
@@ -164,27 +152,12 @@ private struct ProjectRow: View {
     @Binding var renaming: ProjectInfo.ID?
     @Binding var newName: String
     let commit: () -> Void
-    @FocusState private var focused: Bool
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 if renaming == project.id {
-                    TextField("Name", text: $newName)
-                        .labelsHidden()
-                        .focused($focused)
-                        .onSubmit(commit)
-                        .onExitCommand { renaming = nil }
-                        .onChange(of: focused) { was, now in
-                            if was, !now { commit() }
-                        }
-                        // Once the context menu has closed and handed the
-                        // list its focus back, or the list takes it from the
-                        // field.
-                        .task {
-                            try? await Task.sleep(for: .milliseconds(150))
-                            focused = true
-                        }
+                    RenameField(text: $newName, commit: commit) { renaming = nil }
                 } else {
                     Text(project.name).font(.headline)
                 }

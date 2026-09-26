@@ -303,7 +303,8 @@ struct SearchField: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.field = self
         view.placeholderString = prompt
-        view.controlSize = NSControl.ControlSize(context.environment.controlSize)
+        // The SDK maps SwiftUI's sizes to AppKit's, so the field matches its neighbours.
+        view.controlSize = NSControl.ControlSize(context.environment.controlSize) ?? .regular
         view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
         if view.stringValue != text { view.stringValue = text }
         // The field copies its menu, so it is made again when a state changes.
@@ -323,20 +324,6 @@ struct SearchField: NSViewRepresentable {
         if coordinator.focus != focus {
             coordinator.focus = focus
             (view as? FocusingSearchField)?.takeFocus()
-        }
-    }
-}
-
-extension NSControl.ControlSize {
-    /// AppKit's size for SwiftUI's, so a wrapped control matches its neighbours.
-    init(_ size: ControlSize) {
-        self = switch size {
-        case .mini: .mini
-        case .small: .small
-        case .regular: .regular
-        case .large: .large
-        case .extraLarge: .extraLarge
-        @unknown default: .regular
         }
     }
 }
@@ -393,6 +380,32 @@ struct DialogSheet<Fields: View>: View {
                 .disabled(!enabled)
             }
         }
+    }
+}
+
+/// A name edited in place, as Finder renames: Return or clicking away
+/// commits, Escape leaves it as it was.
+struct RenameField: View {
+    @Binding var text: String
+    let commit: () -> Void
+    let cancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $text)
+            .labelsHidden()
+            .focused($focused)
+            .onSubmit(commit)
+            .onExitCommand(perform: cancel)
+            .onChange(of: focused) { was, now in
+                if was, !now { commit() }
+            }
+            // Once the context menu has closed and handed the list its focus
+            // back, or the list takes it straight from the field.
+            .task {
+                try? await Task.sleep(for: .milliseconds(150))
+                focused = true
+            }
     }
 }
 

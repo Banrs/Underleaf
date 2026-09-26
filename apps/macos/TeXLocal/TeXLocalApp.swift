@@ -60,6 +60,21 @@ extension Binding where Value == Bool {
     }
 }
 
+extension View {
+    /// Asks before moving an item to the Trash. Not destructive-styled: moving
+    /// it was chosen, and the Trash gives it back (HIG, Alerts). `presenting`,
+    /// so the title keeps its name while the dialog closes.
+    func trashConfirmation<Item: Sendable>(_ item: Binding<Item?>, name: @escaping (Item) -> String,
+                                           perform: @escaping (Item) -> Void) -> some View {
+        confirmationDialog("Move “\(item.wrappedValue.map(name) ?? "")” to the Trash?", isPresented: Binding(presenting: item),
+                           titleVisibility: .visible, presenting: item.wrappedValue) { value in
+            Button("Move to Trash") { perform(value) }
+        } message: { _ in
+            Text("You can restore it from the Trash.")
+        }
+    }
+}
+
 struct RootView: View {
     @Environment(AppModel.self) private var app
 
