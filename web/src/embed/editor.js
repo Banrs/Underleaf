@@ -269,7 +269,7 @@ window.texlocal = {
     else if (name === 'findPrevious') { if (hostFind) step(findPrevious); else editor.findPrevious(); }
     else if (name === 'replaceNext') step(replaceNext);
     else if (name === 'replaceAll') step(replaceAll);
-    else if (name === 'insert') editor.insertTemplate(arg);
+    else if (name === 'block') return editor.insertBlock(arg);
     else if (name === 'heading') editor.setHeading(arg ?? '');
     else if (name === 'text') editor.insertText(arg ?? '');
     else if (name === 'symbol') editor.insertSymbol(arg ?? '');

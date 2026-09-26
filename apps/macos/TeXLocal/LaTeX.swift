@@ -4,10 +4,11 @@ import Foundation
 // are menu items here, so title case without the web's parentheticals:
 // "Aligned Equations" is the web's "Align (multi-line math)".
 
-/// A snippet to write at the cursor: a block, or (`inline`) a command
-/// around the selection. "$0" marks where the cursor lands. `symbol`: the
-/// source bar has a button for it, with that symbol; the rest are in its
-/// ⋯ menu.
+/// A snippet to write at the cursor: a block, whose `body` is its id in
+/// the editor page's one table of them (web/src/latex-data.js
+/// `BLOCK_TEMPLATES`), or (`inline`) a command around the selection, "$0"
+/// marking where the selection goes. `symbol`: the source bar has a button
+/// for it, with that symbol; the rest are in its ⋯ menu.
 struct Template {
     let title: String
     let body: String
@@ -17,24 +18,24 @@ struct Template {
 
 extension ProjectModel {
     func insert(_ template: Template) {
-        format(template.inline ? "inline" : "insert", template.body)
+        format(template.inline ? "inline" : "block", template.body)
     }
 }
 
 /// Blocks: web/src/sourcebar.js `INSERT_TEMPLATES`.
 let insertTemplates = [
-    Template(title: "Figure", body: "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n", symbol: "photo"),
-    Template(title: "Table", body: "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n", symbol: "tablecells"),
-    Template(title: "Equation", body: "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    Template(title: "Aligned Equations", body: "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    Template(title: "Code Block", body: "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
+    Template(title: "Figure", body: "figure", symbol: "photo"),
+    Template(title: "Table", body: "table", symbol: "tablecells"),
+    Template(title: "Equation", body: "equation"),
+    Template(title: "Aligned Equations", body: "align"),
+    Template(title: "Code Block", body: "code"),
 ]
 
 /// The lists: web/src/sourcebar.js `LIST_TEMPLATES`.
 let listTemplates = [
-    Template(title: "Bulleted List", body: "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n", symbol: "list.bullet"),
-    Template(title: "Numbered List", body: "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n", symbol: "list.number"),
-    Template(title: "Description List", body: "\\begin{description}\n  \\item[$0] \n\\end{description}\n"),
+    Template(title: "Bulleted List", body: "itemize", symbol: "list.bullet"),
+    Template(title: "Numbered List", body: "enumerate", symbol: "list.number"),
+    Template(title: "Description List", body: "description"),
 ]
 
 /// Cross-references, citations and links; each opens completion inside

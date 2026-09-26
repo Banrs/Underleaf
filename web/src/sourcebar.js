@@ -17,18 +17,14 @@ export const HEADING_LEVELS = [
   ['Subsection', 'subsection'], ['Subsubsection', 'subsubsection'], ['Paragraph', 'paragraph'],
 ];
 
+// The blocks, by their ids in latex-data.js BLOCK_TEMPLATES.
 const INSERT_TEMPLATES = [
-  ['Figure', '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n'],
-  ['Table', '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n'],
-  ['Equation', '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n'],
-  ['Align (multi-line math)', '\\begin{align}\n  $0 \\\\\n\\end{align}\n'],
-  ['Code Block', '\\begin{verbatim}\n$0\n\\end{verbatim}\n'],
+  ['Figure', 'figure'], ['Table', 'table'], ['Equation', 'equation'],
+  ['Align (multi-line math)', 'align'], ['Code Block', 'code'],
 ];
 
 const LIST_TEMPLATES = [
-  ['Bulleted List', '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n'],
-  ['Numbered List', '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n'],
-  ['Description List', '\\begin{description}\n  \\item[$0] \n\\end{description}\n'],
+  ['Bulleted List', 'itemize'], ['Numbered List', 'enumerate'], ['Description List', 'description'],
 ];
 
 // Cross-references, citations and links, around the selection; "$0" is
@@ -93,7 +89,7 @@ export function foldCount(widths, room) {
 
 const find = (list, title) => list.find(([t]) => t === title)[1];
 const edit = (fn) => () => { if (state.editor) fn(state.editor); };
-const insert = (tpl) => edit((e) => e.insertTemplate(tpl));
+const insert = (id) => edit((e) => e.insertBlock(id));
 const inline = (tpl) => edit((e) => e.wrapSelection(...`${tpl}$0`.split('$0', 2)));
 const displayMath = edit((e) => e.wrapSelection('\\[', '\\]'));
 

@@ -52,16 +52,19 @@ public sealed partial class WorkspaceView : UserControl
         ]),
     ];
 
-    /// <summary>web/src/workspace.js INSERT_TEMPLATES; "$0" marks where the cursor lands.</summary>
-    private static readonly (string Label, string Template)[] InsertTemplates =
+    /// <summary>
+    /// The Insert menu's blocks, by their ids in the editor page's one table
+    /// of them (web/src/latex-data.js BLOCK_TEMPLATES).
+    /// </summary>
+    private static readonly (string Label, string Id)[] InsertBlocks =
     [
-        ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-        ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-        ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-        ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-        ("Bulleted list", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-        ("Numbered list", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-        ("Code block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
+        ("Figure", "figure"),
+        ("Table", "table"),
+        ("Equation", "equation"),
+        ("Align (multi-line math)", "align"),
+        ("Bulleted list", "itemize"),
+        ("Numbered list", "enumerate"),
+        ("Code block", "code"),
     ];
 
     public WorkspaceView()
@@ -79,9 +82,9 @@ public sealed partial class WorkspaceView : UserControl
         Document.Children.Add(previewSplitter);
 
         BuildMenu();
-        foreach (var (label, template) in InsertTemplates)
+        foreach (var (label, id) in InsertBlocks)
         {
-            InsertMenu.Items.Add(ContextMenus.Item(label, () => Format("insert", template)));
+            InsertMenu.Items.Add(ContextMenus.Item(label, () => Format("block", id)));
         }
         Pdf.Command = command => Main.Perform(command);
     }

@@ -1,4 +1,18 @@
-// Static completion data for the LaTeX editor.
+// Static LaTeX for the editor: the blocks it inserts and its completions.
+
+// The blocks the source bar and the native apps' Insert and Format menus
+// write, by id: the one copy, which the Mac and Windows reach through the
+// editor page's `block` command. "$0" marks where the cursor lands.
+export const BLOCK_TEMPLATES = {
+  figure: '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n',
+  table: '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n',
+  equation: '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n',
+  align: '\\begin{align}\n  $0 \\\\\n\\end{align}\n',
+  code: '\\begin{verbatim}\n$0\n\\end{verbatim}\n',
+  itemize: '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n',
+  enumerate: '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n',
+  description: '\\begin{description}\n  \\item[$0] \n\\end{description}\n',
+};
 
 export const ENVIRONMENTS = [
   'document', 'abstract', 'itemize', 'enumerate', 'description', 'figure', 'table',
