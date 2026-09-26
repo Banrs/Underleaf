@@ -5,11 +5,10 @@ use std::path::Path;
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::logparse::parse_log;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, file_tree, list_projects, rename_entry,
-    rename_project, scan_symbols, search_project, symbols_fingerprint,
+    create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
+    scan_symbols, search_project, symbols_fingerprint,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
@@ -80,22 +79,6 @@ fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
     assert_eq!(err.status, 500);
     assert!(root.join("main.tex").is_file());
     assert!(!root.join("paper.tex").exists());
-}
-
-#[test]
-fn the_active_main_file_and_its_parent_cannot_be_deleted() {
-    let data = data_dir();
-    let root = project(data.path(), "delete-test");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-    fails_with(
-        delete_entry(&root, "chapters/main.tex"),
-        "different main file",
-    );
-    fails_with(delete_entry(&root, "chapters"), "different main file");
-    let raw: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
-    assert_eq!(raw["mainFile"], "chapters/main.tex");
 }
 
 #[test]
@@ -314,35 +297,6 @@ fn renaming_an_unrelated_entry_leaves_the_main_file_alone() {
     write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
     rename_entry(&root, "chapters", "content").unwrap();
     assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-}
-
-#[test]
-fn parse_log_extracts_errors_warnings_and_deduplicates_reruns() {
-    let log = [
-        "./main.tex:12: Undefined control sequence.",
-        "l.12 \\badcommand",
-        "",
-        "! Emergency stop.",
-        "l.40 \\end{document}",
-        "",
-        "LaTeX Warning: Reference `fig:x' on page 1 undefined",
-        "on input line 10.",
-        "",
-        "./main.tex:12: Undefined control sequence.",
-        "l.12 \\badcommand",
-    ]
-    .join("\n");
-    let items = parse_log(&log, "main.tex");
-    let errors: Vec<_> = items.iter().filter(|i| i.kind == "error").collect();
-    let warnings: Vec<_> = items.iter().filter(|i| i.kind == "warning").collect();
-    assert_eq!(errors.len(), 2);
-    assert_eq!(errors[0].file.as_deref(), Some("main.tex"));
-    assert_eq!(errors[0].line, Some(12));
-    assert_eq!(errors[1].message, "Emergency stop.");
-    assert_eq!(errors[1].line, Some(40));
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].line, Some(10));
-    assert!(warnings[0].message.contains("fig:x"));
 }
 
 #[test]

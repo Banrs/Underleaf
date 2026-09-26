@@ -333,6 +333,8 @@ mod tests {
         let crlf = lf.replace('\n', "\r\n");
         let items = parse_log(&crlf, "main.tex");
         assert_eq!(items, parse_log(lf, "main.tex"));
+        // The log's ./main.tex, without its ./
+        assert_eq!(items[0].file.as_deref(), Some("main.tex"));
         assert_eq!(
             items[0].message,
             "Undefined control sequence. <recently read> \\foo"

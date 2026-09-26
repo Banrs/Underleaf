@@ -118,14 +118,6 @@ fn upload_rel(dir: &str, name: &str) -> String {
     }
 }
 
-/// Write a file whole, creating the folders it sits in.
-fn write_creating(abs: &Path, contents: impl AsRef<[u8]>) -> Result<(), CoreError> {
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(atomic::write(abs, contents.as_ref())?)
-}
-
 fn too_large() -> CoreError {
     CoreError::bad_request(format!(
         "File exceeds the {} MB upload limit",
@@ -377,7 +369,7 @@ impl Service {
                 }
                 projects::discard_replaced(root, &taken)?;
             }
-            write_creating(&abs, bytes)
+            projects::write_creating(&abs, bytes)
         })?;
         Ok(rel)
     }
@@ -476,7 +468,7 @@ impl Service {
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
                 out(self.edit(&s("id")?, |root| {
-                    write_creating(&paths::safe_write_path(root, &path)?, text)
+                    projects::write_creating(&paths::safe_write_path(root, &path)?, text.as_bytes())
                 })?)
             }
             "create_entry" => {

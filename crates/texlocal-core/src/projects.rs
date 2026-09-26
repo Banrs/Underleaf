@@ -3,7 +3,6 @@
 
 use std::cmp::Reverse;
 use std::collections::HashSet;
-use std::fmt::Display;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -14,6 +13,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::atomic;
 use crate::error::CoreError;
 use crate::paths::{project_root, rel_key, safe_path, safe_write_path, sanitize_name};
 use crate::settings::{read_settings, write_settings};
@@ -370,23 +370,15 @@ fn same_entry(a: &Path, b: &Path) -> bool {
         && matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
-fn discard_using<E, F>(path: &Path, move_to_trash: F) -> Result<(), CoreError>
-where
-    E: Display,
-    F: FnOnce(&Path) -> Result<(), E>,
-{
-    move_to_trash(path).map_err(|err| {
-        CoreError::internal(format!(
-            "Could not move the item to Trash or Recycle Bin: {err}"
-        ))
-    })
-}
-
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 fn discard(path: &Path) -> Result<(), CoreError> {
-    discard_using(path, |path| trash::delete(path))
+    trash::delete(path).map_err(|err| {
+        CoreError::internal(format!(
+            "Could not move the item to Trash or Recycle Bin: {err}"
+        ))
+    })
 }
 
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
@@ -435,14 +427,18 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
         return Err(CoreError::conflict("Already exists"));
     }
     if dir {
-        fs::create_dir_all(&abs)?;
+        Ok(fs::create_dir_all(&abs)?)
     } else {
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&abs, "")?;
+        write_creating(&abs, b"")
     }
-    Ok(())
+}
+
+/// Write a file whole, creating the folders it sits in.
+pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<(), CoreError> {
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(atomic::write(abs, contents)?)
 }
 
 /// Whether `path` lies strictly inside the folder `dir`; both are
@@ -750,9 +746,10 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_file, create_project, delete_entry_using, discard_using};
+    use super::{create_file, create_project, delete_entry_using};
     use crate::paths::project_root;
     use crate::settings::write_settings;
+    use crate::CoreError;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -770,7 +767,7 @@ mod tests {
     fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
         let (_data, root) = project();
         create_file(&root, "notes/scratch.tex", false).unwrap();
-        let unavailable = |path: &_| discard_using(path, |_| Err::<(), _>("trash unavailable"));
+        let unavailable = |_: &_| Err(CoreError::internal("trash unavailable"));
         let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
         assert_eq!(err.status, 500);
         assert!(root.join("notes/scratch.tex").is_file());
