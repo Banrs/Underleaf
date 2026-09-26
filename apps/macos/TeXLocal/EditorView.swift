@@ -102,6 +102,7 @@ private struct SourcePane: View {
             if project.findShown {
                 Divider()
                 SourceFindBar(project: project)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
             Divider()
             if project.openPath != nil {
@@ -114,6 +115,7 @@ private struct SourcePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .animation(.snappy(duration: 0.25), value: project.findShown)
     }
 }
 
@@ -210,6 +212,8 @@ private struct StatusBar: View {
         .monospacedDigit()
         .lineLimit(1)
         .fixedSize()
+        .animation(.default, value: project.compiling)
+        .animation(.default, value: project.result?.ok)
     }
 
     private var failedTitle: String {

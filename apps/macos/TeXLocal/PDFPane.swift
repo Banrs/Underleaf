@@ -16,30 +16,25 @@ struct PDFPane: View {
 
     var body: some View {
         // The pane's actions (Compile, zoom, Share) in a bar stacked over
-        // the pages, as the source's are over the source: the bar is
-        // opaque, so a page under it would only be hidden. What acts on
-        // the pages themselves floats over them on glass: find at the top,
-        // the page and freshness at the foot. The capsules take the paper's
-        // appearance, not the window's: the glass shows the page through
-        // it, so on white paper in a dark window its labels are drawn dark,
-        // as over any light content.
+        // the pages, then the page and whether the preview is current in a
+        // secondary row, as the source has its bar and location row: the
+        // two panes' rows and hairlines line up. Find floats over the pages
+        // on glass, taking the paper's appearance rather than the window's
+        // (the glass shows the page through it, so on white paper in a dark
+        // window its labels are drawn dark, as over any light content).
         VStack(spacing: 0) {
             bar
+            PageRow(project: project, controller: controller)
             Divider()
             pages
                 .overlay(alignment: .top) {
                     if finding, project.pdfVersion > 0 {
                         findBar.padding(FloatingMetrics.margin)
                             .environment(\.colorScheme, paperScheme)
+                            .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
                     }
                 }
-                .overlay(alignment: .bottom) {
-                    if project.pdfVersion > 0 {
-                        PageControls(project: project, controller: controller)
-                            .padding(FloatingMetrics.margin)
-                            .environment(\.colorScheme, paperScheme)
-                    }
-                }
+                .animation(.snappy(duration: 0.25), value: finding)
         }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
@@ -317,23 +312,26 @@ struct PDFPane: View {
 /// button that does what fixes it: compile, or show the failed build's
 /// issues. A narrow pane shortens the page to "2 / 5" and the freshness to
 /// its symbol.
-private struct PageControls: View {
+/// The page and whether the preview is current, as quiet text in the row
+/// under the PDF's bar, as Preview shows the page: paging is the keyboard's
+/// and the scroll's. The PDF's page, not the one LaTeX prints: front matter
+/// and roman numbers make those differ.
+private struct PageRow: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
     let controller: PDFController
 
     var body: some View {
-        GlassEffectContainer(spacing: FloatingMetrics.blending) {
-            ViewThatFits(in: .horizontal) {
-                controls(long: true)
-                controls(long: false)
+        SecondaryBar {
+            if project.pdfVersion > 0, controller.pageCount > 0 {
+                Text("Page \(controller.page) of \(controller.pageCount)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .animation(.default, value: controller.page)
             }
-        }
-    }
-
-    private func controls(long: Bool) -> some View {
-        HStack(spacing: FloatingMetrics.spacing) {
-            if let freshness = project.pdfFreshness {
+            Spacer(minLength: 0)
+            if project.pdfVersion > 0, let freshness = project.pdfFreshness {
                 Button { fix(freshness) } label: {
                     Label {
                         Text(freshness.title)
@@ -342,35 +340,16 @@ private struct PageControls: View {
                         Image(systemName: freshness.systemImage)
                             .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     }
-                    .labelStyle(long ? AnyLabelStyle(.titleAndIcon) : AnyLabelStyle(.iconOnly))
                 }
-                .onGlass()
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
                 .help(freshness == .lastSuccessful
                       ? "The latest build failed; this is the last one that succeeded. Show Issues"
                       : "The preview doesn’t reflect the current source. Compile")
-                .fixedSize()
-                .floatingGlass()
-            }
-            if controller.pageCount > 0 {
-                HStack(spacing: FloatingMetrics.itemSpacing) {
-                    Button("Previous Page", systemImage: "chevron.up") { controller.view?.goToPreviousPage(nil) }
-                        .onGlass()
-                        .help("Previous Page")
-                        .disabled(controller.page <= 1)
-                    Text(long ? "Page \(controller.page) of \(controller.pageCount)" : "\(controller.page) / \(controller.pageCount)")
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                    Button("Next Page", systemImage: "chevron.down") { controller.view?.goToNextPage(nil) }
-                        .onGlass()
-                        .help("Next Page")
-                        .disabled(controller.page >= controller.pageCount)
-                }
-                .fixedSize()
-                .floatingGlass()
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Page \(controller.page) of \(controller.pageCount)")
+                .transition(.opacity)
             }
         }
+        .animation(.default, value: project.pdfFreshness)
     }
 
     private func fix(_ freshness: PDFFreshness) {
@@ -802,10 +781,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         // of the view on every resize, scrolling a page margin out of sight.
         if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
             scroll.automaticallyAdjustsContentInsets = false
-            // At the foot, room for the floating page controls, so the last
-            // page scrolls clear of them.
-            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0,
-                                                bottom: FloatingMetrics.height + 2 * FloatingMetrics.margin, right: 0)
+            scroll.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
         }
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
