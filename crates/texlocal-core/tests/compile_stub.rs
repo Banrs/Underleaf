@@ -308,6 +308,21 @@ async fn a_build_compiles_past_errors_unless_the_project_stops_on_the_first() {
 }
 
 #[tokio::test]
+async fn a_projects_own_latexmkrc_runs_only_with_shell_escape() {
+    // -norc turns off every rc file latexmk would read by itself, the
+    // project's included; a trusted project keeps them.
+    let (_tmp, root, mgr) = setup(RECORD_ARGS);
+    compile(&mgr, &root).await;
+    assert!(args(&root).contains(&"-norc".into()));
+
+    write_settings(&root, &json!({ "shellEscape": true })).unwrap();
+    compile(&mgr, &root).await;
+    let passed = args(&root);
+    assert!(!passed.contains(&"-norc".into()), "{passed:?}");
+    assert!(passed.contains(&"-shell-escape".into()), "{passed:?}");
+}
+
+#[tokio::test]
 async fn a_failed_run_shows_the_pdf_it_wrote_with_its_errors() {
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nprintf './main.tex:4: Undefined control sequence.\\nl.4 x\\n' > build/main.log\nprintf 'fake' > build/main.pdf\nexit 12\n",

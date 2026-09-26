@@ -3,6 +3,7 @@
 //! stale-output guard.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -493,6 +494,22 @@ impl CompileRun<'_> {
     }
 }
 
+/// The user's own latexmkrc, found where latexmk looks for it, so that it can
+/// be named after -norc turns off the automatic ones. A relative home would
+/// find the project's own rc instead, so only absolute paths count.
+fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
+    let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
+    let home = dir("HOME").or_else(|| dir("USERPROFILE"))?;
+    let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
+    [
+        config.join("latexmk").join("latexmkrc"),
+        home.join(".latexmkrc"),
+    ]
+    .into_iter()
+    .find(|rc| rc.is_file())
+    .map(|rc| rc.to_string_lossy().into_owned())
+}
+
 impl CompileManager {
     fn path(&self, tex_dir: Option<&Path>) -> String {
         self.path_env.clone().unwrap_or_else(|| tex_path(tex_dir))
@@ -619,8 +636,19 @@ impl CompileManager {
         ]);
         let outdir_arg = format!("-outdir={BUILD_DIR}");
         args.push(&outdir_arg);
+        // A latexmkrc is Perl that runs on every build, so a project's own is
+        // honoured only in a project trusted with shell escape. -norc turns
+        // off every automatic rc file, and the user's own is named again.
+        let user_rc = (!shell_escape)
+            .then(|| user_latexmkrc(|key| std::env::var_os(key)))
+            .flatten();
         if shell_escape {
             args.push("-shell-escape");
+        } else {
+            args.push("-norc");
+        }
+        if let Some(rc) = &user_rc {
+            args.extend(["-r", rc]);
         }
         args.push(&main_arg);
 
@@ -785,7 +813,9 @@ fn tail(s: String, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_tail, version_line};
+    use super::{read_tail, user_latexmkrc, version_line};
+    use std::ffi::OsString;
+    use std::path::Path;
 
     #[test]
     fn a_long_log_is_read_from_its_last_whole_line() {
@@ -816,5 +846,25 @@ mod tests {
             "Latexmk, John Collins, 1 Jan 2025. Version 4.86"
         );
         assert_eq!(version_line("something else\n"), "something else");
+    }
+
+    #[test]
+    fn the_users_own_latexmkrc_is_found_where_latexmk_looks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let env = |home: &Path| {
+            let home = OsString::from(home);
+            move |key: &str| (key == "HOME").then(|| home.clone())
+        };
+        assert_eq!(user_latexmkrc(env(home)), None);
+        std::fs::write(home.join(".latexmkrc"), "").unwrap();
+        let rc = |path: &Path| Some(path.to_string_lossy().into_owned());
+        assert_eq!(user_latexmkrc(env(home)), rc(&home.join(".latexmkrc")));
+        let config = home.join(".config/latexmk/latexmkrc");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "").unwrap();
+        assert_eq!(user_latexmkrc(env(home)), rc(&config));
+        // A relative home would be the project's own folder.
+        assert_eq!(user_latexmkrc(env(Path::new("."))), None);
     }
 }
