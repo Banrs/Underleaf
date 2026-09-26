@@ -172,8 +172,7 @@ struct PDFPane: View {
     /// keeps the width of its widest ("000%"), centred, so − and + stay put
     /// as it changes; a click opens its menu of ways to fit and preset
     /// scales, the one in use checked (while fitting, no preset is, even at
-    /// a preset's scale). Not the View menu's commands: their route
-    /// (`requestPDF`) also hides the panel.
+    /// a preset's scale).
     private var zoomControls: some View {
         let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
             .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {

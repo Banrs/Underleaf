@@ -69,11 +69,10 @@ final class AppModel {
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
-    /// rather than whenever the pane next appears. Find floats over the
-    /// pages, so it leaves the build panel open.
+    /// rather than whenever the pane next appears. The build panel stays:
+    /// it sits under both panes, not over the PDF.
     func requestPDF(_ action: PDFAction) {
         project?.showPDF = true
-        if action != .find { project?.showLogs = false }
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
