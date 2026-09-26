@@ -131,11 +131,20 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile at the leading edge, zoom at the trailing. Share is the
-    /// window toolbar's.
+    /// Compile, then Share, at the leading edge, as Overleaf keeps its
+    /// download beside Recompile: two push buttons, one family. Zoom at the
+    /// trailing edge. (Save PDF As… is the File menu's.)
     private func actions(compact: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             compileControls(compact: compact)
+            ShareLink(items: project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []) {
+                Label("Share PDF", systemImage: "square.and.arrow.up")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.bordered)
+            .fixedSize()
+            .disabled(project.pdfVersion == 0)
+            .help("Share PDF")
             Spacer(minLength: 0)
             if zoom { zoomControls }
         }
