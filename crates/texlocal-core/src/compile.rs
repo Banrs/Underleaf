@@ -627,6 +627,14 @@ fn finish(run: &CompileRun, code: i32, fallback_output: String) -> CompileResult
         .into_iter()
         .partition(|item| item.kind == "error");
     let ok = code == 0 && run.outdir.join(format!("{}.pdf", run.base)).exists();
+    if !ok {
+        // latexmk's record of the run. After a fatal TeX error it holds the
+        // truncated .aux's state, so bibtex fails on it ("no \citation") and
+        // every later run stops at "gave an error in previous invocation",
+        // even with -g and the source fixed. Without it the next run starts
+        // afresh.
+        let _ = std::fs::remove_file(run.outdir.join(format!("{}.fdb_latexmk", run.base)));
+    }
 
     CompileResult {
         ok,

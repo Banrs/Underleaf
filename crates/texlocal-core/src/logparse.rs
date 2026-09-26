@@ -27,6 +27,10 @@ static WARNING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(LaTeX|Package (\S+)|Class (\S+)) Warning:\s*(.*)$").unwrap());
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
 
+fn has_error(items: &[LogItem]) -> bool {
+    items.iter().any(|item| item.kind == "error")
+}
+
 pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     // lines(), not split('\n'): a Windows TeX log or latexmk's own output ends
     // lines with \r\n, and a kept \r would land mid-message when a
@@ -45,21 +49,36 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                 message.push(' ');
                 message.push_str(next.trim());
             }
+            // TeX's closing "==> Fatal error occurred" takes the place of
+            // the error that stopped it: that error names the place, and
+            // the summary names none of its own. After that error it is
+            // left out, so one mistake counts as one error.
+            let summary = message.trim_start().starts_with("==>");
+            if summary && has_error(&items) {
+                continue;
+            }
             let file = m[1].strip_prefix("./").unwrap_or(&m[1]).to_string();
             items.push(LogItem {
                 kind: "error",
-                file: Some(file),
-                line: m[2].parse().ok(),
+                file: (!summary).then_some(file),
+                line: if summary { None } else { m[2].parse().ok() },
                 message: message.trim().to_string(),
             });
         } else if let Some(message) = line.strip_prefix("! ") {
-            let line_no = lines[(i + 1)..(i + 12).min(lines.len())]
+            if message.trim_start().starts_with("==>") && has_error(&items) {
+                continue;
+            }
+            // Its own "l.<n>" echo only: not one that belongs to the next
+            // error, as a closing "==> Fatal error occurred" would borrow.
+            let line_no: Option<u32> = lines[(i + 1)..(i + 12).min(lines.len())]
                 .iter()
+                .take_while(|next| !next.starts_with('!') && !FILE_LINE.is_match(next))
                 .find_map(|next| L_NO.captures(next))
                 .and_then(|lm| lm[1].parse().ok());
             items.push(LogItem {
                 kind: "error",
-                file: Some(main_file.to_string()),
+                // The main file only where the log names a line in it.
+                file: line_no.map(|_| main_file.to_string()),
                 line: line_no,
                 message: message.trim().to_string(),
             });
@@ -106,6 +125,37 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
 #[cfg(test)]
 mod tests {
     use super::parse_log;
+
+    #[test]
+    fn an_error_without_its_own_line_names_no_place() {
+        // A "!" error doesn't take the next error's "l.<n>".
+        let log = "! Emergency stop.\n\
+                   ./main.tex:12: Undefined control sequence.\n\
+                   l.12 \\foo\n";
+        let items = parse_log(log, "main.tex");
+        assert_eq!((items[0].file.as_deref(), items[0].line), (None, None));
+        assert_eq!(items[1].line, Some(12));
+        // TeX's closing summary names the stopping error's line, not its own.
+        let log = "./main.tex:12: Undefined control sequence.\n\
+                   l.12 \\foo\n\
+                   \n\
+                   ./main.tex:12:  ==> Fatal error occurred, no output PDF file produced!\n";
+        let items = parse_log(log, "main.tex");
+        assert_eq!(items.len(), 1, "the summary folds into the error before it");
+        assert_eq!(items[0].line, Some(12));
+        // Alone, it is the failure's one record, with no place.
+        let items = parse_log(
+            "./main.tex:12:  ==> Fatal error occurred, no output PDF file produced!\n",
+            "main.tex",
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!((items[0].file.as_deref(), items[0].line), (None, None));
+        let items = parse_log(
+            "! Emergency stop.\n! ==> Fatal error occurred, no output PDF file produced!\n",
+            "main.tex",
+        );
+        assert_eq!(items.len(), 1);
+    }
 
     #[test]
     fn crlf_logs_parse_like_lf_logs() {

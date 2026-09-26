@@ -76,6 +76,24 @@ async fn a_compile_reruns_even_after_a_failed_run() {
 }
 
 #[tokio::test]
+async fn a_failed_run_forgets_latexmks_record_so_the_next_starts_afresh() {
+    let (_tmp, root, mgr) =
+        setup("#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nexit 12\n");
+    let result = compile(&mgr, &root).await;
+    assert!(!result.ok);
+    assert!(!root.join("build/main.fdb_latexmk").exists());
+}
+
+#[tokio::test]
+async fn a_good_run_keeps_latexmks_record() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",
+    );
+    assert!(compile(&mgr, &root).await.ok);
+    assert!(root.join("build/main.fdb_latexmk").exists());
+}
+
+#[tokio::test]
 async fn a_stale_log_is_not_reported() {
     let (_tmp, root, mgr) =
         setup("#!/bin/sh\nmkdir -p build\nprintf 'fake' > build/main.pdf\nexit 0\n");
@@ -121,7 +139,8 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 #[tokio::test]
 async fn a_timed_out_compile_keeps_the_output_it_wrote() {
     let (_tmp, root, mut mgr) = setup("#!/bin/sh\necho 'Running pdflatex'\nsleep 20\n");
-    mgr.timeout = Some(Duration::from_millis(500));
+    // Long enough for the stub to print on a busy machine.
+    mgr.timeout = Some(Duration::from_secs(3));
     let result = compile(&mgr, &root).await;
 
     assert!(!result.ok);
