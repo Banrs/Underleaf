@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The panel's tabs.
+/// The build panel's tabs.
 enum PanelTab: String, CaseIterable, Identifiable {
     case issues, log
 
@@ -14,9 +14,11 @@ enum PanelTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// The panel below the editors, shown and hidden as VS Code's is: the
-/// build's issues, or its whole log (web/src/logs.js `renderLogs`).
+/// The build panel below the editors: the build's issues, or its whole log
+/// (web/src/logs.js `renderLogs`). The status bar's toggle and View › Hide
+/// Build Panel close it, as Xcode's debug area has no close button of its own.
 struct PanelView: View {
+    @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
@@ -38,7 +40,7 @@ struct PanelView: View {
 
     private var header: some View {
         Group {
-            Picker("Panel", selection: $project.panelTab) {
+            Picker("Build Panel", selection: $project.panelTab) {
                 ForEach(PanelTab.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -64,37 +66,47 @@ struct PanelView: View {
             }
             SearchField(text: $filter, prompt: "Filter")
                 .frame(minWidth: 60, maxWidth: 180)
-            Button("Hide Panel", systemImage: "xmark") { project.showLogs = false }
-                .help("Hide Panel")
-                .layoutPriority(1)
         }
         .labelStyle(.iconOnly)
     }
 
+    /// The build's outcome, worded as the status bar words it; only the
+    /// badges carry colour.
     @ViewBuilder
     private var summary: some View {
         if let result = project.result {
             HStack(spacing: 8) {
-                if project.errorCount > 0 {
-                    Label("\(project.errorCount) \(project.errorCount == 1 ? "error" : "errors")",
-                          systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
+                if result.ok {
+                    badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
-                    Label("Compiled", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    badge("Build Failed", "xmark.octagon.fill", .red)
+                }
+                // The failure's badge already stands for the errors.
+                if project.errorCount > 0 {
+                    Text(count(project.errorCount, "Error"))
                 }
                 if project.warningCount > 0 {
-                    Label("\(project.warningCount) \(project.warningCount == 1 ? "warning" : "warnings")",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                    badge(count(project.warningCount, "Warning"), "exclamationmark.triangle.fill", .orange)
                 }
-                Text("\(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
             }
-            .labelStyle(.titleAndIcon)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
         } else {
-            Text("Not compiled yet").foregroundStyle(.secondary)
+            Text("Not Compiled").foregroundStyle(.secondary)
         }
+    }
+
+    private func badge(_ title: String, _ systemImage: String, _ color: Color) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(color)
+        }
+        .labelStyle(.titleAndIcon)
+    }
+
+    private func count(_ n: Int, _ noun: String) -> String {
+        "\(n) \(noun)\(n == 1 ? "" : "s")"
     }
 
     private var items: [LogItem] {
@@ -109,8 +121,14 @@ struct PanelView: View {
     @ViewBuilder
     private var issues: some View {
         if project.result == nil {
-            ContentUnavailableView("Not Compiled Yet", systemImage: "hammer",
-                                   description: Text("Compile to see errors and warnings here."))
+            ContentUnavailableView {
+                Label("Not Compiled Yet", systemImage: "hammer")
+            } description: {
+                Text("Compile to see errors and warnings here.")
+            } actions: {
+                Button("Compile") { app.perform(.compileRun) }
+                    .disabled(!app.isEnabled(.compileRun))
+            }
         } else if items.isEmpty {
             if filter.isEmpty {
                 ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
@@ -138,6 +156,39 @@ struct PanelView: View {
             ContentUnavailableView("No Log", systemImage: "doc.plaintext",
                                    description: Text("Compile to see the log here."))
         }
+    }
+}
+
+/// An error or warning; choosing it opens its line — in the main file when
+/// the log names none, as the web's does.
+private struct IssueRow: View {
+    let item: LogItem
+    let project: ProjectModel
+
+    var body: some View {
+        Button {
+            if let file { Task { await project.open(file, line: item.line) } }
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.message).lineLimit(3).textSelection(.enabled)
+                    if let file = item.file {
+                        Text(item.line.map { "\(file):\($0)" } ?? file)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } icon: {
+                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(item.isError ? .red : .orange)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(file == nil)
+    }
+
+    private var file: String? {
+        item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
     }
 }
 

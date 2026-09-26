@@ -33,11 +33,12 @@ private struct GeneralSettings: View {
                     Text("Dark paper inverts the rendered PDF for night reading")
                 }
                 Picker(selection: $paneBarSize) {
-                    Text("Compact").tag(PaneSize.compact)
+                    // "Standard" keeps the stored value "compact".
+                    Text("Standard").tag(PaneSize.compact)
                     Text("Large").tag(PaneSize.large)
                 } label: {
                     Text("Toolbar Size")
-                    Text("The controls over the source and the PDF")
+                    Text("The bars over the source, the PDF and the build panel")
                 }
             }
             Section("Compiling") {

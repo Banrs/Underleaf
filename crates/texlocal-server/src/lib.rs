@@ -23,7 +23,7 @@ pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
 pub struct App {
     pub service: Arc<Service>,
-    web_dir: PathBuf,
+    web_dir: Arc<Path>,
     token: String,
     hosts: [String; 2],
     origins: [String; 2],
@@ -64,7 +64,7 @@ impl App {
     pub fn new(service: Service, web_dir: PathBuf, port: u16, token: String) -> Self {
         Self {
             service: Arc::new(service),
-            web_dir,
+            web_dir: web_dir.into(),
             token,
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
             origins: [
@@ -206,18 +206,30 @@ impl App {
 
     // ---------- files ----------
 
+    /// Path resolution and the stat run on the blocking pool with everything
+    /// else that touches the disk, in the one hop the stat alone used to take.
     async fn file(&self, path: &str, range: Option<&str>) -> Response {
-        match serve::resolve(&self.service, &segments(path)) {
-            Ok(resolved) => {
-                let response = send_file(&resolved.path, range).await;
-                if resolved.sandboxed {
-                    // A project file must never execute as a document.
-                    response.with("Content-Security-Policy", "sandbox; default-src 'none'")
-                } else {
-                    response
-                }
-            }
-            Err(e) => Response::text(e.status, &e.message),
+        let segments = segments(path);
+        let located = self
+            .blocking(move |service| {
+                let resolved = serve::resolve(service, &segments)?;
+                let len = file_len(&resolved.path);
+                Ok((resolved, len))
+            })
+            .await;
+        let (resolved, len) = match located {
+            Ok(located) => located,
+            Err(e) => return Response::text(e.status, &e.message),
+        };
+        let response = match len {
+            Some(len) => send_file(&resolved.path, len, range).await,
+            None => not_found(),
+        };
+        if resolved.sandboxed {
+            // A project file must never execute as a document.
+            response.with("Content-Security-Policy", "sandbox; default-src 'none'")
+        } else {
+            response
         }
     }
 
@@ -225,14 +237,17 @@ impl App {
     /// files, so a crafted path cannot leave the web directory.
     async fn asset(&self, path: &str) -> Response {
         let rel = segments(path).join("/");
-        let rel = if rel.is_empty() {
-            "index.html".into()
-        } else {
-            rel
-        };
-        match paths::safe_path(&self.web_dir, &rel) {
-            Ok(abs) => send_file(&abs, None).await,
-            Err(_) => Response::text(404, "Not found"),
+        let web_dir = Arc::clone(&self.web_dir);
+        let located = tokio::task::spawn_blocking(move || {
+            let rel = if rel.is_empty() { "index.html" } else { &rel };
+            let abs = paths::safe_path(&web_dir, rel).ok()?;
+            let len = file_len(&abs)?;
+            Some((abs, len))
+        })
+        .await;
+        match located {
+            Ok(Some((abs, len))) => send_file(&abs, len, None).await,
+            _ => not_found(),
         }
     }
 
@@ -270,11 +285,20 @@ impl App {
     }
 }
 
-async fn send_file(path: &Path, range: Option<&str>) -> Response {
-    let len = match tokio::fs::metadata(path).await {
-        Ok(meta) if meta.is_file() => meta.len(),
-        _ => return Response::text(404, "Not found"),
-    };
+fn not_found() -> Response {
+    Response::text(404, "Not found")
+}
+
+/// The length of a regular file; None for anything else or nothing at all.
+fn file_len(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| meta.len())
+}
+
+/// `len` is the file's length as `file_len` found it, for the range check.
+async fn send_file(path: &Path, len: u64, range: Option<&str>) -> Response {
     let range = match range.map(|h| serve::parse_range(h, len)) {
         Some(Ok(r)) => r,
         Some(Err(serve::Unsatisfiable)) => {
@@ -284,7 +308,7 @@ async fn send_file(path: &Path, range: Option<&str>) -> Response {
         None => None,
     };
     let Ok(bytes) = serve::read_file_range(path, range).await else {
-        return Response::text(404, "Not found");
+        return not_found();
     };
     let response = Response::new(
         if range.is_some() { 206 } else { 200 },

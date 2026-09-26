@@ -54,12 +54,12 @@ enum MenuCommand: String, CaseIterable {
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
-        case .editComment: "Toggle Comment"
+        case .editComment: "Comment Selection"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
         case .viewToggleSidebar: "Hide Sidebar"
         case .viewTogglePdf: "Hide PDF"
-        case .viewToggleLogs: "Build Log"
+        case .viewToggleLogs: "Build Panel"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
         case .viewFitWidth: "Fit Width"
@@ -146,7 +146,6 @@ enum MenuCommand: String, CaseIterable {
 enum Prompt: Identifiable {
     case newFile, newFolder, gotoLine
     case renameEntry(String)
-    case renameProject(ProjectInfo)
 
     var id: String {
         switch self {
@@ -154,7 +153,6 @@ enum Prompt: Identifiable {
         case .newFolder: "newFolder"
         case .gotoLine: "gotoLine"
         case .renameEntry(let path): "rename:\(path)"
-        case .renameProject(let p): "renameProject:\(p.id)"
         }
     }
 }
@@ -183,7 +181,7 @@ extension AppModel {
         switch command {
         case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
-        case .viewToggleLogs: project?.showLogs == true ? "Hide Build Log" : "Show Build Log"
+        case .viewToggleLogs: project?.showLogs == true ? "Hide Build Panel" : "Show Build Panel"
         default: command.title
         }
     }
@@ -273,12 +271,17 @@ extension AppModel {
         _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
 
+    /// The project's window, even while Settings is key (it can be main
+    /// too): the editor's, or, with the source pane hidden, the main window.
+    private var documentWindow: NSWindow? { editor.webView.window ?? NSApp.mainWindow ?? NSApp.keyWindow }
+
+    /// No starting folder: the panel opens where the user last saved, as
+    /// every Mac app's Save As does.
     private func savePanel(name: String, type: UTType, _ write: @escaping @MainActor (URL) async -> Void) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name
         panel.allowedContentTypes = [type]
-        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        guard let window = NSApp.keyWindow else { return }
+        guard let window = documentWindow else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in await write(url) }
@@ -290,7 +293,7 @@ extension AppModel {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.prompt = "Add"
-        guard let window = NSApp.keyWindow else { return }
+        guard let window = documentWindow else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK else { return }
             let urls = panel.urls
@@ -306,6 +309,10 @@ struct AppCommands: Commands {
         Button(app.title(command)) { app.perform(command) }
             .keyboardShortcut(app.shortcut(command))
             .disabled(!app.isEnabled(command))
+    }
+
+    private func send(_ action: Selector) {
+        NSApp.sendAction(action, to: nil, from: nil)
     }
 
     var body: some Commands {
@@ -328,13 +335,16 @@ struct AppCommands: Commands {
             Divider()
             item(.projectClose)
             Divider()
+            // What makes a copy, then Share on its own, as Mac File menus
+            // group them.
             item(.pdfSave)
+            item(.projectExport)
+            Divider()
             if let project = app.project, let url = project.pdfURL, project.pdfVersion > 0 {
                 ShareLink("Share PDF", item: url)
             } else {
                 Button("Share PDF") {}.disabled(true)
             }
-            item(.projectExport)
         }
         // The standard Print would go to the first responder, usually the
         // editor's web view, and print the page rather than the PDF.
@@ -352,6 +362,15 @@ struct AppCommands: Commands {
                 item(.pdfFind)
             }
             item(.editGotoLine)
+            // Replacing the group dropped the standard spelling items, which
+            // the editor's native WebKit spell checking answers to. They go
+            // down the responder chain, as AppKit's own do.
+            Menu("Spelling and Grammar") {
+                Button("Show Spelling and Grammar") { send(#selector(NSText.showGuessPanel(_:))) }
+                    .keyboardShortcut(":", modifiers: .command)
+                Button("Check Document Now") { send(#selector(NSText.checkSpelling(_:))) }
+                    .keyboardShortcut(";", modifiers: .command)
+            }
         }
         // Where Mac text apps keep styling (TextEdit, Pages): the toolbar's
         // centre group, and what its Insert menu holds.
@@ -365,7 +384,7 @@ struct AppCommands: Commands {
             Divider()
             item(.editComment)
         }
-        // The panes left to right, then the panel below them.
+        // The panes left to right, then the build panel below them.
         CommandGroup(after: .sidebar) {
             item(.viewToggleSidebar)
             item(.viewTogglePdf)

@@ -14,8 +14,18 @@
        Settings on a Mac, Fluent ones on Windows — rather than the browser
        version's tinted bar (styles.css). */
     * { scrollbar-width: auto; scrollbar-color: auto; }
-    /* Room to scroll the last line clear of the host's status bar. */
+    /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
+    /* The host's highlight colour for the selection when it sends one (the
+       Mac's), unemphasised while the editor is not focused, as in a native
+       text view. !important: the syntax themes set theirs at higher
+       specificity. */
+    :root[data-host-selection] .cm-editor .cm-selectionBackground {
+      background: var(--host-selection-inactive) !important;
+    }
+    :root[data-host-selection] .cm-editor.cm-focused .cm-selectionBackground {
+      background: var(--host-selection) !important;
+    }
   </style>
 </head>
 <body>

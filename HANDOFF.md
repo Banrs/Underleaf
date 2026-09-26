@@ -2,10 +2,13 @@
 
 Status as of 2026-09-26, on `main` (all earlier branches are merged and deleted).
 
-**Last session (2026-09-26): the macOS polish is uncommitted in the working tree.** `main` has everything up to `4ae7f2b`. The Overleaf-style source bar, accessory-bar pane bars, the split sidebar and the scroll-following outline are not committed yet. `/Applications/TeXLocal.app` is a Release build of that working tree. The old Tauri app is in the Trash. Checked on screen: the source bar at two widths, and the sidebar split. Not yet checked:
+**Last session (2026-09-26): the macOS polish and a cleanup pass over it are both uncommitted in the working tree.** `main` has everything up to `4ae7f2b`. The Overleaf-style source bar, accessory-bar pane bars, the split sidebar and the scroll-following outline came first. The cleanup (macOS design pass against the UI kit, and a Rust optimisation pass, below) went on top. The ref `refs/cleanup/baseline` snapshots the tree before the cleanup, so `git diff refs/cleanup/baseline` shows the cleanup alone; delete it with `git update-ref -d refs/cleanup/baseline` once committed. `/Applications/TeXLocal.app` is still a Release build from before the cleanup. The old Tauri app is in the Trash.
+
+All checks pass on the cleaned-up tree: the Debug build has no Swift warnings, 26 XCTests, `cargo fmt`, clippy `-D warnings`, `cargo test --workspace` and `npm test` (37). Not yet checked on screen (rendered frames don't show glass, vibrancy, selection or PDFKit pages):
 - the outline selection following the source as it scrolls;
-- the symbol palette and section-level menu in use;
-- the section and zoom menus: `.menuIndicator(.visible)` shows no chevron under `.accessoryBar`.
+- the symbol palette in use;
+- the sidebar's glass and selection, and the accent colour in the embedded editor;
+- the Files list's Delete key, and that a single click in the Files list or outline keeps keyboard focus in the list.
 
 Next:
 - Bring the web version's editor toolbar and outline to the same Overleaf feature set, keeping it universal web design. The new editor operations are already shared.
@@ -115,6 +118,13 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The window toolbar holds a back button (Close Project, as the web's and Windows' title bars have) and the PDF and inspector toggles. What acts on a pane sits over it.
   - Over the source: undo and redo, Heading, bold / italic | math, reference and citation, Insert. A LaTeX writer's tools, after Overleaf's; commenting out is only in the Format menu. Under that, a location row: project › folders › file › section.
   - Over the PDF: Compile (prominent), zoom (out | level | in), Share. Under that, the page and whether the preview is current.
+  - **Design rules (cleanup pass, 2026-09-26):**
+    - Liquid Glass only where the system gives it: the window toolbar, the sidebar column, popovers, menus, sheets, alerts. Pane bars, the location row and the status bar are flat content-layer bars on one opaque `BarMetrics.background` (`windowBackgroundColor`), so they read as one chrome block with the toolbar.
+    - Metrics from the kit: bar = controls + 8 pt above and below, 8 pt side insets, 16 pt separators; secondary rows (location, status) are 28 pt.
+    - A menu that shows a value (Section Level, Zoom) is a pop-up: one `Text` of the value plus `Text.popUpChevron`, since the accessory-bar style draws no menu indicator and the AppKit pop-up puts a label's image first. A hidden twin menu keeps its width steady. A menu of actions (⋯, +) is an icon-only pull-down.
+    - Vocabulary: the bottom panel is the "Build Panel" everywhere (View menu, status bar); durations come from `CompileResult.durationText` ("1.2 s"); short status strings are title case.
+    - Semantic colours only. The embed takes the system accent and selection colours from the host (`setAppearance`); Windows and the browser keep their defaults.
+    - Only APIs in the macOS 26 SDK, since CI builds with 26.5.
   - Pane bars use AppKit's accessory-bar style (`.accessoryBar`, set once on `PaneBar`), as Finder's and Mail's in-window bars do: flat buttons that highlight on hover, with `ToolSeparator` lines between groups. Compile is `.borderedProminent`. Glass was dropped: merged interactive glass (`glassEffectUnion`) glitched icons on hover, and pills read too heavy for bars stacked above content.
   - The source bar follows Overleaf's toolbar:
     - undo | redo, then a section-level menu for the caret's line (`setHeading`);
@@ -124,18 +134,22 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
     Narrow panes fold groups into ⋯ from the end.
   - The editor operations are in `web/src/editor.js`, used by the embed page: `setHeading`, `insertText`, `inline` (a `pre$0post` wrap in the line) and `displayMath`.
   - PDF bar: Compile, then zoom as − / the scale as a percentage (a menu with Fit Width and presets) / +, then Share. Share uses `NSSharingServicePicker`, anchored to its button through `ViewAnchor`: `ShareLink` opened centred on the PDF.
-  - Settings › General › Toolbar Size: Compact is regular controls in a 40 pt bar; Large is large controls in 48 pt. The location row is 28 pt.
+  - Settings › General › Toolbar Size: Standard (stored as "compact") is regular controls in a 40 pt bar, the kit's Unified Compact toolbar; Large is extra-large controls in 52 pt, the kit's Unified toolbar. The location row and status bar are 28 pt. Accessory-bar buttons measure 22 and 34 pt, 2 pt under the kit's, so those bars have 9 pt insets; the bar-fit test allows 8 to 9.
+  - The PDF pane's empty states have one action each: Compile, Get MacTeX, or Show Build Panel after a build that made no PDF.
+  - The sidebar lists open files and sections without focusing the editor (`ProjectModel.open(…, focus: false)`), so the arrow keys stay in the list; search hits, issues, Go to Line and SyncTeX still focus it.
+  - Menus: Edit › Spelling and Grammar (the stateless items only; the While Typing toggles need an AppKit-validated menu item to show their checkmarks), "Comment Selection", and Help › TeXLocal on GitHub. The app icon is a flat PNG set from `assets/TeXLocal.png`; a layered Icon Composer `.icon` is the macOS 26+ ideal.
+  - A library folder that can't be opened shows an alert and quits. The alert is posted on the next main-queue turn: `Core.shared` is first made during SwiftUI's first scene update, where a modal alert aborted the app.
   - The start window: template cards, then recent projects as a sortable table.
 - **Layout rules learnt the hard way:**
   - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
-  - Every split is AppKit's `NSSplitView` (`SplitController` in EditorView.swift): source | PDF, the editors over the panel, and the editors beside the inspector. Each pane is an `NSHostingView` made once (its views observe the models), with `sizingOptions = []` so SwiftUI's sizes stay out of Auto Layout; the delegate enforces minimums and maximums. A hidden pane is removed from the split, since AppKit kept room for a merely hidden one, and comes back at its previous size. Divider positions are autosaved.
+  - Every split is AppKit's `NSSplitView` (`SplitController.swift`; the bar components are in `PaneBars.swift`, the source's bars in `SourceBars.swift`): source | PDF, the editors over the panel, and the editors beside the inspector. Each pane is an `NSHostingView` made once (its views observe the models), with `sizingOptions = []` so SwiftUI's sizes stay out of Auto Layout; the delegate enforces minimums and maximums. A hidden pane is removed from the split, since AppKit kept room for a merely hidden one, and comes back at its previous size. Divider positions are autosaved.
   - SwiftUI's split views don't work in this window (2026-09-26). `.inspector` crashed on window resize with the same loop. `HSplitView` and `VSplitView` laid the PDF out under the inspector, and a pane shown after launch opened at zero size. `NSSplitViewController` blurred the pane bars with the toolbar's scroll-edge effect.
   - Menu clicks through System Events do update the window in the background. An earlier "frozen window" came from pane views built from values rather than views that observe the models.
   - Bars are stacked above their content, not attached with `safeAreaBar`: they are opaque, so content under them was only hidden.
   - Separators are stock `Divider()`s placed as siblings in a `VStack`. An overlaid `Divider()` takes its parent's layout context, so inside an `HStack` it turns vertical.
   - PDFKit re-anchors page one's top to the view on every resize while fitting the width, so the gap above page one is a scroll-view content inset.
 - **Parity and review fixes:** every command in `commandDefs`, and the settings with a native meaning. Saves run one at a time; quit waits for a save in flight; compiles queue; a WebContent crash recovers the editor; overlapping file opens can no longer save one file's text into another; undo and redo always reach CodeMirror's history.
-- **Tests:** 22 XCTests, including the outline tree, and a check that a pane bar group fits its bar at each toolbar size. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
+- **Tests:** 26 XCTests, including the outline tree, the bar heights and that a pane bar group fits its bar at each toolbar size, the duration text, and the Build Panel and spelling menu items. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
 - **PDF links:** PDFKit draws hyperref's coloured link boxes, which pdf.js (browser, Windows) leaves out, so `hideLinkBorders` zeroes each link's border on load. The links still work.
 - **Checked by hand on a Mac (2026-09-26), against a scratch `TEXLOCAL_DATA`:**
   - click-and-slide from Bold to Italic applied only Italic (with the hand-built groups since replaced by `ControlGroup`);
@@ -150,6 +164,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - One injected double-click on the "Method" heading went to line 28 (`\label`), where `synctex edit` gives line 24. Go to Source Position is correct, so this may be the injected events. Try a real double-click.
 - **Still to check by hand on a Mac:** a real double-click for inverse SyncTeX, find field keys, rename with undo history, drag-and-drop import, the first delete's Automation prompt.
 - **Driving the app without taking focus:** Accessibility actions work while TeXLocal is in the background: AXPress on the pane-bar buttons, menu items through System Events, and alert buttons. Synthetic key and mouse events posted to its process are dropped unless it is the active app. Setting AX text in the CodeMirror editor is ignored.
+- **Looking at the app without Accessibility or Screen Recording** (Claude had neither on 2026-09-26): launch a Debug build directly (`TEXLOCAL_DATA=<scratch> …/TeXLocal.app/Contents/MacOS/TeXLocal -openProject <id>`; preferences can be overridden with launch arguments such as `-paneBarSize large`), attach `lldb --batch`, and in an Objective-C expression draw the largest visible window's theme frame with `cacheDisplayInRect:toBitmapImageRep:` into a PNG. Cast every message send (`(NSArray *)[(NSApplication *)[NSApplication sharedApplication] windows]`). This shows layout and sizes, but not glass, vibrancy, list selection or PDFKit pages.
 
 ## The Windows app (`apps/windows`): run by hand on Windows 11, partly verified
 
@@ -234,11 +249,23 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The compile notification.
   - Nothing is written beside the exe.
 
+## Rust cleanup (2026-09-26, uncommitted)
+
+Behaviour-preserving, with no public API, C ABI or server-check change:
+- The log parser uses 4 `LazyLock` regexes instead of 7, and is about 20% faster on a 16 MB log. CRLF logs (MiKTeX, Windows latexmk) no longer leave a `\r` inside messages.
+- A cancelled compile kills its whole process tree, on Windows too (the registration guard owns the child, so `taskkill /T` runs while latexmk is alive). Registry locks recover from poisoning, since `kill_all` runs from `tl_close`.
+- A ranged read is one blocking-pool trip, and the server resolves and stats a file in one more.
+- One entry walk serves the file tree, search, the symbol scan and fingerprinting. A link loop in a project is skipped instead of failing all of them with a 500. ZIP export no longer packs its own temp file when the destination path runs through a link.
+- `create_project` refuses an existing entry, including a dangling link, atomically.
+- The Trash tests use a stand-in: `core.rs` runs in under a second instead of two minutes, and no longer fills the real Trash.
+
 ## Remaining plan
 
 1. **Run both apps by hand** using the checklists above, and fix what they turn up.
 2. **Windows:** the items under "Not done yet" above.
-3. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.
+3. **Server hardening:** check Host, Origin and the cookie on the request head before reading a body of up to `MAX_BODY`. It needs a pre-body hook in `http::serve` and a lingering close, so the client still reads the 401.
+4. **Edit › Find Next / Find Previous (⌘G, ⇧⌘G)** on the Mac: CodeMirror has them, but the embed has no command for them yet, and `commandDefs` would need the entries too.
+5. **Retire Tauri** once both apps are verified by hand. Delete `src-tauri`, the Tauri path in `bridge.js` and `@tauri-apps/cli`, and replace `tauri-action` in `ci.yml` and `release.yml` with release builds of the two apps.
 
 ## Gotchas
 

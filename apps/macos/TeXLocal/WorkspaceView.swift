@@ -15,18 +15,19 @@ struct WorkspaceView: View {
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
             NavigatorView(project: project)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+                .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
+                                                max: Metrics.sidebarWidth.upperBound)
         } detail: {
             SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
-                SplitPane(minimum: 441) { EditorArea(project: project) },
-                SplitPane(minimum: 220, maximum: 320, fraction: 0.28, keepsSize: true,
-                          shown: app.showInspector) {
+                SplitPane(minimum: Metrics.editorsMinWidth) { EditorArea(project: project) },
+                SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
+                          fraction: 0.28, keepsSize: true, shown: app.showInspector) {
                     InspectorView(project: project)
                 },
             ])
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            .frame(minWidth: 441, minHeight: 280)
+            .frame(minWidth: Metrics.editorsMinWidth, minHeight: 280)
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
             // together in one pill.
@@ -34,7 +35,7 @@ struct WorkspaceView: View {
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
-        .navigationDocument(project.openURL ?? URL(fileURLWithPath: "/"))
+        .modifier(DocumentProxy(url: project.openURL))
         .alert(promptTitle, isPresented: Binding(
             get: { app.prompt != nil }, set: { if !$0 { app.prompt = nil } }
         ), presenting: app.prompt) { prompt in
@@ -49,6 +50,16 @@ struct WorkspaceView: View {
             guard (note.object as? NSWindow) === app.editor.webView.window else { return }
             Task { await project.flush() }
         }
+    }
+
+    /// The columns' widths. The sidebar's ideal is the UI kit's window
+    /// sidebar; the window's own minimum (960 × 600) is set once, in the app.
+    private enum Metrics {
+        static let sidebarWidth: ClosedRange<CGFloat> = 200...320
+        static let sidebarIdeal: CGFloat = 256
+        /// The source and the PDF, side by side at their smallest.
+        static let editorsMinWidth: CGFloat = 441
+        static let inspectorWidth: ClosedRange<CGFloat> = 220...320
     }
 
     // ---------- toolbar ----------
@@ -89,7 +100,6 @@ struct WorkspaceView: View {
         case .newFolder: "New Folder"
         case .gotoLine: "Go to Line"
         case .renameEntry(let path): "Rename “\((path as NSString).lastPathComponent)”"
-        case .renameProject: "Rename Project"
         case nil: ""
         }
     }
@@ -97,7 +107,6 @@ struct WorkspaceView: View {
     private var promptDefault: String {
         switch app.prompt {
         case .renameEntry(let path): path
-        case .renameProject(let p): p.name
         default: ""
         }
     }
@@ -108,7 +117,6 @@ struct WorkspaceView: View {
         case .newFolder: "Path, e.g. figures"
         case .gotoLine: "Line number"
         case .renameEntry: "Path"
-        case .renameProject: "Name"
         }
     }
 
@@ -116,7 +124,7 @@ struct WorkspaceView: View {
         switch prompt {
         case .newFile, .newFolder: "Create"
         case .gotoLine: "Go"
-        case .renameEntry, .renameProject: "Rename"
+        case .renameEntry: "Rename"
         }
     }
 
@@ -135,8 +143,21 @@ struct WorkspaceView: View {
             case .newFolder: await project.createEntry(text, directory: true)
             case .gotoLine: if let line = Int(text) { project.reveal(line: line) }
             case .renameEntry(let from): await project.renameEntry(from, to: text)
-            case .renameProject(let p): await app.rename(p, to: text)
             }
+        }
+    }
+}
+
+/// The open file as the window's represented document (its proxy icon and
+/// path menu), and none while no file is open, rather than the disk's root.
+private struct DocumentProxy: ViewModifier {
+    let url: URL?
+
+    // From a background, so the workspace keeps its identity (and its
+    // panes) as the document comes and goes.
+    func body(content: Content) -> some View {
+        content.background {
+            if let url { Color.clear.navigationDocument(url) }
         }
     }
 }
@@ -160,7 +181,7 @@ struct InsertMenuItems: View {
             }
         }
         Divider()
-        ForEach(insertTemplates.filter { !$0.0.hasSuffix("List") }, id: \.0) { label, template in
+        ForEach(insertTemplates, id: \.0) { label, template in
             Button(label) { project?.format("insert", template) }
         }
         Menu("List") {
@@ -174,14 +195,14 @@ struct InsertMenuItems: View {
 /// The engines a project can compile with, for the compile menu and Settings.
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
-/// web/src/workspace.js `INSERT_TEMPLATES`; "$0" marks where the cursor lands.
+/// web/src/workspace.js `INSERT_TEMPLATES` but the lists, which are
+/// `listTemplates`; "$0" marks where the cursor lands. The source bar finds
+/// them by title (`ProjectModel.insert`), so titles match the web's.
 let insertTemplates: [(String, String)] = [
     ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
     ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
     ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
     ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-    ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
     ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
 ]
 
@@ -234,13 +255,12 @@ struct InspectorView: View {
                 if let result = project.result {
                     LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
                     LabeledContent("Duration") {
-                        Text("\(Double(result.durationMs) / 1000, format: .number.precision(.fractionLength(1))) s")
-                            .monospacedDigit()
+                        Text(result.durationText).monospacedDigit()
                     }
                     LabeledContent("Errors", value: project.errorCount.formatted())
                     LabeledContent("Warnings", value: project.warningCount.formatted())
                 } else {
-                    LabeledContent("Last Build", value: "Not compiled")
+                    LabeledContent("Last Build", value: "Not Compiled")
                 }
                 if let freshness = project.pdfFreshness {
                     Label(freshness.title, systemImage: freshness.systemImage)

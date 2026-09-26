@@ -3,6 +3,7 @@
 //! responses always carry one, and connections stay open for the next
 //! request. Anything outside that is refused rather than half-supported.
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const MAX_HEAD: usize = 64 * 1024;
+const READ_CHUNK: usize = 16 * 1024;
 const MAX_HEADERS: usize = 64;
 const IDLE: Duration = Duration::from_secs(60);
 
@@ -109,11 +111,14 @@ pub async fn serve<H, F>(
     loop {
         tokio::select! {
             _ = &mut shutdown => return,
-            accepted = listener.accept() => {
-                if let Ok((stream, _)) = accepted {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => {
                     let handler = handler.clone();
                     tokio::spawn(async move { connection(stream, handler, max_body).await });
                 }
+                // Out of file descriptors, say: accept fails again at once
+                // until a connection closes, so pause rather than spin.
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
             }
         }
     }
@@ -125,15 +130,14 @@ enum Read {
     Closed,
 }
 
+/// Read more of the connection straight into `buf`, with no copy through a
+/// stack buffer: an upload is up to 100 MB.
 async fn fill(stream: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
-    let mut chunk = [0u8; 16 * 1024];
-    match tokio::time::timeout(IDLE, stream.read(&mut chunk)).await {
-        Ok(Ok(n)) if n > 0 => {
-            buf.extend_from_slice(&chunk[..n]);
-            true
-        }
-        _ => false,
-    }
+    buf.reserve(READ_CHUNK);
+    matches!(
+        tokio::time::timeout(IDLE, stream.read_buf(buf)).await,
+        Ok(Ok(n)) if n > 0
+    )
 }
 
 async fn read_request(stream: &mut TcpStream, buf: &mut Vec<u8>, max_body: usize) -> Read {
@@ -210,10 +214,11 @@ async fn write_response(
         response.status,
         reason(response.status)
     );
+    // Writing to a String cannot fail.
     for (name, value) in &response.headers {
-        head.push_str(&format!("{name}: {value}\r\n"));
+        let _ = write!(head, "{name}: {value}\r\n");
     }
-    head.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
+    let _ = write!(head, "Content-Length: {}\r\n", response.body.len());
     head.push_str(if keep_alive {
         "Connection: keep-alive\r\n\r\n"
     } else {

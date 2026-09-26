@@ -8,12 +8,12 @@ use std::path::Path;
 use serde_json::json;
 use tempfile::TempDir;
 use texlocal_core::logparse::parse_log;
-use texlocal_core::paths::{project_root, safe_path, safe_rel_file};
+use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
-    create_file, create_project, delete_entry, file_tree, rename_entry, rename_project,
-    scan_symbols, search_project, symbols_fingerprint,
+    create_file, create_project, delete_entry, file_tree, list_projects, rename_entry,
+    rename_project, scan_symbols, search_project, symbols_fingerprint,
 };
-use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings};
+use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
 
 fn data_dir() -> TempDir {
@@ -84,27 +84,6 @@ fn a_settings_write_failure_rolls_back_the_filesystem_rename() {
 }
 
 #[test]
-fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
-    let data = data_dir();
-    let root = project(data.path(), "discard-test");
-    create_file(&root, "notes/scratch.tex", false).unwrap();
-    let path = root.join("notes/scratch.tex");
-    let result = delete_entry(&root, "notes/scratch.tex");
-    if result.is_ok() {
-        assert!(
-            !path.exists(),
-            "a successful trash operation removes the entry"
-        );
-    } else {
-        assert!(
-            path.exists(),
-            "a failed trash operation must leave the entry intact"
-        );
-    }
-    assert!(root.join("notes").exists(), "only the file was requested");
-}
-
-#[test]
 fn the_active_main_file_and_its_parent_cannot_be_deleted() {
     let data = data_dir();
     let root = project(data.path(), "delete-test");
@@ -128,19 +107,16 @@ fn the_active_main_file_and_its_parent_cannot_be_deleted() {
 }
 
 #[test]
-fn an_entry_named_with_a_leading_dash_can_be_renamed_and_deleted() {
+fn an_entry_named_with_a_leading_dash_can_be_renamed() {
     // create_entry and uploads accept such a name; only the main file, which
-    // reaches latexmk's command line, may not start with "-".
+    // reaches latexmk's command line, may not start with "-". Deleting one is
+    // covered in projects.rs, against a stand-in for the platform trash.
     let data = data_dir();
     let root = project(data.path(), "dash-test");
     create_file(&root, "-draft.tex", false).unwrap();
     let result = rename_entry(&root, "-draft.tex", "-notes/-draft.tex").unwrap();
     assert_eq!(result.to, "-notes/-draft.tex");
     assert!(root.join("-notes/-draft.tex").is_file());
-    if let Err(err) = delete_entry(&root, "-notes") {
-        // The trash may be unavailable here; the name must not be the reason.
-        assert!(!err.message.contains("cannot start"), "{}", err.message);
-    }
 }
 
 fn names_in(dir: &Path) -> Vec<String> {
@@ -267,11 +243,6 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
 #[cfg(unix)]
 #[test]
 fn implicit_project_scans_skip_external_symlink_files() {
-    // Imported here rather than at the top: this is the only test that reads
-    // them, and it is unix-only, so a file-level import is an unused-import
-    // error on Windows under -D warnings.
-    use texlocal_core::projects::file_tree;
-
     let data = data_dir();
     let root = project(data.path(), "symlink-scans");
     let outside = tempfile::tempdir().unwrap();
@@ -605,10 +576,9 @@ fn search_stops_at_the_limit_and_skips_build_output() {
 
 #[test]
 fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
-    // Plenty of .bib and .tex files are still Latin-1. The scan matches raw
-    // bytes, so its patterns have to match bytes rather than codepoints: a
-    // Unicode-mode automaton cannot step across 0xFC and drops the whole entry
-    // containing it, where decoding the file first would have kept it lossily.
+    // Plenty of .bib and .tex files are still Latin-1. A Unicode-mode pattern
+    // run over the raw bytes cannot step across 0xFC and drops the whole entry
+    // containing it; decoding the file first keeps it, lossily.
     let data = data_dir();
     let root = project(data.path(), "latin1");
     let mut bib = b"@article{m".to_vec();
@@ -731,4 +701,127 @@ fn a_fingerprint_follows_an_in_project_link_to_the_bytes_the_scan_reads() {
     let after = stamp_of(&symbols_fingerprint(&root).unwrap());
 
     assert_ne!(before, after, "the link's stamp must track its target");
+}
+
+#[test]
+fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
+    let data = data_dir();
+    let root = project(data.path(), "tree-order");
+    for file in ["c.tex", "B.tex", "Zeta/z.tex", "beta/y.tex", ".hidden.tex"] {
+        create_file(&root, file, false).unwrap();
+    }
+    let tree = file_tree(&root).unwrap();
+    let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["beta", "Zeta", "B.tex", "c.tex", "main.tex"]);
+    assert_eq!(tree[1].kind, "dir");
+    assert_eq!(tree[1].children.as_ref().unwrap()[0].path, "Zeta/z.tex");
+    assert!(tree[2].children.is_none());
+}
+
+#[test]
+fn rel_to_root_maps_tool_output_back_into_the_project() {
+    let root = Path::new("/data/P");
+    assert_eq!(
+        rel_to_root(root, Path::new("/data/P/./ch/../ch/intro.tex")).as_deref(),
+        Some("ch/intro.tex")
+    );
+    assert_eq!(rel_to_root(root, Path::new("/data/P")), None);
+    assert_eq!(rel_to_root(root, Path::new("/data/P/../Q/a.tex")), None);
+    assert_eq!(rel_to_root(root, Path::new("/data/PQ/a.tex")), None);
+}
+
+#[test]
+fn a_settings_write_returns_what_a_later_read_sees() {
+    let data = data_dir();
+    let root = project(data.path(), "settings-echo");
+    fs::write(
+        root.join(".texlocal.json"),
+        r#"{ "engine": 3, "custom": "kept" }"#,
+    )
+    .unwrap();
+    let written: Settings = write_settings(&root, &json!({ "shellEscape": true })).unwrap();
+    let read = read_settings(&root);
+    assert_eq!(
+        (&written.main_file, &written.engine, written.shell_escape),
+        (&read.main_file, &read.engine, read.shell_escape)
+    );
+    // The mistyped engine reads as the default; the unknown key survives.
+    assert_eq!(read.engine, "pdflatex");
+    assert!(read.shell_escape);
+    let raw: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".texlocal.json")).unwrap()).unwrap();
+    assert_eq!(raw["custom"], "kept");
+
+    write_settings(&root, &json!({ "mainFile": "main.tex" })).unwrap();
+    let listed = list_projects(data.path()).unwrap();
+    assert_eq!(listed[0].id, "settings-echo");
+    assert_eq!(listed[0].main_file, "main.tex");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
+    let data = data_dir();
+    std::os::unix::fs::symlink(data.path().join("gone"), data.path().join("linked")).unwrap();
+    let err = create_project(data.path(), "linked", "blank").unwrap_err();
+    assert_eq!(err.status, 409, "{}", err.message);
+    assert!(!data.path().join("gone").exists());
+}
+
+#[test]
+fn a_new_project_holds_its_template_and_default_settings() {
+    let data = data_dir();
+    let info = create_project(data.path(), "  Thesis  ", "report").unwrap();
+    assert_eq!((info.id.as_str(), info.name.as_str()), ("Thesis", "Thesis"));
+    assert_eq!(info.main_file, "main.tex");
+    let root = data.path().join("Thesis");
+    assert_eq!(
+        names_in(&root),
+        [".texlocal.json", "main.tex", "references.bib"]
+    );
+    assert!(fs::read_to_string(root.join("main.tex"))
+        .unwrap()
+        .contains("{report}"));
+}
+
+#[cfg(unix)]
+#[test]
+fn zip_export_skips_its_own_archive_when_the_destination_is_spelled_through_a_link() {
+    // The project is reached through one spelling and the destination through
+    // another, as when a Save panel hands back /private/var for a data folder
+    // under /var. A lexical comparison missed that and archived the ZIP's own
+    // half-written temporary file into it.
+    let data = data_dir();
+    let root = project(data.path(), "zip-alias");
+    let aliases = tempfile::tempdir().unwrap();
+    let alias = aliases.path().join("alias");
+    std::os::unix::fs::symlink(&root, &alias).unwrap();
+    export_zip(&root, &alias.join("out.zip")).unwrap();
+    let names = zip_names(&root.join("out.zip"));
+    assert_eq!(names, ["main.tex"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
+    // A link that resolves to nothing, here two links pointing at each other,
+    // cannot be shown to stay inside the project, so it is not content. It
+    // must not turn the file tree, the scans or the ZIP export into an error.
+    let data = data_dir();
+    let root = project(data.path(), "link-loop");
+    std::os::unix::fs::symlink(root.join("b.tex"), root.join("a.tex")).unwrap();
+    std::os::unix::fs::symlink(root.join("a.tex"), root.join("b.tex")).unwrap();
+
+    let names: Vec<String> = file_tree(&root)
+        .unwrap()
+        .into_iter()
+        .map(|n| n.name)
+        .collect();
+    assert_eq!(names, ["main.tex"]);
+    assert!(search_project(&root, "documentclass", 50).is_ok());
+    assert!(scan_symbols(&root).is_ok());
+    assert!(symbols_fingerprint(&root).is_ok());
+    let out = tempfile::tempdir().unwrap();
+    export_zip(&root, &out.path().join("out.zip")).unwrap();
+    assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);
 }

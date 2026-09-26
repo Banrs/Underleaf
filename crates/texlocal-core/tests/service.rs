@@ -97,7 +97,12 @@ async fn dispatch_rejects_unknown_commands_and_bad_arguments() {
         json!({ "id": "P", "path": "main.tex" }),
         json!({ "id": "P", "path": "main.tex", "text": null }),
     ] {
-        assert_eq!(status_of(&service, "write_file", args).await, 400);
+        let err = service.call("write_file", &args).await.unwrap_err();
+        assert_eq!(err.status, 400);
+        assert_eq!(
+            err.message,
+            "Invalid argument `text`: invalid type: null, expected a string"
+        );
     }
     let main = call(
         &service,

@@ -80,11 +80,11 @@ enum Outline {
     }
 
     /// An empty heading by its kind — "Untitled Subsection" — where the web
-    /// writes "(untitled)".
+    /// writes "(untitled)". The kinds are the source bar's section levels.
     static func displayTitle(_ item: OutlineItem) -> String {
         guard item.title == "(untitled)" else { return item.title }
-        let kinds = ["Part", "Chapter", "Section", "Subsection", "Subsubsection", "Paragraph"]
-        return "Untitled " + (kinds.indices.contains(item.level) ? kinds[item.level] : "Section")
+        let kind = headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "Section"
+        return "Untitled " + kind
     }
 
     /// The headings that enclose a line, outermost first: the breadcrumb

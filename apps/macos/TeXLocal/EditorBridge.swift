@@ -28,6 +28,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// The latest host keys, symbols and appearance, sent again to a page
     /// reloaded after its web process died.
     private var kept: [String: (body: String, args: [String: Any])] = [:]
+    /// The last appearance from Settings, sent again with fresh system
+    /// colours when the user changes the accent or highlight colour.
+    private var appearance: (theme: String, palette: String, font: String, fontSize: Int)?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -43,6 +46,18 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         controller.add(self, name: "texlocal")
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
+        #if DEBUG
+        // Safari's Web Inspector, for the embed's styling.
+        webView.isInspectable = true
+        #endif
+        NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let a = self.appearance else { return }
+                Task { await self.setAppearance(theme: a.theme, palette: a.palette, font: a.font, fontSize: a.fontSize) }
+            }
+        }
         webView.load(URLRequest(url: URL(string: "\(Self.scheme)://app/embed/editor.html")!))
     }
 
@@ -59,8 +74,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         return try? await webView.callAsyncJavaScript(body, arguments: args, contentWorld: .page)
     }
 
-    func open(path: String, text: String) async {
-        await js("return texlocal.open(path, text)", ["path": path, "text": text])
+    /// `focus` false leaves keyboard focus where it is, as choosing a file
+    /// in the sidebar should.
+    func open(path: String, text: String, focus: Bool = true) async {
+        await js("return texlocal.open(path, text, 0, focus)", ["path": path, "text": text, "focus": focus])
     }
 
     func text() async -> String? {
@@ -72,9 +89,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     /// `atTop` puts the line at the top of the view, as an outline's jump
-    /// does; otherwise it is centred.
-    func reveal(line: Int, atTop: Bool = false) async {
-        await js("texlocal.reveal(line, atTop)", ["line": line, "atTop": atTop])
+    /// does; otherwise it is centred. `focus` false leaves keyboard focus
+    /// where it is.
+    func reveal(line: Int, atTop: Bool = false, focus: Bool = true) async {
+        await js("texlocal.reveal(line, atTop, focus)", ["line": line, "atTop": atTop, "focus": focus])
     }
 
     /// False when the page did not run the command.
@@ -106,9 +124,27 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         await keep("hostKeys", "texlocal.setHostKeys(list)", ["list": list])
     }
 
+    /// Settings' theme and font, with the user's accent and highlight
+    /// colours for the caret and the selection, as native text views take them.
     func setAppearance(theme: String, palette: String, font: String, fontSize: Int) async {
-        let appearance: [String: Any] = ["theme": theme, "palette": palette, "font": font, "fontSize": fontSize]
-        await keep("appearance", "texlocal.setAppearance(a)", ["a": appearance])
+        appearance = (theme, palette, font, fontSize)
+        var colors: [String: String] = [:]
+        webView.effectiveAppearance.performAsCurrentDrawingAppearance {
+            colors = [
+                "accent": Self.css(.controlAccentColor),
+                "selection": Self.css(.selectedTextBackgroundColor),
+                "inactiveSelection": Self.css(.unemphasizedSelectedTextBackgroundColor),
+            ]
+        }
+        let settings: [String: Any] = ["theme": theme, "palette": palette, "font": font, "fontSize": fontSize]
+        await keep("appearance", "texlocal.setAppearance(a)", ["a": settings.merging(colors) { $1 }])
+    }
+
+    /// A colour as CSS, resolved in the current drawing appearance.
+    private static func css(_ color: NSColor) -> String {
+        guard let c = color.usingColorSpace(.sRGB) else { return "" }
+        let rgb = [c.redComponent, c.greenComponent, c.blueComponent].map { String(Int(($0 * 255).rounded())) }
+        return "rgb(\(rgb.joined(separator: " ")) / \(c.alphaComponent))"
     }
 
     func focus() {

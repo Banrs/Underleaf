@@ -23,6 +23,8 @@ targets:
         PRODUCT_NAME: TeXLocal
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
+        # Assets.xcassets, from assets/TeXLocal.png.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         # Deleting moves to the Trash through Finder (the trash crate's default),
         # which keeps Put Back working and needs the Automation permission.

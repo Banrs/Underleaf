@@ -53,8 +53,11 @@ private struct FilesList: View {
                             Divider()
                             Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
                         }
+                        // A sidebar header's accessory: a plain small glyph, not
+                        // a pane bar's button.
                         .menuStyle(.button)
-                        .buttonStyle(.accessoryBar)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
                         .menuIndicator(.hidden)
                         .labelStyle(.iconOnly)
                         .fixedSize()
@@ -67,7 +70,7 @@ private struct FilesList: View {
         }
         .listStyle(.sidebar)
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path) } }
+            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         .overlay {
@@ -79,14 +82,17 @@ private struct FilesList: View {
             Task { await project.importFiles(urls) }
             return true
         }
+        // ⌫, as Finder and the projects table take it.
+        .onDeleteCommand { if let selection, project.searchQuery.isEmpty { deleting = selection } }
         .confirmationDialog(
-            "Move “\(deleting ?? "")” to the Trash?",
+            "Move “\((deleting.map { ($0 as NSString).lastPathComponent }) ?? "")” to the Trash?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Move to Trash", role: .destructive) {
-                if let path = deleting { Task { await project.deleteEntry(path) } }
-            }
+            titleVisibility: .visible,
+            presenting: deleting
+        ) { path in
+            Button("Move to Trash", role: .destructive) { Task { await project.deleteEntry(path) } }
+        } message: { _ in
+            Text("You can restore it from the Trash.")
         }
     }
 
@@ -133,19 +139,21 @@ private struct FilesList: View {
         } icon: {
             Image(systemName: icon(for: node))
         }
-        .accessibilityLabel(node.name)
+        // The star's name too: the row's label replaces its children's.
+        .accessibilityLabel(node.path == project.settings?.mainFile ? "\(node.name), Main File" : node.name)
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                 Divider()
             }
             Button("Rename…") { app.prompt = .renameEntry(node.path) }
-            Button("Show in Finder") { reveal(node.path, in: project) }
+            Button("Show in Finder") { project.showInFinder(node.path) }
             Divider()
             Button("Move to Trash", role: .destructive) { deleting = node.path }
         }
     }
 
+    /// The file kind's symbol, as every list of the project's files shows it.
     private func icon(for node: TreeNode) -> String {
         if node.isDirectory { return "folder" }
         switch (node.name as NSString).pathExtension.lowercased() {
@@ -155,49 +163,6 @@ private struct FilesList: View {
         case "pdf": return "doc.richtext"
         default: return "doc"
         }
-    }
-}
-
-/// Select a project entry in Finder.
-@MainActor
-func reveal(_ path: String, in project: ProjectModel) {
-    Task {
-        if let abs = try? await Core.shared.call("raw_path", ["id": project.id, "path": path], as: String.self) {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: abs)])
-        }
-    }
-}
-
-/// An error or warning; choosing it opens its line — in the main file when
-/// the log names none, as the web's does.
-struct IssueRow: View {
-    let item: LogItem
-    let project: ProjectModel
-
-    var body: some View {
-        Button {
-            if let file { Task { await project.open(file, line: item.line) } }
-        } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.message).lineLimit(3).textSelection(.enabled)
-                    if let file = item.file {
-                        Text(item.line.map { "\(file):\($0)" } ?? file)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } icon: {
-                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(item.isError ? .red : .orange)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(file == nil)
-    }
-
-    private var file: String? {
-        item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
     }
 }
 
@@ -234,7 +199,7 @@ private struct OutlineList: View {
             .onChange(of: section) { _, id in
                 guard let id, id != current, let path = project.openPath,
                       let item = project.outline.first(where: { $0.id == id }) else { return }
-                Task { await project.open(path, line: item.line, atTop: true) }
+                Task { await project.open(path, line: item.line, atTop: true, focus: false) }
             }
         }
     }

@@ -73,11 +73,11 @@ fn component_eq(a: &str, b: &str) -> bool {
 /// Split a relative path into normalized segments, accepting either separator.
 /// `.` segments drop out; `..` pops — popping past the start is an escape.
 /// Returns an empty vec for inputs that normalize to the base itself.
-fn normalize_segments(rel: &str, escape_err: &str) -> Result<Vec<String>, CoreError> {
+fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>, CoreError> {
     if is_absolute_like(rel) {
         return Err(CoreError::bad_request(escape_err));
     }
-    let mut segments: Vec<String> = Vec::new();
+    let mut segments = Vec::new();
     for seg in rel.split(['/', '\\']) {
         match seg {
             "" | "." => {}
@@ -88,7 +88,7 @@ fn normalize_segments(rel: &str, escape_err: &str) -> Result<Vec<String>, CoreEr
             }
             _ => {
                 validate_platform_segment(seg, escape_err)?;
-                segments.push(seg.to_string());
+                segments.push(seg);
             }
         }
     }
@@ -147,7 +147,7 @@ pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
 /// reserved-settings-file rule: `.texlocal.json` at the project root is only
 /// writable through write_settings, which validates each key. Windows path
 /// aliases are compared case-insensitively.
-fn safe_segments(rel: &str) -> Result<Vec<String>, CoreError> {
+fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
     }
@@ -155,7 +155,7 @@ fn safe_segments(rel: &str) -> Result<Vec<String>, CoreError> {
     if segments.is_empty() {
         return Err(CoreError::bad_request("Path escapes project"));
     }
-    if segments.len() == 1 && component_eq(&segments[0], SETTINGS_FILE) {
+    if segments.len() == 1 && component_eq(segments[0], SETTINGS_FILE) {
         return Err(CoreError::bad_request("Reserved file"));
     }
     Ok(segments)
@@ -227,17 +227,16 @@ pub fn normalize_abs(path: &Path) -> PathBuf {
 }
 
 /// The forward-slash relative path of `abs` inside `root`, or None if it lies
-/// outside. Both are normalized lexically first.
+/// outside or is the root itself. Both are normalized lexically first.
 pub fn rel_to_root(root: &Path, abs: &Path) -> Option<String> {
     let abs = normalize_abs(abs);
-    let root = normalize_abs(root);
-    let rel = abs.strip_prefix(&root).ok()?;
-    let parts: Vec<String> = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    if parts.is_empty() {
-        return None;
+    let rel = abs.strip_prefix(normalize_abs(root)).ok()?;
+    let mut out = String::new();
+    for part in rel.components() {
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(&part.as_os_str().to_string_lossy());
     }
-    Some(parts.join("/"))
+    (!out.is_empty()).then_some(out)
 }

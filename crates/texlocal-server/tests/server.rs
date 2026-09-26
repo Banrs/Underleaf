@@ -277,6 +277,32 @@ async fn project_files_are_sandboxed_and_support_ranges() {
 }
 
 #[tokio::test]
+async fn only_regular_files_are_served() {
+    let f = fixture();
+    for target in ["/__raw/P/img", "/__raw/P/img/missing.png"] {
+        let response = f.app.handle(authed("GET", target, &[], b"")).await;
+        assert_eq!(response.status, 404, "{target}");
+        assert_eq!(
+            response.header("content-security-policy"),
+            Some("sandbox; default-src 'none'"),
+            "{target}"
+        );
+    }
+    let no_pdf = f.app.handle(authed("GET", "/__pdf/P", &[], b"")).await;
+    assert_eq!(no_pdf.status, 404);
+    let no_project = f.app.handle(authed("GET", "/__pdf/Q", &[], b"")).await;
+    assert_eq!(no_project.status, 404);
+
+    std::fs::create_dir(f._web.path().join("dist")).unwrap();
+    for target in ["/dist", "/missing.js"] {
+        let response = f.app.handle(authed("GET", target, &[], b"")).await;
+        assert_eq!(response.status, 404, "{target}");
+    }
+    let head = f.app.handle(authed("HEAD", "/index.html", &[], b"")).await;
+    assert_eq!(head.status, 200);
+}
+
+#[tokio::test]
 async fn web_assets_stay_inside_the_web_directory() {
     let f = fixture();
     let index = f.app.handle(authed("GET", "/", &[], b"")).await;

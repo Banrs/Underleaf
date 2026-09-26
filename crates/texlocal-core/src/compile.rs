@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
@@ -49,8 +49,7 @@ fn four_digit_years(dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    years.sort();
-    years.reverse();
+    years.sort_unstable_by(|a, b| b.cmp(a));
     years
 }
 
@@ -232,7 +231,7 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                let mut kept = kept.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
                 if kept.len() < cap {
                     let take = n.min(cap - kept.len());
                     kept.extend_from_slice(&chunk[..take]);
@@ -242,11 +241,9 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
     }
 }
 
-fn text_of(buffer: &Mutex<Vec<u8>>) -> String {
-    let bytes = buffer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    String::from_utf8_lossy(&bytes).into_owned()
+fn take_text(buffer: &Mutex<Vec<u8>>) -> String {
+    let bytes = std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
+    crate::lossy_string(bytes)
 }
 
 pub(crate) struct RunOutput {
@@ -325,8 +322,8 @@ async fn drive(child: &mut tokio::process::Child, timeout: Duration) -> (i32, St
     }
     (
         status.and_then(|s| s.code()).unwrap_or(-1),
-        text_of(&out_buf),
-        text_of(&err_buf),
+        take_text(&out_buf),
+        take_text(&err_buf),
     )
 }
 
@@ -395,34 +392,64 @@ struct RunningEntry {
     done: Arc<Notify>,
 }
 
-struct CompletionGuard(Arc<Notify>);
-
-impl Drop for CompletionGuard {
-    fn drop(&mut self) {
-        // notify_one stores a permit when the successor has not begun waiting
-        // yet, so a very fast completion cannot be missed.
-        self.0.notify_one();
-    }
-}
+type Registry = HashMap<PathBuf, RunningEntry>;
 
 /// One compile per project, supersede-kill semantics, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
-    running: Mutex<HashMap<PathBuf, RunningEntry>>,
+    running: Mutex<Registry>,
     next_token: AtomicU64,
     pub path_env: Option<String>,
     pub timeout: Option<Duration>,
 }
 
-/// One compile run's identity: known together, read again only in finish(), so
-/// it travels as one value rather than eight arguments.
-#[derive(Clone, Copy)]
-struct CompileRun<'a> {
+/// A compile's entry in the registry, and the child it spawned. Dropping it,
+/// on every exit path, removes the entry if it is still this run's, drops the
+/// child, then wakes the successor waiting on it. A run dropped before its
+/// child settled (the compile future was cancelled) kills the tree first,
+/// while latexmk still lives: kill_on_drop reaches only latexmk, and Windows'
+/// taskkill /T finds the engine only under a living parent.
+struct Registration<'a> {
+    manager: &'a CompileManager,
     root: &'a Path,
+    token: u64,
+    done: Arc<Notify>,
+    child: Option<tokio::process::Child>,
+    settled: bool,
+}
+
+impl Registration<'_> {
+    fn is_current(&self, running: &Registry) -> bool {
+        running.get(self.root).map(|entry| entry.token) == Some(self.token)
+    }
+}
+
+impl Drop for Registration<'_> {
+    fn drop(&mut self) {
+        let mut running = self.manager.running();
+        if self.is_current(&running) {
+            let pid = running.remove(self.root).and_then(|entry| entry.pid);
+            if let Some(pid) = pid.filter(|_| !self.settled) {
+                kill_pid_tree(pid);
+            }
+        }
+        drop(running);
+        self.child = None;
+        // notify_one stores a permit when the successor has not begun waiting
+        // yet, so a very fast completion cannot be missed.
+        self.done.notify_one();
+    }
+}
+
+/// What finish() needs to know about one compile run.
+struct CompileRun<'a> {
     main_rel: &'a str,
+    base: String,
+    outdir: PathBuf,
+    log_path: PathBuf,
     log_before: Option<SystemTime>,
     started_at: SystemTime,
-    request_started: std::time::Instant,
+    request_started: Instant,
 }
 
 impl CompileManager {
@@ -434,8 +461,15 @@ impl CompileManager {
         self.path_env.clone().unwrap_or_else(|| tex_path(tex_dir))
     }
 
+    /// The registry holds plain data that no panic leaves half-written, so a
+    /// poisoned lock is still usable — and kill_all runs at quit, from
+    /// `tl_close` too, where a panic would abort the host.
+    fn running(&self) -> MutexGuard<'_, Registry> {
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn kill_all(&self) {
-        let mut running = self.running.lock().unwrap();
+        let mut running = self.running();
         for entry in running.values() {
             if let Some(pid) = entry.pid {
                 kill_pid_tree(pid);
@@ -444,14 +478,29 @@ impl CompileManager {
         running.clear();
     }
 
-    fn clear_if_current(&self, root: &Path, token: u64) {
-        let mut running = self.running.lock().unwrap();
-        if running.get(root).map(|entry| entry.token) == Some(token) {
-            running.remove(root);
-        }
+    fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Option<RunningEntry>) {
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        let done = Arc::new(Notify::new());
+        let previous = self.running().insert(
+            root.to_path_buf(),
+            RunningEntry {
+                token,
+                pid: None,
+                done: Arc::clone(&done),
+            },
+        );
+        let registration = Registration {
+            manager: self,
+            root,
+            token,
+            done,
+            child: None,
+            settled: false,
+        };
+        (registration, previous)
     }
 
-    fn superseded(start: std::time::Instant) -> CompileResult {
+    fn superseded(start: Instant) -> CompileResult {
         CompileResult {
             ok: false,
             duration_ms: start.elapsed().as_millis() as u64,
@@ -468,15 +517,21 @@ impl CompileManager {
         overrides: &CompileOverrides,
         tex_dir: Option<&Path>,
     ) -> Result<CompileResult, CoreError> {
-        let request_started = std::time::Instant::now();
+        let request_started = Instant::now();
         let settings = read_settings(root);
-        let engine = overrides.engine.clone().unwrap_or(settings.engine);
-        let main_file = overrides.main_file.clone().unwrap_or(settings.main_file);
+        let engine = overrides
+            .engine
+            .as_deref()
+            .unwrap_or(settings.engine.as_str());
+        let main_file = overrides
+            .main_file
+            .as_deref()
+            .unwrap_or(settings.main_file.as_str());
         let shell_escape = overrides.shell_escape.unwrap_or(settings.shell_escape);
 
-        let flags = engine_flags(&engine)
+        let flags = engine_flags(engine)
             .ok_or_else(|| CoreError::bad_request(format!("Unknown engine: {engine}")))?;
-        let main_rel = safe_rel_file(root, &main_file)?;
+        let main_rel = safe_rel_file(root, main_file)?;
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(format!(
                 "Main file not found: {main_rel}"
@@ -505,17 +560,7 @@ impl CompileManager {
         }
         args.push(&main_arg);
 
-        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
-        let done = Arc::new(Notify::new());
-        let _completion = CompletionGuard(Arc::clone(&done));
-        let previous = self.running.lock().unwrap().insert(
-            root.to_path_buf(),
-            RunningEntry {
-                token,
-                pid: None,
-                done,
-            },
-        );
+        let (mut registration, previous) = self.register(root);
 
         // A replacement must not touch the same build directory until the
         // predecessor has fully settled: process tree gone, child reaped, and
@@ -528,109 +573,82 @@ impl CompileManager {
             previous.done.notified().await;
         }
 
-        if self
-            .running
-            .lock()
-            .unwrap()
-            .get(root)
-            .map(|entry| entry.token)
-            != Some(token)
-        {
+        if !registration.is_current(&self.running()) {
             return Ok(Self::superseded(request_started));
         }
 
         // Capture log identity after the predecessor has stopped, otherwise its
         // final write can be mistaken for output from this generation.
-        let run = CompileRun {
-            root,
-            main_rel: &main_rel,
-            log_before: std::fs::metadata(
-                outdir.join(format!("{}.log", main_base_name(&main_rel))),
-            )
+        let base = main_base_name(&main_rel);
+        let log_path = outdir.join(format!("{base}.log"));
+        let log_before = std::fs::metadata(&log_path)
             .and_then(|meta| meta.modified())
-            .ok(),
+            .ok();
+        let run = CompileRun {
+            main_rel: &main_rel,
+            base,
+            outdir,
+            log_path,
+            log_before,
             started_at: SystemTime::now(),
             request_started,
         };
 
         let mut cmd = base_command("latexmk", Some(root), &self.path(tex_dir));
         cmd.args(&args);
-        let spawn_result = {
+        let spawned = {
             // Hold the registry lock across synchronous spawn + PID publication.
             // A successor therefore sees either no child or the actual PID,
             // never an unkillable gap between the two.
-            let mut running = self.running.lock().unwrap();
-            if running.get(root).map(|entry| entry.token) != Some(token) {
-                None
-            } else {
-                match cmd.spawn() {
-                    Ok(child) => {
-                        running.get_mut(root).expect("token checked").pid = child.id();
-                        Some(Ok(child))
-                    }
-                    Err(err) => Some(Err(err)),
+            let mut running = self.running();
+            match running.get_mut(root) {
+                Some(entry) if entry.token == registration.token => {
+                    Some(cmd.spawn().inspect(|child| entry.pid = child.id()))
                 }
+                _ => None,
             }
         };
 
-        let mut child = match spawn_result {
+        let child = match spawned {
             None => return Ok(Self::superseded(request_started)),
-            Some(Err(err)) => {
-                let result = self.finish(&run, -1, err.to_string());
-                self.clear_if_current(root, token);
-                return Ok(result);
-            }
-            Some(Ok(child)) => child,
+            Some(Err(err)) => return Ok(finish(&run, -1, err.to_string())),
+            Some(Ok(child)) => registration.child.insert(child),
         };
         let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-        let (code, mut output, stderr) = drive(&mut child, timeout).await;
+        let (code, mut output, stderr) = drive(child, timeout).await;
+        registration.settled = true;
         output.push_str(&stderr);
-
-        let result = self.finish(&run, code, output);
-        self.clear_if_current(root, token);
-        Ok(result)
+        Ok(finish(&run, code, output))
     }
+}
 
-    fn finish(&self, run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
-        let CompileRun {
-            root,
-            main_rel,
-            log_before,
-            started_at,
-            request_started: start_instant,
-        } = *run;
-        let base = main_base_name(main_rel);
-        let outdir = root.join(BUILD_DIR);
-        let log_path = outdir.join(format!("{base}.log"));
-
-        let mut log = fallback_output;
-        if let Ok(meta) = std::fs::metadata(&log_path) {
-            let modified = meta.modified().ok();
-            let rewritten = modified != log_before;
-            let after_start = modified.map(|mtime| mtime >= started_at).unwrap_or(false);
-            if rewritten || after_start {
-                if let Ok(bytes) = read_tail(&log_path, LOG_READ_MAX) {
-                    log = String::from_utf8_lossy(&bytes).into_owned();
-                }
+fn finish(run: &CompileRun, code: i32, fallback_output: String) -> CompileResult {
+    let mut log = fallback_output;
+    if let Ok(meta) = std::fs::metadata(&run.log_path) {
+        let modified = meta.modified().ok();
+        let rewritten = modified != run.log_before;
+        let after_start = modified.is_some_and(|mtime| mtime >= run.started_at);
+        if rewritten || after_start {
+            if let Ok(bytes) = read_tail(&run.log_path, LOG_READ_MAX) {
+                log = crate::lossy_string(bytes);
             }
         }
+    }
 
-        let issues = parse_log(&log, main_rel);
-        let pdf_exists = outdir.join(format!("{base}.pdf")).exists();
-        let ok = code == 0 && pdf_exists;
-        let (errors, warnings): (Vec<_>, Vec<_>) =
-            issues.into_iter().partition(|item| item.kind == "error");
+    let (errors, warnings): (Vec<_>, Vec<_>) = parse_log(&log, run.main_rel)
+        .into_iter()
+        .partition(|item| item.kind == "error");
+    let ok = code == 0 && run.outdir.join(format!("{}.pdf", run.base)).exists();
 
-        CompileResult {
-            ok,
-            duration_ms: start_instant.elapsed().as_millis() as u64,
-            // Never advertise a pre-existing PDF for a failed run. The UI keeps
-            // its old preview visible but does not reload it as fresh output.
-            pdf: ok.then(|| format!("{BUILD_DIR}/{base}.pdf")),
-            errors,
-            warnings,
-            log: tail(&log, LOG_TAIL).to_string(),
-        }
+    CompileResult {
+        ok,
+        duration_ms: run.request_started.elapsed().as_millis() as u64,
+        // Never advertise a pre-existing PDF for a failed run. The UI keeps
+        // its old preview visible but does not reload it as fresh output.
+        pdf: ok.then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
+        errors,
+        warnings,
+        log: tail(log, LOG_TAIL),
     }
 }
 
@@ -653,8 +671,9 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The last `max` bytes of `s`, moved forward to a char boundary.
-fn tail(s: &str, max: usize) -> &str {
+/// The last `max` bytes of `s`, moved forward to a char boundary. A log
+/// that fits, the usual case, is returned without a copy.
+fn tail(s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
@@ -662,7 +681,7 @@ fn tail(s: &str, max: usize) -> &str {
     while !s.is_char_boundary(start) {
         start += 1;
     }
-    &s[start..]
+    s[start..].to_string()
 }
 
 #[cfg(test)]

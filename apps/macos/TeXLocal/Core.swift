@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import TeXLocalCore
 
 /// A command the Rust core refused, with the status it gave (400 for a bad
@@ -23,13 +23,28 @@ final class Core {
         init(_ raw: OpaquePointer) { self.raw = raw }
     }
 
-    private let handle: Handle
+    /// None when the library folder can't be opened; the app then says so
+    /// and quits.
+    private let handle: Handle?
 
     private init() {
-        guard let raw = tl_open(nil) else {
-            fatalError("TeXLocal could not open its library folder (~/TeXLocal).")
-        }
-        handle = Handle(raw)
+        handle = tl_open(nil).map(Handle.init)
+        // Not from here: the first use is inside SwiftUI's first update, and
+        // a modal alert run there aborts the app.
+        if handle == nil { DispatchQueue.main.async { Self.cannotOpenLibrary() } }
+    }
+
+    /// The library folder can't be made or opened: say so and quit, rather
+    /// than leave a crash report that explains nothing.
+    private static func cannotOpenLibrary() -> Never {
+        let folder = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"] ?? "~/TeXLocal"
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "TeXLocal can’t open its library folder."
+        alert.informativeText = "Make sure you can create and write to \(folder), then open TeXLocal again."
+        alert.addButton(withTitle: "Quit")
+        alert.runModal()
+        exit(1)
     }
 
     private nonisolated static func run(_ handle: Handle, _ command: String, _ json: String) -> Data {
@@ -52,7 +67,9 @@ final class Core {
 
     private func send(_ command: String, _ args: [String: Any]) async throws -> Data {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
-        let handle = handle
+        guard let handle else {
+            throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
+        }
         return await Task.detached { Core.run(handle, command, json) }.value
     }
 
@@ -76,6 +93,7 @@ final class Core {
 
     /// Stop running compiles. Synchronous on purpose: it runs as the app quits.
     func killAll() {
+        guard let handle else { return }
         _ = Core.run(handle, "kill_all", "{}")
     }
 }

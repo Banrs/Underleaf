@@ -34,13 +34,12 @@ struct ProjectSettings: Decodable {
     let shellEscape: Bool
 }
 
-struct LogItem: Decodable, Hashable, Identifiable {
+struct LogItem: Decodable, Hashable {
     let type: String
     let file: String?
     let line: Int?
     let message: String
 
-    var id: Int { hashValue }
     var isError: Bool { type == "error" }
 }
 
@@ -51,6 +50,13 @@ struct CompileResult: Decodable {
     let errors: [LogItem]
     let warnings: [LogItem]
     let log: String
+}
+
+extension CompileResult {
+    /// How long the build took, as every place that shows it reads it: "1.2 s".
+    var durationText: String {
+        "\((Double(durationMs) / 1000).formatted(.number.precision(.fractionLength(1)))) s"
+    }
 }
 
 struct Symbols: Decodable {

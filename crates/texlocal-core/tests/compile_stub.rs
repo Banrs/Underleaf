@@ -300,6 +300,38 @@ esac
 }
 
 #[tokio::test]
+async fn a_cancelled_compile_takes_its_whole_tree_down() {
+    // Dropping the compile future kills latexmk (kill_on_drop), but the
+    // engine it started must not keep writing into the build directory.
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    let path = stub_env(
+        &tmp.path().join("bin"),
+        "#!/bin/sh\n(sleep 1; touch late) &\nsleep 20\n",
+    );
+
+    let mgr = Arc::new({
+        let mut m = CompileManager::new();
+        m.path_env = Some(path);
+        m
+    });
+    let task = tokio::spawn({
+        let mgr = Arc::clone(&mgr);
+        let root = root.clone();
+        async move { mgr.compile(&root, &CompileOverrides::default(), None).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        !root.join("late").exists(),
+        "a descendant outlived the cancel"
+    );
+}
+
+#[tokio::test]
 async fn tex_available_reports_the_stub_version() {
     let tmp = TempDir::new().unwrap();
     let path = stub_env(

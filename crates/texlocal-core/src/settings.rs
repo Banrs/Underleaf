@@ -45,19 +45,16 @@ fn read_raw(root: &Path) -> Map<String, Value> {
 /// the values happens where they are used (compile re-checks both mainFile and
 /// engine), because the file on disk is user-editable.
 pub fn read_settings(root: &Path) -> Settings {
-    let raw = read_raw(root);
+    lenient(&read_raw(root))
+}
+
+/// A settings object read leniently, as `read_settings` describes.
+fn lenient(raw: &Map<String, Value>) -> Settings {
+    let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_string);
     let defaults = Settings::default();
     Settings {
-        main_file: raw
-            .get("mainFile")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or(defaults.main_file),
-        engine: raw
-            .get("engine")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or(defaults.engine),
+        main_file: text("mainFile").unwrap_or(defaults.main_file),
+        engine: text("engine").unwrap_or(defaults.engine),
         shell_escape: raw
             .get("shellEscape")
             .and_then(Value::as_bool)
@@ -110,20 +107,17 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
 /// preserved, as the JS spread did) and write the result.
 pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let validated = validate_settings(root, patch)?;
-    let mut merged = serde_json::to_value(Settings::default())
-        .ok()
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    for (k, v) in read_raw(root) {
-        merged.insert(k, v);
-    }
-    for (k, v) in validated {
-        merged.insert(k, v);
-    }
-    let text = serde_json::to_string_pretty(&Value::Object(merged))
-        .map_err(|e| CoreError::internal(e.to_string()))?;
+    let mut merged = match serde_json::to_value(Settings::default()) {
+        Ok(Value::Object(defaults)) => defaults,
+        _ => Map::new(),
+    };
+    merged.extend(read_raw(root));
+    merged.extend(validated);
+    let text =
+        serde_json::to_string_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
     fs::write(root.join(SETTINGS_FILE), text)?;
-    Ok(read_settings(root))
+    // What was just written, without reading it back.
+    Ok(lenient(&merged))
 }
 
 /// The compiled PDF path for a project — the ONE place this is derived.

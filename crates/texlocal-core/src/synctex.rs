@@ -161,7 +161,7 @@ pub async fn synctex_inverse(
     let rel = rel_to_root(root, &abs)
         .or_else(|| rel_to_root(&std::fs::canonicalize(root).ok()?, &abs))
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    if rel == BUILD_DIR || rel.starts_with(&format!("{BUILD_DIR}/")) || !root.join(&rel).exists() {
+    if Path::new(&rel).starts_with(BUILD_DIR) || !root.join(&rel).exists() {
         return Err(CoreError::not_found("No source file at this location"));
     }
     Ok(InverseLoc { file: rel, line })

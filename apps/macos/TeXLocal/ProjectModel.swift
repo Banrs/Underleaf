@@ -135,7 +135,9 @@ final class ProjectModel {
     // ---------- editing ----------
 
     /// Open a file: text in the editor, anything else in its own app.
-    func open(_ path: String, line: Int? = nil, atTop: Bool = false) async {
+    /// Choosing in a sidebar list passes `focus: false`, so the arrow keys
+    /// stay in the list, as Xcode's navigator keeps them.
+    func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         guard isTextFile(path) else {
             if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: abs))
@@ -156,14 +158,23 @@ final class ProjectModel {
                 openURL = (try? await core.call("raw_path", ["id": id, "path": path], as: String.self))
                     .map { URL(fileURLWithPath: $0) }
                 analyze(file.text)
-                await editor.open(path: "\(id)/\(path)", text: file.text)
+                await editor.open(path: "\(id)/\(path)", text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
             } catch {
                 report(error)
                 return
             }
         }
-        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop) }
+        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+    }
+
+    /// Select an entry in Finder.
+    func showInFinder(_ path: String) {
+        Task {
+            if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: abs)])
+            }
+        }
     }
 
     private func edited() {
@@ -321,12 +332,13 @@ final class ProjectModel {
     private func notify(_ result: CompileResult) {
         guard !NSApp.isActive else { return }
         let content = UNMutableNotificationContent()
-        content.title = "TeXLocal"
+        // macOS already names the app; the title says which project.
+        content.title = id
         content.body = switch (result.ok, result.errors.count) {
-        case (true, _): String(format: "Compiled in %.1fs", Double(result.durationMs) / 1000)
-        case (false, 0): "Compile failed"
-        case (false, 1): "Compile failed — 1 error"
-        case (false, let n): "Compile failed — \(n) errors"
+        case (true, _): "Compiled in \(result.durationText)"
+        case (false, 0): "Build failed"
+        case (false, 1): "Build failed with 1 error"
+        case (false, let n): "Build failed with \(n) errors"
         }
         let center = UNUserNotificationCenter.current()
         Task {
@@ -468,7 +480,6 @@ final class ProjectModel {
     func exportZip(to url: URL) async {
         do {
             try await core.perform("export_zip", ["id": id, "dest": url.path])
-            NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
             report(error)
         }
@@ -479,12 +490,20 @@ final class ProjectModel {
             app?.alert = "Compile first to produce a PDF."
             return
         }
+        let files = FileManager.default
         do {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
+            guard files.fileExists(atPath: url.path) else {
+                try files.copyItem(at: pdfURL, to: url)
+                return
             }
-            try FileManager.default.copyItem(at: pdfURL, to: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            // A copy beside it first, swapped in whole: a failed copy leaves
+            // the file being replaced as it was.
+            let scratch = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                        appropriateFor: url, create: true)
+            defer { try? files.removeItem(at: scratch) }
+            let copy = scratch.appendingPathComponent(url.lastPathComponent)
+            try files.copyItem(at: pdfURL, to: copy)
+            _ = try files.replaceItemAt(url, withItemAt: copy)
         } catch {
             report(error)
         }
@@ -560,7 +579,7 @@ enum PDFFreshness {
     var systemImage: String {
         switch self {
         case .edited: "clock.arrow.circlepath"
-        case .lastSuccessful: "exclamationmark.triangle"
+        case .lastSuccessful: "exclamationmark.triangle.fill"
         }
     }
 }

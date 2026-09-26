@@ -282,9 +282,7 @@ impl Service {
 
     pub fn read_file(&self, id: &str, path: &str) -> Result<String, CoreError> {
         let bytes = std::fs::read(paths::safe_path(&self.project_root(id)?, path)?)?;
-        // Valid UTF-8, the usual case, becomes the String without a second copy.
-        Ok(String::from_utf8(bytes)
-            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()))
+        Ok(crate::lossy_string(bytes))
     }
 
     pub fn write_file(&self, id: &str, path: &str, text: &str) -> Result<(), CoreError> {
@@ -496,7 +494,8 @@ impl Service {
 }
 
 fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
-    serde_json::from_value(args.get(key).cloned().unwrap_or(Value::Null))
+    // Straight from the borrowed Value, with no intermediate clone of it.
+    T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
 }
 

@@ -46,14 +46,43 @@ struct PDFPane: View {
                     darkPaper: pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark)
                 )
             } else {
-                ContentUnavailableView(
-                    project.texAvailable ? "No PDF Yet" : "TeX Isn’t Installed",
-                    systemImage: "doc.richtext",
-                    description: Text(project.texAvailable
-                        ? "Compile to preview your document."
-                        : "Install MacTeX to enable compilation.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// No PDF: TeX to install, a build that failed before making one, or
+    /// nothing compiled yet.
+    @ViewBuilder
+    private var emptyState: some View {
+        if !project.texAvailable {
+            ContentUnavailableView {
+                Label("TeX Isn’t Installed", systemImage: "doc.richtext")
+            } description: {
+                Text("Install MacTeX to compile. TeXLocal notices it once it’s there.")
+            } actions: {
+                Link("Get MacTeX", destination: macTeXURL)
+            }
+        } else if project.result?.ok == false {
+            ContentUnavailableView {
+                Label("Build Failed", systemImage: "xmark.octagon")
+            } description: {
+                Text("The build made no PDF. The build panel shows what went wrong.")
+            } actions: {
+                Button("Show Build Panel") {
+                    // The log when no error was parsed out of it.
+                    project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
+                    project.showLogs = true
+                }
+            }
+        } else {
+            ContentUnavailableView {
+                Label("No PDF Yet", systemImage: "doc.richtext")
+            } description: {
+                Text("Compile to preview your document.")
+            } actions: {
+                Button("Compile") { app.perform(.compileRun) }
+                    .disabled(!app.isEnabled(.compileRun))
             }
         }
     }
@@ -136,11 +165,17 @@ struct PDFPane: View {
     private var status: some View {
         HStack(spacing: 12) {
             if let freshness = project.pdfFreshness {
-                Label(freshness.title, systemImage: freshness.systemImage)
-                    .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                    .help(freshness == .lastSuccessful
-                          ? "The latest build failed; this is the last one that succeeded"
-                          : "The preview doesn’t reflect the current source")
+                Label {
+                    Text(freshness.title)
+                } icon: {
+                    // A failed build's warning badge is the one colour here.
+                    Image(systemName: freshness.systemImage)
+                        .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                }
+                .foregroundStyle(.secondary)
+                .help(freshness == .lastSuccessful
+                      ? "The latest build failed; this is the last one that succeeded"
+                      : "The preview doesn’t reflect the current source")
             }
             if controller.pageCount > 0 {
                 Text("Page \(controller.page) of \(controller.pageCount)")
@@ -179,34 +214,40 @@ struct PDFPane: View {
             .fixedSize()
     }
 
-    /// The zoom level with its presets, then zoom out and in — the web's
-    /// zoom control (workspace.js `zoomButton`). The level comes first so
-    /// the buttons don't move as its label changes width.
+    private func zoomMenu(_ level: String) -> some View {
+        Menu {
+            Button("Fit Width") { controller.fitWidth() }
+            Button("Fit Height") { controller.fitHeight() }
+            Divider()
+            ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
+                Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
+            }
+        } label: {
+            Text("\(level) \(Text.popUpChevron)").monospacedDigit()
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    /// Zoom out, the level as a pop-up of presets, zoom in — the web's zoom
+    /// control (workspace.js `zoomButton`).
     private var zoomControls: some View {
         // Not the View menu's commands: their route (`requestPDF`) also
         // hides the panel.
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
                 .help("Zoom Out")
-            Menu {
-                Button("Fit Width") { controller.fitWidth() }
-                Button("Fit Height") { controller.fitHeight() }
-                Divider()
-                ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-                    Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
-                }
-            } label: {
-                // As wide as the widest level, so − and + stay put.
-                ZStack {
-                    Text("000%").hidden()
-                    Text(controller.zoomLabel)
-                }
-                .monospacedDigit()
+            // As wide as three digits, so − and + stay put as the level
+            // changes: the pop-up takes its label's text alone, so the room
+            // is kept by a hidden twin (as SectionLevelMenu's).
+            ZStack {
+                zoomMenu("000%").hidden()
+                zoomMenu(controller.zoomLabel)
+                    .help("Zoom")
+                    .accessibilityLabel("Zoom")
+                    .accessibilityValue(controller.zoomLabel)
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Zoom")
             Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
                 .help("Zoom In")
         }
@@ -452,6 +493,7 @@ private struct PDFRepresentable: NSViewRepresentable {
     let controller: PDFController
     let darkPaper: Bool
 
+    @MainActor
     final class Coordinator {
         var version = 0
         var highlightToken = 0

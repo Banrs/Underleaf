@@ -138,7 +138,16 @@ final class OutlineDisplayTests: XCTestCase {
 /// The pane bar's groups measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
-    func testAGroupFitsItsBar() {
+    /// The UI kit's two toolbars: Unified Compact and Unified.
+    func testTheBarsAreTheKitsToolbarHeights() {
+        XCTAssertEqual(PaneSize.compact.barHeight, 40)
+        XCTAssertEqual(PaneSize.large.barHeight, 52)
+    }
+
+    /// Controls sit 8 pt from the bar's top and bottom, as in the kit. The
+    /// accessory-bar bezel measures 22 and 34 pt, 2 pt under the kit's 24
+    /// and 36, so the group keeps within 8 to 9 pt of each edge.
+    func testAGroupFitsItsBarWithTheKitsInsets() {
         let two = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
@@ -146,14 +155,22 @@ final class PaneBarLayoutTests: XCTestCase {
         .buttonStyle(.accessoryBar)
         for size in [PaneSize.compact, .large] {
             let height = self.size(of: two.controlSize(size.controlSize)).height
-            XCTAssertGreaterThan(height, 0)
-            XCTAssertLessThanOrEqual(height, size.barHeight - 8, "\(size)")
+            XCTAssertLessThanOrEqual(height, size.barHeight - 16, "\(size)")
+            XCTAssertGreaterThanOrEqual(height, size.barHeight - 18, "\(size)")
         }
     }
 
     private func size(of view: some View) -> CGSize {
         let host = NSHostingView(rootView: view)
         return host.fittingSize
+    }
+}
+
+final class CompileResultTests: XCTestCase {
+    func testDurationsReadTheSameEverywhere() throws {
+        let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
+        let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
+        XCTAssertEqual(result.durationText, "1.2 s")
     }
 }
 
@@ -274,6 +291,18 @@ final class MenuBarTests: XCTestCase {
 
     func testTheSidebarToggleIsCommandBackslash() throws {
         XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    }
+
+    func testTheBottomPanelIsTheBuildPanel() throws {
+        let title = try XCTUnwrap(item("l", [.command, .shift])).title
+        XCTAssertTrue(["Show Build Panel", "Hide Build Panel"].contains(title), title)
+    }
+
+    /// Replacing the text-editing group must keep the spelling commands the
+    /// editor's WebKit spell checking answers to.
+    func testSpellingIsInTheEditMenu() {
+        XCTAssertNotNil(item(";"), "Check Document Now ⌘;")
+        XCTAssertNotNil(item(":"), "Show Spelling and Grammar ⌘:")
     }
 }
 

@@ -164,6 +164,14 @@ fn dropped_files_and_folders_import_into_the_project() {
     assert_eq!(refused["status"], 400);
     assert!(!dir.path().join("data/P/again").exists());
 
+    // A path that is not a string is the caller's mistake, not an I/O error.
+    let malformed = call(
+        handle,
+        "import_files",
+        Some(json!({ "id": "P", "paths": [42] })),
+    );
+    assert_eq!(malformed["status"], 400);
+
     unsafe { tl_close(handle) };
 }
 

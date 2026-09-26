@@ -49,3 +49,9 @@ impl From<std::io::Error> for CoreError {
         Self::internal(err.to_string())
     }
 }
+
+impl From<zip::result::ZipError> for CoreError {
+    fn from(err: zip::result::ZipError) -> Self {
+        Self::internal(err.to_string())
+    }
+}

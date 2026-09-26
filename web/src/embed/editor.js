@@ -30,8 +30,10 @@ const WRAPS = {
 
 window.texlocal = {
   // Show a file. Its earlier state (undo history, selection) comes back only
-  // when the text is unchanged since; anything else starts fresh.
-  open(nextPath, text, scrollTop = 0) {
+  // when the text is unchanged since; anything else starts fresh. `focus`
+  // false leaves keyboard focus with the host, as choosing a file in a
+  // native sidebar does.
+  open(nextPath, text, scrollTop = 0, focus = true) {
     if (editor && path) cached.set(path, editor.getState());
     editor?.destroy();
     const prior = cached.get(nextPath);
@@ -47,7 +49,7 @@ window.texlocal = {
       onScroll: (line) => post({ type: 'scroll', path, line }),
     });
     editor.setScrollTop(scrollTop);
-    editor.focus();
+    if (focus) editor.focus();
     return true;
   },
   // Forget a file's cached state after the host renames or deletes it.
@@ -64,13 +66,15 @@ window.texlocal = {
   },
   getText: () => editor?.getContent() ?? null,
   currentLine: () => editor?.currentLine() ?? 1,
-  reveal(line, atTop) { editor?.gotoLine(line, atTop); },
+  reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
   // The accelerators the host's native menu owns. The page sees a chord
   // before the menu does, and the editor's keymap would otherwise take some
   // of them (Mod-Enter inserts a blank line), so these are handed back.
   setHostKeys(list) { hostKeys = list; },
-  setAppearance({ theme, palette, font, fontSize, accent }) {
+  // `accent` and the selection colours are the host system's (the Mac's
+  // accent and highlight colours); without them the page keeps its own.
+  setAppearance({ theme, palette, font, fontSize, accent, selection, inactiveSelection }) {
     const root = document.documentElement;
     dark = theme === 'dark';
     root.dataset.theme = theme;
@@ -78,6 +82,11 @@ window.texlocal = {
     if (font) root.style.setProperty('--editor-font', font === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
     if (fontSize) root.style.setProperty('--editor-fs', `${fontSize}px`);
     if (accent) root.style.setProperty('--accent', accent);
+    if (selection && inactiveSelection) {
+      root.style.setProperty('--host-selection', selection);
+      root.style.setProperty('--host-selection-inactive', inactiveSelection);
+      root.dataset.hostSelection = '';
+    }
     editor?.setTheme(dark);
   },
   command(name, arg) {

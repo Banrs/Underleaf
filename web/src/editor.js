@@ -381,13 +381,14 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
     },
     // `atTop` puts the line at the top of the view, as an outline's jump to
     // a heading does; otherwise it is centred, with context above it.
-    gotoLine(line, atTop = false) {
+    // `focus` false leaves keyboard focus where it is (a native sidebar).
+    gotoLine(line, atTop = false, focus = true) {
       const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
       view.dispatch({
         selection: { anchor: l.from },
         effects: [EditorView.scrollIntoView(l.from, { y: atTop ? 'start' : 'center' }), setJumpFlash.of(l.from)],
       });
-      view.focus();
+      if (focus) view.focus();
       clearTimeout(this._flashTimer);
       this._flashTimer = setTimeout(() => {
         if (view.dom.isConnected) view.dispatch({ effects: setJumpFlash.of(null) });

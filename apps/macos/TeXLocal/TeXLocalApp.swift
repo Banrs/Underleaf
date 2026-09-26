@@ -16,6 +16,10 @@ struct TeXLocalApp: App {
             AppCommands(app: app)
             // Show/Hide Toolbar and Customize Toolbar… in the View menu.
             ToolbarCommands()
+            // The app has no help book; the default item only said so.
+            CommandGroup(replacing: .help) {
+                Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
+            }
         }
 
         Settings {
@@ -27,10 +31,10 @@ struct TeXLocalApp: App {
 
 /// Quit waits for the open document to reach disk, and refuses — keeping the
 /// window — when it cannot, rather than dropping the only copy of the edits.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor var app: AppModel?
+    var app: AppModel?
 
-    @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A save in flight counts: it has cleared `dirty` before its write
         // is on disk.
@@ -41,7 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    @MainActor
     func applicationWillTerminate(_ notification: Notification) {
         // Compiles run in their own process groups; nothing else stops them.
         Core.shared.killAll()
@@ -65,8 +68,8 @@ struct RootView: View {
             }
         }
         // One minimum for the window whatever it shows, with room for every
-        // column at its own: navigator 180, source and PDF 441, inspector
-        // 220. A minimum that changed with the content — raised as a project
+        // column at its own: navigator 200, source and PDF together 441,
+        // inspector 220. A minimum that changed with the content — raised as a project
         // opened — landed mid-layout on the split view, whose constraint
         // passes then looped until AppKit threw.
         .frame(minWidth: 960, minHeight: 600)

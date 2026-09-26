@@ -4,8 +4,9 @@
 //! ZIP at the requested path.
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -13,31 +14,29 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
-use crate::paths::normalize_abs;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
-    let dest_abs = absolute_lexical(dest)?;
     let (temp_path, file) = create_sibling_temp(dest)?;
-    let temp_abs = absolute_lexical(&temp_path)?;
 
     let result = (|| -> Result<(), CoreError> {
+        // The folder the archive is written into, resolved the way the walk
+        // resolves the project, so a destination spelled through a link (such
+        // as macOS's /var for /private/var) is still recognised there.
+        let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
         let mut export = Export {
             writer: ZipWriter::new(file),
             options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
             root_canonical: &root_canonical,
-            dest_abs: &dest_abs,
-            temp_abs: &temp_abs,
+            archive_dir: fs::canonicalize(parent.unwrap_or(Path::new(".")))?,
+            archive_names: [dest.file_name(), temp_path.file_name()],
             visited: HashSet::from([root_canonical.clone()]),
         };
-        export.add_dir(root, "")?;
-        let completed = export
-            .writer
-            .finish()
-            .map_err(|e| CoreError::internal(e.to_string()))?;
+        export.add_dir(root, &root_canonical, "")?;
+        let completed = export.writer.finish()?;
         completed.sync_all()?;
         Ok(())
     })();
@@ -52,14 +51,6 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         return Err(err.into());
     }
     Ok(())
-}
-
-fn absolute_lexical(path: &Path) -> io::Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(normalize_abs(path))
-    } else {
-        Ok(normalize_abs(&std::env::current_dir()?.join(path)))
-    }
 }
 
 fn create_sibling_temp(dest: &Path) -> io::Result<(PathBuf, File)> {
@@ -132,49 +123,48 @@ fn sibling_backup(dest: &Path) -> PathBuf {
 }
 
 /// The parts of an export that do not change as the walk descends: where the
-/// archive is being written, and the two paths inside the project that must not
-/// end up in it.
+/// archive is being written, and the two entries there (the destination and
+/// its temporary sibling) that must not end up in it.
 struct Export<'a> {
     writer: ZipWriter<File>,
     options: SimpleFileOptions,
     root_canonical: &'a Path,
-    dest_abs: &'a Path,
-    temp_abs: &'a Path,
+    archive_dir: PathBuf,
+    archive_names: [Option<&'a OsStr>; 2],
     visited: HashSet<PathBuf>,
 }
 
 impl Export<'_> {
-    fn add_dir(&mut self, dir: &Path, prefix: &str) -> Result<(), CoreError> {
-        let mut entries = Vec::new();
-        for entry in fs::read_dir(dir)? {
-            entries.push(entry?);
-        }
+    /// `dir_canonical` is `dir` resolved, as the visited set records it.
+    fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
+        let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(|e| e.file_name());
+        let holds_archive = dir_canonical == self.archive_dir;
 
         for entry in entries {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let file_name = entry.file_name();
+            if holds_archive && self.archive_names.contains(&Some(file_name.as_os_str())) {
+                continue;
+            }
+            let name = file_name.to_string_lossy();
             if prefix.is_empty() && (name == BUILD_DIR || name == SETTINGS_FILE) {
                 continue;
             }
             let rel = if prefix.is_empty() {
-                name.clone()
+                name.into_owned()
             } else {
                 format!("{prefix}/{name}")
             };
             let path = entry.path();
-            let path_abs = absolute_lexical(&path)?;
-            if path_abs == *self.dest_abs || path_abs == *self.temp_abs {
-                continue;
-            }
 
             let entry_type = entry.file_type()?;
             if entry_type.is_symlink() {
-                let target = match fs::canonicalize(&path) {
-                    Ok(target) => target,
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
-                    Err(err) => return Err(err.into()),
+                // Unresolvable (dangling, a loop): nothing to export, as in
+                // the project walks.
+                let Ok(target) = fs::canonicalize(&path) else {
+                    continue;
                 };
-                if target != *self.root_canonical && !target.starts_with(self.root_canonical) {
+                if !target.starts_with(self.root_canonical) {
                     // Never export data reached through a link outside the project.
                     continue;
                 }
@@ -188,17 +178,14 @@ impl Export<'_> {
 
             if entry_type.is_dir() {
                 let canonical = fs::canonicalize(&path)?;
-                if canonical != *self.root_canonical && !canonical.starts_with(self.root_canonical)
-                {
+                if !canonical.starts_with(self.root_canonical) {
                     continue;
                 }
-                if !self.visited.insert(canonical) {
+                if !self.visited.insert(canonical.clone()) {
                     continue;
                 }
-                self.writer
-                    .add_directory(format!("{rel}/"), self.options)
-                    .map_err(|e| CoreError::internal(e.to_string()))?;
-                self.add_dir(&path, &rel)?;
+                self.writer.add_directory(format!("{rel}/"), self.options)?;
+                self.add_dir(&path, &canonical, &rel)?;
             } else if entry_type.is_file() {
                 self.add_file(&rel, &path)?;
             }
@@ -207,12 +194,10 @@ impl Export<'_> {
     }
 
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
-        self.writer
-            .start_file(rel, self.options)
-            .map_err(|e| CoreError::internal(e.to_string()))?;
-        let mut src = File::open(path)?;
-        io::copy(&mut src, &mut self.writer)?;
-        self.writer.flush()?;
+        self.writer.start_file(rel, self.options)?;
+        // No flush per file: on a deflated entry that forces a sync block
+        // into the stream, and the next start_file or finish ends it anyway.
+        io::copy(&mut File::open(path)?, &mut self.writer)?;
         Ok(())
     }
 }

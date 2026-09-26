@@ -36,3 +36,10 @@ pub fn default_data_dir() -> std::path::PathBuf {
         .map(|home| home.join("TeXLocal"))
         .unwrap_or_else(|| "TeXLocal".into())
 }
+
+/// Bytes as text, replacing invalid UTF-8. Valid input, the usual case,
+/// becomes the String without a second copy.
+pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
+}

@@ -71,7 +71,7 @@ struct HomeView: View {
                         Button { newProject(template.id) } label: {
                             TemplateCard(template: template)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(TemplateCardStyle())
                         .help("New \(template.title) Project")
                     }
                 }
@@ -151,11 +151,14 @@ struct HomeView: View {
             )
             .symbolRenderingMode(.multicolor)
             Spacer()
-            Link("Get MacTeX", destination: URL(string: "https://tug.org/mactex/")!)
+            Link("Get MacTeX", destination: macTeXURL)
         }
         .padding()
     }
 }
+
+/// Where to get TeX: the start window's notice and the PDF pane link here.
+let macTeXURL = URL(string: "https://tug.org/mactex/")!
 
 /// A template the core can make a project from (crates/texlocal-core
 /// templates.rs), with how its first page looks.
@@ -175,16 +178,46 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
+/// A template card as a button: its page's edge takes the accent colour on
+/// hover and the card dims while pressed, as Pages' template chooser shows
+/// what can be clicked. No glass: the cards are content.
+private struct TemplateCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Card(configuration: configuration)
+    }
+
+    private struct Card: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .environment(\.templateHighlighted, hovering)
+                .opacity(configuration.isPressed ? 0.8 : 1)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    @Entry fileprivate var templateHighlighted = false
+}
+
 /// A template's card: a drawing of its first page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
+    @Environment(\.templateHighlighted) private var highlighted
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             PagePreview(page: template.page)
                 .frame(width: 120, height: 156)
                 .background(.white, in: .rect(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(highlighted ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator),
+                                      lineWidth: highlighted ? 2 : 1)
+                }
             VStack(alignment: .leading, spacing: 1) {
                 Text(template.title).font(.body.weight(.medium))
                 Text(template.detail)

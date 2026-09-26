@@ -1,11 +1,16 @@
 //! Project and file management. Every project is a directory under the data
 //! dir; all returned paths use forward slashes.
 
+use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, UNIX_EPOCH};
 
+use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 
@@ -78,37 +83,38 @@ fn mtime_ns(meta: &fs::Metadata) -> u64 {
 enum EntryKind {
     File,
     Dir,
-    Skip,
 }
 
 // Directory symlinks are skipped to prevent cycles. File symlinks are retained
 // only when their resolved target remains inside the canonical project root.
-fn classify_entry(root_canonical: &Path, entry: &fs::DirEntry) -> Result<EntryKind, CoreError> {
+fn classify_entry(
+    root_canonical: &Path,
+    entry: &fs::DirEntry,
+) -> Result<Option<EntryKind>, CoreError> {
     let file_type = entry.file_type()?;
     if file_type.is_dir() {
-        return Ok(EntryKind::Dir);
+        return Ok(Some(EntryKind::Dir));
     }
     if file_type.is_file() {
-        return Ok(EntryKind::File);
+        return Ok(Some(EntryKind::File));
     }
     if !file_type.is_symlink() {
-        return Ok(EntryKind::Skip);
+        return Ok(None);
     }
 
-    let target = match fs::canonicalize(entry.path()) {
-        Ok(target) => target,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(EntryKind::Skip),
-        Err(err) => return Err(err.into()),
+    // A link that does not resolve (dangling, a loop, an unreadable target)
+    // cannot be shown to stay inside the project, so it is not content, and
+    // must not fail the whole walk.
+    let Ok(target) = fs::canonicalize(entry.path()) else {
+        return Ok(None);
     };
-    if target != root_canonical && !target.starts_with(root_canonical) {
-        return Ok(EntryKind::Skip);
+    if !target.starts_with(root_canonical) {
+        return Ok(None);
     }
-    Ok(if fs::metadata(entry.path())?.is_file() {
-        EntryKind::File
-    } else {
-        // Following a directory link can duplicate trees or recurse forever.
-        EntryKind::Skip
-    })
+    // Following a directory link can duplicate trees or recurse forever.
+    Ok(fs::metadata(entry.path())?
+        .is_file()
+        .then_some(EntryKind::File))
 }
 
 /// The result of reading one entry during a scan, or None when it vanished or
@@ -120,7 +126,7 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
         Err(err)
             if matches!(
                 err.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                ErrorKind::NotFound | ErrorKind::PermissionDenied
             ) =>
         {
             Ok(None)
@@ -129,22 +135,62 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-/// A folder's entries during a walk. The project root itself must be
-/// readable; a subfolder that is not is skipped.
-fn read_subdir(dir: &Path, prefix: &str) -> Result<Option<fs::ReadDir>, CoreError> {
-    if prefix.is_empty() {
-        return Ok(Some(fs::read_dir(dir)?));
+/// One entry of a project folder that a walk descends into or reports.
+struct Entry {
+    path: PathBuf,
+    name: String,
+    /// Project-relative, forward slashes.
+    rel: String,
+    kind: EntryKind,
+}
+
+/// A folder's content entries, in directory order. The file tree, search,
+/// symbol scanning and fingerprinting all walk through here, so they cannot
+/// disagree about what a project contains: dotfiles are hidden, the top-level
+/// `build/` is compile output rather than content, and links are followed only
+/// while they stay inside the project. The project root itself must be
+/// readable; a subfolder that is not reads as empty.
+fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>, CoreError> {
+    let read = if prefix.is_empty() {
+        fs::read_dir(dir)?
+    } else {
+        match skip_unreadable(fs::read_dir(dir))? {
+            Some(read) => read,
+            None => return Ok(Vec::new()),
+        }
+    };
+    let mut out = Vec::new();
+    for entry in read {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        // Only the project's own build directory holds compile output. A
+        // `build` deeper in the tree is the author's, and the ZIP export keeps
+        // it, so every walk here must too.
+        if rel == BUILD_DIR {
+            continue;
+        }
+        if let Some(kind) = classify_entry(root_canonical, &entry)? {
+            out.push(Entry {
+                path: entry.path(),
+                name,
+                rel,
+                kind,
+            });
+        }
     }
-    skip_unreadable(fs::read_dir(dir))
+    Ok(out)
 }
 
 /// Every content file in the project, depth-first, with its project-relative
-/// path. Search, symbol scanning and fingerprinting all walk through here, so
-/// they cannot disagree about what a project contains: dotfiles are hidden,
-/// the top-level `build/` is compile output rather than content, and links are
-/// followed only while they stay inside the project.
-///
-/// The visitor returns false to stop the walk — search uses that to stop
+/// path. The visitor returns false to stop the walk — search uses that to stop
 /// reading files once it has the hits it was asked for.
 fn visit_files(
     root: &Path,
@@ -156,38 +202,13 @@ fn visit_files(
         prefix: &str,
         visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        let Some(entries) = read_subdir(dir, prefix)? else {
-            return Ok(true);
-        };
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            let rel = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
+        for entry in entries(root_canonical, dir, prefix)? {
+            let go_on = match entry.kind {
+                EntryKind::Dir => walk(root_canonical, &entry.path, &entry.rel, visit)?,
+                EntryKind::File => visit(&entry.path, entry.rel)?,
             };
-            // Only the project's own build directory holds compile output. A
-            // `build` deeper in the tree is the author's, and both the file
-            // tree and the ZIP export keep it, so the scans must too.
-            if rel == BUILD_DIR {
-                continue;
-            }
-            match classify_entry(root_canonical, &entry)? {
-                EntryKind::Dir => {
-                    if !walk(root_canonical, &entry.path(), &rel, visit)? {
-                        return Ok(false);
-                    }
-                }
-                EntryKind::File => {
-                    if !visit(&entry.path(), rel)? {
-                        return Ok(false);
-                    }
-                }
-                EntryKind::Skip => {}
+            if !go_on {
+                return Ok(false);
             }
         }
         Ok(true)
@@ -205,6 +226,19 @@ fn ext_of(rel: &str) -> String {
         .unwrap_or_default()
 }
 
+fn project_info(name: String, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+    ProjectInfo {
+        id: name.clone(),
+        name,
+        mtime: mtime_ms(meta),
+        main_file,
+    }
+}
+
+fn name_taken() -> CoreError {
+    CoreError::conflict("A project with that name already exists")
+}
+
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
@@ -217,15 +251,10 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
         let Some(meta) = skip_unreadable(fs::metadata(&root))? else {
             continue;
         };
-        let settings = read_settings(&root);
-        projects.push(ProjectInfo {
-            id: name.clone(),
-            name,
-            mtime: mtime_ms(&meta),
-            main_file: settings.main_file,
-        });
+        let main_file = read_settings(&root).main_file;
+        projects.push(project_info(name, &meta, main_file));
     }
-    projects.sort_by_key(|p| std::cmp::Reverse(p.mtime));
+    projects.sort_by_key(|p| Reverse(p.mtime));
     Ok(projects)
 }
 
@@ -236,29 +265,23 @@ pub fn create_project(
 ) -> Result<ProjectInfo, CoreError> {
     let clean = sanitize_name(name)?;
     let root = data_dir.join(&clean);
-    if root.exists() {
-        return Err(CoreError::conflict(
-            "A project with that name already exists",
-        ));
+    fs::create_dir_all(data_dir)?;
+    // One create rather than a check and then a create: it cannot race, and
+    // it refuses anything already there, a dangling link or case alias too.
+    match fs::create_dir(&root) {
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => return Err(name_taken()),
+        created => created?,
     }
-    let files = templates::files(template);
-    fs::create_dir_all(&root)?;
-    for (rel, content) in files {
-        let abs = safe_path(&root, rel)?;
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(abs, content)?;
+    // Template paths are plain file names, fixed at build time.
+    for (file, content) in templates::files(template) {
+        fs::write(root.join(file), content)?;
     }
-    write_settings(&root, &json!({}))?;
-    let meta = fs::metadata(&root)?;
-    let settings = read_settings(&root);
-    Ok(ProjectInfo {
-        id: clean.clone(),
-        name: clean,
-        mtime: mtime_ms(&meta),
-        main_file: settings.main_file,
-    })
+    let settings = write_settings(&root, &json!({}))?;
+    Ok(project_info(
+        clean,
+        &fs::metadata(&root)?,
+        settings.main_file,
+    ))
 }
 
 pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
@@ -266,19 +289,11 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
     if occupied(&root, &dest) {
-        return Err(CoreError::conflict(
-            "A project with that name already exists",
-        ));
+        return Err(name_taken());
     }
     fs::rename(&root, &dest)?;
-    let meta = fs::metadata(&dest)?;
-    let settings = read_settings(&dest);
-    Ok(ProjectInfo {
-        id: clean.clone(),
-        name: clean,
-        mtime: mtime_ms(&meta),
-        main_file: settings.main_file,
-    })
+    let main_file = read_settings(&dest).main_file;
+    Ok(project_info(clean, &fs::metadata(&dest)?, main_file))
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
@@ -333,66 +348,33 @@ pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
 // ---------- files ----------
 
 pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
-    fn walk(
-        root_canonical: &Path,
-        dir: &Path,
-        rel_prefix: &str,
-    ) -> Result<Vec<TreeNode>, CoreError> {
+    fn walk(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
-        let Some(entries) = read_subdir(dir, rel_prefix)? else {
-            return Ok(nodes);
-        };
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            let rel = if rel_prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{rel_prefix}/{name}")
+        for entry in entries(root_canonical, dir, prefix)? {
+            let (kind, children) = match entry.kind {
+                EntryKind::Dir => ("dir", Some(walk(root_canonical, &entry.path, &entry.rel)?)),
+                EntryKind::File => ("file", None),
             };
-            if rel == BUILD_DIR {
-                continue;
-            }
-            match classify_entry(root_canonical, &entry)? {
-                EntryKind::Dir => {
-                    let children = walk(root_canonical, &entry.path(), &rel)?;
-                    nodes.push(TreeNode {
-                        kind: "dir",
-                        name,
-                        path: rel,
-                        children: Some(children),
-                    });
-                }
-                EntryKind::File => nodes.push(TreeNode {
-                    kind: "file",
-                    name,
-                    path: rel,
-                    children: None,
-                }),
-                EntryKind::Skip => {}
-            }
+            nodes.push(TreeNode {
+                kind,
+                name: entry.name,
+                path: entry.rel,
+                children,
+            });
         }
-        nodes.sort_by(|a, b| {
-            if a.kind != b.kind {
-                return if a.kind == "dir" {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                };
-            }
-            a.name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then_with(|| b.name.cmp(&a.name))
+        // Folders first, then by name ignoring case. The key is built once per
+        // entry, not twice per comparison.
+        nodes.sort_by_cached_key(|n| {
+            (
+                n.kind != "dir",
+                n.name.to_lowercase(),
+                Reverse(n.name.clone()),
+            )
         });
         Ok(nodes)
     }
 
-    let root_canonical = fs::canonicalize(root)?;
-    walk(&root_canonical, root, "")
+    walk(&fs::canonicalize(root)?, root, "")
 }
 
 const TEXT_EXT: &[&str] = &[
@@ -401,10 +383,7 @@ const TEXT_EXT: &[&str] = &[
 ];
 
 pub fn is_text_file(rel: &str) -> bool {
-    Path::new(rel)
-        .extension()
-        .map(|e| TEXT_EXT.contains(&e.to_string_lossy().to_lowercase().as_str()))
-        .unwrap_or(false)
+    TEXT_EXT.contains(&ext_of(rel).as_str())
 }
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
@@ -423,6 +402,19 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Whether `path` lies strictly inside the folder `dir`; both are
+/// forward-slash project paths.
+fn is_under(path: &str, dir: &str) -> bool {
+    path.strip_prefix(dir)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// The stored main file in the forward-slash form `rel_key` produces. An
+/// older build could store it with backslashes.
+fn main_file_key(root: &Path) -> String {
+    read_settings(root).main_file.replace('\\', "/")
+}
+
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
     let dest = safe_path(root, to)?;
@@ -436,7 +428,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
     if occupied(&src, &dest) {
         return Err(CoreError::conflict("Destination already exists"));
     }
-    if to_rel.starts_with(&format!("{from_rel}/")) {
+    if is_under(&to_rel, &from_rel) {
         return Err(CoreError::bad_request(
             "A folder can't be moved into itself",
         ));
@@ -445,17 +437,15 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         fs::create_dir_all(parent)?;
     }
 
-    let settings = read_settings(root);
-    let mut main_file = settings.main_file.replace('\\', "/");
-    let prefix = format!("{from_rel}/");
-    let updates_main = main_file == from_rel || main_file.starts_with(&prefix);
+    let mut main_file = main_file_key(root);
+    let updates_main = main_file == from_rel || is_under(&main_file, &from_rel);
     if updates_main {
         main_file = format!("{to_rel}{}", &main_file[from_rel.len()..]);
     }
 
     fs::rename(&src, &dest)?;
     if updates_main {
-        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file.clone() })) {
+        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": &main_file })) {
             if let Err(rollback_err) = fs::rename(&dest, &src) {
                 return Err(CoreError::internal(format!(
                     "{}; rename rollback failed: {}",
@@ -475,16 +465,24 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 }
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), CoreError> {
+    delete_entry_using(root, rel, discard)
+}
+
+fn delete_entry_using(
+    root: &Path,
+    rel: &str,
+    move_to_trash: impl FnOnce(&Path) -> Result<(), CoreError>,
+) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
     let target = rel_key(rel)?;
-    let main_file = read_settings(root).main_file.replace('\\', "/");
-    if main_file == target || main_file.starts_with(&format!("{target}/")) {
+    let main_file = main_file_key(root);
+    if main_file == target || is_under(&main_file, &target) {
         return Err(CoreError::conflict(
             "Choose a different main file before deleting this entry",
         ));
     }
     if fs::symlink_metadata(&abs).is_ok() {
-        discard(&abs)?;
+        move_to_trash(&abs)?;
     }
     Ok(())
 }
@@ -502,11 +500,11 @@ fn lower_into(s: &str, out: &mut Vec<char>) {
     }));
 }
 
-fn find_from(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
+fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
+    if needle.is_empty() {
         return None;
     }
-    (from..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
@@ -553,7 +551,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
                 Some(needle) if line.is_ascii() => find_ci_ascii(line.as_bytes(), needle),
                 _ => {
                     lower_into(line, &mut lower);
-                    find_from(&lower, &q, 0)
+                    find_chars(&lower, &q)
                 }
             };
             let Some(col) = found else {
@@ -594,36 +592,32 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 // ---------- symbols ----------
 
-pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    // Both failure modes here are real and pull in opposite directions, so the
-    // decode has to happen before the match, not after.
-    //
-    // Matching raw bytes in Unicode mode drops an entry outright when the file
-    // carries a byte that is not valid UTF-8 — an umlaut in a Latin-1 .bib —
-    // because a class like `[^,\s]` cannot step across it. Escaping that with
-    // `(?-u)` narrows `\s` to ASCII instead, which swallows a non-breaking
-    // space into the captured key (autocomplete then offers a key `\cite`
-    // will never match) and drops the entry entirely when one sits between the
-    // type and the brace. Reference managers and PDF copy-paste emit those.
-    //
-    // Decoding first and matching a str gets both right: invalid bytes become
-    // U+FFFD and the entry survives, while `\s` keeps its Unicode meaning.
-    // `from_utf8_lossy` borrows when the file is already valid UTF-8, which is
-    // the normal case, so this does not copy the file the way an earlier
-    // `.into_owned()` here did.
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static BIB_RE: OnceLock<Regex> = OnceLock::new();
-    static LABEL_RE: OnceLock<Regex> = OnceLock::new();
-    let bib_re = BIB_RE.get_or_init(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-    let label_re = LABEL_RE.get_or_init(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+// Both failure modes here are real and pull in opposite directions, so the
+// decode has to happen before the match, not after.
+//
+// Matching raw bytes in Unicode mode drops an entry outright when the file
+// carries a byte that is not valid UTF-8 — an umlaut in a Latin-1 .bib —
+// because a class like `[^,\s]` cannot step across it. Escaping that with
+// `(?-u)` narrows `\s` to ASCII instead, which swallows a non-breaking
+// space into the captured key (autocomplete then offers a key `\cite`
+// will never match) and drops the entry entirely when one sits between the
+// type and the brace. Reference managers and PDF copy-paste emit those.
+//
+// Decoding first and matching a str gets both right: invalid bytes become
+// U+FFFD and the entry survives, while `\s` keeps its Unicode meaning.
+// `from_utf8_lossy` borrows when the file is already valid UTF-8, the
+// normal case, so then nothing is copied.
+static BIB_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
+static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
 
+pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut keys: Vec<String> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     visit_files(root, &mut |abs, rel| {
         let (re, out) = match ext_of(&rel).as_str() {
-            "bib" => (bib_re, &mut keys),
-            "tex" => (label_re, &mut labels),
+            "bib" => (&*BIB_KEY, &mut keys),
+            "tex" => (&*LABEL, &mut labels),
             _ => return Ok(true),
         };
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
@@ -635,9 +629,10 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
         Ok(true)
     })?;
 
-    fn dedup(v: Vec<String>) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        v.into_iter().filter(|s| seen.insert(s.clone())).collect()
+    fn dedup(mut v: Vec<String>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        v.retain(|s| seen.insert(s.clone()));
+        v
     }
     Ok(Symbols {
         citations: dedup(keys),
@@ -663,9 +658,26 @@ pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
     out.sort();
     Ok(out)
 }
+
 #[cfg(test)]
 mod tests {
-    use super::discard_using;
+    use super::{create_file, create_project, delete_entry_using, discard_using};
+    use crate::error::CoreError;
+    use crate::paths::project_root;
+    use crate::settings::write_settings;
+    use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    fn project() -> (tempfile::TempDir, PathBuf) {
+        let data = tempfile::tempdir().unwrap();
+        create_project(data.path(), "P", "blank").unwrap();
+        let root = project_root(data.path(), "P").unwrap();
+        (data, root)
+    }
+
+    fn unavailable(path: &Path) -> Result<(), CoreError> {
+        discard_using(path, |_| Err::<(), _>("trash unavailable"))
+    }
 
     #[test]
     fn failed_trash_operation_never_falls_back_to_permanent_deletion() {
@@ -680,5 +692,53 @@ mod tests {
             path.exists(),
             "the original must remain after trash failure"
         );
+    }
+
+    // These go through a stand-in for the platform trash: the real one is slow
+    // or unavailable under test, and must not fill the user's Trash either.
+
+    #[test]
+    fn deleting_an_entry_never_turns_a_trash_failure_into_permanent_deletion() {
+        let (_data, root) = project();
+        create_file(&root, "notes/scratch.tex", false).unwrap();
+        let err = delete_entry_using(&root, "notes/scratch.tex", unavailable).unwrap_err();
+        assert_eq!(err.status, 500);
+        assert!(root.join("notes/scratch.tex").is_file());
+    }
+
+    #[test]
+    fn an_entry_named_with_a_leading_dash_reaches_the_trash() {
+        // create_entry and uploads accept such a name; only the main file,
+        // which reaches latexmk's command line, may not start with "-".
+        let (_data, root) = project();
+        create_file(&root, "-notes/-draft.tex", false).unwrap();
+        let mut trashed = None;
+        delete_entry_using(&root, "-notes", |path| {
+            trashed = Some(path.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(trashed, Some(root.join("-notes")));
+    }
+
+    #[test]
+    fn the_main_file_guard_runs_before_the_trash() {
+        let (_data, root) = project();
+        create_file(&root, "chapters/main.tex", false).unwrap();
+        write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
+        for path in ["chapters", "chapters/main.tex", r"chapters\main.tex"] {
+            let err =
+                delete_entry_using(&root, path, |_| panic!("{path} was trashed")).unwrap_err();
+            assert_eq!(err.status, 409, "{path}");
+        }
+        // A sibling that merely shares the name's prefix is not the main file.
+        create_file(&root, "chapters2/x.tex", false).unwrap();
+        let mut trashed = false;
+        delete_entry_using(&root, "chapters2", |_| {
+            trashed = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(trashed);
     }
 }
