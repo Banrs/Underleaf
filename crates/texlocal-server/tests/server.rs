@@ -67,8 +67,11 @@ async fn project_routes_need_the_token_header() {
     let f = fixture();
     for (method, target) in [
         ("POST", "/api/list_projects"),
+        ("POST", "/api/upload_file"),
         ("GET", "/__raw/P/img/a.svg"),
+        ("HEAD", "/__raw/P/img/a.svg"),
         ("GET", "/__pdf/P"),
+        ("GET", "/__download/pdf/P"),
         ("GET", "/__download/zip/P"),
     ] {
         let bare = request(method, target, &[("host", HOST)], b"");
