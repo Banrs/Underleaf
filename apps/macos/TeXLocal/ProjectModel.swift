@@ -41,6 +41,16 @@ final class ProjectModel {
     /// The open file on disk, for the window's document icon.
     var openURL: URL?
 
+    /// The source's find bar (Edit › Find and Replace…): CodeMirror's
+    /// search, driven from native fields, searched for as the query changes.
+    var findShown = false
+    var findQuery = FindQuery() {
+        didSet { if findQuery != oldValue { Task { await editor.setFind(findQuery) } } }
+    }
+    var findMatches = FindMatches()
+    /// Bumped to put the cursor in the find field, its text selected.
+    var findFocus = 0
+
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
 
@@ -75,6 +85,11 @@ final class ProjectModel {
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
+
+    /// The one name for "no build yet", shared by the status bar, the
+    /// inspector and the Issues tab so they can't drift: a PDF from an
+    /// earlier session may be on screen, but its build's issues weren't kept.
+    var noBuildTitle: String { pdfVersion > 0 ? "No Build This Session" : "Not Compiled" }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
 
@@ -96,12 +111,21 @@ final class ProjectModel {
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onScroll = { [weak self] line in self?.topLine = line }
         editor.onCommand = { [weak self] id in self?.run(id) }
+        editor.onFind = { [weak self] query in
+            guard let self else { return }
+            findQuery = query
+            findShown = true
+            findFocus += 1
+        }
+        editor.onFindClosed = { [weak self] in self?.findShown = false }
+        editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
         editor.onCrash = { [weak self] in
             guard let self else { return }
             if self.dirty || self.readingText { self.lostEdits = true }
         }
         editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
+        await editor.useHostFind()
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
@@ -562,6 +586,26 @@ final class ProjectModel {
 
     func format(_ name: String, _ arg: String? = nil) {
         Task { await editor.command(name, arg) }
+    }
+
+    /// The find bar's next or previous match (⌘G, Return, the arrows).
+    func findStep(_ delta: Int) {
+        format(delta > 0 ? "findNext" : "findPrevious")
+    }
+
+    /// Replace the selected match and go to the next, or replace them all.
+    func replace(all: Bool) {
+        format(all ? "replaceAll" : "replaceNext")
+    }
+
+    /// Done or Escape: the bar goes, its matches unmarked, and typing goes
+    /// back to the text.
+    func closeFind() {
+        findShown = false
+        Task {
+            await editor.closeFind()
+            editor.focus()
+        }
     }
 
     func reveal(line: Int) {

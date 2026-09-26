@@ -42,7 +42,7 @@ struct SourceBar: View {
     /// its buttons are 51 pt wide).
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
-        return HStack(spacing: 4) {
+        return HStack(spacing: BarMetrics.spacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
                 + (redo || !isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
             if isLaTeX {
@@ -67,16 +67,22 @@ struct SourceBar: View {
         case .format:
             ToolGroup(items: [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)])
         case .math:
-            ToolGroup(items: [
-                Segment(.editMath, "x.squareroot", app: app),
-                Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
-                    project.format("displayMath")
-                },
-                Segment(id: "symbols", title: "Symbols", systemImage: "pi") { showSymbols = true },
-            ])
-            .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
-                SymbolPalette { project.format("text", $0) }
+            HStack(spacing: 0) {
+                ToolGroup(items: [
+                    Segment(.editMath, "x.squareroot", app: app),
+                    Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
+                        project.format("displayMath")
+                    },
+                ])
+                // Its own button, so the popover points at it.
+                Button("Symbols", systemImage: "pi") { showSymbols = true }
+                    .labelStyle(.iconOnly)
+                    .help("Symbols")
+                    .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
+                        SymbolPalette { project.format("text", $0) }
+                    }
             }
+            .fixedSize()
         case .references:
             ToolGroup(items: Self.references.map { title, symbol in
                 Segment(id: title, title: title, systemImage: symbol) { project.inline(title) }
@@ -148,38 +154,29 @@ struct SourceBar: View {
 }
 
 /// The line's section level, as a word processor shows its paragraph
-/// style; choosing one makes the line that heading, or plain text. A view of
-/// its own, so a caret move redraws it and not the whole bar.
+/// style; choosing one makes the line that heading, or plain text. The
+/// system's pop-up: it shows the level, checks it in its menu and names
+/// itself to VoiceOver. A view of its own, so a caret move redraws it and
+/// not the whole bar.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
 
     var body: some View {
         let level = project.outline.first { $0.line == project.cursorLine }?.level
-        let current = level.map { headingLevels[$0 + 1].0 } ?? headingLevels[0].0
-        // As wide as the widest level, so the bar doesn't shift as the cursor
-        // moves between lines: the pop-up takes its label's text alone, so
-        // the room is kept by a hidden twin.
-        ZStack(alignment: .leading) {
-            popUp("Subsubsection").hidden()
-            popUp(current)
-                .help("Section Level")
-                .accessibilityLabel("Section Level")
-                .accessibilityValue(current)
-        }
-    }
-
-    private func popUp(_ title: String) -> some View {
-        Menu {
+        let current = level.map { headingLevels[$0 + 1].1 } ?? headingLevels[0].1
+        Picker("Section Level", selection: Binding(
+            get: { current },
+            set: { project.format("heading", $0) }
+        )) {
             ForEach(headingLevels, id: \.1) { title, command in
-                Button(title) { project.format("heading", command) }
+                Text(title).tag(command)
                 if command.isEmpty { Divider() }
             }
-        } label: {
-            Text("\(title) \(Text.popUpChevron)")
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
+        .pickerStyle(.menu)
+        .labelsHidden()
         .fixedSize()
+        .help("Section Level")
     }
 }
 
@@ -203,28 +200,42 @@ let symbolGroups: [(String, [(String, String)])] = [
                           ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
 ]
 
-/// The symbol palette: a grid per kind, each symbol a plain button named by
-/// its command. The popover draws its own glass.
+/// The symbol palette: one grid, so the columns line up across the kinds,
+/// each kind under its name; each symbol a flat button named by its command
+/// that highlights on hover, as the pane bars' do. The popover draws its
+/// own glass.
 private struct SymbolPalette: View {
     let insert: (String) -> Void
     @Environment(\.dismiss) private var dismiss
 
+    private static let columns = 10
+
+    /// A square cell a line of the glyphs' text style high, so every glyph,
+    /// narrow or wide, takes the same room.
+    private static var cell: CGFloat {
+        let font = NSFont.preferredFont(forTextStyle: .title3)
+        return (font.ascender - font.descender + font.leading).rounded(.up)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(symbolGroups, id: \.0) { title, symbols in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.subheadline).foregroundStyle(.secondary)
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 2), count: 10), spacing: 2) {
-                        ForEach(symbols, id: \.1) { glyph, command in
+        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            ForEach(Array(symbolGroups.enumerated()), id: \.offset) { index, group in
+                let (title, symbols) = group
+                Text(title)
+                    .font(Typography.secondary)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, index == 0 ? 0 : BarMetrics.inset)
+                    .padding(.bottom, BarMetrics.spacing)
+                    .gridCellColumns(Self.columns)
+                ForEach(Array(stride(from: 0, to: symbols.count, by: Self.columns)), id: \.self) { start in
+                    GridRow {
+                        ForEach(symbols[start..<min(start + Self.columns, symbols.count)], id: \.1) { glyph, command in
                             Button {
                                 insert(command)
                                 dismiss()
                             } label: {
-                                Text(glyph).font(.title3).frame(width: 28, height: 28).contentShape(.rect)
+                                Text(glyph).font(.title3).frame(width: Self.cell, height: Self.cell)
                             }
-                            // Borderless: the accessory-bar bezel pads a 28 pt
-                            // glyph to 52 × 36, past its fixed grid cell.
-                            .buttonStyle(.borderless)
                             .help(command)
                             .accessibilityLabel(command)
                         }
@@ -232,6 +243,7 @@ private struct SymbolPalette: View {
                 }
             }
         }
+        .buttonStyle(.accessoryBar)
         .padding()
     }
 }
@@ -261,7 +273,7 @@ struct SourceLocation: View {
     let project: ProjectModel
 
     var body: some View {
-        LocationBar {
+        SecondaryBar {
             if let path = project.openPath {
                 let siblings = siblings(of: path)
                 ViewThatFits(in: .horizontal) {
@@ -276,7 +288,7 @@ struct SourceLocation: View {
 
     private func crumbs(_ path: String, _ siblings: [String], folders: Bool, section: Bool) -> some View {
         let parts = path.split(separator: "/").map(String.init)
-        return HStack(spacing: 4) {
+        return HStack(spacing: BarMetrics.spacing) {
             if folders {
                 crumb(project.id, "folder")
                 ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { _, folder in
@@ -347,14 +359,111 @@ private struct SectionCrumb: View {
                 }
             }
         } label: {
-            Label(chain.last.map(Outline.displayTitle) ?? "Top of File", systemImage: "list.bullet.indent")
-                .labelStyle(.titleAndIcon)
+            // On the label's text, not the menu: the pop-up takes its colour
+            // from the text it is given. Only a real section reads as primary.
+            Label {
+                Text(chain.last.map(Outline.displayTitle) ?? "Top of File")
+                    .foregroundStyle(chain.isEmpty ? .secondary : .primary)
+            } icon: {
+                Image(systemName: "list.bullet.indent")
+            }
+            .labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .menuIndicator(.hidden)
-        .foregroundStyle(chain.isEmpty ? .secondary : .primary)
         .help("Go to a Section")
+    }
+}
+
+/// Find and replace in the source, as TextEdit's and Xcode's find bars
+/// have it: the system search field, its options in the field's own menu,
+/// previous and next, the match count and Done; under it the replacement
+/// and its actions. Text actions are push buttons, apart from the icon
+/// buttons. Narrow panes drop the count, then put Replace All in Replace's
+/// menu, then narrow the fields, so the fields and Done are never clipped. CodeMirror does the
+/// searching; its own panel stays hidden. Return steps to the next match
+/// (Shift-Return the previous) and Escape closes the bar, as in the PDF's.
+struct SourceFindBar: View {
+    @Bindable var project: ProjectModel
+
+    var body: some View {
+        PaneBarRows {
+            ViewThatFits(in: .horizontal) {
+                // Replace All folds into Replace's menu before the count
+                // goes, so a narrow bar still says how many matches there
+                // are (or that there are none), as Xcode's does.
+                rows(count: true, replaceMenu: false)
+                rows(count: true, replaceMenu: true)
+                rows(count: true, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
+                rows(count: false, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
+                rows(count: false, replaceMenu: true, fieldWidth: 0)
+            }
+        }
+    }
+
+    /// The fields share the one flexible column, so they take what the
+    /// buttons leave and line up; the buttons' column keeps to the trailing
+    /// edge, Done ending the first row.
+    private func rows(count: Bool, replaceMenu: Bool, fieldWidth: CGFloat = BarMetrics.fieldWidth) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
+            GridRow {
+                SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
+                            options: options, step: { project.findStep($0) }, close: { project.closeFind() })
+                    .frame(minWidth: fieldWidth, idealWidth: fieldWidth, maxWidth: .infinity)
+                HStack(spacing: BarMetrics.groupSpacing) {
+                    ToolGroup(items: [
+                        Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
+                                enabled: project.findMatches.total > 0) { project.findStep(-1) },
+                        Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
+                                enabled: project.findMatches.total > 0) { project.findStep(1) },
+                    ])
+                    if count {
+                        Text(project.findMatches.label(for: project.findQuery.search))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Button("Done") { project.closeFind() }
+                        .buttonStyle(.bordered)
+                }
+                .fixedSize()
+                .gridColumnAlignment(.trailing)
+            }
+            GridRow {
+                SearchField(text: $project.findQuery.replace, prompt: "Replace", searches: false,
+                            submit: { project.replace(all: false) }, close: { project.closeFind() })
+                    .frame(minWidth: fieldWidth, idealWidth: fieldWidth, maxWidth: .infinity)
+                Group {
+                    if replaceMenu {
+                        // Replace, with Replace All in its menu.
+                        Menu("Replace") {
+                            Button("Replace All") { project.replace(all: true) }
+                        } primaryAction: {
+                            project.replace(all: false)
+                        }
+                        .menuStyle(.button)
+                    } else {
+                        HStack(spacing: BarMetrics.spacing) {
+                            Button("Replace") { project.replace(all: false) }
+                            Button("Replace All") { project.replace(all: true) }
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .fixedSize()
+                .disabled(project.findMatches.total == 0)
+            }
+        }
+    }
+
+    /// How to match, each checked in the search field's menu, as Xcode's
+    /// find options are.
+    private var options: [SearchOption] {
+        [
+            SearchOption(title: "Match Case", isOn: $project.findQuery.caseSensitive),
+            SearchOption(title: "Whole Words", isOn: $project.findQuery.wholeWord),
+            SearchOption(title: "Regular Expression", isOn: $project.findQuery.regexp),
+        ]
     }
 }
 

@@ -111,7 +111,7 @@ private struct FilesList: View {
                                 .lineLimit(2)
                             Spacer(minLength: 4)
                             Text("\(hit.line)")
-                                .font(.caption)
+                                .font(Typography.secondary)
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }

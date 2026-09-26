@@ -1,20 +1,25 @@
 import SwiftUI
 
 /// A pane of a `SplitController`: its view, its smallest (and largest)
-/// size, the share of the split it opens at, whether it keeps its size as
-/// the window resizes, and whether it shows.
+/// size, the largest share of the split it may take, the share it opens
+/// at, whether it keeps its size as the window resizes, and whether it
+/// shows.
 struct SplitPane {
     var minimum: CGFloat
     var maximum: CGFloat?
+    /// At most this share of the split, so a pane that keeps its size gives
+    /// way to the others in a small window.
+    var maxFraction: CGFloat?
     var fraction: CGFloat?
     var keepsSize = false
     var shown = true
     let content: AnyView
 
-    init(minimum: CGFloat, maximum: CGFloat? = nil, fraction: CGFloat? = nil, keepsSize: Bool = false,
-         shown: Bool = true, @ViewBuilder content: () -> some View) {
+    init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
+         keepsSize: Bool = false, shown: Bool = true, @ViewBuilder content: () -> some View) {
         self.minimum = minimum
         self.maximum = maximum
+        self.maxFraction = maxFraction
         self.fraction = fraction
         self.keepsSize = keepsSize
         self.shown = shown
@@ -120,6 +125,15 @@ struct SplitController: NSViewRepresentable {
             panes[views.firstIndex(of: split.arrangedSubviews[place]) ?? place]
         }
 
+        /// The most a pane may take of the split as it is now: its maximum,
+        /// or its largest share, whichever is less, and never under its
+        /// minimum.
+        private func maximum(_ split: NSSplitView, _ pane: SplitPane) -> CGFloat {
+            let total = split.isVertical ? split.bounds.width : split.bounds.height
+            let share = pane.maxFraction.map { $0 * total } ?? .infinity
+            return max(min(pane.maximum ?? .infinity, share), pane.minimum)
+        }
+
         private func span(_ split: NSSplitView, _ place: Int) -> (CGFloat, CGFloat) {
             let frame = split.arrangedSubviews[place].frame
             return split.isVertical ? (frame.minX, frame.maxX) : (frame.minY, frame.maxY)
@@ -159,7 +173,7 @@ struct SplitController: NSViewRepresentable {
                 - split.dividerThickness * CGFloat(max(shown.count - 1, 0))
             let limits = places.map { place in
                 let pane = pane(split, place)
-                return (pane.minimum, pane.maximum ?? .infinity, pane.keepsSize)
+                return (pane.minimum, maximum(split, pane), pane.keepsSize)
             }
             let want = places.map { place in
                 views.firstIndex(of: shown[place]).flatMap { wanted[$0] } ?? length(split, shown[place])
@@ -207,15 +221,15 @@ struct SplitController: NSViewRepresentable {
 
         func splitView(_ split: NSSplitView, constrainMinCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            var low = span(split, place).0 + pane(split, place).minimum
-            if let maximum = pane(split, place + 1).maximum { low = max(low, span(split, place + 1).1 - maximum) }
+            let low = max(span(split, place).0 + pane(split, place).minimum,
+                          span(split, place + 1).1 - maximum(split, pane(split, place + 1)))
             return max(proposed, low)
         }
 
         func splitView(_ split: NSSplitView, constrainMaxCoordinate proposed: CGFloat,
                        ofSubviewAt place: Int) -> CGFloat {
-            var high = span(split, place + 1).1 - pane(split, place + 1).minimum
-            if let maximum = pane(split, place).maximum { high = min(high, span(split, place).0 + maximum) }
+            let high = min(span(split, place + 1).1 - pane(split, place + 1).minimum,
+                           span(split, place).0 + maximum(split, pane(split, place)))
             return min(proposed, high)
         }
     }

@@ -198,9 +198,40 @@ final class SplitLayoutTests: XCTestCase {
         split.setFrameSize(NSSize(width: 936, height: 400))
         XCTAssertEqual(widths(split), [735, 200])
     }
+
+    /// A pane that keeps its size gives way beyond its largest share: the
+    /// build panel in a small window leaves the editors the room.
+    func testAPaneKeepsWithinItsLargestShare() {
+        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 400, height: 1000))
+        split.isVertical = false
+        split.dividerStyle = .thin
+        let coordinator = SplitController.Coordinator()
+        coordinator.panes = [
+            SplitPane(minimum: 120) { EmptyView() },
+            SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
+        ]
+        coordinator.views = [NSView(), NSView()]
+        coordinator.views.forEach(split.addArrangedSubview)
+        split.delegate = coordinator
+        split.setPosition(1000 - 300 - split.dividerThickness, ofDividerAt: 0)
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
+        split.setFrameSize(NSSize(width: 400, height: 500))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
+        split.setFrameSize(NSSize(width: 400, height: 1000))
+        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
+    }
 }
 
 final class CompileResultTests: XCTestCase {
+    func testTheSourceFindCountReadsAsXcodesDoes() {
+        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
+        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
+        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
+        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
+        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
+        XCTAssertEqual(FindMatches().label(for: ""), "")
+    }
+
     func testDurationsReadTheSameEverywhere() throws {
         let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
         let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))

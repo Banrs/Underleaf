@@ -34,10 +34,13 @@ struct PanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Content, on the text's surface as the source is.
+            .background(Color(nsColor: .textBackgroundColor))
         }
-        .background(.background)
     }
 
+    /// The tabs, then what acts on the one showing. The build's summary is
+    /// the status bar's, directly below, so it isn't repeated here.
     private var header: some View {
         Group {
             Picker("Build Panel", selection: $project.panelTab) {
@@ -47,8 +50,7 @@ struct PanelView: View {
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
-            summary
-            Spacer(minLength: 8)
+            Spacer(minLength: BarMetrics.groupSpacing)
             if project.panelTab == .issues {
                 Toggle(isOn: $showWarnings) {
                     Label("Warnings", systemImage: "exclamationmark.triangle")
@@ -65,48 +67,9 @@ struct PanelView: View {
                 .disabled(project.result?.log.isEmpty ?? true)
             }
             SearchField(text: $filter, prompt: "Filter")
-                .frame(minWidth: 60, maxWidth: 180)
+                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
         }
         .labelStyle(.iconOnly)
-    }
-
-    /// The build's outcome, worded as the status bar words it; only the
-    /// badges carry colour.
-    @ViewBuilder
-    private var summary: some View {
-        if let result = project.result {
-            HStack(spacing: 8) {
-                if result.ok {
-                    badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
-                } else {
-                    badge("Build Failed", "xmark.octagon.fill", .red)
-                }
-                // The failure's badge already stands for the errors.
-                if project.errorCount > 0 {
-                    Text(count(project.errorCount, "Error"))
-                }
-                if project.warningCount > 0 {
-                    badge(count(project.warningCount, "Warning"), "exclamationmark.triangle.fill", .orange)
-                }
-            }
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-        } else {
-            Text("Not Compiled").foregroundStyle(.secondary)
-        }
-    }
-
-    private func badge(_ title: String, _ systemImage: String, _ color: Color) -> some View {
-        Label {
-            Text(title)
-        } icon: {
-            Image(systemName: systemImage).foregroundStyle(color)
-        }
-        .labelStyle(.titleAndIcon)
-    }
-
-    private func count(_ n: Int, _ noun: String) -> String {
-        "\(n) \(noun)\(n == 1 ? "" : "s")"
     }
 
     private var items: [LogItem] {
@@ -121,8 +84,10 @@ struct PanelView: View {
     @ViewBuilder
     private var issues: some View {
         if project.result == nil {
+            // A PDF from an earlier session may be on screen; its build's
+            // issues weren't kept, so don't claim there was never one.
             ContentUnavailableView {
-                Label("Not Compiled Yet", systemImage: "hammer")
+                Label(project.noBuildTitle, systemImage: "hammer")
             } description: {
                 Text("Compile to see errors and warnings here.")
             } actions: {
@@ -130,16 +95,23 @@ struct PanelView: View {
                     .disabled(!app.isEnabled(.compileRun))
             }
         } else if items.isEmpty {
-            if filter.isEmpty {
-                ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
-            } else {
+            if !filter.isEmpty {
                 ContentUnavailableView.search(text: filter)
+            } else if project.result?.ok == false {
+                // The build failed on something the log's parser didn't
+                // pick out as an error: the log itself says what.
+                ContentUnavailableView {
+                    Label("Build Failed", systemImage: "xmark.octagon")
+                } description: {
+                    Text("The build log shows what went wrong.")
+                } actions: {
+                    Button("Show Build Log") { project.panelTab = .log }
+                }
+            } else {
+                ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
             }
         } else {
-            // By position: LaTeX repeats identical warnings, which would
-            // share an id built from their contents.
-            List(Array(items.enumerated()), id: \.offset) { _, item in IssueRow(item: item, project: project) }
-                .listStyle(.inset)
+            IssueList(items: items, project: project)
         }
     }
 
@@ -159,36 +131,74 @@ struct PanelView: View {
     }
 }
 
-/// An error or warning; choosing it opens its line — in the main file when
+/// The errors and warnings as a list with the system's selection: a click
+/// selects, a double-click or Return opens the line — in the main file when
 /// the log names none, as the web's does.
-private struct IssueRow: View {
-    let item: LogItem
+private struct IssueList: View {
+    let items: [LogItem]
     let project: ProjectModel
+    @State private var selection: Int?
 
     var body: some View {
-        Button {
-            if let file { Task { await project.open(file, line: item.line) } }
-        } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.message).lineLimit(3).textSelection(.enabled)
-                    if let file = item.file {
-                        Text(item.line.map { "\(file):\($0)" } ?? file)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } icon: {
-                Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(item.isError ? .red : .orange)
-            }
+        // By position: LaTeX repeats identical warnings, which would share
+        // an id built from their contents.
+        List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
+            IssueRow(item: item, location: location(of: item))
         }
-        .buttonStyle(.plain)
-        .disabled(file == nil)
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .contextMenu(forSelectionType: Int.self) { rows in
+            if let row = rows.first {
+                if file(of: items[row]) != nil {
+                    Button("Go to Line") { open(items[row]) }
+                }
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(items[row].message, forType: .string)
+                }
+            }
+        } primaryAction: { rows in
+            if let row = rows.first { open(items[row]) }
+        }
+        .onChange(of: items.count) { _, _ in selection = nil }
     }
 
-    private var file: String? {
+    private func open(_ item: LogItem) {
+        if let file = file(of: item) { Task { await project.open(file, line: item.line) } }
+    }
+
+    private func file(of item: LogItem) -> String? {
         item.file ?? (item.line == nil ? nil : project.settings?.mainFile)
+    }
+
+    /// Where a row opens, so every row that goes somewhere says where.
+    private func location(of item: LogItem) -> String? {
+        file(of: item).map { file in item.line.map { "\(file):\($0)" } ?? file }
+    }
+}
+
+/// An error or warning: its message, and where it is when the log says.
+private struct IssueRow: View {
+    let item: LogItem
+    /// "file:line", the main file's when the log names none.
+    let location: String?
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.message).lineLimit(3)
+                if let location {
+                    Text(location)
+                        .font(Typography.secondary)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } icon: {
+            Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(item.isError ? .red : .orange)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
     }
 }
 
@@ -211,7 +221,7 @@ private struct LogTextView: NSViewRepresentable {
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         view.textContainerInset = NSSize(width: 8, height: 8)
-        view.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        view.font = Typography.secondaryMono
         view.textColor = .labelColor
         return scroll
     }

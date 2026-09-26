@@ -8,10 +8,21 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") { GeneralSettings() }
-            Tab("Editor", systemImage: "character.cursor.ibeam") { EditorSettings() }
+            Tab("General", systemImage: "gearshape") { GeneralSettings().settingsPane() }
+            Tab("Editor", systemImage: "character.cursor.ibeam") { EditorSettings().settingsPane() }
         }
-        .frame(width: 480)
+    }
+}
+
+extension View {
+    /// A pane of the Settings window: a grouped form at its content's
+    /// height, so the window fits each tab as it switches, as the system's
+    /// own settings windows do.
+    fileprivate func settingsPane() -> some View {
+        formStyle(.grouped)
+            .scrollDisabled(true)
+            .frame(width: 480)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -51,7 +62,6 @@ private struct GeneralSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -78,21 +88,34 @@ private struct EditorSettings: View {
                     Text("System Monospaced").tag("system")
                     Text("JetBrains Mono").tag("jetbrains")
                 }
-                Stepper(value: $fontSize, in: 10...28) {
-                    LabeledContent("Font Size", value: "\(fontSize) pt")
-                }
+                // The system's stepper with its editable value, as a grouped
+                // form lays it out: type a size or step to it, lined up with
+                // the other rows' controls.
+                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                // "onedark" is the editor's own colours: One Dark in dark
+                // mode and CodeMirror's default in light, so it isn't named
+                // for one of them.
                 Picker("Syntax Colors", selection: $palette) {
-                    Text("One Dark").tag("onedark")
+                    Text("Default").tag("onedark")
                     Text("Xcode").tag("xcode")
                 }
             }
-            Section("Status") {
+            Section("Status Bar") {
                 Toggle(isOn: $showWordCount) {
                     Text("Word Count")
-                    Text("Show words and lines in the status bar")
+                    Text("Words and lines in the open file")
                 }
             }
         }
-        .formStyle(.grouped)
+    }
+
+    private static let sizes: ClosedRange<Double> = 10...28
+
+    /// A typed size, whole and kept within the sizes the stepper offers.
+    /// Double, as the stepper's formatted value takes only floating point.
+    private var size: Binding<Double> {
+        Binding(get: { Double(fontSize) }, set: {
+            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        })
     }
 }

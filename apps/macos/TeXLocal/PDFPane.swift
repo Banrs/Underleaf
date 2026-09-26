@@ -69,10 +69,13 @@ struct PDFPane: View {
             } description: {
                 Text("The build made no PDF. The build panel shows what went wrong.")
             } actions: {
-                Button("Show Build Panel") {
-                    // The log when no error was parsed out of it.
-                    project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
-                    project.showLogs = true
+                // Nothing to offer while the panel already shows.
+                if !project.showLogs {
+                    Button("Show Build Panel") {
+                        // The log when no error was parsed out of it.
+                        project.panelTab = project.result?.errors.isEmpty == false ? .issues : .log
+                        project.showLogs = true
+                    }
                 }
             }
         } else {
@@ -112,17 +115,31 @@ struct PDFPane: View {
                     findControls
                 } else {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { compileControls(compact: false); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); zoomControls; share }
-                        HStack(spacing: 8) { compileControls(compact: true); Spacer(minLength: 0); share }
+                        actions(compact: false, zoom: true)
+                        actions(compact: true, zoom: true)
+                        actions(compact: true, zoom: false)
                     }
                 }
             }
-            LocationBar {
+            SecondaryBar(spacing: BarMetrics.itemSpacing) {
                 status
                 Spacer(minLength: 0)
             }
             Divider()
+        }
+    }
+
+    /// Compile at the leading edge; zoom, then Share, at the trailing, each
+    /// a group with the source bar's separator between them.
+    private func actions(compact: Bool, zoom: Bool) -> some View {
+        HStack(spacing: BarMetrics.spacing) {
+            compileControls(compact: compact)
+            Spacer(minLength: BarMetrics.groupSpacing)
+            if zoom {
+                zoomControls
+                ToolSeparator()
+            }
+            share
         }
     }
 
@@ -132,7 +149,7 @@ struct PDFPane: View {
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
         if project.compiling {
-            HStack(spacing: 8) {
+            HStack(spacing: BarMetrics.groupSpacing) {
                 ProgressView().controlSize(.small)
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
@@ -163,7 +180,7 @@ struct PDFPane: View {
 
     /// The page, and whether the PDF still matches the source.
     private var status: some View {
-        HStack(spacing: 12) {
+        Group {
             if let freshness = project.pdfFreshness {
                 Label {
                     Text(freshness.title)
@@ -179,17 +196,16 @@ struct PDFPane: View {
             }
             if controller.pageCount > 0 {
                 Text("Page \(controller.page) of \(controller.pageCount)")
-                    .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }
-        .lineLimit(1)
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder
     private var findControls: some View {
         SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
-            .frame(minWidth: 100, maxWidth: .infinity)
+            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
             .task(id: findQuery) {
                 // Debounced like the web's, so typing doesn't search every prefix.
                 try? await Task.sleep(for: .milliseconds(200))
@@ -210,44 +226,67 @@ struct PDFPane: View {
             Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
                     enabled: !controller.matches.isEmpty) { controller.step(1) },
         ])
+        // A text action, so a push button, apart from the icon buttons.
         Button("Done") { closeFind() }
+            .buttonStyle(.bordered)
             .fixedSize()
     }
 
-    private func zoomMenu(_ level: String) -> some View {
+    /// The scale, a menu of ways to fit and preset scales, the one in use
+    /// checked. A menu rather than a pop-up, as the scale is any percentage,
+    /// not only a preset's; bordered, with the system's indicator, as the
+    /// source bar's Section Level is: the bars' values are bordered, their
+    /// actions flat.
+    private var zoomMenu: some View {
         Menu {
-            Button("Fit Width") { controller.fitWidth() }
-            Button("Fit Height") { controller.fitHeight() }
-            Divider()
-            ForEach([50, 75, 100, 125, 150, 200], id: \.self) { percent in
-                Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
+            // The fitting in use is checked, as Preview's is; while fitting,
+            // no preset is, even at a preset's scale.
+            Picker("Fit", selection: Binding(
+                get: { controller.fit },
+                set: { fit in
+                    switch fit {
+                    case .width: controller.fitWidth()
+                    case .height: controller.fitHeight()
+                    case nil: break
+                    }
+                }
+            )) {
+                Text("Fit Width").tag(Optional(PDFController.Fit.width))
+                Text("Fit Height").tag(Optional(PDFController.Fit.height))
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Picker("Zoom", selection: Binding(
+                get: { controller.fit == nil ? Self.zoomPresets.first { "\($0)%" == controller.zoomLabel } : nil },
+                set: { if let percent = $0 { controller.setScale(CGFloat(percent) / 100) } }
+            )) {
+                ForEach(Self.zoomPresets, id: \.self) { Text("\($0)%").tag(Optional($0)) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
-            Text("\(level) \(Text.popUpChevron)").monospacedDigit()
+            Text(controller.zoomLabel).monospacedDigit()
         }
         .menuStyle(.button)
-        .menuIndicator(.hidden)
+        .buttonStyle(.bordered)
         .fixedSize()
+        .help("Zoom")
+        .accessibilityLabel("Zoom")
+        .accessibilityValue(controller.zoomLabel)
     }
 
-    /// Zoom out, the level as a pop-up of presets, zoom in — the web's zoom
-    /// control (workspace.js `zoomButton`).
+    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
+
+    /// Zoom out, the scale, zoom in: one group, as Preview's zoom is — the
+    /// web's zoom control (workspace.js `zoomButton`).
     private var zoomControls: some View {
         // Not the View menu's commands: their route (`requestPDF`) also
         // hides the panel.
         HStack(spacing: 0) {
             Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
                 .help("Zoom Out")
-            // As wide as three digits, so − and + stay put as the level
-            // changes: the pop-up takes its label's text alone, so the room
-            // is kept by a hidden twin (as SectionLevelMenu's).
-            ZStack {
-                zoomMenu("000%").hidden()
-                zoomMenu(controller.zoomLabel)
-                    .help("Zoom")
-                    .accessibilityLabel("Zoom")
-                    .accessibilityValue(controller.zoomLabel)
-            }
+            zoomMenu
             Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
                 .help("Zoom In")
         }
@@ -284,21 +323,36 @@ enum PDFFind {
     }
 }
 
+/// A choice in a search field's own menu (Match Case, Whole Words…).
+struct SearchOption {
+    let title: String
+    let isOn: Binding<Bool>
+}
+
 /// A search field in which Return steps to the next match, Shift-Return to
 /// the previous one, and Escape closes the bar — keys a SwiftUI text field
 /// keeps to itself. Without `step` or `close`, those keys do what they
-/// usually do.
+/// usually do. `options` go in the field's own menu, under its magnifier,
+/// as Xcode's and Safari's find options do. Without its magnifier
+/// (`searches` false) it is the find bar's replace field: the search
+/// field's shape and height at every control size, which AppKit's plain
+/// text field keeps at the regular size; Return then calls `submit`.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    var searches = true
     var focus = 0
+    var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
+    var submit: (@MainActor () -> Void)?
     var close: (@MainActor () -> Void)?
 
     @MainActor
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
         var focus = 0
+        /// The options' states the field's menu was last made with.
+        var optionStates: [Bool]?
 
         init(_ field: SearchField) {
             self.field = field
@@ -309,11 +363,21 @@ struct SearchField: NSViewRepresentable {
             field.text = sender.stringValue
         }
 
+        @objc func toggleOption(_ sender: NSMenuItem) {
+            guard field.options.indices.contains(sender.tag) else { return }
+            field.options[sender.tag].isOn.wrappedValue.toggle()
+        }
+
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
-                guard let step = field.step else { return false }
-                step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                if let step = field.step {
+                    step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+                } else if let submit = field.submit {
+                    submit()
+                } else {
+                    return false
+                }
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
                 guard let close = field.close else { return false }
@@ -336,24 +400,63 @@ struct SearchField: NSViewRepresentable {
         return view
     }
 
+    /// As wide as it is offered, however narrow: the frame around it sets
+    /// its least and ideal widths.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
+    }
+
     func updateNSView(_ view: NSSearchField, context: Context) {
-        context.coordinator.field = self
+        let coordinator = context.coordinator
+        coordinator.field = self
         view.placeholderString = prompt
-        // The size of the bar's other controls.
-        view.controlSize = switch context.environment.controlSize {
+        view.controlSize = NSControl.ControlSize(context.environment.controlSize)
+        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
+        // No magnifier, but its room kept, so the text starts where the find
+        // field's does above it: an empty menu makes AppKit lay out the same
+        // magnifier-with-menu button as the find field's options menu does.
+        // After the size and the menu, which both set the image again.
+        if !searches, view.searchMenuTemplate == nil {
+            view.searchMenuTemplate = NSMenu(title: "")
+        }
+        if !searches, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
+            button.image = nil
+            button.alternateImage = nil
+            button.isEnabled = false
+        }
+        if view.stringValue != text { view.stringValue = text }
+        // The field copies its menu, so it is made again when a state changes.
+        let states = options.map(\.isOn.wrappedValue)
+        if !options.isEmpty, coordinator.optionStates != states {
+            coordinator.optionStates = states
+            let menu = NSMenu(title: "Find Options")
+            for (index, option) in options.enumerated() {
+                let item = NSMenuItem(title: option.title, action: #selector(Coordinator.toggleOption(_:)), keyEquivalent: "")
+                item.target = coordinator
+                item.tag = index
+                item.state = option.isOn.wrappedValue ? .on : .off
+                menu.addItem(item)
+            }
+            view.searchMenuTemplate = menu
+        }
+        if coordinator.focus != focus {
+            coordinator.focus = focus
+            // Once the field is in its window. Taking focus selects the text.
+            Task { @MainActor in view.window?.makeFirstResponder(view) }
+        }
+    }
+}
+
+extension NSControl.ControlSize {
+    /// AppKit's size for SwiftUI's, so a wrapped control matches its neighbours.
+    init(_ size: ControlSize) {
+        self = switch size {
         case .mini: .mini
         case .small: .small
         case .regular: .regular
         case .large: .large
         case .extraLarge: .extraLarge
         @unknown default: .regular
-        }
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
-        if view.stringValue != text { view.stringValue = text }
-        if context.coordinator.focus != focus {
-            context.coordinator.focus = focus
-            // Once the field is in its window. Taking focus selects the text.
-            Task { @MainActor in view.window?.makeFirstResponder(view) }
         }
     }
 }
@@ -372,34 +475,52 @@ final class PDFController {
     var limited = false
     /// The scale, as a percentage, whether fitting or set.
     var zoomLabel = "100%"
+    /// How the page is fitted to the view, or nil at a set scale.
+    enum Fit { case width, height }
+    private(set) var fit: Fit? = .width
 
     func scaleChanged() {
         guard let view else { return }
         zoomLabel = "\(Int((view.scaleFactor * 100).rounded()))%"
+        // Any other change of scale (a pinch, a zoom command) ends fitting.
+        if view.autoScales {
+            fit = .width
+        } else if fit == .width || (fit == .height && abs(view.scaleFactor - heightScale(view)) > 0.001) {
+            fit = nil
+        }
+    }
+
+    private func heightScale(_ view: PDFView) -> CGFloat {
+        guard let page = view.currentPage else { return view.scaleFactor }
+        return view.bounds.height / page.bounds(for: view.displayBox).height
     }
 
     func setScale(_ scale: CGFloat) {
         guard let view else { return }
+        fit = nil
         view.autoScales = false
         view.scaleFactor = scale
     }
 
     func zoom(in zoomIn: Bool) {
         guard let view else { return }
+        fit = nil
         view.autoScales = false
         if zoomIn { view.zoomIn(nil) } else { view.zoomOut(nil) }
     }
 
     /// In a continuous single-page layout, auto-scaling fits the page width.
     func fitWidth() {
+        fit = .width
         view?.autoScales = true
         scaleChanged()
     }
 
     func fitHeight() {
-        guard let view, let page = view.currentPage else { return }
+        guard let view, view.currentPage != nil else { return }
+        fit = .height
         view.autoScales = false
-        view.scaleFactor = view.bounds.height / page.bounds(for: view.displayBox).height
+        view.scaleFactor = heightScale(view)
     }
 
     func find(_ value: String) {

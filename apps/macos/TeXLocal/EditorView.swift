@@ -67,7 +67,9 @@ struct EditorArea: View {
     private var editors: some View {
         SplitController(app: app, axis: .vertical, autosave: "PanelSplit", panes: [
             SplitPane(minimum: 120) { SourceAndPDF(project: project) },
-            SplitPane(minimum: 80, fraction: 0.3, keepsSize: true, shown: project.showLogs) {
+            // At most two fifths of the height, so in a small window the
+            // source and the PDF keep the room, not the panel.
+            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.3, keepsSize: true, shown: project.showLogs) {
                 PanelView(project: project)
             },
         ])
@@ -89,7 +91,8 @@ private struct SourceAndPDF: View {
 }
 
 /// The source's bars stacked over it, not overlaid: they are opaque, so
-/// text scrolled beneath them was only hidden.
+/// text scrolled beneath them was only hidden. The find bar, while it
+/// shows, goes between them and the text, as TextEdit's and Xcode's do.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -98,6 +101,10 @@ private struct SourcePane: View {
         VStack(spacing: 0) {
             SourceBar(project: project)
             SourceLocation(project: project)
+            if project.findShown {
+                Divider()
+                SourceFindBar(project: project)
+            }
             Divider()
             if project.openPath != nil {
                 EditorView(bridge: app.editor)
@@ -114,14 +121,16 @@ private struct SourcePane: View {
 
 /// The status bar: how the build went (choose it for the panel's errors and
 /// warnings), the save state and where the cursor is, then the build panel's
-/// toggle at the trailing end. The bars' flat controls, at the small size.
+/// toggle at the trailing end. The bars' flat controls, at the secondary
+/// rows' size. The one place the build's summary shows: the panel's header
+/// leaves it out.
 private struct StatusBar: View {
     let project: ProjectModel
     @AppStorage("showWordCount") private var showWordCount = true
 
     var body: some View {
         @Bindable var project = project
-        HStack(spacing: 12) {
+        SecondaryBar(spacing: BarMetrics.itemSpacing) {
             Button {
                 project.panelTab = .issues
                 project.showLogs = true
@@ -131,7 +140,7 @@ private struct StatusBar: View {
             .help("Show Issues")
             .layoutPriority(1)
             Text(project.status)
-            Spacer(minLength: 12)
+            Spacer(minLength: BarMetrics.itemSpacing)
             if project.openPath != nil {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showWordCount, let counts = project.counts {
@@ -150,40 +159,56 @@ private struct StatusBar: View {
             .labelStyle(.iconOnly)
             .help(project.showLogs ? "Hide Build Panel" : "Show Build Panel")
         }
-        // The small system font (11 pt), as Finder's and Xcode's status bars.
-        .font(.subheadline)
-        .controlSize(.small)
         .buttonStyle(.accessoryBar)
         .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .padding(.horizontal, BarMetrics.inset)
-        .frame(height: BarMetrics.secondaryBarHeight)
-        .background(BarMetrics.background)
     }
 
+    /// Only the symbols carry colour; the words stay secondary.
     @ViewBuilder
     private var buildStatus: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: BarMetrics.groupSpacing) {
             if project.compiling {
                 ProgressView().controlSize(.small)
                 Text("Compiling…")
             } else if let result = project.result {
-                Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .foregroundStyle(result.ok ? .green : .red)
-                Text(result.ok ? "Compiled in \(result.durationText)" : "Build Failed")
+                if result.ok {
+                    badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
+                } else {
+                    // The error count folds into the failure, so its symbol
+                    // shows once.
+                    badge(failedTitle, "xmark.octagon.fill", .red)
+                }
             } else {
-                // A PDF from an earlier session is on screen but not this build.
-                Text(project.pdfVersion > 0 ? "Ready" : "Not Compiled")
+                Text(project.noBuildTitle)
             }
-            if project.errorCount > 0 {
-                Label("\(project.errorCount)", systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+            if project.errorCount > 0, project.result?.ok != false {
+                badge("\(project.errorCount)", "xmark.octagon.fill", .red)
+                    .accessibilityLabel("\(project.errorCount) errors")
             }
             if project.warningCount > 0 {
-                Label("\(project.warningCount)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                badge("\(project.warningCount)", "exclamationmark.triangle.fill", .orange)
+                    .accessibilityLabel("\(project.warningCount) warnings")
             }
         }
-        .labelStyle(.titleAndIcon)
+        .monospacedDigit()
         .lineLimit(1)
         .fixedSize()
+    }
+
+    private var failedTitle: String {
+        switch project.errorCount {
+        case 0: "Build Failed"
+        case 1: "Build Failed · 1 Error"
+        case let count: "Build Failed · \(count) Errors"
+        }
+    }
+
+    private func badge(_ title: String, _ systemImage: String, _ color: Color) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(color)
+        }
+        .labelStyle(.titleAndIcon)
     }
 }

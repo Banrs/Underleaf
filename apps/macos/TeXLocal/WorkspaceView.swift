@@ -260,7 +260,7 @@ struct InspectorView: View {
                     LabeledContent("Errors", value: project.errorCount.formatted())
                     LabeledContent("Warnings", value: project.warningCount.formatted())
                 } else {
-                    LabeledContent("Last Build", value: "Not Compiled")
+                    LabeledContent("Last Build", value: project.noBuildTitle)
                 }
                 if let freshness = project.pdfFreshness {
                     Label(freshness.title, systemImage: freshness.systemImage)

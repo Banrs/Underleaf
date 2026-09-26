@@ -54,6 +54,12 @@ struct HomeView: View {
         }
     }
 
+    /// The window's margin: where the inset table starts its column titles
+    /// and row content (its 10 pt inset, then the cell's 8 pt), measured on
+    /// macOS 27. The section titles and template cards take the same edge,
+    /// so New, Recent, Name and the rows start on one line.
+    private static let margin: CGFloat = 18
+
     private func newProject(_ template: String) {
         app.newProjectTemplate = template
         app.showNewProject = true
@@ -62,32 +68,34 @@ struct HomeView: View {
     // ---------- new ----------
 
     private var templates: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading) {
             Text("New")
-                .font(.title3.weight(.semibold))
+                .font(Typography.sectionTitle)
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 20) {
+                HStack(alignment: .top, spacing: Self.margin) {
                     ForEach(ProjectTemplate.all) { template in
                         Button { newProject(template.id) } label: {
                             TemplateCard(template: template)
                         }
-                        .buttonStyle(TemplateCardStyle())
+                        // A plain system button: it dims while pressed and
+                        // takes the focus ring with keyboard navigation.
+                        .buttonStyle(.plain)
                         .help("New \(template.title) Project")
                     }
                 }
             }
             .scrollIndicators(.never)
         }
-        .padding()
+        .padding(Self.margin)
     }
 
     // ---------- recent ----------
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading) {
             Text("Recent")
-                .font(.title3.weight(.semibold))
-                .padding([.horizontal, .top])
+                .font(Typography.sectionTitle)
+                .padding([.horizontal, .top], Self.margin)
             Table(shown, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("Name", value: \.name) { project in
                     Label(project.name, systemImage: "doc.text")
@@ -153,7 +161,7 @@ struct HomeView: View {
             Spacer()
             Link("Get MacTeX", destination: macTeXURL)
         }
-        .padding()
+        .padding(Self.margin)
     }
 }
 
@@ -178,53 +186,29 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
-/// A template card as a button: its page's edge takes the accent colour on
-/// hover and the card dims while pressed, as Pages' template chooser shows
-/// what can be clicked. No glass: the cards are content.
-private struct TemplateCardStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Card(configuration: configuration)
-    }
-
-    private struct Card: View {
-        let configuration: Configuration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .environment(\.templateHighlighted, hovering)
-                .opacity(configuration.isPressed ? 0.8 : 1)
-                .onHover { hovering = $0 }
-        }
-    }
-}
-
-extension EnvironmentValues {
-    @Entry fileprivate var templateHighlighted = false
-}
-
 /// A template's card: a drawing of its first page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    @Environment(\.templateHighlighted) private var highlighted
+    /// A drawing of a Letter page: the thumbnail's size and its corners.
+    private static let page = CGSize(width: 120, height: 156)
+    private static let corner: CGFloat = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading) {
             PagePreview(page: template.page)
-                .frame(width: 120, height: 156)
-                .background(.white, in: .rect(cornerRadius: 6))
+                .frame(width: Self.page.width, height: Self.page.height)
+                .background(.white, in: .rect(cornerRadius: Self.corner, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(highlighted ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator),
-                                      lineWidth: highlighted ? 2 : 1)
+                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
+                        .strokeBorder(.separator)
                 }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(template.title).font(.body.weight(.medium))
+            VStack(alignment: .leading) {
+                Text(template.title).font(.headline)
                 Text(template.detail)
-                    .font(.caption)
+                    .font(Typography.secondary)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .frame(width: 120, alignment: .leading)
+                    .frame(width: Self.page.width, alignment: .leading)
             }
         }
         .contentShape(.rect)
@@ -241,7 +225,8 @@ private struct PagePreview: View {
         switch page {
         case .blank:
             Image(systemName: "plus")
-                .font(.system(size: 28, weight: .light))
+                .font(.largeTitle)
+                .fontWeight(.light)
                 .foregroundStyle(.gray.opacity(0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .article:
