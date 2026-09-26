@@ -305,7 +305,9 @@ Behaviour-preserving, with no public API, C ABI or server-check change:
 
 ## Gotchas
 
-- An unfinished Word-style safe save (write a temporary file, then replace) is kept, uncommitted, at `.claude/wip/safesave.rs`. It is not wired in.
+- Saves are atomic (`crates/texlocal-core/src/atomic.rs`): a hidden temporary file beside the target, given the old file's mode before any text, synced, then renamed over it; a symlinked file is written through to its target inside the project; Windows steps the old file aside when a plain rename is refused.
+- Driving the Debug build without keystrokes or the menu bar: SwiftUI's menu items have no AppKit action of their own, but the app menu's items answer `menuAction:` sent to their `target` (lldb: `[NSApp sendAction:[item action] to:[item target] from:item]`), which is how Settings was opened in the verify pass; File › Save PDF As… was reached with a scratch-only launch hook (never committed). A background window's WKWebView doesn't paint CodeMirror's measure pass until the app is active once, so the gutter looks misaligned in inactive captures.
+- Core Image's filters work in linear light: dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16. Pick the input for the grey wanted out.
 
 - On the owner's Mac, `static.crates.io` is blocked by network policy, while GitHub works. Before adding a Rust dependency, check `~/.cargo/registry/cache`, or pin a dependency-free crate to its GitHub tag. That is why the server doesn't use axum.
 - `CLAUDE.md` is deleted; the owner's global `AGENTS.md` replaces it.
