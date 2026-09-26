@@ -112,6 +112,8 @@ struct PaneBarRows<Content: View>: View {
 /// the same.
 struct SecondaryBar<Content: View>: View {
     var spacing = BarMetrics.spacing
+    /// From the row's ends to its first and last items.
+    var edgeInset = BarMetrics.inset
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -119,7 +121,7 @@ struct SecondaryBar<Content: View>: View {
             .font(Typography.secondary)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
-            .padding(.horizontal, BarMetrics.inset)
+            .padding(.horizontal, edgeInset)
             .frame(height: BarMetrics.secondaryBarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(BarMetrics.background)

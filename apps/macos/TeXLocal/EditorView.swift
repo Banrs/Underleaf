@@ -125,7 +125,12 @@ private struct StatusBar: View {
 
     var body: some View {
         @Bindable var project = project
-        SecondaryBar(spacing: BarMetrics.itemSpacing) {
+        // Its ends as far from the edge as its items are from each other:
+        // the panel's toggle sits centred between the line and the window's
+        // edge, and its bezel clear of, and concentric with, the window's
+        // rounded corner. (SwiftUI's containerCornerOffset can't see the
+        // window's corners from inside the split's panes.)
+        SecondaryBar(spacing: BarMetrics.itemSpacing, edgeInset: BarMetrics.itemSpacing) {
             ViewThatFits(in: .horizontal) {
                 items(save: true, counts: true, engine: true)
                 items(save: true, counts: true, engine: false)
