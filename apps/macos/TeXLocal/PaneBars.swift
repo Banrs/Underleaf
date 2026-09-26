@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The one set of metrics every in-window bar shares, from the kit's
-/// toolbars: 8 pt around the controls, 4 pt between the controls of a
-/// group, 8 pt between groups, and 16 pt separator lines. One size, the
+/// toolbars: 8 pt around the controls, the controls of a group abutting,
+/// 8 pt between groups, and 16 pt separator lines. One size, the
 /// standard one: the bars under the window toolbar (the source's and the
 /// PDF's actions, the find bar, the build panel's header) and the
 /// secondary rows.

@@ -38,8 +38,8 @@ struct NavigatorView: View {
     }
 }
 
-/// The project's files, with adding at the header as Overleaf has it, or
-/// the project search's results while there is a query.
+/// The project's files, or the project search's results while there is a
+/// query.
 private struct FilesList: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -314,7 +314,8 @@ private struct OutlineList: View {
                 }
             }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            .onChange(of: project.topLine) { _, top in line = top }            // The current heading always shows: its sections open, then the
+            .onChange(of: project.topLine) { _, top in line = top }
+            // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in
                 let chain = Outline.chain(outline, at: line).dropLast()
