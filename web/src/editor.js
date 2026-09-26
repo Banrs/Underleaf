@@ -314,7 +314,7 @@ export function latexCompletions(getSymbols) {
 // `content`: it carries the document, selection, and undo history of an
 // earlier session with the same file. Its embedded listener closures only
 // touch stable module-level state, so reattaching them is safe.
-export function createEditor({ parent, content, restore, onChange, onCursor, dark, getSymbols }) {
+export function createEditor({ parent, content, restore, onChange, onCursor, onScroll, dark, getSymbols }) {
   const state = restore ?? EditorState.create({
     doc: content,
     extensions: [
@@ -354,6 +354,17 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
   const view = new EditorView({ state, parent });
   // A restored state carries the theme it was cached under, which may be stale.
   if (restore) view.dispatch({ effects: themeCompartment.reconfigure(themeFor(dark)) });
+  // The line at the top of the view, as the reader moves through the file:
+  // an outline follows where you are reading, as Overleaf's does.
+  if (onScroll) {
+    let frame = 0;
+    const report = () => {
+      frame = 0;
+      if (view.dom.isConnected) onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number);
+    };
+    view.scrollDOM.addEventListener('scroll', () => { frame ||= requestAnimationFrame(report); }, { passive: true });
+    frame = requestAnimationFrame(report);
+  }
 
   return {
     getContent: () => view.state.doc.toString(),
@@ -368,11 +379,13 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
     setTheme(isDark) {
       view.dispatch({ effects: themeCompartment.reconfigure(themeFor(isDark)) });
     },
-    gotoLine(line) {
+    // `atTop` puts the line at the top of the view, as an outline's jump to
+    // a heading does; otherwise it is centred, with context above it.
+    gotoLine(line, atTop = false) {
       const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
       view.dispatch({
         selection: { anchor: l.from },
-        effects: [EditorView.scrollIntoView(l.from, { y: 'center' }), setJumpFlash.of(l.from)],
+        effects: [EditorView.scrollIntoView(l.from, { y: atTop ? 'start' : 'center' }), setJumpFlash.of(l.from)],
       });
       view.focus();
       clearTimeout(this._flashTimer);
@@ -394,6 +407,38 @@ export function createEditor({ parent, content, restore, onChange, onCursor, dar
         changes: { from, to, insert: prefix + selected + suffix },
         selection: { anchor: from + prefix.length, head: from + prefix.length + selected.length },
       });
+      view.focus();
+    },
+    // Replace the selection with text, in the line: a symbol, say.
+    insertText(text) {
+      const { from, to } = view.state.selection.main;
+      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
+      view.focus();
+    },
+    // Make the cursor's line a heading (`\section` etc.), or plain text given
+    // no command, as a word processor's paragraph style does: an
+    // existing heading changes level and keeps its title, and a line of text
+    // becomes the title.
+    setHeading(command) {
+      const { state } = view;
+      const line = state.doc.lineAt(state.selection.main.head);
+      const m = /^(\s*)\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*\{/.exec(line.text);
+      let title = line.text.trim();
+      let indent = /^\s*/.exec(line.text)[0];
+      let rest = '';
+      if (m) {
+        indent = m[1];
+        // The title runs to the brace that closes the command's.
+        let depth = 1;
+        let i = m[0].length;
+        for (; i < line.text.length && depth; i++) depth += { '{': 1, '}': -1 }[line.text[i]] ?? 0;
+        title = line.text.slice(m[0].length, depth ? line.text.length : i - 1);
+        rest = depth ? '' : line.text.slice(i);
+      }
+      const star = m?.[3] ?? '';
+      const text = command ? `${indent}\\${command}${star}{${title}}${rest}` : `${indent}${title}${rest}`;
+      const cursor = line.from + (command ? indent.length + command.length + star.length + 2 + title.length : text.length);
+      view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: cursor } });
       view.focus();
     },
     // Insert a multi-line template at the cursor; "$0" marks the cursor spot.

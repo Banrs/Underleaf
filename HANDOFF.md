@@ -2,6 +2,15 @@
 
 Status as of 2026-09-26, on `main` (all earlier branches are merged and deleted).
 
+**Last session (2026-09-26): the macOS polish is uncommitted in the working tree.** `main` has everything up to `4ae7f2b`. The Overleaf-style source bar, accessory-bar pane bars, the split sidebar and the scroll-following outline are not committed yet. `/Applications/TeXLocal.app` is a Release build of that working tree. The old Tauri app is in the Trash. Checked on screen: the source bar at two widths, and the sidebar split. Not yet checked:
+- the outline selection following the source as it scrolls;
+- the symbol palette and section-level menu in use;
+- the section and zoom menus: `.menuIndicator(.visible)` shows no chevron under `.accessoryBar`.
+
+Next:
+- Bring the web version's editor toolbar and outline to the same Overleaf feature set, keeping it universal web design. The new editor operations are already shared.
+- The Windows app, which the owner is picking up from `main`.
+
 ## Goal
 
 TeXLocal is moving from a single Tauri web UI to three clients over one Rust core:
@@ -101,14 +110,21 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - The bundle ID is `com.texlocal.mac`. There is no sandbox and signing is ad hoc. `NSAppleEventsUsageDescription` is declared because `trash::delete` moves files to the Trash through Finder.
   - `open TeXLocal.app --args -openProject <id>` opens a project at launch.
 - **Window:** one `NavigationSplitView`, sized to the macOS 27 UI kit (`~/Downloads/Apple macOS 27 UI Kit.sketch` on the owner's Mac).
-  - Sidebar: the files, then the open document's outline as a real hierarchy with disclosure triangles (`Outline.tree`), and project search.
+  - Sidebar (Overleaf's layout): Files on top, with add in its header, over a docked "File Outline", split by a draggable `NSSplitView` divider. They are separate lists, each with its own selection. The outline's selection follows the section on screen: the top visible line, sent by the editor as `scroll` messages into `ProjectModel.topLine`. It does not follow the caret. Choosing a section scrolls it to the top (`reveal(line, atTop)`).
   - Detail: the source beside the PDF, a build panel below (Issues | Build Log, the log an `NSTextView`), a status bar, and a trailing inspector.
   - The window toolbar holds a back button (Close Project, as the web's and Windows' title bars have) and the PDF and inspector toggles. What acts on a pane sits over it.
   - Over the source: undo and redo, Heading, bold / italic | math, reference and citation, Insert. A LaTeX writer's tools, after Overleaf's; commenting out is only in the Format menu. Under that, a location row: project › folders › file › section.
   - Over the PDF: Compile (prominent), zoom (out | level | in), Share. Under that, the page and whether the preview is current.
-  - Pane bar controls are native only; the owner asked for native over hand-built. Each group is native `.glass` buttons whose glass `glassEffectUnion` merges into one capsule with no separators, as Notes' toolbar groups look. `ControlGroup` was tried and dropped: AppKit's segmented control puts a separator between every button. The zoom level is a borderless menu on its own glass in the same union: as a `.glass` menu, its label drew blurred.
-  - Glass buttons draw their icons dimmed while the window is inactive; that is the system's, not disabled.
-  - Settings › General › Toolbar Size: Compact uses Large controls (26 pt glass buttons, 44 pt bars); Large uses Extra Large controls (34 pt, 52 pt bars), the window toolbar's size. Both keep the standard toolbar spacing (8 pt insets and gaps). The location row is 28 pt.
+  - Pane bars use AppKit's accessory-bar style (`.accessoryBar`, set once on `PaneBar`), as Finder's and Mail's in-window bars do: flat buttons that highlight on hover, with `ToolSeparator` lines between groups. Compile is `.borderedProminent`. Glass was dropped: merged interactive glass (`glassEffectUnion`) glitched icons on hover, and pills read too heavy for bars stacked above content.
+  - The source bar follows Overleaf's toolbar:
+    - undo | redo, then a section-level menu for the caret's line (`setHeading`);
+    - bold | italic, then inline math | display math | a symbol palette (a popover, `symbolGroups`);
+    - link | reference | citation, figure | table, and bulleted | numbered;
+    - a trailing ⋯ menu for the rest.
+    Narrow panes fold groups into ⋯ from the end.
+  - The editor operations are in `web/src/editor.js`, used by the embed page: `setHeading`, `insertText`, `inline` (a `pre$0post` wrap in the line) and `displayMath`.
+  - PDF bar: Compile, then zoom as − / the scale as a percentage (a menu with Fit Width and presets) / +, then Share. Share uses `NSSharingServicePicker`, anchored to its button through `ViewAnchor`: `ShareLink` opened centred on the PDF.
+  - Settings › General › Toolbar Size: Compact is regular controls in a 40 pt bar; Large is large controls in 48 pt. The location row is 28 pt.
   - The start window: template cards, then recent projects as a sortable table.
 - **Layout rules learnt the hard way:**
   - The window has one minimum size (960 × 600) whatever it shows. Changing it as a project opened crashed AppKit ("more Update Constraints in Window passes than there are views").
@@ -119,7 +135,7 @@ Neither app can be built in a Linux or cloud session, so GitHub Actions is the c
   - Separators are stock `Divider()`s placed as siblings in a `VStack`. An overlaid `Divider()` takes its parent's layout context, so inside an `HStack` it turns vertical.
   - PDFKit re-anchors page one's top to the view on every resize while fitting the width, so the gap above page one is a scroll-view content inset.
 - **Parity and review fixes:** every command in `commandDefs`, and the settings with a native meaning. Saves run one at a time; quit waits for a save in flight; compiles queue; a WebContent crash recovers the editor; overlapping file opens can no longer save one file's text into another; undo and redo always reach CodeMirror's history.
-- **Tests:** 22 XCTests, including the outline tree and the pane bar groups' height at each toolbar size. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
+- **Tests:** 22 XCTests, including the outline tree, and a check that a pane bar group fits its bar at each toolbar size. The test scheme sets `TEXLOCAL_DATA=/tmp/texlocal-xctest`, and its pre-action copies `web/src/workspace.js` there for the command-table test: the tests run inside TeXLocal.app, which would otherwise need Documents access, and macOS asks again after every re-signing build, blocking the read.
 - **PDF links:** PDFKit draws hyperref's coloured link boxes, which pdf.js (browser, Windows) leaves out, so `hideLinkBorders` zeroes each link's border on load. The links still work.
 - **Checked by hand on a Mac (2026-09-26), against a scratch `TEXLOCAL_DATA`:**
   - click-and-slide from Bold to Italic applied only Italic (with the hand-built groups since replaced by `ControlGroup`);

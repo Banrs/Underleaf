@@ -68,9 +68,6 @@ struct PanelView: View {
                 .help("Hide Panel")
                 .layoutPriority(1)
         }
-        // The rest of the bars' icon buttons.
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
     }
 

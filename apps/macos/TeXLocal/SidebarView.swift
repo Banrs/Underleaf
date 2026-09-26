@@ -1,31 +1,64 @@
 import SwiftUI
 
-/// The sidebar, as a writer's rather than a programmer's: the project's
-/// files with the open document's outline beneath (as Overleaf pairs them),
-/// project search at the top, and adding files at the foot.
+/// The sidebar, as a writer's rather than a programmer's and as Overleaf
+/// lays it out: the project's files over the open document's outline, with
+/// a divider to drag between them, and project search at the top. They are
+/// separate lists, so each shows its own selection: the open file, and the
+/// section on screen.
 struct NavigatorView: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var project: ProjectModel
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        SplitController(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
+            SplitPane(minimum: 100) { FilesList(project: project) },
+            SplitPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline) {
+                OutlineList(project: project)
+            },
+        ])
+        .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
+        .searchFocused($searchFocused)
+        .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
+    }
+
+    /// Search results take the whole sidebar.
+    private var showsOutline: Bool {
+        project.searchQuery.isEmpty && project.openPath?.hasSuffix(".tex") == true
+    }
+}
+
+/// The project's files, with adding at the header as Overleaf has it, or
+/// the project search's results while there is a query.
+private struct FilesList: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var selection: String?
     @State private var deleting: String?
-    @FocusState private var searchFocused: Bool
-    @AppStorage("outlineOpen") private var outlineOpen = true
-    /// Sections folded in the outline, by level and title, so a fold
-    /// survives edits that renumber the headings.
-    @State private var collapsedSections: Set<String> = []
 
     var body: some View {
         List(selection: $selection) {
             if project.searchQuery.isEmpty {
-                Section("Files") {
+                Section {
                     OutlineGroup(project.tree, children: \.children) { node in
                         row(node).tag(node.path)
                     }
-                }
-                if !project.outline.isEmpty, let path = project.openPath {
-                    Section("Outline", isExpanded: $outlineOpen) {
-                        OutlineRows(nodes: Outline.tree(project.outline), path: path,
-                                    project: project, current: current, collapsed: $collapsedSections)
+                } header: {
+                    HStack {
+                        Text("Files")
+                        Spacer()
+                        Menu("Add", systemImage: "plus") {
+                            Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
+                            Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                            Divider()
+                            Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.accessoryBar)
+                        .menuIndicator(.hidden)
+                        .labelStyle(.iconOnly)
+                        .fixedSize()
+                        .help("Add Files")
                     }
                 }
             } else {
@@ -33,9 +66,6 @@ struct NavigatorView: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
-        .searchFocused($searchFocused)
-        .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
         .onChange(of: selection) { _, path in
             if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path) } }
         }
@@ -44,25 +74,6 @@ struct NavigatorView: View {
             if !project.searchQuery.isEmpty, project.searchHits.isEmpty {
                 ContentUnavailableView.search(text: project.searchQuery)
             }
-        }
-        .safeAreaBar(edge: .bottom) {
-            HStack {
-                Menu("Add", systemImage: "plus") {
-                    Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                    Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
-                    Divider()
-                    Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
-                }
-                .menuIndicator(.hidden)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .help("Add Files")
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
         .dropDestination(for: URL.self) { urls, _ in
             Task { await project.importFiles(urls) }
@@ -77,11 +88,6 @@ struct NavigatorView: View {
                 if let path = deleting { Task { await project.deleteEntry(path) } }
             }
         }
-    }
-
-    /// The section the cursor is in.
-    private var current: Int? {
-        Outline.chain(project.outline, at: project.cursorLine).last?.id
     }
 
     /// Hits grouped by file, each line with its match picked out.
@@ -195,22 +201,62 @@ struct IssueRow: View {
     }
 }
 
+/// The open document's sections, as Overleaf's file outline: the selection
+/// is the section on screen — the one the top of the source is in — and
+/// follows as the source scrolls. Choosing one brings it to the top.
+private struct OutlineList: View {
+    @Bindable var project: ProjectModel
+    @State private var section: Int?
+    /// Sections folded, by level and title, so a fold survives edits that
+    /// renumber the headings.
+    @State private var collapsed: Set<String> = []
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            List(selection: $section) {
+                Section("File Outline") {
+                    OutlineRows(nodes: Outline.tree(project.outline), collapsed: $collapsed)
+                }
+            }
+            .listStyle(.sidebar)
+            .overlay {
+                if project.outline.isEmpty {
+                    ContentUnavailableView("No Sections", systemImage: "list.bullet.indent")
+                }
+            }
+            .onChange(of: current, initial: true) { _, id in
+                for item in Outline.chain(project.outline, at: project.topLine).dropLast() {
+                    collapsed.remove(OutlineRows.key(item))
+                }
+                section = id
+                if let id { proxy.scrollTo(id) }
+            }
+            .onChange(of: section) { _, id in
+                guard let id, id != current, let path = project.openPath,
+                      let item = project.outline.first(where: { $0.id == id }) else { return }
+                Task { await project.open(path, line: item.line, atTop: true) }
+            }
+        }
+    }
+
+    private var current: Int? {
+        Outline.chain(project.outline, at: project.topLine).last?.id
+    }
+}
+
 /// The outline's headings with native disclosure triangles, as Finder,
 /// Mail and Xcode's navigators show a hierarchy: the system indents each
-/// level and draws no guide lines. Headings start expanded.
+/// level and draws no guide lines. Headings start expanded; each row is
+/// tagged with its heading, for the outline list's selection.
 private struct OutlineRows: View {
     let nodes: [OutlineNode]
-    let path: String
-    let project: ProjectModel
-    let current: Int?
     @Binding var collapsed: Set<String>
 
     var body: some View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node)) {
-                    AnyView(OutlineRows(nodes: children, path: path, project: project,
-                                        current: current, collapsed: $collapsed))
+                    AnyView(OutlineRows(nodes: children, collapsed: $collapsed))
                 } label: {
                     row(node.item)
                 }
@@ -220,28 +266,25 @@ private struct OutlineRows: View {
         }
     }
 
-    private func key(_ node: OutlineNode) -> String { "\(node.item.level):\(node.item.title)" }
+    /// A fold's key: level and title, so it survives edits that renumber
+    /// the headings.
+    static func key(_ item: OutlineItem) -> String { "\(item.level):\(item.title)" }
 
     private func expansion(_ node: OutlineNode) -> Binding<Bool> {
-        Binding(
-            get: { !collapsed.contains(key(node)) },
+        let key = Self.key(node.item)
+        return Binding(
+            get: { !collapsed.contains(key) },
             set: { open in
-                if open { collapsed.remove(key(node)) } else { collapsed.insert(key(node)) }
+                if open { collapsed.remove(key) } else { collapsed.insert(key) }
             }
         )
     }
 
     private func row(_ item: OutlineItem) -> some View {
-        Button {
-            Task { await project.open(path, line: item.line) }
-        } label: {
-            Text(Outline.displayTitle(item))
-                .lineLimit(1)
-                .foregroundStyle(item.title == "(untitled)" ? .secondary : .primary)
-                .fontWeight(item.id == current ? .semibold : .regular)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
+        Text(Outline.displayTitle(item))
+            .lineLimit(1)
+            .foregroundStyle(item.title == "(untitled)" ? .secondary : .primary)
+            .tag(item.id)
+            .id(item.id)
     }
 }

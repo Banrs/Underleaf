@@ -12,6 +12,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     let webView: WKWebView
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
+    /// The line at the top of the view, as it scrolls.
+    var onScroll: (Int) -> Void = { _ in }
     var onCommand: (String) -> Void = { _ in }
     /// The page's web process died, taking the editor's text with it.
     var onCrash: () -> Void = {}
@@ -69,8 +71,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         (await js("return texlocal.currentLine()") as? Int) ?? 1
     }
 
-    func reveal(line: Int) async {
-        await js("texlocal.reveal(line)", ["line": line])
+    /// `atTop` puts the line at the top of the view, as an outline's jump
+    /// does; otherwise it is centred.
+    func reveal(line: Int, atTop: Bool = false) async {
+        await js("texlocal.reveal(line, atTop)", ["line": line, "atTop": atTop])
     }
 
     /// False when the page did not run the command.
@@ -132,6 +136,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             onChanged()
         case "cursor":
             if let line = body["line"] as? Int { onCursor(line) }
+        case "scroll":
+            if let line = body["line"] as? Int { onScroll(line) }
         case "command":
             if let id = body["id"] as? String { onCommand(id) }
         default:

@@ -138,15 +138,17 @@ final class OutlineDisplayTests: XCTestCase {
 /// The pane bar's groups measured off screen, with no window shown.
 @MainActor
 final class PaneBarLayoutTests: XCTestCase {
-    func testAGroupIsAsTallAsTheBarsControlSize() {
-        let two = GlassGroup(items: [
+    func testAGroupFitsItsBar() {
+        let two = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
-        // Glass buttons: Large 26 pt, Extra Large 34 pt, as tall as the
-        // bar's glass menus beside them.
-        XCTAssertEqual(size(of: two.controlSize(PaneSize.compact.controlSize)).height, 26)
-        XCTAssertEqual(size(of: two.controlSize(PaneSize.large.controlSize)).height, 34)
+        .buttonStyle(.accessoryBar)
+        for size in [PaneSize.compact, .large] {
+            let height = self.size(of: two.controlSize(size.controlSize)).height
+            XCTAssertGreaterThan(height, 0)
+            XCTAssertLessThanOrEqual(height, size.barHeight - 8, "\(size)")
+        }
     }
 
     private func size(of view: some View) -> CGSize {

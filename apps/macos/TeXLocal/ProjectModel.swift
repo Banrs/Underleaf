@@ -14,6 +14,8 @@ final class ProjectModel {
     /// Words and lines in the open .tex file, for the status bar.
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
+    /// The line at the top of the source as it scrolls: what the outline follows.
+    var topLine = 1
 
     var dirty = false
     var saving = false
@@ -88,6 +90,7 @@ final class ProjectModel {
     func load() async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
+        editor.onScroll = { [weak self] line in self?.topLine = line }
         editor.onCommand = { [weak self] id in self?.run(id) }
         editor.onCrash = { [weak self] in
             guard let self else { return }
@@ -132,7 +135,7 @@ final class ProjectModel {
     // ---------- editing ----------
 
     /// Open a file: text in the editor, anything else in its own app.
-    func open(_ path: String, line: Int? = nil) async {
+    func open(_ path: String, line: Int? = nil, atTop: Bool = false) async {
         guard isTextFile(path) else {
             if let abs = try? await core.call("raw_path", ["id": id, "path": path], as: String.self) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: abs))
@@ -160,7 +163,7 @@ final class ProjectModel {
                 return
             }
         }
-        if let line, generation == openGeneration { await editor.reveal(line: line) }
+        if let line, generation == openGeneration { await editor.reveal(line: line, atTop: atTop) }
     }
 
     private func edited() {

@@ -25,6 +25,7 @@ const WRAPS = {
   bold: ['\\textbf{', '}'],
   italic: ['\\textit{', '}'],
   math: ['$', '$'],
+  displayMath: ['\\[', '\\]'],
 };
 
 window.texlocal = {
@@ -43,6 +44,7 @@ window.texlocal = {
       getSymbols: () => symbols,
       onChange: () => post({ type: 'changed', path }),
       onCursor: (line) => post({ type: 'cursor', path, line }),
+      onScroll: (line) => post({ type: 'scroll', path, line }),
     });
     editor.setScrollTop(scrollTop);
     editor.focus();
@@ -62,7 +64,7 @@ window.texlocal = {
   },
   getText: () => editor?.getContent() ?? null,
   currentLine: () => editor?.currentLine() ?? 1,
-  reveal(line) { editor?.gotoLine(line); },
+  reveal(line, atTop) { editor?.gotoLine(line, atTop); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
   // The accelerators the host's native menu owns. The page sees a chord
   // before the menu does, and the editor's keymap would otherwise take some
@@ -90,6 +92,11 @@ window.texlocal = {
     else if (name === 'comment') editor.toggleComment();
     else if (name === 'find') editor.openSearch();
     else if (name === 'insert') editor.insertTemplate(arg);
+    else if (name === 'heading') editor.setHeading(arg ?? '');
+    else if (name === 'text') editor.insertText(arg ?? '');
+    // A template such as \ref{$0} around the selection, in the line: "$0"
+    // is where the selection (or the cursor) goes.
+    else if (name === 'inline') editor.wrapSelection(...(`${arg}$0`).split('$0', 2));
     else return false;
     return true;
   },

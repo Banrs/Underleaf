@@ -239,28 +239,27 @@ struct SplitController: NSViewRepresentable {
     }
 }
 
-/// The pane bars' two sizes (Settings › General › Toolbar Size): AppKit's
-/// Large controls, or its Extra Large ones, the window toolbar's size.
+/// The pane bars' two sizes (Settings › General › Toolbar Size): regular
+/// controls in the compact toolbar's 40 pt, or large ones in 48 pt.
 enum PaneSize: String {
     case compact, large
 
-    var controlSize: ControlSize { self == .large ? .extraLarge : .large }
-    /// A control, with the standard toolbar's 8 pt above and below.
-    var barHeight: CGFloat { self == .large ? 52 : 44 }
+    var controlSize: ControlSize { self == .large ? .large : .regular }
+    var barHeight: CGFloat { self == .large ? 48 : 40 }
 }
 
-/// A pane's actions: the second row under the window toolbar, in native
-/// controls of the size Settings chooses (`PaneSize`), spaced as the
-/// standard toolbar spaces its items: 8 pt insets, 8 pt between groups.
+/// A pane's actions: the row under the window toolbar, in AppKit's
+/// accessory-bar controls, as Finder's and Mail's in-window bars have them:
+/// flat buttons that highlight on hover, a line between groups. Glass is for
+/// controls that float over content; these bars sit above it.
 struct PaneBar<Content: View>: View {
     @AppStorage("paneBarSize") private var size = PaneSize.compact
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) { content }
-        }
+        HStack(spacing: 4) { content }
         .controlSize(size.controlSize)
+        .buttonStyle(.accessoryBar)
         .lineLimit(1)
         .padding(.horizontal, 8)
         .frame(height: size.barHeight)
@@ -303,13 +302,9 @@ extension Segment {
     }
 }
 
-/// A group of actions as one Liquid Glass capsule, as a window toolbar
-/// groups its items: native glass buttons whose glass is merged into one
-/// shape (`glassEffectUnion`), with no separators. The pane bar's
-/// GlassEffectContainer does the merging.
-struct GlassGroup: View {
+/// Related icon actions side by side, icons only.
+struct ToolGroup: View {
     let items: [Segment]
-    @Namespace private var group
 
     var body: some View {
         HStack(spacing: 0) {
@@ -317,104 +312,243 @@ struct GlassGroup: View {
                 Button(item.title, systemImage: item.systemImage, action: item.action)
                     .disabled(!item.enabled)
                     .help(item.help ?? item.title)
-                    .glassEffectUnion(id: "group", namespace: group)
             }
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
         .labelStyle(.iconOnly)
         .fixedSize()
     }
 }
 
-/// The bar over the source: a writer's tools, not a programmer's — what
-/// Overleaf's editor toolbar and the web's (workspace.js `editorToolbar`)
-/// offer, at the leading edge as Xcode places its editor's controls:
-/// history; the heading style; bold, italic and math; references and
-/// citations; then inserting figures, tables and lists. Commenting out is a
-/// code editor's tool; it stays in the Format menu (⌘/).
+/// The line between a bar's groups.
+struct ToolSeparator: View {
+    var body: some View {
+        Divider().frame(height: 16)
+    }
+}
+
+/// The bar over the source: a LaTeX writer's tools, as Overleaf's editor
+/// toolbar has them, at the leading edge as Xcode places its editor's
+/// controls: history; the section level of the line; bold and italic; math
+/// and symbols; links, references and citations; figures and tables; lists;
+/// then the rest in a menu. Narrow panes fold groups into that menu from the
+/// end, as a toolbar overflows. Commenting out is a code editor's tool; it
+/// stays in the Format menu (⌘/).
 private struct SourceBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
+    @State private var showSymbols = false
+
+    /// The groups that fold, in the order they fold back from.
+    private enum Tools: Int, CaseIterable { case format, math, references, figures, lists }
 
     var body: some View {
         PaneBar {
-            // Narrow panes fold groups into the menus, as a toolbar overflows.
             ViewThatFits(in: .horizontal) {
-                tools(folded: 0)
-                tools(folded: 1)
-                tools(folded: 2)
+                tools(showing: 5)
+                tools(showing: 4)
+                tools(showing: 3)
+                tools(showing: 2)
+                tools(showing: 1)
+                tools(showing: 0)
             }
             Spacer(minLength: 0)
         }
     }
 
-    /// 0: everything; 1: references join Insert; 2: all but history in one
-    /// Format menu.
-    private func tools(folded: Int) -> some View {
-        HStack(spacing: 8) {
-            GlassGroup(items: [
+    private func tools(showing count: Int) -> some View {
+        let shown = Tools.allCases.filter { $0.rawValue < count }
+        return HStack(spacing: 4) {
+            ToolGroup(items: [
                 Segment(.editUndo, "arrow.uturn.backward", app: app),
                 Segment(.editRedo, "arrow.uturn.forward", app: app),
             ])
             if isLaTeX {
-                if folded < 2 {
-                    templateMenu("Heading", headingTemplates)
-                        .help("Heading")
-                    GlassGroup(items: [
-                        Segment(.editBold, "bold", app: app),
-                        Segment(.editItalic, "italic", app: app),
-                        Segment(.editMath, "x.squareroot", app: app),
-                    ])
+                ToolSeparator()
+                sectionMenu
+                ForEach(shown, id: \.self) { group in
+                    ToolSeparator()
+                    tools(group)
                 }
-                if folded == 0 {
-                    GlassGroup(items: [
-                        Segment(id: "ref", title: "Reference", systemImage: "number", help: "Reference (\\ref)") {
-                            project.format("insert", "\\ref{$0}")
-                        },
-                        Segment(id: "cite", title: "Citation", systemImage: "text.quote", help: "Citation (\\cite)") {
-                            project.format("insert", "\\cite{$0}")
-                        },
-                    ])
-                }
-                insertMenu(folded: folded)
+                ToolSeparator()
+                moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count })
             }
         }
         .fixedSize()
     }
 
-    private func templateMenu(_ title: String, _ templates: [(String, String)]) -> some View {
-        Menu(title) {
-            ForEach(templates, id: \.0) { label, template in
-                Button(label) { project.format("insert", template) }
+    @ViewBuilder
+    private func tools(_ group: Tools) -> some View {
+        switch group {
+        case .format:
+            ToolGroup(items: [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)])
+        case .math:
+            ToolGroup(items: [
+                Segment(.editMath, "x.squareroot", app: app),
+                Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
+                    project.format("displayMath")
+                },
+                Segment(id: "symbols", title: "Symbols", systemImage: "pi") { showSymbols = true },
+            ])
+            .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
+                SymbolPalette { project.format("text", $0) }
+            }
+        case .references:
+            ToolGroup(items: [
+                inline("Link", "link", "\\href{$0}{}"),
+                inline("Reference", "number", "\\ref{$0}"),
+                inline("Citation", "text.quote", "\\cite{$0}"),
+            ])
+        case .figures:
+            ToolGroup(items: [block("Figure", "photo"), block("Table", "tablecells")])
+        case .lists:
+            ToolGroup(items: [block("Bulleted List", "list.bullet"), block("Numbered List", "list.number")])
+        }
+    }
+
+    private func inline(_ title: String, _ systemImage: String, _ template: String) -> Segment {
+        Segment(id: title, title: title, systemImage: systemImage) { project.format("inline", template) }
+    }
+
+    private func block(_ title: String, _ systemImage: String) -> Segment {
+        Segment(id: title, title: title, systemImage: systemImage) {
+            if let template = insertTemplates.first(where: { $0.0 == title })?.1 { project.format("insert", template) }
+        }
+    }
+
+    /// The line's section level, as a word processor shows its paragraph
+    /// style; choosing one makes the line that heading, or plain text.
+    private var sectionMenu: some View {
+        let level = project.outline.first { $0.line == project.cursorLine }?.level
+        let current = level.map { headingLevels[$0 + 1].0 } ?? "Normal Text"
+        return Menu {
+            ForEach(headingLevels, id: \.1) { title, command in
+                Button(title) { project.format("heading", command) }
+                if command.isEmpty { Divider() }
+            }
+        } label: {
+            // As wide as the widest level, so the bar doesn't shift as the
+            // cursor moves between lines.
+            ZStack(alignment: .leading) {
+                Text("Subsubsection").hidden()
+                Text(current)
             }
         }
         .menuStyle(.button)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
+        .menuIndicator(.visible)
         .fixedSize()
+        .help("Section Level")
     }
 
-    /// Words, like Heading: a "+" here read as the sidebar's add-file button.
-    private func insertMenu(folded: Int) -> some View {
-        Menu(folded == 2 ? "Format" : "Insert") {
-            if folded == 2 {
-                ForEach([MenuCommand.editBold, .editItalic, .editMath], id: \.self) { command in
-                    Button(command.title) { app.perform(command) }
+    /// The folded groups' tools, then what has no button of its own.
+    private func moreMenu(folded: [Tools]) -> some View {
+        Menu {
+            ForEach(folded, id: \.self) { group in
+                switch group {
+                case .format:
+                    Button(MenuCommand.editBold.title) { app.perform(.editBold) }
+                    Button(MenuCommand.editItalic.title) { app.perform(.editItalic) }
+                case .math:
+                    Button(MenuCommand.editMath.title) { app.perform(.editMath) }
+                    Button("Display Math") { project.format("displayMath") }
+                    SymbolMenu(project: project)
+                case .references:
+                    Button("Link") { project.format("inline", "\\href{$0}{}") }
+                    Button("Reference") { project.format("inline", "\\ref{$0}") }
+                    Button("Citation") { project.format("inline", "\\cite{$0}") }
+                case .figures, .lists:
+                    let titles = group == .figures ? ["Figure", "Table"] : ["Bulleted List", "Numbered List"]
+                    ForEach(titles, id: \.self) { title in
+                        Button(title) { block(title, "").action() }
+                    }
                 }
                 Divider()
             }
-            // What the bar isn't showing as controls of its own.
-            InsertMenuItems(project: project, headings: folded == 2, references: folded >= 1)
+            ForEach(["Equation", "Align (multi-line math)", "Code Block"], id: \.self) { title in
+                Button(title) { block(title, "").action() }
+            }
+            Button("Description List") { project.format("insert", listTemplates[2].1) }
+            Divider()
+            ForEach(referenceTemplates.filter { !["Reference", "Citation", "Link"].contains($0.0) }, id: \.0) { title, template in
+                Button(title) { project.format("inline", template) }
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis")
         }
         .menuStyle(.button)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
+        .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
         .fixedSize()
-        .help(folded == 2 ? "Format" : "Insert")
+        .help("More")
     }
 
     private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
+}
+
+/// Symbols by kind, each inserted as its command: the palette LaTeX editors
+/// keep beside the source (TeXstudio, TeXShop, Overleaf).
+let symbolGroups: [(String, [(String, String)])] = [
+    ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
+               ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
+               ("μ", "\\mu"), ("ν", "\\nu"), ("ξ", "\\xi"), ("π", "\\pi"), ("ρ", "\\rho"), ("σ", "\\sigma"),
+               ("τ", "\\tau"), ("φ", "\\phi"), ("χ", "\\chi"), ("ψ", "\\psi"), ("ω", "\\omega"),
+               ("Γ", "\\Gamma"), ("Δ", "\\Delta"), ("Θ", "\\Theta"), ("Λ", "\\Lambda"), ("Π", "\\Pi"),
+               ("Σ", "\\Sigma"), ("Φ", "\\Phi"), ("Ψ", "\\Psi"), ("Ω", "\\Omega")]),
+    ("Operators", [("±", "\\pm"), ("×", "\\times"), ("÷", "\\div"), ("·", "\\cdot"), ("∑", "\\sum"),
+                   ("∏", "\\prod"), ("∫", "\\int"), ("∮", "\\oint"), ("√", "\\sqrt{}"), ("∂", "\\partial"),
+                   ("∇", "\\nabla"), ("∞", "\\infty"), ("∘", "\\circ"), ("⊗", "\\otimes"), ("⊕", "\\oplus")]),
+    ("Relations", [("≤", "\\leq"), ("≥", "\\geq"), ("≠", "\\neq"), ("≈", "\\approx"), ("≡", "\\equiv"),
+                   ("∼", "\\sim"), ("∝", "\\propto"), ("∈", "\\in"), ("∉", "\\notin"), ("⊂", "\\subset"),
+                   ("⊆", "\\subseteq"), ("∪", "\\cup"), ("∩", "\\cap"), ("∅", "\\emptyset")]),
+    ("Arrows and Logic", [("→", "\\rightarrow"), ("←", "\\leftarrow"), ("↔", "\\leftrightarrow"),
+                          ("⇒", "\\Rightarrow"), ("⇐", "\\Leftarrow"), ("⇔", "\\Leftrightarrow"), ("↦", "\\mapsto"),
+                          ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
+]
+
+/// The symbol palette: a grid per kind, each symbol a plain button named by
+/// its command.
+private struct SymbolPalette: View {
+    let insert: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(symbolGroups, id: \.0) { title, symbols in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.subheadline).foregroundStyle(.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 2), count: 10), spacing: 2) {
+                        ForEach(symbols, id: \.1) { glyph, command in
+                            Button {
+                                insert(command)
+                                dismiss()
+                            } label: {
+                                Text(glyph).font(.title3).frame(width: 28, height: 28).contentShape(.rect)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(command)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+    }
+}
+
+/// The palette as a menu, for the Format menu and the bar's overflow.
+struct SymbolMenu: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        Menu("Symbols") {
+            ForEach(symbolGroups, id: \.0) { title, symbols in
+                Menu(title) {
+                    ForEach(symbols, id: \.1) { glyph, command in
+                        Button("\(glyph)   \(command)") { project?.format("text", command) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Where the cursor is, as Xcode's jump bar shows it: the project, its
@@ -512,10 +646,11 @@ private struct SourceLocation: View {
     }
 }
 
-/// The sectioning commands, in the order the web's outline ranks them.
-let headingTemplates: [(String, String)] = [
-    ("Part", "\\part{$0}\n"), ("Chapter", "\\chapter{$0}\n"), ("Section", "\\section{$0}\n"),
-    ("Subsection", "\\subsection{$0}\n"), ("Subsubsection", "\\subsubsection{$0}\n"), ("Paragraph", "\\paragraph{$0} "),
+/// The section levels, as the line's style: plain text, then the
+/// sectioning commands in the order the web's outline ranks them.
+let headingLevels: [(String, String)] = [
+    ("Normal Text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
+    ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
 ]
 
 /// Cross-references, citations and links; each opens completion inside

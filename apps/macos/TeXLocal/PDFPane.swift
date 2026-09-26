@@ -98,7 +98,7 @@ struct PDFPane: View {
     }
 
     /// Overleaf's Recompile, over the PDF it makes: the pane's one
-    /// prominent control, in prominent Liquid Glass; while a build runs, a
+    /// prominent control; while a build runs, a
     /// spinner and Stop in its place.
     @ViewBuilder
     private func compileControls(compact: Bool) -> some View {
@@ -107,7 +107,6 @@ struct PDFPane: View {
                 ProgressView().controlSize(.small)
                 Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.glass)
                     .help("Stop")
             }
             .fixedSize()
@@ -119,8 +118,7 @@ struct PDFPane: View {
                     Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
                 }
             }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.capsule)
+            .buttonStyle(.borderedProminent)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun))
             .help("Compile")
@@ -129,20 +127,9 @@ struct PDFPane: View {
 
     @ViewBuilder
     private var share: some View {
-        Group {
-            if let url = project.pdfURL, project.pdfVersion > 0 {
-                ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
-                    .help("Share PDF")
-            } else {
-                Button("Share PDF", systemImage: "square.and.arrow.up") {}
-                    .disabled(true)
-                    .help("Share PDF")
-            }
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .fixedSize()
+        ShareButton(url: project.pdfVersion > 0 ? project.pdfURL : nil)
+            .labelStyle(.iconOnly)
+            .fixedSize()
     }
 
     /// The page, and whether the PDF still matches the source.
@@ -182,15 +169,13 @@ struct PDFPane: View {
         .foregroundStyle(.secondary)
         .monospacedDigit()
         .lineLimit(1)
-        GlassGroup(items: [
+        ToolGroup(items: [
             Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
                     enabled: !controller.matches.isEmpty) { controller.step(-1) },
             Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
                     enabled: !controller.matches.isEmpty) { controller.step(1) },
         ])
         Button("Done") { closeFind() }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
             .fixedSize()
     }
 
@@ -198,7 +183,11 @@ struct PDFPane: View {
     /// zoom control (workspace.js `zoomButton`). The level comes first so
     /// the buttons don't move as its label changes width.
     private var zoomControls: some View {
-        HStack(spacing: 8) {
+        // Not the View menu's commands: their route (`requestPDF`) also
+        // hides the panel.
+        HStack(spacing: 0) {
+            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
+                .help("Zoom Out")
             Menu {
                 Button("Fit Width") { controller.fitWidth() }
                 Button("Fit Height") { controller.fitHeight() }
@@ -207,20 +196,22 @@ struct PDFPane: View {
                     Button("\(percent)%") { controller.setScale(CGFloat(percent) / 100) }
                 }
             } label: {
-                Text(controller.zoomLabel).monospacedDigit()
+                // As wide as the widest level, so − and + stay put.
+                ZStack {
+                    Text("000%").hidden()
+                    Text(controller.zoomLabel)
+                }
+                .monospacedDigit()
             }
             .menuStyle(.button)
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help("Zoom")
-            // Not the View menu's commands: their route (`requestPDF`) also
-            // hides the panel.
-            GlassGroup(items: [
-                Segment(id: "zoomOut", title: "Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) },
-                Segment(id: "zoomIn", title: "Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) },
-            ])
+            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
+                .help("Zoom In")
         }
+        .labelStyle(.iconOnly)
+        .fixedSize()
         .disabled(project.pdfVersion == 0)
     }
 
@@ -338,12 +329,12 @@ final class PDFController {
     var matchIndex = 0
     /// More matches exist than are kept.
     var limited = false
-    /// "Fit Width" while the view fits the page to its width, else the scale.
-    var zoomLabel = "Fit Width"
+    /// The scale, as a percentage, whether fitting or set.
+    var zoomLabel = "100%"
 
     func scaleChanged() {
         guard let view else { return }
-        zoomLabel = view.autoScales ? "Fit Width" : "\(Int((view.scaleFactor * 100).rounded()))%"
+        zoomLabel = "\(Int((view.scaleFactor * 100).rounded()))%"
     }
 
     func setScale(_ scale: CGFloat) {
@@ -574,4 +565,33 @@ private struct PDFRepresentable: NSViewRepresentable {
             page.removeAnnotation(mark)
         }
     }
+}
+
+/// Shares the PDF with AppKit's picker, opened from the button itself.
+private struct ShareButton: View {
+    let url: URL?
+    @State private var anchor: NSView?
+
+    var body: some View {
+        Button("Share PDF", systemImage: "square.and.arrow.up") {
+            guard let url, let anchor else { return }
+            NSSharingServicePicker(items: [url]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        }
+        .disabled(url == nil)
+        .background(ViewAnchor(view: $anchor))
+        .help("Share PDF")
+    }
+}
+
+/// An AppKit view where a SwiftUI view is, for AppKit to anchor to.
+private struct ViewAnchor: NSViewRepresentable {
+    @Binding var view: NSView?
+
+    func makeNSView(context: Context) -> NSView {
+        let anchor = NSView()
+        Task { @MainActor in view = anchor }
+        return anchor
+    }
+
+    func updateNSView(_ anchor: NSView, context: Context) {}
 }
