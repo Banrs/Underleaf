@@ -25,10 +25,8 @@ enum BarMetrics {
     /// bar's build, save state and position), wider than a group's so each
     /// reads as its own item.
     static let itemSpacing: CGFloat = 12
-    /// A search field in a bar: the width a find bar keeps before it folds
-    /// its other controls, the least any field shrinks to, and the widest a
-    /// filter grows.
-    static let fieldWidth: CGFloat = 160
+    /// A search field in a bar: the least any field shrinks to, and the
+    /// widest a filter grows.
     static let fieldMinWidth: CGFloat = 100
     static let fieldMaxWidth: CGFloat = 180
     /// Opaque, and what shows under the glass toolbar, so the toolbar and
@@ -69,7 +67,7 @@ enum Typography {
 extension View {
     /// A pane bar's controls: AppKit's accessory-bar buttons at the bar's
     /// size, on the chrome's background, inset from the pane's edges.
-    fileprivate func paneBarControls() -> some View {
+    func paneBarControls() -> some View {
         controlSize(BarMetrics.controlSize)
             .buttonStyle(.accessoryBar)
             .lineLimit(1)
@@ -92,18 +90,6 @@ struct PaneBar<Content: View>: View {
         // groups apart, as the source's find bar spaces them.
         HStack(spacing: BarMetrics.groupSpacing) { content }
             .frame(height: BarMetrics.barHeight)
-            .paneBarControls()
-    }
-}
-
-/// Several rows of a pane's actions in one bar (the source's find and
-/// replace): each row a pane bar's controls, 8 pt apart.
-struct PaneBarRows<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: BarMetrics.inset) { content }
-            .padding(.vertical, BarMetrics.inset)
             .paneBarControls()
     }
 }

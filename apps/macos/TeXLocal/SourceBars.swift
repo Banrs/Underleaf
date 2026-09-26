@@ -405,44 +405,45 @@ struct SourceFindBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        PaneBarRows {
-            Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
-                GridRow {
-                    SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
-                                options: options, step: { project.findStep($0) }, close: { project.closeFind() })
-                        .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-                    HStack(spacing: BarMetrics.groupSpacing) {
-                        FindSteps(enabled: project.findMatches.total > 0) { project.findStep($0) }
-                        FindCount(label: project.findMatches.label(for: project.findQuery.search))
-                        Button("Done") { project.closeFind() }
-                            .buttonStyle(.bordered)
-                    }
-                    .gridColumnAlignment(.trailing)
+        // Two rows of a pane bar's controls, inset as its one row is.
+        Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
+            GridRow {
+                SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
+                            options: options, step: { project.findStep($0) }, close: { project.closeFind() })
+                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+                HStack(spacing: BarMetrics.groupSpacing) {
+                    FindSteps(enabled: project.findMatches.total > 0) { project.findStep($0) }
+                    FindCount(label: project.findMatches.label(for: project.findQuery.search))
+                    Button("Done") { project.closeFind() }
+                        .buttonStyle(.bordered)
                 }
-                GridRow {
-                    TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { project.replace(all: false) }
-                        .onExitCommand { project.closeFind() }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: BarMetrics.spacing) {
-                            Button("Replace") { project.replace(all: false) }
-                            Button("Replace All") { project.replace(all: true) }
-                        }
-                        // Replace, with Replace All in its menu.
-                        Menu("Replace") {
-                            Button("Replace All") { project.replace(all: true) }
-                        } primaryAction: {
-                            project.replace(all: false)
-                        }
-                        .menuStyle(.button)
+                .gridColumnAlignment(.trailing)
+            }
+            GridRow {
+                TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { project.replace(all: false) }
+                    .onExitCommand { project.closeFind() }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: BarMetrics.spacing) {
+                        Button("Replace") { project.replace(all: false) }
+                        Button("Replace All") { project.replace(all: true) }
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(project.findMatches.total == 0)
+                    // Replace, with Replace All in its menu.
+                    Menu("Replace") {
+                        Button("Replace All") { project.replace(all: true) }
+                    } primaryAction: {
+                        project.replace(all: false)
+                    }
+                    .menuStyle(.button)
                 }
+                .buttonStyle(.bordered)
+                .disabled(project.findMatches.total == 0)
             }
         }
+        .padding(.vertical, BarMetrics.inset)
+        .paneBarControls()
     }
 
     private var options: [SearchOption] {
