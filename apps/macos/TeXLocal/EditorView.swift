@@ -73,7 +73,8 @@ private struct SourceAndPDF: View {
 /// The source's bars stacked over it, not overlaid: they are opaque, so
 /// text scrolled beneath them was only hidden. The find bar, while it
 /// shows, goes between them and the text, as TextEdit's and Xcode's do. A
-/// file that isn't text has no formatting bar, only its location row.
+/// file that isn't text keeps the bar, empty, so the source's rows and
+/// lines stay level with the PDF's.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -83,8 +84,10 @@ private struct SourcePane: View {
         VStack(spacing: 0) {
             if project.openPath == nil || project.editsText {
                 SourceBar(project: project)
-                Divider()
+            } else {
+                PaneBar {}
             }
+            Divider()
             SourceLocation(project: project)
             if project.findShown {
                 Divider()
