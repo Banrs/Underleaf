@@ -249,10 +249,10 @@ struct SymbolMenu: View {
     }
 }
 
-/// Where the cursor is, as Xcode's jump bar shows it: the project, its
-/// folders, the file (a menu of its siblings) and the section (a menu of
-/// the file's sections). Narrow panes drop the project and folders, then
-/// the section.
+/// Where the cursor is, as Xcode's jump bar shows it, every crumb a menu:
+/// the project and its folders (each a menu of what it holds), the file (a
+/// menu of its siblings) and the section (a menu of the file's sections).
+/// Narrow panes drop the project and folders, then the section.
 struct SourceLocation: View {
     let project: ProjectModel
 
@@ -274,10 +274,11 @@ struct SourceLocation: View {
         let parts = path.split(separator: "/").map(String.init)
         return HStack(spacing: BarMetrics.spacing) {
             if folders {
-                crumb(project.id, "folder")
-                ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { _, folder in
+                folderMenu(project.id, contents: project.tree)
+                ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { index, folder in
                     chevron
-                    crumb(folder, "folder")
+                    let path = parts[...index].joined(separator: "/")
+                    folderMenu(folder, contents: project.tree.flattened.first { $0.path == path }?.children ?? [])
                 }
                 chevron
             }
@@ -296,10 +297,18 @@ struct SourceLocation: View {
             .accessibilityHidden(true)
     }
 
-    private func crumb(_ title: String, _ systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(.secondary)
+    /// The project or a folder, a menu of what it holds: its folders as
+    /// submenus, its files to open.
+    private func folderMenu(_ name: String, contents: [TreeNode]) -> some View {
+        Menu {
+            FolderMenuItems(nodes: contents) { path in Task { await project.open(path) } }
+        } label: {
+            Label(name, systemImage: "folder").labelStyle(.titleAndIcon)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.accessoryBar)
+        .menuIndicator(.hidden)
+        .help(name)
     }
 
     /// The file, a menu of the text files in its folder.
@@ -352,6 +361,29 @@ private struct SectionCrumb: View {
         .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help("Go to a Section")
+    }
+}
+
+/// A folder's contents as a menu: each folder a submenu, each file an
+/// item that opens it.
+private struct FolderMenuItems: View {
+    let nodes: [TreeNode]
+    let open: (String) -> Void
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if node.isDirectory {
+                Menu {
+                    FolderMenuItems(nodes: node.children ?? [], open: open)
+                } label: {
+                    Label(node.name, systemImage: "folder")
+                }
+            } else {
+                Button { open(node.path) } label: {
+                    Label(node.name, systemImage: fileSymbol(node.path))
+                }
+            }
+        }
     }
 }
 
