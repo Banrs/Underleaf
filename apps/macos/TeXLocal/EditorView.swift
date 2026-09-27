@@ -163,13 +163,15 @@ private struct StatusBar: View {
         SecondaryBar(spacing: 0,
                      leadingInset: corners.bottomLeading.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset,
                      trailingInset: corners.bottomTrailing.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset) {
-            // On while the panel shows the issues, as Xcode's leading
-            // breakpoints toggle is on while breakpoints are active.
-            Toggle(isOn: Binding(get: { project.showLogs && project.panelTab == .issues },
-                                 set: { $0 ? project.showBuildPanel() : (project.showLogs = false) })) {
+            // Shows or hides the issues. A button, not a toggle: the panel's
+            // own toggle is the one place its open state shows.
+            let showingIssues = project.showLogs && project.panelTab == .issues
+            Button {
+                if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
+            } label: {
                 buildStatus
             }
-            .help(project.showLogs && project.panelTab == .issues ? "Hide Issues" : "Show Issues")
+            .help(showingIssues ? "Hide Issues" : "Show Issues")
             ToolSeparator()
                 .padding(.leading, BarMetrics.statusControlGap)
                 .padding(.trailing, BarMetrics.statusTextGap)
