@@ -216,7 +216,7 @@ extension FocusedValues {
 
 extension AppModel {
     /// `project` is the key window's (`AppCommands`), or the one a view in
-    /// its window acts on; nil while the gallery or Settings is in front.
+    /// its window acts on; nil on the projects or while Settings is in front.
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         // Undo and redo also serve text fields outside the editor.
@@ -247,7 +247,7 @@ extension AppModel {
         }
     }
 
-    /// In the gallery, with no files to make, ⌘N makes a project, as the
+    /// On the projects, with no files to make, ⌘N makes a project, as the
     /// web's home screen does (home.js).
     func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
         switch (command, project) {
@@ -261,12 +261,10 @@ extension AppModel {
         guard isEnabled(command, on: project) else { return }
         switch command {
         case .projectNew: newProject()
-        // Mac only: the browser can't read a folder from disk. The gallery
-        // asks (`GalleryWindow`).
+        // Mac only: the browser can't read a folder from disk. The window
+        // asks (`RootView`).
         case .projectOpen: openingProject = true
-        // The menu closes the project's window, which closes the project
-        // (`ProjectWindow`).
-        case .projectClose: break
+        case .projectClose: Task { await close() }
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
@@ -347,18 +345,12 @@ extension AppModel {
 struct AppCommands: Commands {
     let app: AppModel
     /// The key window's project, from its root (`WorkspaceView`): the menus
-    /// act on the window in front, and are off in the gallery and Settings.
+    /// act on the window in front, and are off on the projects and in Settings.
     @FocusedValue(ProjectModel.self) private var project
     @AppStorage(NavigatorView.outlineCollapsedKey) private var outlineCollapsed = false
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
 
-    /// `then` runs after the command, in the menu, which can open windows.
-    private func item(_ command: MenuCommand, then: @escaping () -> Void = {}) -> some View {
-        Button(app.title(command, on: project)) {
-            app.perform(command, on: project)
-            then()
-        }
+    private func item(_ command: MenuCommand) -> some View {
+        Button(app.title(command, on: project)) { app.perform(command, on: project) }
         .keyboardShortcut(app.shortcut(command, on: project))
         .disabled(!app.isEnabled(command, on: project))
     }
@@ -369,15 +361,12 @@ struct AppCommands: Commands {
             item(.editRedo)
         }
         CommandGroup(replacing: .newItem) {
-            // New Project… and Open… ask in the gallery, bringing it back
-            // when it was closed, as Office's File menu does.
-            item(.projectNew) { openWindow(id: AppScene.gallery) }
-            item(.projectOpen) { openWindow(id: AppScene.gallery) }
+            item(.projectNew)
+            item(.projectOpen)
             Menu("Open Recent") {
                 ForEach(app.recentProjects.compactMap { id in app.projects.first { $0.id == id } }) { recent in
                     Button {
                         Task { await app.open(recent.id) }
-                        openWindow(id: AppScene.project)
                     } label: {
                         Label(recent.name, systemImage: "doc.text")
                     }
@@ -396,12 +385,12 @@ struct AppCommands: Commands {
             item(.fileUpload)
         }
         // After the system's Close (⌘W), as Apple's File menus order them.
-        // Close Project closes the file and its window (HIG, Keyboards: a
-        // file's close beside the window's).
+        // Close Project goes back to the projects, as the toolbar's back
+        // button does (HIG, Keyboards: a file's close beside the window's).
         CommandGroup(after: .saveItem) {
             item(.fileSave)
             Divider()
-            item(.projectClose) { dismissWindow(id: AppScene.project) }
+            item(.projectClose)
             Divider()
             // What makes a copy, then Share on its own, as Mac File menus
             // group them; always there, off while there's no PDF.

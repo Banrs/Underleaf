@@ -146,7 +146,7 @@ final class ProjectModel {
     /// A project path's last component, for alert titles.
     private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
-    /// What reopening at launch puts back (`ProjectWindow`).
+    /// What reopening at launch puts back (`RootView`).
     var saved: SavedWorkspace {
         SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdfPage)
     }

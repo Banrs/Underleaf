@@ -40,30 +40,18 @@ final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
     var project: ProjectModel?
-    var alert: AppAlert? {
-        // Its window is chosen as it comes, so it stays there: the gallery
-        // while it's in front (what it asked for failed), otherwise the
-        // project's window, if there is one.
-        didSet { if alert != nil { alertInGallery = project == nil || galleryInFront } }
-    }
-    /// Where `alert` shows (`appAlert`).
-    var alertInGallery = true
-    /// The gallery is the window in front (`appearsActive`).
-    @ObservationIgnored var galleryInFront = false
+    var alert: AppAlert?
 
     // Requests from commands to the views that own the matching UI.
     /// The new-project sheet, on the template it starts with.
     var newProjectTemplate: ProjectTemplate?
     /// The sheet New File…, New Folder… or Go to Line… asks with (WorkspaceView).
     var prompt: Prompt?
-    /// File › Open…'s panel (the gallery's), Add Files…' (WorkspaceView).
+    /// File › Open…'s panel (RootView's), Add Files…' (WorkspaceView).
     var openingProject = false
     var addingFiles = false
-    /// The app is quitting: the project window's close is no reason to
-    /// leave the project.
-    @ObservationIgnored var quitting = false
     /// Something Finder's Open With or the Dock icon handed the app, while
-    /// the gallery asks before copying it in.
+    /// the window asks before copying it in.
     var pendingImport: URL?
     /// Save PDF As… or Export Project as ZIP…, while its panel shows.
     var exporting: ExportFile?
@@ -212,7 +200,7 @@ final class AppModel {
 
     /// `open TeXLocal.app --args -openProject <id>` opens a project at
     /// launch; launch arguments land in UserDefaults' argument domain for
-    /// this run only. Taken once, by whichever window asks first.
+    /// this run only. Taken once.
     @ObservationIgnored private var launchProject = UserDefaults.standard.string(forKey: "openProject")
 
     func takeLaunchProject() -> String? {

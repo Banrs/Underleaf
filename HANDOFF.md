@@ -3,7 +3,7 @@
 ## Status (2026-09-28)
 
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
-- `claude/macos-polish` (not pushed) is the Mac polish pass: Office-style windows, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
+- `claude/macos-polish` (not pushed) is the Mac polish pass: one window with a back button, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
 - PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
@@ -53,7 +53,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## macOS app (`apps/macos/TeXLocal`)
 
 **Files:**
-- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows. The project window is `.windowManagerRole(.principal)`: without it, a second `Window` scene only zooms, with no full screen. `alert(_:)` shows any `AppAlert`: in the gallery if it was in front when the alert came, otherwise in the project window.
+- `TeXLocalApp`: one window. It shows the projects (templates and recents) until one opens, then the project, with a back button (back only: one level, no history) and File › Close Project to return. Closing the window quits, and the quit saves. The window is `.windowManagerRole(.principal)`, for full screen rather than only zoom. `alert(_:)` shows any `AppAlert`.
 - `AppModel`: library, recents, imports, alerts.
 - `ProjectModel`: the open project, saves, builds, file watching.
 - `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`). Insert sits between View and Window; Format keeps Bold, Italic, the section level and Comment.
@@ -102,13 +102,13 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Known issues
 
-- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen. Its prime suspect, the Home→Workspace toolbar swap, went with the separate gallery window. On `claude/macos-polish` the repro (the project window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen) passes with nothing on stderr.
+- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen. Its prime suspect is the Home→Workspace toolbar swap, which is back with the single window; the repro (the window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen) needs checking again.
 - The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
-- Not yet seen on screen: drag and drop (the gallery's and the sidebar's, including a refused drag), and focus rings with Keyboard navigation on.
+- Not yet seen on screen: drag and drop (the projects screen's and the sidebar's, including a refused drag), and focus rings with Keyboard navigation on.
 - The PDF bar's Share is a lone bordered button, 38 × 24 pt, wider than the source bar's More, a symbol grouped alone: a `ShareLink` in a `ControlGroup` loses its action on 27.2.
 
 ## Next
@@ -134,7 +134,6 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 - **`-ApplePersistenceIgnoreState YES` writes the new state to a temporary folder** and leaves the old one, so the next launch without it restores the state from before. Restoration repros need both launches without it.
 
-- **A launch with saved window state presents no default window.** The gallery stays restorable: with `.restorationBehavior(.disabled)`, state holding only the gallery (a crash, or Quit and Keep Windows) opened the app with no window at all. Launch scratch builds with `-ApplePersistenceIgnoreState YES` for a clean start.
 
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
