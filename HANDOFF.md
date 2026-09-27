@@ -52,7 +52,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## macOS app (`apps/macos/TeXLocal`)
 
 **Files:**
-- `TeXLocalApp`: scenes and window minimum.
+- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows.
 - `AppModel`: library, recents, imports, alerts.
 - `ProjectModel`: the open project, saves, builds, file watching.
 - `Core`, `Models`, `Commands`: menus and shortcuts.
@@ -100,7 +100,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
-- Not yet seen on screen: drag and drop, Open With, the clash alert, the nested section menu, focus rings.
+- Not yet seen on screen: drag and drop, the clash alert, the nested section menu, focus rings.
 
 ## Next
 
@@ -122,6 +122,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - Retire Tauri once both apps are verified: delete `src-tauri`, the Tauri path in `bridge.js`, `@tauri-apps/cli`, and the Tauri entries in `check-version.mjs`, `ci.yml` and `release.yml`.
 
 ## Gotchas
+
+- **A launch with saved window state presents no default window.** The gallery stays restorable: with `.restorationBehavior(.disabled)`, state holding only the gallery (a crash, or Quit and Keep Windows) opened the app with no window at all. Launch scratch builds with `-ApplePersistenceIgnoreState YES` for a clean start.
 
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 - **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its autosaved size, or its share, and then lets it go.

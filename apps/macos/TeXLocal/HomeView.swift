@@ -14,6 +14,8 @@ struct HomeView: View {
     @State private var newName = ""
     @State private var deleting: ProjectInfo?
     @State private var query = ""
+    /// Something is being dragged over the window.
+    @State private var dropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,11 +28,30 @@ struct HomeView: View {
             recents
         }
         // A folder, .tex file or .zip dropped on the window opens as Open…
-        // opens it, as Apple's start windows take a dropped document.
+        // opens it, as Apple's start windows take a dropped document. It is
+        // copied in, as the Open panel says: the pointer carries the copy
+        // badge, and a note says where it goes.
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first, AppModel.canOpen(url) else { return false }
+            dropTargeted = false
+            guard let url = urls.first, AppModel.canOpen(url) else { return }
             Task { await app.importProject(from: url) }
-            return true
+        }
+        .dropConfiguration { _ in DropConfiguration(operation: .copy) }
+        .onDropSessionUpdated { session in
+            switch session.phase {
+            case .entering, .active: dropTargeted = true
+            default: dropTargeted = false
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if dropTargeted {
+                Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
+                    .padding(.horizontal, Self.margin)
+                    .padding(.vertical, BarMetrics.groupSpacing)
+                    .background(.regularMaterial, in: .capsule)
+                    .padding(Self.margin)
+                    .allowsHitTesting(false)
+            }
         }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")

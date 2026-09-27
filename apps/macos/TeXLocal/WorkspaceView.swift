@@ -95,14 +95,6 @@ struct WorkspaceView: View {
         } message: { path in
             Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
         }
-        .task {
-            for await note in NotificationCenter.default.notifications(named: NSWindow.willCloseNotification) {
-                // This window's only: closing Settings is no reason to save.
-                guard (note.object as? NSWindow) === NSApp.projectWindow else { continue }
-                // Its own task: the view's goes with the closing window.
-                Task { await project.flush() }
-            }
-        }
     }
 
     /// The sidebar's widths; the window's own minimum (960 × 600) is set
@@ -114,22 +106,13 @@ struct WorkspaceView: View {
 
     // ---------- toolbar ----------
 
-    /// Back and the file as the window's title at the leading edge, and the
-    /// panes' toggles at the trailing. What acts on a pane sits over it
-    /// instead: editing over the source (EditorView's `SourceBar`), compiling
-    /// and sharing over the PDF (PDFPane's bar). Every item is in the menu
-    /// bar too.
+    /// The file as the window's title at the leading edge, and the panes'
+    /// toggles at the trailing. What acts on a pane sits over it instead:
+    /// editing over the source (EditorView's `SourceBar`), compiling and
+    /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
+    /// too. Closing the window goes back to the projects.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        // Back to the projects, as the web's and Windows' title bars lead
-        // with it; otherwise only File › Close Project left a project.
-        ToolbarItem(placement: .navigation) {
-            Button { app.perform(.projectClose) } label: {
-                Label("Projects", systemImage: "chevron.backward")
-            }
-            .help("Back to Projects")
-        }
-
         // The panes' toggles, sharing one piece of glass as related buttons
         // do. Nothing here acts on the PDF alone: Share is the PDF bar's.
         ToolbarItem(placement: .primaryAction) { PDFToggle() }

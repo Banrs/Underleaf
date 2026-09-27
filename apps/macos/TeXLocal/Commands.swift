@@ -209,7 +209,7 @@ extension AppModel {
         }
     }
 
-    /// On the home screen, with no files to make, ⌘N makes a project, as the
+    /// In the gallery, with no files to make, ⌘N makes a project, as the
     /// web's home screen does (home.js).
     func shortcut(_ command: MenuCommand) -> KeyboardShortcut? {
         switch (command, project) {
@@ -223,7 +223,9 @@ extension AppModel {
         guard isEnabled(command) else { return }
         switch command {
         case .projectNew: newProject()
-        case .projectClose: Task { await close() }
+        // The menu closes the project's window, which closes the project
+        // (`ProjectWindow`).
+        case .projectClose: break
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
@@ -341,11 +343,17 @@ extension AppModel {
 struct AppCommands: Commands {
     let app: AppModel
     @AppStorage(NavigatorView.outlineCollapsedKey) private var outlineCollapsed = false
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
-    private func item(_ command: MenuCommand) -> some View {
-        Button(app.title(command)) { app.perform(command) }
-            .keyboardShortcut(app.shortcut(command))
-            .disabled(!app.isEnabled(command))
+    /// `then` runs after the command, in the menu, which can open windows.
+    private func item(_ command: MenuCommand, then: @escaping () -> Void = {}) -> some View {
+        Button(app.title(command)) {
+            app.perform(command)
+            then()
+        }
+        .keyboardShortcut(app.shortcut(command))
+        .disabled(!app.isEnabled(command))
     }
 
     private func send(_ action: Selector) {
@@ -358,13 +366,21 @@ struct AppCommands: Commands {
             item(.editRedo)
         }
         CommandGroup(replacing: .newItem) {
-            item(.projectNew)
+            // New Project… and Open… ask in the gallery, bringing it back
+            // when it was closed, as Office's File menu does.
+            item(.projectNew) { openWindow(id: AppScene.gallery) }
             // Mac only: the browser can't read a folder from disk.
-            Button("Open…") { app.openingProject = true }
-                .keyboardShortcut("o")
+            Button("Open…") {
+                app.openingProject = true
+                openWindow(id: AppScene.gallery)
+            }
+            .keyboardShortcut("o")
             Menu("Open Recent") {
                 ForEach(app.recentProjects.compactMap { id in app.projects.first { $0.id == id } }) { project in
-                    Button(project.name) { Task { await app.open(project.id) } }
+                    Button(project.name) {
+                        Task { await app.open(project.id) }
+                        openWindow(id: AppScene.project)
+                    }
                 }
                 Divider()
                 Button("Clear Menu") { app.recentProjects = [] }
@@ -379,7 +395,7 @@ struct AppCommands: Commands {
         CommandGroup(after: .saveItem) {
             item(.fileSave)
             Divider()
-            item(.projectClose)
+            item(.projectClose) { dismissWindow(id: AppScene.project) }
             Divider()
             // What makes a copy, then Share on its own, as Mac File menus
             // group them.
