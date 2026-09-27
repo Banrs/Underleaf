@@ -136,9 +136,9 @@ struct SourceBar: View {
 
 /// The line's section level, as a word processor shows its paragraph
 /// style; choosing one makes the line that heading, or plain text. The
-/// system's pop-up, so it checks the level; named for VoiceOver, which
-/// otherwise read the pop-up's symbol name. A view of its own, so a caret
-/// move redraws it and not the whole bar.
+/// system's pop-up, so it checks the level; VoiceOver names it by the
+/// picker's hidden label. A view of its own, so a caret move redraws it
+/// and not the whole bar.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
 
@@ -157,7 +157,6 @@ private struct SectionLevelMenu: View {
         .pickerStyle(.menu)
         .labelsHidden()
         .fixedSize()
-        .accessibilityLabel("Section Level")
         .help("Section Level")
     }
 }
@@ -292,7 +291,9 @@ struct SourceLocation: View {
     }
 
     private var chevron: some View {
+        // Decoration: VoiceOver read each one as "Compact Forward Chevron".
         Image(systemName: "chevron.compact.forward").foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
     }
 
     private func crumb(_ title: String, _ systemImage: String) -> some View {
