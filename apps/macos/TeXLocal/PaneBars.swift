@@ -33,11 +33,12 @@ enum BarMetrics {
     static let groupSpacing: CGFloat = 8
     /// The status bar's lines: the kit's toolbar separator, 1 × 16 pt.
     static let separatorHeight: CGFloat = 16
-    /// The status bar's ends, whether a pane or the window's corner is
-    /// beside them: under the toolbar's symbols, which the kit's toolbar
-    /// sets 16 pt in (its 36 pt items 8 pt from the edge, a 20 pt symbol
-    /// centred in each). Clear of the window's rounded corner.
-    static let statusEndInset: CGFloat = 16
+    /// The window's own margin: the status bar's ends, whether a pane or
+    /// the window's corner is beside them, and the inspector's content.
+    /// Under the toolbar's symbols, which the kit's toolbar sets 16 pt in
+    /// (its 36 pt items 8 pt from the edge, a 20 pt symbol centred in
+    /// each). Clear of the window's rounded corner.
+    static let edgeInset: CGFloat = 16
     /// A search field in a bar: the least any field shrinks to, and the
     /// widest a filter grows.
     static let fieldMinWidth: CGFloat = 100
@@ -57,6 +58,8 @@ enum BarMetrics {
 ///   sheet titles: `sectionTitle`.
 /// - Titles of a pane's groups (the inspector's Project, Document and
 ///   Build, bold as Xcode's inspectors have them): `groupTitle`.
+/// - Names of items over a line about them (the gallery's template cards
+///   and recent projects): `itemTitle`, the same weight.
 /// - Secondary rows, metadata and captions (the location row, the status
 ///   bar, line numbers beside search hits, template descriptions, sheet
 ///   messages): `secondary`, the small system size (11 pt) that `.small`
@@ -64,7 +67,11 @@ enum BarMetrics {
 enum Typography {
     static let sectionTitle: Font = .title3.weight(.semibold)
     static let groupTitle: Font = .headline
+    static let itemTitle: Font = .headline
     static let secondary: Font = .subheadline
+    /// Between a title and the secondary line under it, as the kit's form
+    /// rows set their 11 pt description 2 pt under the 13 pt title.
+    static let subtitleSpacing: CGFloat = 2
     static let secondaryControlSize: ControlSize = .small
     /// SF Mono at the secondary size, for AppKit text (the build log).
     static var secondaryMono: NSFont { .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular) }
@@ -522,6 +529,46 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
+/// A list's rename in place, as Finder renames: the item whose name is
+/// being edited, and the name so far. Observable, so typing redraws only
+/// the row with the field, not every row that checks `id`.
+@MainActor @Observable
+final class InPlaceRename<ID: Hashable> {
+    private(set) var id: ID?
+    var name = ""
+
+    func begin(_ id: ID, name: String) {
+        self.name = name
+        self.id = id
+    }
+
+    func cancel() { id = nil }
+
+    /// Ends `id`'s rename: the new name, trimmed, or nil when the rename
+    /// had already ended or left the name empty or as it was.
+    func end(_ id: ID, from old: String) -> String? {
+        guard self.id == id else { return nil }
+        self.id = nil
+        let new = name.trimmingCharacters(in: .whitespaces)
+        return new.isEmpty || new == old ? nil : new
+    }
+}
+
+/// An item's own actions, in Finder's order: Rename (edited in place, so
+/// no ellipsis), Show in Finder, then Move to Trash on its own.
+struct ItemMenuItems: View {
+    let rename: () -> Void
+    let showInFinder: () -> Void
+    let moveToTrash: () -> Void
+
+    var body: some View {
+        Button("Rename", action: rename)
+        Button("Show in Finder", action: showInFinder)
+        Divider()
+        Button("Move to Trash", action: moveToTrash)
+    }
+}
+
 /// A name edited in place, as Finder renames: Return or clicking away
 /// commits, Escape leaves it as it was.
 struct RenameField: View {
@@ -568,7 +615,7 @@ struct RenameField: View {
 }
 
 #Preview("Secondary bar") {
-    SecondaryBar(spacing: 0, endInset: BarMetrics.statusEndInset) {
+    SecondaryBar(spacing: 0, endInset: BarMetrics.edgeInset) {
         Text("Saved")
         ToolSeparator()
         Spacer(minLength: 0)

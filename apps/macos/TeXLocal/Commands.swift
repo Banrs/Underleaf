@@ -471,7 +471,7 @@ struct AppCommands: Commands {
             item(.compileStop)
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
             Picker("Engine", selection: Binding(
-                get: { project?.settings?.engine ?? "pdflatex" },
+                get: { project?.settings?.engine ?? defaultTeXEngine },
                 set: { engine in
                     if let project { Task { await project.setEngine(engine) } }
                 }

@@ -151,7 +151,7 @@ private struct StatusBar: View {
         @Bindable var project = project
         // A borderless toggle past a line at the trailing end. Both ends
         // the same whether a pane or the window's corner is beside them.
-        SecondaryBar(spacing: 0, endInset: BarMetrics.statusEndInset) {
+        SecondaryBar(spacing: 0, endInset: BarMetrics.edgeInset) {
             // Shows or hides the issues. A button, not a toggle: the panel's
             // own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -203,7 +203,7 @@ private struct StatusBar: View {
                 }
             }
             if showEngine, let engine = project.settings?.engine {
-                Text(texEngines.first { $0.0 == engine }?.1 ?? engine)
+                Text(texEngineName(engine))
             }
         }
         .lineLimit(1)

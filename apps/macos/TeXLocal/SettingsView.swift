@@ -28,7 +28,7 @@ extension View {
 
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
-    @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
 

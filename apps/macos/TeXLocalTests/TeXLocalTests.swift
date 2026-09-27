@@ -524,6 +524,47 @@ final class RenameTests: XCTestCase {
     }
 }
 
+/// The gallery's and the sidebar's rename in place.
+@MainActor
+struct InPlaceRenameTests {
+    @Test func aRenameEndsOnceWithItsNewName() {
+        let rename = InPlaceRename<String>()
+        rename.begin("ch/intro.tex", name: "intro.tex")
+        rename.name = "  start.tex "
+        #expect(rename.end("ch/intro.tex", from: "intro.tex") == "start.tex")
+        #expect(rename.id == nil)
+        // Return, then the field losing focus as it goes: the second finds
+        // the rename over.
+        #expect(rename.end("ch/intro.tex", from: "intro.tex") == nil)
+    }
+
+    @Test func anEmptyOrUnchangedNameRenamesNothing() {
+        let rename = InPlaceRename<String>()
+        for name in ["   ", "intro.tex"] {
+            rename.begin("intro.tex", name: "intro.tex")
+            rename.name = name
+            #expect(rename.end("intro.tex", from: "intro.tex") == nil)
+            #expect(rename.id == nil)
+        }
+    }
+
+    @Test func anotherRowLeavesTheRenameOpen() {
+        let rename = InPlaceRename<String>()
+        rename.begin("a.tex", name: "a.tex")
+        rename.name = "b.tex"
+        #expect(rename.end("c.tex", from: "c.tex") == nil)
+        #expect(rename.id == "a.tex")
+    }
+}
+
+struct TeXEngineTests {
+    @Test func enginesReadAsTheMenusNameThem() {
+        #expect(texEngineName("xelatex") == "XeLaTeX")
+        #expect(texEngineName("custom") == "custom")
+        #expect(texEngines.contains { $0.0 == defaultTeXEngine })
+    }
+}
+
 final class FindTests: XCTestCase {
     func testTheCountReadsAsXcodesDoes() {
         XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")

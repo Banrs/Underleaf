@@ -9,9 +9,7 @@ struct HomeView: View {
     /// One project at a time, as Xcode's welcome list: every action here
     /// acts on one.
     @State private var selection: ProjectInfo.ID?
-    /// The project whose name is being edited in place, and the name so far.
-    @State private var renaming: ProjectInfo.ID?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @State private var deleting: ProjectInfo?
     @State private var query = ""
     /// Something is being dragged over the window.
@@ -94,26 +92,18 @@ struct HomeView: View {
                 .accessibilityAddTraits(.isHeader)
                 .padding([.horizontal, .top], GalleryMetrics.margin)
             List(shown, selection: $selection) { project in
-                // A view of its own that reads the rename through bindings:
-                // the list redraws a row only when its value changes.
-                ProjectRow(project: project, renaming: $renaming, newName: $newName) {
-                    commitRename(project)
-                }
+                // A view of its own, so the list redraws a row only when its
+                // rename starts or ends.
+                ProjectRow(project: project, rename: rename) { commitRename(project) }
             }
             .listStyle(.inset)
             .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
                 if let project = app.projects.first(where: { ids.contains($0.id) }) {
                     Button("Open") { Task { await app.open(project.id) } }
                     Divider()
-                    // Edited in place, as Finder renames: no dialog, so no
-                    // ellipsis.
-                    Button("Rename") {
-                        newName = project.name
-                        renaming = project.id
-                    }
-                    Button("Show in Finder") { app.revealProject(project) }
-                    Divider()
-                    Button("Move to Trash") { deleting = project }
+                    ItemMenuItems(rename: { rename.begin(project.id, name: project.name) },
+                                  showInFinder: { app.revealProject(project) },
+                                  moveToTrash: { deleting = project })
                 }
             } primaryAction: { ids in
                 if let id = ids.first { Task { await app.open(id) } }
@@ -136,10 +126,7 @@ struct HomeView: View {
     }
 
     private func commitRename(_ project: ProjectInfo) {
-        guard renaming == project.id else { return }
-        renaming = nil
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, name != project.name else { return }
+        guard let name = rename.end(project.id, from: project.name) else { return }
         Task { await app.rename(project, to: name) }
     }
 
@@ -151,7 +138,7 @@ struct HomeView: View {
     private var texMissing: some View {
         HStack(alignment: .firstTextBaseline) {
             Label(
-                "TeX isn’t installed. Install MacTeX to compile; TeXLocal notices it once it’s there.",
+                "TeX isn’t installed. Install MacTeX to compile. TeXLocal notices it once it’s there.",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .symbolRenderingMode(.multicolor)
@@ -168,17 +155,16 @@ struct HomeView: View {
 /// leaves it as it was.
 private struct ProjectRow: View {
     let project: ProjectInfo
-    @Binding var renaming: ProjectInfo.ID?
-    @Binding var newName: String
+    let rename: InPlaceRename<ProjectInfo.ID>
     let commit: () -> Void
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: GalleryMetrics.subtitleSpacing) {
-                if renaming == project.id {
-                    RenameField(text: $newName, commit: commit) { renaming = nil }
+            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+                if rename.id == project.id {
+                    RenameField(text: Bindable(rename).name, commit: commit) { rename.cancel() }
                 } else {
-                    Text(project.name).font(.headline)
+                    Text(project.name).font(Typography.itemTitle)
                 }
                 Text("\(project.mainFile) · \(project.modified.formatted(.relative(presentation: .named)))")
                     .font(Typography.secondary)
@@ -235,9 +221,6 @@ private enum GalleryMetrics {
     /// macOS 27. The section titles and template cards take the same edge,
     /// so New, Recent, Name and the rows start on one line.
     static let margin: CGFloat = 18
-    /// Between a name and the smaller line under it, as the kit's form rows
-    /// set their 11 pt description 2 pt under the 13 pt title.
-    static let subtitleSpacing: CGFloat = 2
     /// The kit's group box corners, 12 pt.
     static let groupBoxCorner: CGFloat = 12
 }
@@ -256,8 +239,8 @@ private struct TemplateCard: View {
         GroupBox {
             VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
                 page
-                VStack(alignment: .leading, spacing: GalleryMetrics.subtitleSpacing) {
-                    Text(template.title).font(.headline)
+                VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+                    Text(template.title).font(Typography.itemTitle)
                     Text(template.detail)
                         .font(Typography.secondary)
                         .foregroundStyle(.secondary)
@@ -394,7 +377,7 @@ struct NewProjectSheet: View {
     List {
         ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
                                         mainFile: "main.tex"),
-                   renaming: .constant(nil), newName: .constant("")) {}
+                   rename: InPlaceRename()) {}
     }
     .listStyle(.inset)
 }

@@ -156,7 +156,7 @@ private struct IssueRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
                 Text(item.message).lineLimit(3)
                 if let location = location(line: ":") {
                     Text(location)

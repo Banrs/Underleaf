@@ -671,6 +671,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         mark.color = NSColor.systemYellow.withAlphaComponent(0.45)
         page.addAnnotation(mark)
         view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3), on: page)
+        // As long as the web's flash fades (web/styles.css `.sync-flash`).
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)

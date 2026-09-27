@@ -50,9 +50,7 @@ private struct FilesList: View {
     @State private var selection: String?
     @State private var hit: SearchHit.ID?
     @State private var deleting: String?
-    /// The row whose name is being edited in place, and the name so far.
-    @State private var renaming: String?
-    @State private var newName = ""
+    @State private var rename = InPlaceRename<String>()
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
     /// Files dragged over the list's empty space, or over a row.
@@ -164,8 +162,8 @@ private struct FilesList: View {
         let isMain = node.path == project.settings?.mainFile
         return Label {
             HStack {
-                if renaming == node.path {
-                    RenameField(text: $newName) { commitRename(node) } cancel: { renaming = nil }
+                if rename.id == node.path {
+                    RenameField(text: $rename.name) { commitRename(node) } cancel: { rename.cancel() }
                 } else {
                     Text(node.name)
                 }
@@ -201,22 +199,14 @@ private struct FilesList: View {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                 Divider()
             }
-            // Edited in place, as Finder renames: no dialog, so no ellipsis.
-            Button("Rename") {
-                newName = node.name
-                renaming = node.path
-            }
-            Button("Show in Finder") { project.showInFinder(node.path) }
-            Divider()
-            Button("Move to Trash") { deleting = node.path }
+            ItemMenuItems(rename: { rename.begin(node.path, name: node.name) },
+                          showInFinder: { project.showInFinder(node.path) },
+                          moveToTrash: { deleting = node.path })
         }
     }
 
     private func commitRename(_ node: TreeNode) {
-        guard renaming == node.path else { return }
-        renaming = nil
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, name != node.name, !name.contains("/") else { return }
+        guard let name = rename.end(node.path, from: node.name), !name.contains("/") else { return }
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
     }

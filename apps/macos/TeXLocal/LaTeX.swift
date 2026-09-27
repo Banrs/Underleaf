@@ -60,6 +60,16 @@ let headingLevels: [(String, String)] = [
 /// inspector and the status bar.
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
+/// The engine a project compiles with until it picks one: the core's
+/// (crates/texlocal-core settings.rs).
+let defaultTeXEngine = "pdflatex"
+
+/// An engine's name as the menus show it ("pdfLaTeX"), or its id if it
+/// isn't one of `texEngines`.
+func texEngineName(_ engine: String) -> String {
+    texEngines.first { $0.0 == engine }?.1 ?? engine
+}
+
 /// Symbols by kind, each inserted as its command: the palette LaTeX editors
 /// keep beside the source (TeXstudio, TeXShop, Overleaf).
 let symbolGroups: [(String, [(String, String)])] = [

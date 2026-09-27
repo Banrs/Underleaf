@@ -240,7 +240,7 @@ struct InspectorView: View {
                 header("Project")
                 let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
                 pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
-                pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
+                pickerRow("Engine", project.settings?.engine ?? defaultTeXEngine, texEngines, set: project.setEngine)
                 toggleRow("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
                           project.settings?.shellEscape ?? false, set: project.setShellEscape)
                 toggleRow("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
@@ -282,7 +282,7 @@ struct InspectorView: View {
             .monospacedDigit()
             // The window's end margin, as the status bar keeps from the
             // edges: the kit's toolbar sets its symbols 16 pt in.
-            .padding(BarMetrics.statusEndInset)
+            .padding(BarMetrics.edgeInset)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
