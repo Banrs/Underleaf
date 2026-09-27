@@ -38,10 +38,10 @@ struct HomeView: View {
         .overlay(alignment: .bottom) {
             if dropTargeted {
                 Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
-                    .padding(.horizontal, Self.margin)
+                    .padding(.horizontal, GalleryMetrics.margin)
                     .padding(.vertical, BarMetrics.groupSpacing)
                     .background(.regularMaterial, in: .capsule)
-                    .padding(Self.margin)
+                    .padding(GalleryMetrics.margin)
                     .allowsHitTesting(false)
             }
         }
@@ -62,18 +62,13 @@ struct HomeView: View {
         .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
-    /// The window's margin: where the inset table starts its column titles
-    /// and row content (its 10 pt inset, then the cell's 8 pt), measured on
-    /// macOS 27. The section titles and template cards take the same edge,
-    /// so New, Recent, Name and the rows start on one line.
-    private static let margin: CGFloat = 18
-
     // ---------- new ----------
 
     private var templates: some View {
         VStack(alignment: .leading) {
             Text("New")
                 .font(Typography.sectionTitle)
+                .accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 HStack(alignment: .top) {
                     ForEach(ProjectTemplate.all) { template in
@@ -87,7 +82,7 @@ struct HomeView: View {
             }
             .scrollIndicators(.never)
         }
-        .padding(Self.margin)
+        .padding(GalleryMetrics.margin)
     }
 
     // ---------- recent ----------
@@ -96,7 +91,8 @@ struct HomeView: View {
         VStack(alignment: .leading) {
             Text("Recent")
                 .font(Typography.sectionTitle)
-                .padding([.horizontal, .top], Self.margin)
+                .accessibilityAddTraits(.isHeader)
+                .padding([.horizontal, .top], GalleryMetrics.margin)
             List(shown, selection: $selection) { project in
                 // A view of its own that reads the rename through bindings:
                 // the list redraws a row only when its value changes.
@@ -162,7 +158,7 @@ struct HomeView: View {
             Spacer()
             GetMacTeXButton()
         }
-        .padding(Self.margin)
+        .padding(GalleryMetrics.margin)
     }
 }
 
@@ -178,7 +174,7 @@ private struct ProjectRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: GalleryMetrics.subtitleSpacing) {
                 if renaming == project.id {
                     RenameField(text: $newName, commit: commit) { renaming = nil }
                 } else {
@@ -196,7 +192,8 @@ private struct ProjectRow: View {
     }
 }
 
-/// Where to get TeX: the start window's notice and the PDF pane link here.
+/// Where to get TeX: the start window's notice, the PDF pane and Settings
+/// link here.
 let macTeXURL = URL(string: "https://tug.org/mactex/")!
 
 /// Opens MacTeX's page: a button, as the actions beside it are, not a link.
@@ -231,11 +228,26 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
+/// The gallery's measures.
+private enum GalleryMetrics {
+    /// The window's margin: where the inset table starts its column titles
+    /// and row content (its 10 pt inset, then the cell's 8 pt), measured on
+    /// macOS 27. The section titles and template cards take the same edge,
+    /// so New, Recent, Name and the rows start on one line.
+    static let margin: CGFloat = 18
+    /// Between a name and the smaller line under it, as the kit's form rows
+    /// set their 11 pt description 2 pt under the 13 pt title.
+    static let subtitleSpacing: CGFloat = 2
+    /// The kit's group box corners, 12 pt.
+    static let groupBoxCorner: CGFloat = 12
+}
+
 /// A template's card, in the system's group box: a drawing of its first
 /// page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A drawing of a Letter page: the thumbnail's size and its corners.
+    /// A drawing of a Letter page, 8.5 × 11 in at 120 pt wide, and its
+    /// corners: a picture, so drawn to look like paper, not to the kit.
     private static let page = CGSize(width: 120, height: 156)
     private static let corner: CGFloat = 6
     @Environment(\.colorScheme) private var colorScheme
@@ -244,7 +256,7 @@ private struct TemplateCard: View {
         GroupBox {
             VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
                 page
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: GalleryMetrics.subtitleSpacing) {
                     Text(template.title).font(.headline)
                     Text(template.detail)
                         .font(Typography.secondary)
@@ -255,33 +267,34 @@ private struct TemplateCard: View {
             }
         }
         .contentShape(.rect)
-        // Its focus ring on the group box's corners (the UI kit's 12 pt),
-        // not a square around them.
-        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous))
+        // Its focus ring on the group box's corners, not a square around
+        // them.
+        .contentShape(.focusEffect, .rect(cornerRadius: GalleryMetrics.groupBoxCorner, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
     private var page: some View {
         PagePreview(page: template.page)
-                .frame(width: Self.page.width, height: Self.page.height)
-                // Paper is white in either appearance, dimmed a little in
-                // dark mode as the HIG dims a white PDF page; its drawing in
-                // the light appearance's colours, which are drawn for paper.
-                .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
-                            in: .rect(cornerRadius: Self.corner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                        .strokeBorder(.separator)
-                }
-                .environment(\.colorScheme, .light)
-                // A drawing: the card is read by its name ("Blank", not
-                // "Add, Blank").
-                .accessibilityHidden(true)
+            .frame(width: Self.page.width, height: Self.page.height)
+            // Paper is white in either appearance, dimmed a little in
+            // dark mode as the HIG dims a white PDF page; its drawing in
+            // the light appearance's colours, which are drawn for paper.
+            .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
+                        in: .rect(cornerRadius: Self.corner, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
+                    .strokeBorder(.separator)
+            }
+            .environment(\.colorScheme, .light)
+            // A drawing: the card is read by its name ("Blank", not
+            // "Add, Blank").
+            .accessibilityHidden(true)
     }
 }
 
 /// Grey bars where the text would be, laid out like the template's first
-/// page (or first slide), in semantic fills and the accent.
+/// page (or first slide), in semantic fills and the accent. Its numbers are
+/// the drawing's, in points of the 120 × 156 page, not layout.
 private struct PagePreview: View {
     let page: ProjectTemplate.Page
 
@@ -367,4 +380,29 @@ struct NewProjectSheet: View {
         }
         .onAppear { nameFocused = true }
     }
+}
+
+
+#Preview("Template cards") {
+    HStack(alignment: .top) {
+        ForEach(ProjectTemplate.all) { TemplateCard(template: $0) }
+    }
+    .padding(GalleryMetrics.margin)
+}
+
+#Preview("Recent project") {
+    List {
+        ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
+                                        mainFile: "main.tex"),
+                   renaming: .constant(nil), newName: .constant("")) {}
+    }
+    .listStyle(.inset)
+}
+
+#Preview("Get MacTeX") {
+    VStack {
+        GetMacTeXButton()
+        GetMacTeXButton(prominent: true)
+    }
+    .padding()
 }

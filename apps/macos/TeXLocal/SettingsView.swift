@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
-/// panels", "Interface size" and theme have no counterpart: macOS draws its
+/// panels", "Interface scale" and theme have no counterpart: macOS draws its
 /// own sidebar and toolbar, sizes its own text, and the app follows the
 /// system's appearance (HIG, Dark Mode).
 struct SettingsView: View {
@@ -17,7 +17,7 @@ struct SettingsView: View {
 extension View {
     /// A pane of the Settings window: a grouped form at its content's
     /// height, so the window fits each tab as it switches, as the system's
-    /// own settings windows do.
+    /// own settings windows do. 500 pt wide, as the kit's example forms are.
     fileprivate func settingsPane() -> some View {
         formStyle(.grouped)
             .scrollDisabled(true)
@@ -50,12 +50,14 @@ private struct GeneralSettings: View {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing.")
                 }
-                // One row: where TeX is (or Not Found, with where to get
-                // it), Choose… for a folder the automatic search misses, and
-                // Use Automatic once one is chosen. A spinner until the
-                // status is in, rather than "Not Found" for a moment at launch.
+                // One row: where TeX is (or Not Found, with Get MacTeX as
+                // the start window has it), Choose… for a folder the
+                // automatic search misses, and Use Automatic once one is
+                // chosen. A spinner until the status is in, rather than "Not
+                // Found" for a moment at launch.
                 LabeledContent {
                     HStack {
+                        if app.tex?.available == false { GetMacTeXButton() }
                         if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
                         Button("Choose…") { choosingTeX = true }
                     }
@@ -66,10 +68,11 @@ private struct GeneralSettings: View {
                             Text(tex.texDir ?? tex.found.map { "\($0), Automatic" } ?? "Automatic")
                         } else {
                             Text("Not Found")
-                            Link("Get MacTeX…", destination: macTeXURL)
                         }
                     } else {
-                        ProgressView().controlSize(.small)
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Looking for TeX")
                     }
                 }
             }
@@ -81,11 +84,7 @@ private struct GeneralSettings: View {
         .fileDialogMessage("Choose the folder latexmk is in, such as a TeX distribution’s bin folder.")
         // Here, not in the project window, whose alert the Settings window
         // may be covering.
-        .alert(alert?.title ?? "", isPresented: Binding(presenting: $alert), presenting: alert) { _ in
-            Button("OK") {}
-        } message: { alert in
-            Text(alert.message)
-        }
+        .alert($alert)
     }
 
     private func setTeXFolder(_ path: String?) {
@@ -135,4 +134,8 @@ private struct EditorSettings: View {
             fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
         })
     }
+}
+
+#Preview("Editor") {
+    EditorSettings().settingsPane()
 }
