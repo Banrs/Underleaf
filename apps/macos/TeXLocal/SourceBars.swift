@@ -142,13 +142,22 @@ struct SourceBar: View {
 }
 
 /// The line's section level, as a word processor shows its paragraph
-/// style; choosing one makes the line that heading, or plain text. A menu
-/// in the bar's accessory-bar style, flat until the pointer is over it as
-/// its neighbours are (a pop-up button drew the one filled control in the
-/// row), its level checked in the menu. A view of its own, so a caret move
-/// redraws it and not the whole bar.
+/// style; choosing one makes the line that heading, or plain text. Flat
+/// until the pointer is over it, as its accessory-bar neighbours are (a
+/// pop-up button drew the one filled control in the row), its level
+/// checked in the menu. A view of its own, so a caret move redraws it and
+/// not the whole bar.
+///
+/// Spaced as the kit's pop-up button: the words 8 pt in, the ⇕ (13 pt
+/// semibold, small) after them, and 8 pt to the end. The accessory-bar
+/// style can't do that: it hands the menu to AppKit, which pads its title
+/// 12 pt a side and ignores the label's own spacing. So the label is laid
+/// out here, and the bezel the accessory bar shows under the pointer
+/// drawn behind it: the system's secondary fill, 6 pt corners, as
+/// measured on macOS 27.2.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
+    @State private var hovering = false
 
     var body: some View {
         let level = project.outline.first { $0.line == project.cursorLine }?.level
@@ -159,17 +168,25 @@ private struct SectionLevelMenu: View {
                 if command.isEmpty { Divider() }
             }
         } label: {
-            // The pop-up's ⇕, so it reads as a choice, not a label: the
-            // accessory-bar style draws no indicator of its own.
-            // One text, so the menu keeps the symbol after the words, where
-            // a pop-up has it, an en space (half the font's size) off the
-            // words: a plain space set it tighter than a pop-up does.
-            let chevrons = Text(Image(systemName: "chevron.up.chevron.down")).font(.caption).foregroundStyle(.secondary)
-            Text("\(current.0)\u{2002}\(chevrons)")
+            HStack(spacing: BarMetrics.spacing) {
+                Text(current.0)
+                // The pop-up's ⇕, so it reads as a choice, not a label.
+                Image(systemName: "chevron.up.chevron.down")
+                    .fontWeight(.semibold)
+                    .imageScale(.small)
+            }
+            // Brighter under the pointer, as the accessory bar's are.
+            .foregroundStyle(hovering ? .primary : .secondary)
+            .padding(.horizontal, BarMetrics.inset)
+            .frame(height: BarMetrics.controlHeight)
+            .background(hovering ? Color(nsColor: .secondarySystemFill) : .clear, in: .rect(cornerRadius: 6))
+            .contentShape(.rect)
         }
         .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .onHover { hovering = $0 }
         .help("Section Level")
         .accessibilityLabel("Section Level")
         .accessibilityValue(current.0)
