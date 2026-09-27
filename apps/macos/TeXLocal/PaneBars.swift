@@ -28,7 +28,7 @@ enum BarMetrics {
     /// bar's build, save state and position), wider than a group's so each
     /// reads as its own item.
     static let itemSpacing: CGFloat = 12
-    /// The status bar's ends, as Xcode 26's editor status bar measures
+    /// The status bar's ends, as Xcode 27's editor status bar measures
     /// (at 2x): 10 pt between the text and a line, 7 pt between the line
     /// and a borderless toggle, and the toggle 15 pt from the window's
     /// edge, which puts its symbol 17 pt in.
