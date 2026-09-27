@@ -12,16 +12,13 @@ struct SplitPane {
     /// Keeps its size as the window resizes.
     var keepsSize = false
     var shown = true
-    /// On edge-to-edge system glass, as an inspector sits beside the
-    /// content (`NSGlassEffectView`, the pane its content view).
-    var glass = false
     /// Folded to this size (its header), its divider fixed; unfolding
     /// brings back the size it had, remembered across launches.
     var collapsed: CGFloat?
     let content: AnyView
 
     init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
-         keepsSize: Bool = false, shown: Bool = true, glass: Bool = false, collapsed: CGFloat? = nil,
+         keepsSize: Bool = false, shown: Bool = true, collapsed: CGFloat? = nil,
          @ViewBuilder content: () -> some View) {
         self.minimum = minimum
         self.maximum = maximum
@@ -29,7 +26,6 @@ struct SplitPane {
         self.fraction = fraction
         self.keepsSize = keepsSize
         self.shown = shown
-        self.glass = glass
         self.collapsed = collapsed
         self.content = AnyView(content())
     }
@@ -64,23 +60,12 @@ struct SplitController: NSViewRepresentable {
             // SwiftUI's sizes stay out of Auto Layout; the delegate keeps
             // each pane within its minimum and maximum instead.
             host.sizingOptions = []
-            let clip = PaneClip(content: host, vertical: split.isVertical)
-            context.coordinator.clips.append(clip)
-            let view: NSView
-            if pane.glass {
-                // The content inside the glass, never a sibling behind it.
-                let glass = NSGlassEffectView()
-                glass.cornerRadius = 0
-                glass.contentView = clip
-                view = glass
-            } else {
-                view = clip
-            }
+            let view = PaneClip(content: host, vertical: split.isVertical)
+            context.coordinator.clips.append(view)
             // Starting sizes in proportion, until the split has its own.
             let share = (pane.fraction ?? rest) * 1000
             view.frame.size = axis == .horizontal
                 ? CGSize(width: share, height: 1000) : CGSize(width: 1000, height: share)
-            context.coordinator.views.append(view)
             if pane.shown { split.addArrangedSubview(view) }
         }
         split.autosaveName = autosave
@@ -170,8 +155,8 @@ struct SplitController: NSViewRepresentable {
     final class Coordinator: NSObject, NSSplitViewDelegate {
         let autosave: String
         var panes: [SplitPane] = []
-        var views: [NSView] = []
-        /// Each pane's content, by index, inside its view.
+        var views: [NSView] { clips }
+        /// Each pane, by index.
         var clips: [PaneClip] = []
         /// Hidden panes' shares of the split, or sizes for a pane that keeps
         /// its size, by index.

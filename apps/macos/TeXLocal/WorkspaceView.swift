@@ -20,8 +20,12 @@ struct WorkspaceView: View {
             SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
                 SplitPane(minimum: Metrics.editorsMinWidth) { EditorArea(project: project) },
                 SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
-                          fraction: 0.28, keepsSize: true, shown: app.showInspector, glass: true) {
+                          fraction: 0.28, keepsSize: true, shown: app.showInspector) {
+                    // On edge-to-edge system glass, as an inspector sits
+                    // beside the content.
                     InspectorView(project: project)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .glassEffect(.regular, in: .rect)
                 },
             ])
             // Built once per project: its panes keep the views they were made with.
@@ -37,6 +41,10 @@ struct WorkspaceView: View {
             // view itself the spacers were dropped and every item ran
             // together in one pill.
             .toolbar { toolbar }
+            // No line under the toolbar, as Xcode has none over its jump
+            // bar: the toolbar and the pane bars under it read as one strip,
+            // and the system's automatic line came and went with resizes.
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
