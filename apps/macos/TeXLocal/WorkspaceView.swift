@@ -16,6 +16,10 @@ struct WorkspaceView: View {
             // Widths of its own: the system's default opened it at 144 pt
             // (15% of the window) with no maximum.
             NavigatorView(project: project)
+                // Built once per project, as the detail is: its split hosts
+                // its lists once, and an open goes straight from one project
+                // to the next in this window.
+                .id(ObjectIdentifier(project))
                 .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
                                                 max: Metrics.sidebarWidth.upperBound)
         } detail: {
@@ -28,7 +32,8 @@ struct WorkspaceView: View {
             // Up to the window's top, so the inspector reaches it; the
             // editors keep below the toolbar, in their safe area.
             .ignoresSafeArea(.container, edges: .top)
-            // Built once per project: its panes keep the views they were made with.
+            // Built once per project, as the sidebar is: its panes keep the
+            // views they were made with.
             .id(ObjectIdentifier(project))
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
