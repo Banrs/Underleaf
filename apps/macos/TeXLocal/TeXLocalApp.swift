@@ -37,7 +37,7 @@ struct TeXLocalApp: App {
                 .environment(app)
                 .onAppear { delegate.app = app }
         }
-        .defaultSize(width: 1200, height: 760)
+        .defaultSize(WindowMetrics.projectDefault)
         .defaultLaunchBehavior(.suppressed)
         .commandsRemoved()
 
@@ -233,11 +233,21 @@ struct ProjectWindow: View {
 
 extension View {
     /// What went wrong (`AppModel.alert`), in the window that is the app's
-    /// for now. The title says what happened, briefly, as the HIG asks; the
-    /// detail is the message. `presenting`, so the text stays while the
-    /// alert closes.
+    /// for now.
     func appAlert(shown: Bool) -> some View {
         modifier(AppAlertPresenter(shown: shown))
+    }
+
+    /// An `AppAlert` while `alert` holds one. The title says what happened,
+    /// briefly, as the HIG asks; the detail is the message. `presenting`,
+    /// so the text stays while the alert closes.
+    func alert(_ alert: Binding<AppAlert?>) -> some View {
+        self.alert(alert.wrappedValue?.title ?? "", isPresented: Binding(presenting: alert),
+                   presenting: alert.wrappedValue) { _ in
+            Button("OK") {}
+        } message: { alert in
+            Text(alert.message)
+        }
     }
 }
 
@@ -247,12 +257,7 @@ private struct AppAlertPresenter: ViewModifier {
 
     func body(content: Content) -> some View {
         @Bindable var app = app
-        content.alert(app.alert?.title ?? "", isPresented: Binding(presenting: shown ? $app.alert : .constant(nil)),
-                      presenting: app.alert) { _ in
-            Button("OK") {}
-        } message: { alert in
-            Text(alert.message)
-        }
+        content.alert(shown ? $app.alert : .constant(nil))
     }
 }
 
@@ -269,11 +274,18 @@ enum WindowMetrics {
     static let toolbarHeight: CGFloat = 52
     static var contentMinHeight: CGFloat { minimum.height - toolbarHeight }
 
+    /// The project window opens with room to spare around its columns'
+    /// minimums, and inside the smallest current Mac display's default
+    /// resolution (the 13-inch MacBook Air's 1470 × 956) with the menu bar
+    /// and Dock.
+    static let projectDefault = CGSize(width: 1200, height: 760)
+
     /// The gallery's, as a whole window: the four template cards uncropped
     /// and two rows of the recent list, measured on macOS 27.2 (the cards end
-    /// 562 pt from the leading edge, then the 18 pt margin; the second row
-    /// ends 478 pt down). It opens at the project window's minimum, the
-    /// size it had at the least before it had a window of its own.
+    /// 562 pt from the leading edge, then the gallery's 18 pt margin; the
+    /// second row ends 478 pt down). It opens at the project window's
+    /// minimum, the size it had at the least before it had a window of its
+    /// own.
     static let galleryMinimum = CGSize(width: 580, height: 480)
     static var galleryContentMinHeight: CGFloat { galleryMinimum.height - toolbarHeight }
     static let galleryDefault = minimum

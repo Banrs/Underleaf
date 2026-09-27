@@ -45,6 +45,7 @@ final class AppModel {
     // Requests from commands to the views that own the matching UI.
     /// The new-project sheet, on the template it starts with.
     var newProjectTemplate: ProjectTemplate?
+    /// The sheet New File…, New Folder… or Go to Line… asks with (WorkspaceView).
     var prompt: Prompt?
     /// File › Open…'s panel (the gallery's), Add Files…' (WorkspaceView).
     var openingProject = false
@@ -57,6 +58,7 @@ final class AppModel {
     var pendingImport: URL?
     /// Save PDF As… or Export Project as ZIP…, while its panel shows.
     var exporting: ExportFile?
+    /// Bumped by Find in Project…, to focus the sidebar's search field.
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
@@ -82,7 +84,7 @@ final class AppModel {
         didSet { UserDefaults.standard.set(recentProjects, forKey: "recentProjects") }
     }
 
-    /// ⌘N in the gallery, or a template's card.
+    /// File › New Project…, or a template's card.
     func newProject(_ template: String = "article") {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
@@ -212,6 +214,7 @@ final class AppModel {
         opensUnderWay += 1
         defer { opensUnderWay -= 1 }
         guard await leave(generation) else { return }
+        // Ten, as many as the system's Open Recent keeps by default.
         recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
