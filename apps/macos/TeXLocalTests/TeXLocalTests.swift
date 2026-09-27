@@ -246,17 +246,19 @@ final class SplitControllerTests: XCTestCase {
     /// grows, gives way beyond two fifths in a small window, and has its
     /// size back as the window grows again.
     func testThePanelKeepsItsSizeWithinItsLargestShare() {
-        let controller = split(NSSize(width: 400, height: 601), vertical: false, [
+        // No taller than 601: the window stays within the screen, and CI's
+        // screen caps a taller one.
+        let controller = split(NSSize(width: 400, height: 501), vertical: false, [
             SplitPane(minimum: 120) { EmptyView() },
             SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.3, keepsSize: true) { EmptyView() },
         ])
-        XCTAssertEqual(heights(controller), [420, 180])
-        resize(to: NSSize(width: 400, height: 801))
-        XCTAssertEqual(heights(controller), [620, 180])
-        resize(to: NSSize(width: 400, height: 401))
-        XCTAssertEqual(heights(controller)[1], 160, accuracy: 0.5)
+        XCTAssertEqual(heights(controller), [350, 150])
         resize(to: NSSize(width: 400, height: 601))
-        XCTAssertEqual(heights(controller), [420, 180])
+        XCTAssertEqual(heights(controller), [450, 150])
+        resize(to: NSSize(width: 400, height: 301))
+        XCTAssertEqual(heights(controller)[1], 120, accuracy: 0.5)
+        resize(to: NSSize(width: 400, height: 501))
+        XCTAssertEqual(heights(controller), [350, 150])
     }
 
     /// The inspector is the system's: its behaviour and its standard
