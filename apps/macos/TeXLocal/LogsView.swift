@@ -36,12 +36,12 @@ struct PanelView: View {
         Picker("Build Panel", selection: $project.panelTab) {
             ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }
-        // macOS 27's tabs: the panel's two views, read as tabs by VoiceOver.
-        // The current tab is a neutral knob, not the accent, as the kit's tab
-        // bars have it (Utility Panel/Tab Bar/Button/Selected); the accent
-        // fill is the select-one segmented control's. It draws the same on
-        // any bar background and takes no tint.
-        .pickerStyle(.tabs)
+        // A segmented control, which the HIG gives switching between a
+        // view's parts: a capsule, as the glass and the Filter field beside
+        // it are, its current part clearly marked. macOS 27's tabs style
+        // drew a rounded rectangle with a near-invisible current tab in
+        // light mode (242 on 236).
+        .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
         .layoutPriority(1)
@@ -60,7 +60,7 @@ struct PanelView: View {
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 .accessibilityLabel("Warnings")
                 .accessibilityAddTraits(showWarnings ? .isSelected : [])
-                .inControlGroup()
+                .inGlassCapsule()
             }
         } else {
             Button("Copy Log", systemImage: "document.on.document") {
@@ -69,7 +69,7 @@ struct PanelView: View {
             }
             .help("Copy Log")
             .disabled(project.result?.log.isEmpty ?? true)
-            .inControlGroup()
+            .inGlassCapsule()
         }
         SearchField(text: $filter, prompt: "Filter")
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)

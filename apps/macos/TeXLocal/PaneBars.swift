@@ -39,14 +39,21 @@ enum BarMetrics {
     /// items 8 pt from the edge, a 20 pt symbol centred in each). Clear of
     /// the window's rounded corner.
     static let edgeInset: CGFloat = 16
+    /// Controls on glass, as the kit's toolbar groups (Titlebars and
+    /// Toolbars › Medium): a 24 pt capsule holding 20 pt items 2 pt in from
+    /// its edge and 4 pt apart, and text 8 pt from its ends.
+    static let glassItem: CGFloat = 20
+    static let glassItemInset: CGFloat = 2
+    static let glassItemSpacing: CGFloat = 4
+    static let glassTextInset: CGFloat = 8
+    /// The status bar: Xcode 27's editor status bar, 36 pt (measured at
+    /// 2x), roomier than the rows under the toolbar, which stay at the
+    /// small controls' 28 pt so the chrome over the text stays light.
+    static let statusBarHeight: CGFloat = 36
     /// A search field in a bar: the least any field shrinks to, and the
     /// widest a filter grows.
     static let fieldMinWidth: CGFloat = 100
     static let fieldMaxWidth: CGFloat = 180
-    /// Opaque, and what shows under the glass toolbar, so the toolbar and
-    /// the bars under it read as one chrome block over the content. Not
-    /// `.bar`: nothing scrolls under a stacked bar for it to blur.
-    static let background: some ShapeStyle = .windowBackground
 }
 
 /// The app's text roles, each one of the system's text styles, so the
@@ -69,6 +76,9 @@ enum Typography {
     static let groupTitle: Font = .headline
     static let itemTitle: Font = .headline
     static let secondary: Font = .subheadline
+    /// The status bar's text: 12 pt, as Xcode 27's editor status bar sets
+    /// it in its 36 pt bar.
+    static let status: Font = .callout
     /// Between a title and the secondary line under it, as the kit's form
     /// rows set their 11 pt description 2 pt under the 13 pt title.
     static let subtitleSpacing: CGFloat = 2
@@ -78,58 +88,74 @@ enum Typography {
 }
 
 extension View {
-    /// A pane bar's controls, one family in every bar: bordered controls
-    /// and control groups at the regular size, on the chrome's background,
-    /// inset from the pane's edges.
+    /// A pane bar's controls, one family in every bar: Liquid Glass, as the
+    /// window toolbar's items over them are, at the regular size, inset
+    /// from the pane's edges. No background of their own: the window's
+    /// shows, as it does under the toolbar, so the two read as one piece of
+    /// chrome in either appearance (a bar of its own was a step lighter than
+    /// the toolbar in dark mode).
     func paneBarControls() -> some View {
         controlSize(BarMetrics.controlSize)
-            .buttonStyle(.bordered)
+            .buttonStyle(.glass)
             .menuStyle(.button)
             .labelStyle(.iconOnly)
             .lineLimit(1)
             .padding(.horizontal, BarMetrics.inset)
             .frame(maxWidth: .infinity)
-            .background(BarMetrics.background)
     }
 
-    /// One control as a group of its own. The system's control group is the
-    /// regular size's 24 pt whatever it holds, as its neighbours are; a
-    /// bordered icon button or menu alone takes its symbol's height (the
-    /// ellipsis 12.5 pt). Not for a share link, which loses its action in
-    /// a group (`SymbolOnTextLine` instead).
-    func inControlGroup() -> some View {
-        ControlGroup { self }
+    /// An icon control on glass: borderless, the kit's 20 pt square, its
+    /// symbol centred in it whatever the symbol's own height (a bordered
+    /// button took its symbol's: Share came out 25.5 pt and off-centre).
+    /// The label colour, as a pop-up's text beside it: a borderless
+    /// button's symbol is otherwise a step dimmer.
+    func glassItem() -> some View {
+        labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.primary)
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .frame(width: BarMetrics.glassItem, height: BarMetrics.glassItem)
+            .contentShape(.rect)
+    }
+
+    /// A group's capsule of glass around its items.
+    func glassCapsule() -> some View {
+        padding(BarMetrics.glassItemInset)
+            .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
+    /// One icon control as a capsule of its own.
+    func inGlassCapsule() -> some View {
+        glassItem().glassCapsule()
+    }
+
+    /// A text control (a pop-up) on glass: borderless, its text the kit's
+    /// 8 pt from the capsule's ends.
+    func glassTextPill() -> some View {
+        buttonStyle(.borderless)
+            .foregroundStyle(.primary)
+            .menuStyle(.button)
             .fixedSize()
+            .padding(.horizontal, BarMetrics.glassTextInset)
+            .frame(height: BarMetrics.glassItem + 2 * BarMetrics.glassItemInset)
+            .glassEffect(.regular.interactive(), in: .capsule)
     }
 }
 
 /// A pane's actions: the row under the window toolbar (over the source,
 /// over the PDF, the build panel's header). Each child is a group of its
-/// own, a bordered control or a control group, spaced as the kit's
-/// toolbar spaces its items. Not glass: these bars sit above content, not
-/// over it.
+/// own, a capsule of glass, spaced as the kit's toolbar spaces its items,
+/// in one container so neighbouring glass renders together.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: BarMetrics.itemSpacing) { content }
-            .frame(height: BarMetrics.barHeight)
-            .paneBarControls()
-    }
-}
-
-/// A button's symbol alone, on the line its title would take: a bordered
-/// button is as tall as its label, and a symbol alone is shorter or taller
-/// than a line of text (the compact Compile came out 21 pt beside 24 pt
-/// groups, Share 25.5 pt). The symbol draws at its own size but takes no
-/// height, so the line's is the button's. A hidden title isn't read, so
-/// the button names itself for VoiceOver.
-struct SymbolOnTextLine: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 0) {
-            configuration.icon.frame(height: 0)
-            configuration.title.hidden().frame(width: 0)
+        GlassEffectContainer(spacing: BarMetrics.itemSpacing) {
+            HStack(spacing: BarMetrics.itemSpacing) { content }
         }
+        .frame(height: BarMetrics.barHeight)
+        .paneBarControls()
     }
 }
 
@@ -139,6 +165,8 @@ struct SymbolOnTextLine: LabelStyle {
 /// the same.
 struct SecondaryBar<Content: View>: View {
     var spacing = BarMetrics.spacing
+    var height = BarMetrics.secondaryBarHeight
+    var font = Typography.secondary
     /// From the row's ends to its items.
     var leadingInset = BarMetrics.inset
     var trailingInset = BarMetrics.inset
@@ -146,14 +174,13 @@ struct SecondaryBar<Content: View>: View {
 
     var body: some View {
         HStack(spacing: spacing) { content }
-            .font(Typography.secondary)
+            .font(font)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
             .padding(.leading, leadingInset)
             .padding(.trailing, trailingInset)
-            .frame(height: BarMetrics.secondaryBarHeight)
+            .frame(height: height)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(BarMetrics.background)
     }
 }
 
@@ -205,21 +232,22 @@ extension Segment {
     }
 }
 
-/// Related icon actions side by side, icons only: the system's control
-/// group, one bordered piece with a line between its segments.
+/// Related icon actions side by side, icons only: one capsule of glass,
+/// as the kit's toolbar groups. The system's control group ignores the
+/// glass button style and stays bordered.
 struct ToolGroup: View {
     let items: [Segment]
 
     var body: some View {
-        ControlGroup {
+        HStack(spacing: BarMetrics.glassItemSpacing) {
             ForEach(items) { item in
                 Button(item.title, systemImage: item.systemImage, action: item.action)
                     .disabled(!item.enabled)
                     .help(item.title)
+                    .glassItem()
             }
         }
-        .labelStyle(.iconOnly)
-        .fixedSize()
+        .glassCapsule()
     }
 }
 
@@ -613,7 +641,7 @@ struct RenameField: View {
             Segment(id: "italic", title: "Italic", systemImage: "italic") {},
         ])
         Spacer(minLength: 0)
-        Button("More", systemImage: "ellipsis") {}.inControlGroup()
+        Button("More", systemImage: "ellipsis") {}.inGlassCapsule()
     }
     .frame(width: 480)
 }

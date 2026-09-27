@@ -113,24 +113,24 @@ struct PDFPane: View {
     }
 
     /// Compile, zoom and Share, the PDF's actions, lined up with the
-    /// source's bar beside it. Narrow panes shorten Compile to its symbol,
-    /// then leave Share to the File menu; narrower still, zoom goes to the
-    /// View menu instead, and Share, the narrower, comes back in its place.
+    /// source's bar beside it. Compile keeps its word at every width: it is
+    /// the pane's one prominent action, and a lone play symbol reads as
+    /// media. Narrow panes leave Share to File › Share… first, then zoom to
+    /// the View menu.
     private var bar: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
-                actions(compact: false, share: true, zoom: true)
-                actions(compact: true, share: true, zoom: true)
-                actions(compact: true, share: false, zoom: true)
-                actions(compact: true, share: true, zoom: false)
+                actions(share: true, zoom: true)
+                actions(share: false, zoom: true)
+                actions(share: false, zoom: false)
             }
         }
     }
 
     /// Compile at the leading edge; Share, then zoom, at the trailing.
-    private func actions(compact: Bool, share: Bool, zoom: Bool) -> some View {
+    private func actions(share: Bool, zoom: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            compileControls(compact: compact)
+            compileControls
             Spacer(minLength: 0)
             // Share before zoom, not at the bar's edge, where its picker
             // had no room in a full-screen window.
@@ -139,25 +139,30 @@ struct PDFPane: View {
         }
     }
 
-    /// Overleaf's Recompile, the pane's one prominent control; while a build
-    /// runs, Stop in its place, the system's spinner as its icon. Nothing
-    /// follows it on its side of the bar, so the swap moves nothing.
+    /// Overleaf's Recompile, the pane's one prominent control. While a build
+    /// runs, the system's spinner and a Stop symbol in its place, as
+    /// Safari's reload becomes a stop: the spinner says it's running, the
+    /// symbol how to end it (HIG, Progress indicators: let people cancel a
+    /// lengthy task). Nothing follows it on its side of the bar, so the
+    /// swap moves nothing.
     @ViewBuilder
-    private func compileControls(compact: Bool) -> some View {
+    private var compileControls: some View {
         if project.compiling {
-            Button { project.stopCompile() } label: {
-                let stop = Label { Text("Stop") } icon: { ProgressView().controlSize(.small) }
-                if compact { stop.labelStyle(.iconOnly) } else { stop.labelStyle(.titleAndIcon) }
+            HStack(spacing: BarMetrics.glassItemSpacing) {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: BarMetrics.glassItem, height: BarMetrics.glassItem)
+                    .accessibilityLabel("Compiling")
+                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
+                    .help("Stop")
+                    .glassItem()
             }
-            .buttonStyle(.bordered)
-            .fixedSize()
-            .help("Stop")
+            .glassCapsule()
         } else {
             Button { app.perform(.compileRun, on: project) } label: {
-                let compile = Label("Compile", systemImage: "play.fill")
-                if compact { compile.labelStyle(SymbolOnTextLine()) } else { compile.labelStyle(.titleAndIcon) }
+                Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun, on: project))
             .help("Compile")
@@ -165,15 +170,16 @@ struct PDFPane: View {
         }
     }
 
-    /// Zoom out | the scale | zoom in, the system's control group. The
+    /// Zoom out | the scale | zoom in, one capsule of glass. The
     /// scale is a menu of ways to fit and preset scales, the one in use
     /// checked (while fitting, no preset is, even at a preset's scale). It
     /// keeps the width of its widest ("000%"), centred, so − and + stay put
     /// as it changes, as Pages' zoom keeps its own.
     private var zoomControls: some View {
-        ControlGroup {
+        HStack(spacing: BarMetrics.glassItemSpacing) {
             Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
                 .help("Zoom Out")
+                .glassItem()
             Menu {
                 CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
                 CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
@@ -189,36 +195,39 @@ struct PDFPane: View {
                     .monospacedDigit()
             }
             .menuIndicator(.hidden)
+            .buttonStyle(.borderless)
+            .menuStyle(.button)
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .frame(height: BarMetrics.glassItem)
             .help("Zoom")
             // Named for what it sets, the scale its value, not a bare number.
             .accessibilityLabel("Scale")
             .accessibilityValue(controller.zoomLabel)
             Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
                 .help("Zoom In")
+                .glassItem()
         }
-        .fixedSize()
+        .glassCapsule()
         .disabled(project.pdfVersion == 0)
         // One named group, its three controls inside it.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zoom")
     }
 
-    /// The system's share picker for the PDF: a bordered button, its symbol
-    /// on a line of text so it is zoom's height beside it. Not in a control
-    /// group, where the share link lost its action and only its tooltip
-    /// showed (macOS 27.2).
+    /// The system's share picker for the PDF, a capsule of its own.
     @ViewBuilder
     private var shareControl: some View {
         if project.pdfVersion > 0, let url = project.pdfURL {
             ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
-                .labelStyle(SymbolOnTextLine())
                 .help("Share PDF")
                 .accessibilityLabel("Share PDF")
+                .inGlassCapsule()
         } else {
             Button("Share PDF", systemImage: "square.and.arrow.up") {}
-                .labelStyle(SymbolOnTextLine())
                 .disabled(true)
                 .accessibilityLabel("Share PDF")
+                .inGlassCapsule()
         }
     }
 

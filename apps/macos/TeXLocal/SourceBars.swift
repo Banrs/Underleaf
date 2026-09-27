@@ -66,24 +66,23 @@ struct SourceBar: View {
         case .format:
             ToolGroup(items: [Segment(.editBold, "bold", app: app, project: project), Segment(.editItalic, "italic", app: app, project: project)])
         case .math:
-            ControlGroup {
+            HStack(spacing: BarMetrics.glassItemSpacing) {
                 Button(MenuCommand.editMath.title, systemImage: "x.squareroot") { app.perform(.editMath, on: project) }
                     .disabled(!app.isEnabled(.editMath, on: project))
                     .help(MenuCommand.editMath.title)
+                    .glassItem()
                 Button("Display Math", systemImage: "sum") { project.format("displayMath") }
                     .help("Display Math")
+                    .glassItem()
+                // Its own item, so the popover points at it.
                 Button("Symbols", systemImage: "pi") { showSymbols = true }
                     .help("Symbols")
+                    .glassItem()
+                    .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
+                        SymbolPalette { project.format("symbol", $0) }
+                    }
             }
-            .labelStyle(.iconOnly)
-            .fixedSize()
-            // A control group draws its buttons as one control, so the
-            // group holds the popover, its arrow at Symbols, the last of
-            // its three segments: they measure 27.25, 24 and 23.75 pt on
-            // macOS 27.2, so Symbols' middle is 84% along the 75 pt group.
-            .popover(isPresented: $showSymbols, attachmentAnchor: .point(UnitPoint(x: 0.84, y: 1)), arrowEdge: .bottom) {
-                SymbolPalette { project.format("symbol", $0) }
-            }
+            .glassCapsule()
         case .references, .figures, .lists:
             ToolGroup(items: group.templates.compactMap { template in
                 template.symbol.map { Segment(id: template.title, title: template.title, systemImage: $0) { project.insert(template) } }
@@ -125,7 +124,7 @@ struct SourceBar: View {
         }
         .menuIndicator(.hidden)
         .help("More")
-        .inControlGroup()
+        .inGlassCapsule()
     }
 
     private func items(_ templates: [Template]) -> some View {
@@ -157,7 +156,7 @@ private struct SectionLevelMenu: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
-        .fixedSize()
+        .glassTextPill()
         .help("Section Level")
     }
 }
@@ -446,9 +445,7 @@ struct SourceFindBar: View {
                         if project.replaceFocus > 0 { replaceFocused = true }
                     }
                 ViewThatFits(in: .horizontal) {
-                    // Momentary segments, as the HIG's Reply, Reply All
-                    // and Forward.
-                    ControlGroup {
+                    HStack(spacing: BarMetrics.groupSpacing) {
                         Button("Replace") { project.replace(all: false) }
                         Button("Replace All") { project.replace(all: true) }
                     }

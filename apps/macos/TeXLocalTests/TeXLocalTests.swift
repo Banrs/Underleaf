@@ -141,29 +141,30 @@ struct PaneBarLayoutTests {
         #expect(height(PaneBar { Button("Done") {} }) == BarMetrics.barHeight)
     }
 
-    /// Every control in a bar is the kit's regular height, whatever its
-    /// symbol: a group, one control grouped alone (a bordered ellipsis
-    /// alone was 12.5 pt), and a symbol on a line of text: the compact
-    /// Compile (21 pt as a symbol alone) and Share (25.5 pt), a share link
-    /// as the PDF bar has it.
-    @Test func everyControlIsTheKitsRegularHeight() {
+    /// Every control in a bar is one height, whatever its symbol: a group
+    /// of icons, one icon alone, and the share link, each a capsule of glass
+    /// (the kit's toolbar group: 20 pt items 2 pt in, so 24 pt), and the
+    /// titled glass buttons (Compile, Done) beside them.
+    @Test func everyControlIsOneHeight() {
         let undo = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
-        let more = Menu { Button("Figure") {} } label: { Label("More", systemImage: "ellipsis") }.inControlGroup()
+        let more = Menu { Button("Figure") {} } label: { Label("More", systemImage: "ellipsis") }.inGlassCapsule()
         let share = ShareLink(item: URL(fileURLWithPath: "/tmp/main.pdf")) {
             Label("Share PDF", systemImage: "square.and.arrow.up")
         }
-        .labelStyle(SymbolOnTextLine())
-        let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(SymbolOnTextLine()) }
-            .buttonStyle(.borderedProminent)
+        .inGlassCapsule()
+        let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon) }
+            .buttonStyle(.glassProminent)
         let done = Button("Done") {}
-        #expect(height(undo) == BarMetrics.controlHeight)
-        #expect(height(more) == BarMetrics.controlHeight)
-        #expect(height(share) == BarMetrics.controlHeight)
-        #expect(height(compile) == BarMetrics.controlHeight)
-        #expect(height(done) == BarMetrics.controlHeight)
+        let capsule = BarMetrics.glassItem + 2 * BarMetrics.glassItemInset
+        #expect(capsule == BarMetrics.controlHeight)
+        #expect(height(undo) == capsule)
+        #expect(height(more) == capsule)
+        #expect(height(share) == capsule)
+        #expect(height(compile) == height(done))
+        #expect(height(done) <= BarMetrics.barHeight - 2 * BarMetrics.inset + 4)
     }
 }
 
