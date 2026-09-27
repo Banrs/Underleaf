@@ -125,42 +125,61 @@ final class OutlineDisplayTests: XCTestCase {
     }
 }
 
-/// The pane bar's groups measured off screen, with no window shown.
+/// The pane bars' controls measured off screen, with no window shown.
 @MainActor
-final class PaneBarLayoutTests: XCTestCase {
-    /// The UI kit's Unified Compact toolbar, the bars' one size.
-    func testTheBarIsTheKitsCompactToolbarHeight() {
-        XCTAssertEqual(BarMetrics.barHeight, 40)
-        XCTAssertEqual(BarMetrics.controlSize, .regular)
+struct PaneBarLayoutTests {
+    private func height(_ view: some View) -> CGFloat {
+        NSHostingView(rootView: view.paneBarControls()).fittingSize.height
     }
 
-    /// Controls sit 8 pt from the bar's top and bottom, as in the kit's
-    /// Unified Compact toolbar. The accessory-bar bezel measures 22 pt, 2 pt
-    /// under the kit's 24, so the group keeps within 8 to 9 pt of each edge.
-    func testAGroupFitsItsBarWithTheKitsInsets() {
-        let two = ToolGroup(items: [
+    /// The UI kit's Unified Compact toolbar, the bars' one size: its
+    /// regular controls with 8 pt above and below.
+    @Test func theBarIsTheKitsCompactToolbarHeight() {
+        #expect(BarMetrics.barHeight == 40)
+        #expect(BarMetrics.controlSize == .regular)
+        #expect(height(PaneBar { Button("Done") {} }) == BarMetrics.barHeight)
+    }
+
+    /// Every control in a bar is the kit's regular height, whatever its
+    /// symbol: a group, one control grouped alone (a bordered ellipsis
+    /// alone was 12.5 pt), and the compact Compile (21 pt as a symbol alone).
+    @Test func everyControlIsTheKitsRegularHeight() {
+        let undo = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
-        .buttonStyle(.accessoryBar)
-        .controlSize(BarMetrics.controlSize)
-        let height = NSHostingView(rootView: two).fittingSize.height
-        XCTAssertLessThanOrEqual(height, BarMetrics.barHeight - 16)
-        XCTAssertGreaterThanOrEqual(height, BarMetrics.barHeight - 18)
+        let more = Menu { Button("Figure") {} } label: { Label("More", systemImage: "ellipsis") }.inControlGroup()
+        let share = Button("Share PDF", systemImage: "square.and.arrow.up") {}.inControlGroup()
+        let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(SymbolOnTextLine()) }
+            .buttonStyle(.borderedProminent)
+        let done = Button("Done") {}
+        #expect(height(undo) == BarMetrics.controlHeight)
+        #expect(height(more) == BarMetrics.controlHeight)
+        #expect(height(share) == BarMetrics.controlHeight)
+        #expect(height(compile) == BarMetrics.controlHeight)
+        #expect(height(done) == BarMetrics.controlHeight)
     }
 }
 
 /// A find bar, measured off screen.
 @MainActor
-final class FindBarTests: XCTestCase {
-    /// Its field and buttons fit a pane bar, so it is the bars' height.
-    func testAFindBarIsABarsHeight() {
-        let bar = PaneBar {
-            SearchField(text: .constant(""), prompt: "Find in PDF").frame(width: 160)
-            FindSteps(enabled: true) { _ in }
-            Button("Done") {}.buttonStyle(.bordered)
+struct FindBarTests {
+    /// The PDF's one row fits a pane bar, so it is the bars' height; the
+    /// source's replace row adds a row of controls and the gap between.
+    @Test func aFindBarIsABarsHeight() {
+        let find = FindBar(query: .constant("the"), prompt: "Find in PDF", focus: 0, matches: FindMatches(),
+                           searched: "the", step: { _ in }, close: {})
+        let replace = FindBar(query: .constant("the"), prompt: "Find", focus: 0, matches: FindMatches(),
+                              searched: "the", step: { _ in }, close: {}) {
+            GridRow {
+                TextField("Replace", text: .constant("")).textFieldStyle(.bordered)
+                Button("Replace") {}
+            }
         }
-        XCTAssertEqual(NSHostingView(rootView: bar).fittingSize.height, BarMetrics.barHeight)
+        let one = NSHostingView(rootView: find.frame(width: 400)).fittingSize.height
+        let two = NSHostingView(rootView: replace.frame(width: 400)).fittingSize.height
+        #expect(one == BarMetrics.barHeight)
+        #expect(two > one + BarMetrics.controlHeight)
     }
 }
 

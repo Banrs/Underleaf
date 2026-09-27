@@ -12,28 +12,22 @@ struct PDFPane: View {
     @State private var findFocus = 0
     @AppStorage("pdfPaper") private var pdfPaper = "white"
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var controller = PDFController()
 
     var body: some View {
-        // The pane's actions (Compile, zoom, Share) in a bar stacked over
-        // the pages, then the page and whether the preview is current in a
-        // secondary row, as the source has its bar and location row: the
-        // two panes' rows and hairlines line up. The find bar, while it
-        // shows, goes under them, as the source's does.
-        VStack(spacing: 0) {
+        // The pane's actions (Compile, zoom, Share), then the page and
+        // whether the preview is current in a secondary row, as the source
+        // has its bar and location row: the two panes' rows and hairlines
+        // line up. The find bar, while it shows, goes under them.
+        PaneStack(finding: finding && project.pdfVersion > 0) {
             bar
-            Divider()
+        } location: {
             PageRow(project: project, controller: controller)
-            if finding, project.pdfVersion > 0 {
-                Divider()
-                findBar
-                    .transition(.findBar(reduceMotion: reduceMotion))
-            }
-            Divider()
+        } find: {
+            findBar
+        } content: {
             pages
         }
-        .animation(.snappy(duration: 0.25), value: finding)
         // Edit › Find's items while the pages or the find bar have the
         // keyboard: the PDF's find, not the source's.
         .focusedValue(\.find, findAction)
@@ -121,25 +115,26 @@ struct PDFPane: View {
 
     /// Compile, zoom and Share, the PDF's actions, lined up with the
     /// source's bar beside it. Narrow panes shorten Compile to its symbol,
-    /// then leave zoom to the View menu.
+    /// then leave Share to the File menu, then zoom to the View menu.
     private var bar: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
-                actions(compact: false, zoom: true)
-                actions(compact: true, zoom: true)
-                actions(compact: true, zoom: false)
+                actions(compact: false, share: true, zoom: true)
+                actions(compact: true, share: true, zoom: true)
+                actions(compact: true, share: false, zoom: true)
+                actions(compact: true, share: true, zoom: false)
             }
         }
     }
 
     /// Compile at the leading edge; Share, then zoom, at the trailing.
-    private func actions(compact: Bool, zoom: Bool) -> some View {
-        HStack(spacing: BarMetrics.groupSpacing) {
+    private func actions(compact: Bool, share: Bool, zoom: Bool) -> some View {
+        HStack(spacing: BarMetrics.itemSpacing) {
             compileControls(compact: compact)
             Spacer(minLength: 0)
             // Share before zoom, not at the bar's edge, where its picker
             // had no room in a full-screen window.
-            shareControl
+            if share { shareControl }
             if zoom { zoomControls }
         }
     }
@@ -160,75 +155,80 @@ struct PDFPane: View {
         } else {
             Button { app.perform(.compileRun, on: project) } label: {
                 let compile = Label("Compile", systemImage: "play.fill")
-                if compact { compile.labelStyle(.iconOnly) } else { compile.labelStyle(.titleAndIcon) }
+                if compact { compile.labelStyle(SymbolOnTextLine()) } else { compile.labelStyle(.titleAndIcon) }
             }
             .buttonStyle(.borderedProminent)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun, on: project))
             .help("Compile")
+            .accessibilityLabel("Compile")
         }
     }
 
-    /// Zoom out | the scale | zoom in, AppKit's segmented control. The scale
+    /// Zoom out | the scale | zoom in, the system's control group. The
+    /// scale is a menu of ways to fit and preset scales, the one in use
+    /// checked (while fitting, no preset is, even at a preset's scale). It
     /// keeps the width of its widest ("000%"), centred, so − and + stay put
-    /// as it changes; a click opens its menu of ways to fit and preset
-    /// scales, the one in use checked (while fitting, no preset is, even at
-    /// a preset's scale).
+    /// as it changes, as Pages' zoom keeps its own.
     private var zoomControls: some View {
-        let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
-            .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
-                controller.setScale(CGFloat(percent) / 100)
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
+                .help("Zoom Out")
+            Menu {
+                CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
+                CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
+                Divider()
+                ForEach(Self.zoomPresets, id: \.self) { percent in
+                    CheckedItem("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
+                        controller.setScale(CGFloat(percent) / 100)
+                    }
+                }
+            } label: {
+                Text("000%").hidden()
+                    .overlay { Text(controller.zoomLabel) }
+                    .monospacedDigit()
             }
+            .menuIndicator(.hidden)
+            .help("Zoom")
+            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
+                .help("Zoom In")
         }
-        return SegmentedControl(segments: [
-            .init(symbol: "minus", help: "Zoom Out") { _, _ in controller.zoom(in: false) },
-            .init(label: controller.zoomLabel, widest: "000%", help: "Zoom", menu: [
-                .item("Fit Width", checked: controller.fit == .width) { controller.fitWidth() },
-                .item("Fit Height", checked: controller.fit == .height) { controller.fitHeight() },
-                .separator,
-            ] + presets),
-            .init(symbol: "plus", help: "Zoom In") { _, _ in controller.zoom(in: true) },
-        ])
         .fixedSize()
         .disabled(project.pdfVersion == 0)
+        .accessibilityLabel("Zoom")
         .accessibilityValue(controller.zoomLabel)
     }
 
-    /// The system's share picker for the PDF, opened from its segment: one
-    /// segment of the same control as zoom's, so the two are one size.
+    /// The system's share picker for the PDF, a group of its own so it is
+    /// zoom's height beside it.
+    @ViewBuilder
     private var shareControl: some View {
-        let url = project.pdfVersion > 0 ? project.pdfURL : nil
-        return SegmentedControl(segments: [
-            .init(symbol: "square.and.arrow.up", help: "Share PDF", enabled: url != nil) { control, rect in
-                guard let url else { return }
-                NSSharingServicePicker(items: [url]).show(relativeTo: rect, of: control, preferredEdge: .minY)
-            },
-        ])
-        .fixedSize()
+        if project.pdfVersion > 0, let url = project.pdfURL {
+            ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
+                .help("Share PDF")
+                .inControlGroup()
+        } else {
+            Button("Share PDF", systemImage: "square.and.arrow.up") {}
+                .disabled(true)
+                .inControlGroup()
+        }
     }
 
     private static let zoomPresets = [50, 75, 100, 125, 150, 200]
 
-    /// Find in PDF, as the source's find bar is: the field, previous / next,
-    /// the count (while there is room) and Done. Return and Shift-Return
-    /// step, Escape closes.
+    /// Find in PDF, as the source's find bar is, without its replace row.
     private var findBar: some View {
-        PaneBar {
-            SearchField(text: $findQuery, prompt: "Find in PDF", focus: findFocus, step: controller.step, close: closeFind)
-                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-            FindSteps(enabled: !controller.matches.isEmpty, step: controller.step)
-            FindCount(label: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
-                                         limited: controller.limited).label(for: controller.query))
-            Button("Done") { closeFind() }
-                .buttonStyle(.bordered)
-        }
-        .task(id: findQuery) {
-            // Debounced like the web's, so typing doesn't search every prefix.
-            try? await Task.sleep(for: .milliseconds(200))
-            if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
-                controller.find(findQuery)
+        FindBar(query: $findQuery, prompt: "Find in PDF", focus: findFocus,
+                matches: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
+                                     limited: controller.limited),
+                searched: controller.query, step: controller.step, close: closeFind)
+            .task(id: findQuery) {
+                // Debounced like the web's, so typing doesn't search every prefix.
+                try? await Task.sleep(for: .milliseconds(200))
+                if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
+                    controller.find(findQuery)
+                }
             }
-        }
     }
 
     /// What Edit › Find's items do in the PDF (`FindActions`). It has no

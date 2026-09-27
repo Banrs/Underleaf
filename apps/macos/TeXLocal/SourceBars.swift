@@ -39,20 +39,14 @@ struct SourceBar: View {
     /// fold last, for a source pane at its narrowest.
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
-        // A group's room either side of each line, as every bar has it.
-        return HStack(spacing: BarMetrics.groupSpacing) {
+        return HStack(spacing: BarMetrics.itemSpacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app, project: project)]
                 + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app, project: project)] : []))
             if project.isLaTeX {
-                if level {
-                    ToolSeparator()
-                    SectionLevelMenu(project: project)
-                }
+                if level { SectionLevelMenu(project: project) }
                 ForEach(shown, id: \.self) { group in
-                    ToolSeparator()
                     tools(group)
                 }
-                ToolSeparator()
                 moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count }, level: !level, redo: !redo)
             }
         }
@@ -65,22 +59,23 @@ struct SourceBar: View {
         case .format:
             ToolGroup(items: [Segment(.editBold, "bold", app: app, project: project), Segment(.editItalic, "italic", app: app, project: project)])
         case .math:
-            HStack(spacing: 0) {
-                ToolGroup(items: [
-                    Segment(.editMath, "x.squareroot", app: app, project: project),
-                    Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
-                        project.format("displayMath")
-                    },
-                ])
-                // Its own button, so the popover points at it.
+            ControlGroup {
+                Button(MenuCommand.editMath.title, systemImage: "x.squareroot") { app.perform(.editMath, on: project) }
+                    .disabled(!app.isEnabled(.editMath, on: project))
+                    .help(MenuCommand.editMath.title)
+                Button("Display Math", systemImage: "sum") { project.format("displayMath") }
+                    .help("Display Math")
                 Button("Symbols", systemImage: "pi") { showSymbols = true }
-                    .labelStyle(.iconOnly)
                     .help("Symbols")
-                    .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
-                        SymbolPalette { project.format("symbol", $0) }
-                    }
             }
+            .labelStyle(.iconOnly)
             .fixedSize()
+            // A control group draws its buttons as one control, so the
+            // group holds the popover, its arrow at Symbols, the last of
+            // its three segments.
+            .popover(isPresented: $showSymbols, attachmentAnchor: .point(UnitPoint(x: 5.0 / 6, y: 1)), arrowEdge: .bottom) {
+                SymbolPalette { project.format("symbol", $0) }
+            }
         case .references, .figures, .lists:
             ToolGroup(items: group.templates.compactMap { template in
                 template.symbol.map { Segment(id: template.title, title: template.title, systemImage: $0) { project.insert(template) } }
@@ -120,11 +115,9 @@ struct SourceBar: View {
         } label: {
             Label("More", systemImage: "ellipsis")
         }
-        .menuStyle(.button)
         .menuIndicator(.hidden)
-        .labelStyle(.iconOnly)
-        .fixedSize()
         .help("More")
+        .inControlGroup()
     }
 
     private func items(_ templates: [Template]) -> some View {
@@ -272,7 +265,9 @@ struct SourceLocation: View {
 
     private func crumbs(_ path: String, _ siblings: [String], folders: Bool, section: Bool) -> some View {
         let parts = path.split(separator: "/").map(String.init)
-        return HStack(spacing: BarMetrics.spacing) {
+        // Crumb against chevron: the crumbs' own padding (their fill under
+        // the pointer) parts them, as Xcode's jump bar sets its chevrons.
+        return HStack(spacing: 0) {
             if folders {
                 folderMenu(project.id, contents: project.tree)
                 ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { index, folder in
@@ -298,10 +293,10 @@ struct SourceLocation: View {
     }
 
     /// The project or a folder, a menu of what it holds: its folders as
-    /// submenus, its files to open.
+    /// submenus, its files to open, the open one checked.
     private func folderMenu(_ name: String, contents: [TreeNode]) -> some View {
         Menu {
-            FolderMenuItems(nodes: contents) { path in Task { await project.open(path) } }
+            FolderMenuItems(nodes: contents, current: project.openPath) { path in Task { await project.open(path) } }
         } label: {
             Label(name, systemImage: "folder").labelStyle(.titleAndIcon)
         }
@@ -311,11 +306,13 @@ struct SourceLocation: View {
         .help(name)
     }
 
-    /// The file, a menu of the text files in its folder.
+    /// The file, a menu of the text files in its folder, itself checked.
     private func fileMenu(_ path: String, _ siblings: [String], name: String) -> some View {
         Menu {
             ForEach(siblings, id: \.self) { file in
-                Button((file as NSString).lastPathComponent) { Task { await project.open(file) } }
+                CheckedItem((file as NSString).lastPathComponent, checked: file == path) {
+                    Task { await project.open(file) }
+                }
             }
         } label: {
             Label(name, systemImage: fileSymbol(path)).labelStyle(.titleAndIcon)
@@ -343,7 +340,7 @@ private struct SectionCrumb: View {
     var body: some View {
         let chain = Outline.chain(project.outline, at: project.cursorLine)
         Menu {
-            SectionMenuItems(nodes: Outline.tree(project.outline)) { item in
+            SectionMenuItems(nodes: Outline.tree(project.outline), current: chain.last?.line) { item in
                 if let path = project.openPath { Task { await project.open(path, line: item.line) } }
             }
         } label: {
@@ -365,21 +362,22 @@ private struct SectionCrumb: View {
 }
 
 /// A folder's contents as a menu: each folder a submenu, each file an
-/// item that opens it.
+/// item that opens it, the open file checked.
 private struct FolderMenuItems: View {
     let nodes: [TreeNode]
+    let current: String?
     let open: (String) -> Void
 
     var body: some View {
         ForEach(nodes) { node in
             if node.isDirectory {
                 Menu {
-                    FolderMenuItems(nodes: node.children ?? [], open: open)
+                    FolderMenuItems(nodes: node.children ?? [], current: current, open: open)
                 } label: {
                     Label(node.name, systemImage: "folder")
                 }
             } else {
-                Button { open(node.path) } label: {
+                CheckedItem(checked: node.path == current) { open(node.path) } label: {
                     Label(node.name, systemImage: fileSymbol(node.path))
                 }
             }
@@ -389,54 +387,48 @@ private struct FolderMenuItems: View {
 
 /// The sections as the outline nests them: a heading with subsections is
 /// a submenu, itself its first item, as a menu can't both open a submenu
-/// and act.
+/// and act. The section at the cursor is checked.
 private struct SectionMenuItems: View {
     let nodes: [OutlineNode]
+    /// The line of the section at the cursor.
+    let current: Int?
     let go: (OutlineItem) -> Void
 
     var body: some View {
         ForEach(nodes) { node in
             let title = Outline.displayTitle(node.item)
+            let item = CheckedItem(title, checked: node.item.line == current) { go(node.item) }
             if let children = node.children {
                 Menu(title) {
-                    Button(title) { go(node.item) }
+                    item
                     Divider()
-                    SectionMenuItems(nodes: children, go: go)
+                    SectionMenuItems(nodes: children, current: current, go: go)
                 }
             } else {
-                Button(title) { go(node.item) }
+                item
             }
         }
     }
 }
 
-/// Find and replace in the source, as Xcode's find bar has it; CodeMirror
-/// does the searching, its own panel hidden. Text actions are push buttons.
-/// One layout: in a narrow pane the fields narrow, the count goes and
+/// Find and replace in the source; CodeMirror does the searching, its own
+/// panel hidden. In a narrow pane the fields narrow, the count goes and
 /// Replace All folds into Replace's menu.
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
     @FocusState private var replaceFocused: Bool
 
     var body: some View {
-        // Two rows of a pane bar's controls, inset as its one row is.
-        Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
-            GridRow {
-                SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
-                            options: options, step: { project.findStep($0) }, close: { project.closeFind() })
-                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-                HStack(spacing: BarMetrics.groupSpacing) {
-                    FindSteps(enabled: project.findMatches.total > 0) { project.findStep($0) }
-                    FindCount(label: project.findMatches.label(for: project.findQuery.search))
-                    Button("Done") { project.closeFind() }
-                        .buttonStyle(.bordered)
-                }
-                .gridColumnAlignment(.trailing)
-            }
+        FindBar(query: $project.findQuery.search, prompt: "Find", focus: project.findFocus, options: options,
+                matches: project.findMatches, searched: project.findQuery.search,
+                step: { project.findStep($0) }, close: { project.closeFind() }) {
             GridRow {
                 TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
                     .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
+                    // A capsule, as the find field over it is (the kit's
+                    // search fields).
+                    .textFieldStyle(.bordered)
+                    .textInputBorderShape(.capsule)
                     .onSubmit { project.replace(all: false) }
                     .onExitCommand { project.closeFind() }
                     .focused($replaceFocused)
@@ -445,24 +437,24 @@ struct SourceFindBar: View {
                         if project.replaceFocus > 0 { replaceFocused = true }
                     }
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: BarMetrics.spacing) {
+                    // Momentary segments, as the HIG's Reply, Reply All
+                    // and Forward.
+                    ControlGroup {
                         Button("Replace") { project.replace(all: false) }
                         Button("Replace All") { project.replace(all: true) }
                     }
+                    .fixedSize()
                     // Replace, with Replace All in its menu.
                     Menu("Replace") {
                         Button("Replace All") { project.replace(all: true) }
                     } primaryAction: {
                         project.replace(all: false)
                     }
-                    .menuStyle(.button)
                 }
-                .buttonStyle(.bordered)
                 .disabled(project.findMatches.total == 0)
+                .gridColumnAlignment(.trailing)
             }
         }
-        .padding(.vertical, BarMetrics.inset)
-        .paneBarControls()
     }
 
     private var options: [SearchOption] {

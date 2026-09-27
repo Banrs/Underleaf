@@ -70,31 +70,25 @@ private struct SourceAndPDF: View {
     }
 }
 
-/// The source's bars stacked over it, not overlaid: they are opaque, so
-/// text scrolled beneath them was only hidden. The find bar, while it
-/// shows, goes between them and the text, as TextEdit's and Xcode's do. A
+/// The source's bars stacked over it, as the PDF's are over the pages. A
 /// file that isn't text keeps the bar, empty, so the source's rows and
 /// lines stay level with the PDF's.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let project: ProjectModel
 
     var body: some View {
-        VStack(spacing: 0) {
+        PaneStack(finding: project.findShown) {
             if project.openPath == nil || project.editsText {
                 SourceBar(project: project)
             } else {
                 PaneBar {}
             }
-            Divider()
+        } location: {
             SourceLocation(project: project)
-            if project.findShown {
-                Divider()
-                SourceFindBar(project: project)
-                    .transition(.findBar(reduceMotion: reduceMotion))
-            }
-            Divider()
+        } find: {
+            SourceFindBar(project: project)
+        } content: {
             if project.openPath != nil, !project.editsText, let url = project.openURL {
                 FilePreview(url: url)
             } else if project.openPath != nil {
@@ -107,7 +101,6 @@ private struct SourcePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .animation(.snappy(duration: 0.25), value: project.findShown)
     }
 }
 
@@ -145,30 +138,20 @@ private struct FilePreview: View {
 /// The status bar, as Finder's is: a little text about the window's
 /// contents (HIG, Windows). How the build went (choose it for the panel's
 /// issues), the save state and where the cursor is, then, past a line, the
-/// build panel's toggle. Both are accessory-bar buttons, as the location
-/// row's crumbs and Xcode's jump bar are: flat at rest, a fill under the
-/// pointer so what can be clicked shows, and the toggle filled while the
-/// panel shows (NSBezelStyleAccessoryBar, "buttons with togglable state").
-/// The one place the build's summary shows. A narrow window drops whole
-/// items, never cutting one short: the engine first (the inspector and the
-/// Compile menu show it too), then the counts, then the save state.
+/// build panel's toggle. Both are borderless, as Xcode's bottom-bar
+/// controls are, the toggle tinted while the panel shows. The one place
+/// the build's summary shows. A narrow window drops whole items, never
+/// cutting one short: the engine first (the inspector and the Compile
+/// menu show it too), then the counts, then the save state.
 private struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         @Bindable var project = project
-        // Each end as Xcode's editor status bar has it (see BarMetrics'
-        // status metrics): a borderless toggle past a line, clear of the
-        // window's rounded corner where the bar meets one (the sidebar or
-        // the inspector hidden), 8 pt from a pane beside it otherwise.
-        // The corners are the detail's, which holds the inspector too: its
-        // trailing corner is the bar's only while the inspector is hidden.
-        let corners = app.windowCorners
-        let trailingCorner = corners.bottomTrailing.width > 0 && !app.showInspector
-        SecondaryBar(spacing: 0,
-                     leadingInset: corners.bottomLeading.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset,
-                     trailingInset: trailingCorner ? BarMetrics.statusEndInset : BarMetrics.inset) {
+        // A borderless toggle past a line at the trailing end. Both ends
+        // the same whether a pane or the window's corner is beside them.
+        SecondaryBar(spacing: 0, endInset: BarMetrics.statusEndInset) {
             // Shows or hides the issues. A button, not a toggle: the panel's
             // own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -179,8 +162,6 @@ private struct StatusBar: View {
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             ToolSeparator()
-                .padding(.leading, BarMetrics.statusControlGap)
-                .padding(.trailing, BarMetrics.statusTextGap)
             ViewThatFits(in: .horizontal) {
                 items(save: true, counts: true, engine: true)
                 items(save: true, counts: true, engine: false)
@@ -189,8 +170,6 @@ private struct StatusBar: View {
             }
             .foregroundStyle(.secondary)
             ToolSeparator()
-                .padding(.leading, BarMetrics.statusTextGap)
-                .padding(.trailing, BarMetrics.statusControlGap)
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
@@ -280,13 +259,5 @@ private struct StatusBar: View {
             Image(systemName: systemImage).foregroundStyle(color)
         }
         .labelStyle(.titleAndIcon)
-    }
-}
-
-extension AnyTransition {
-    /// A find bar sliding down from the bar over it; a dissolve with Reduce
-    /// Motion, as the HIG asks of slides.
-    static func findBar(reduceMotion: Bool) -> AnyTransition {
-        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 }

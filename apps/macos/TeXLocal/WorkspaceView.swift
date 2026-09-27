@@ -31,9 +31,6 @@ struct WorkspaceView: View {
             .ignoresSafeArea(.container, edges: .top)
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: {
-                app.windowCorners = $0
-            }
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
             // together in one pill.

@@ -61,14 +61,14 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `EditorBridge`: the `WebPage`.
 - `SourceBars`, `PDFPane`, `LogsView`: the build panel.
 - `SidebarView`, `Outline`, `HomeView`, `SettingsView`.
-- `PaneBars`: bar metrics and pieces.
+- `PaneBars`: bar metrics (the UI kit's) and pieces: every bar control is a bordered control or `ControlGroup` at 24 pt; `PaneStack` and `FindBar` serve both panes.
 - `SplitController`: `NSSplitViewController` panes, plus the sidebar's `SidebarSplit`.
 - `SyncTeXGeometry`.
 
 **AppKit that remains, and why:**
 - `SplitController`: SwiftUI's `.inspector` crashes on resize on macOS 27, and `HSplitView`/`VSplitView` mislay panes.
 - `SidebarSplit` is a plain `NSSplitView`: inside `NSSplitViewController` items, SwiftUI sidebar lists start 10 pt lower.
-- `NSSegmentedControl` for zoom and Share, `NSSearchField` in the find bars, `PDFView`, and an `NSTextView` for the build log.
+- `NSSearchField` in the find bars and the log filter (SwiftUI's search field is toolbar or sidebar only), `PDFView`, and an `NSTextView` for the build log.
 - `FindMenuResponder`: Edit › Find is the system's (`TextEditingCommands`), whose items send `performFindPanelAction:` with a tag down the responder chain. Neither `WKWebView` nor `PDFView` answers it, so a responder after the project window takes it to the pane with the keyboard (`FocusedValues.find`); a find bar's field has its own field editor that passes the items on. Replacing `.textEditing` instead loses the spelling and substitution toggles' checkmarks.
 
 ## Core behaviour (every host)

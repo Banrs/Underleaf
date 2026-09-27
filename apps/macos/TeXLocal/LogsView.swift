@@ -31,37 +31,44 @@ struct PanelView: View {
 
     /// The tabs, then what acts on the one showing. The build's summary is
     /// the status bar's, directly below, so it isn't repeated here.
+    @ViewBuilder
     private var header: some View {
-        Group {
-            Picker("Build Panel", selection: $project.panelTab) {
-                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .layoutPriority(1)
-            Spacer(minLength: 0)
-            if project.panelTab == .issues {
-                // Only when there are warnings to hide.
-                if project.warningCount > 0 {
-                    Toggle(isOn: $showWarnings) {
-                        Label("Warnings", systemImage: "exclamationmark.triangle")
-                    }
-                    .toggleStyle(.button)
-                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-                }
-            } else {
-                Button("Copy Log", systemImage: "document.on.document") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
-                }
-                .help("Copy Log")
-                .disabled(project.result?.log.isEmpty ?? true)
-            }
-            SearchField(text: $filter, prompt: "Filter")
-                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
+        Picker("Build Panel", selection: $project.panelTab) {
+            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }
-        .labelStyle(.iconOnly)
+        // macOS 27's tabs: the panel's two views, read as tabs by VoiceOver.
+        .pickerStyle(.tabs)
+        .labelsHidden()
+        .fixedSize()
+        .layoutPriority(1)
+        Spacer(minLength: 0)
+        if project.panelTab == .issues {
+            // Only when there are warnings to hide.
+            if project.warningCount > 0 {
+                // The filter's state in its symbol, filled while warnings
+                // show, as Xcode's filter buttons have it: a toggle fills
+                // with the accent while on, the loudest thing in the panel
+                // for a setting that is usually on.
+                Button(showWarnings ? "Hide Warnings" : "Show Warnings",
+                       systemImage: showWarnings ? "exclamationmark.triangle.fill" : "exclamationmark.triangle") {
+                    showWarnings.toggle()
+                }
+                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
+                .accessibilityLabel("Warnings")
+                .accessibilityAddTraits(showWarnings ? .isSelected : [])
+                .inControlGroup()
+            }
+        } else {
+            Button("Copy Log", systemImage: "document.on.document") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+            }
+            .help("Copy Log")
+            .disabled(project.result?.log.isEmpty ?? true)
+            .inControlGroup()
+        }
+        SearchField(text: $filter, prompt: "Filter")
+            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
     private var items: [LogItem] {

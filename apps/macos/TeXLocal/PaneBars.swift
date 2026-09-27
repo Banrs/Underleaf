@@ -1,40 +1,43 @@
 import SwiftUI
 
-/// The one set of metrics every in-window bar shares, from the kit's
-/// toolbars: 8 pt around the controls, the controls of a group abutting,
-/// 8 pt between groups and either side of a separator line, and 16 pt
-/// separator lines. One size, the
-/// standard one: the bars under the window toolbar (the source's and the
-/// PDF's actions, the find bar, the build panel's header) and the
-/// secondary rows.
-@MainActor
+/// The one set of metrics every in-window bar shares, from the UI kit's
+/// macOS 27 toolbars and controls. Two heights: the bars of actions under
+/// the window toolbar (the source's, the PDF's, the find bars, the build
+/// panel's header) at the regular control size, and the secondary rows
+/// (the location rows, the status bar) at the small.
 enum BarMetrics {
     static let controlSize: ControlSize = .regular
+    /// The kit's regular and small control heights, the same for its
+    /// buttons, pop-ups, segmented controls and fields.
+    static let controlHeight: CGFloat = 24
+    static let secondaryControlHeight: CGFloat = 20
+    /// Around a bar's controls, as the kit's Unified Compact toolbar sets
+    /// its items 8 pt from its top, bottom and ends.
     static let inset: CGFloat = 8
+    /// Between the pieces of one item (a symbol and its words), and above
+    /// and below a secondary row's small controls.
     static let spacing: CGFloat = 4
-    /// A bar of actions: its controls' native height (24 pt at regular)
-    /// with 8 pt above and below, the kit's Unified Compact toolbar. Every
-    /// bar is its control size's height, whatever it holds, so bars side by
-    /// side line up, as AppKit's do.
-    static var barHeight: CGFloat { controlHeight(controlSize) + 2 * inset }
-    /// The secondary rows (the location rows, the status bar): small
-    /// controls (20 pt) with 4 pt above and below.
-    static var secondaryBarHeight: CGFloat { controlHeight(Typography.secondaryControlSize) + 2 * spacing }
-    /// Between groups, and either side of every `ToolSeparator`: SwiftUI's
-    /// own spacing beside a Divider on macOS, the kit's toolbar group gap.
-    static let groupSpacing: CGFloat = 8
-    static let separatorHeight: CGFloat = 16
-    /// Between the separate items of a secondary row's text (the status
-    /// bar's build, save state and position), wider than a group's so each
-    /// reads as its own item.
+    /// A bar of actions: the kit's Unified Compact toolbar, 40 pt. Every
+    /// bar is this height, whatever it holds, so bars side by side line up.
+    static var barHeight: CGFloat { controlHeight + 2 * inset }
+    /// A secondary row: its small controls with `spacing` above and below.
+    static var secondaryBarHeight: CGFloat { secondaryControlHeight + 2 * spacing }
+    /// Between a bar's groups, each a bordered control or control group
+    /// whose own edges part it from the next, so no line between: the
+    /// kit's Unified Compact toolbar spaces its items 12 pt apart. The
+    /// status bar's separate items too.
     static let itemSpacing: CGFloat = 12
-    /// The status bar's ends, as Xcode 27's editor status bar measures
-    /// (at 2x): 10 pt between the text and a line, 7 pt between the line
-    /// and a borderless toggle, and the toggle 15 pt from the window's
-    /// edge, which puts its symbol 17 pt in.
-    static let statusTextGap: CGFloat = 10
-    static let statusControlGap: CGFloat = 7
-    static let statusEndInset: CGFloat = 15
+    /// Between the parts of one item (the build status's symbols and
+    /// counts), and either side of a status bar line: the kit's Unified
+    /// toolbar spaces its items 8 pt apart.
+    static let groupSpacing: CGFloat = 8
+    /// The status bar's lines: the kit's toolbar separator, 1 × 16 pt.
+    static let separatorHeight: CGFloat = 16
+    /// The status bar's ends, whether a pane or the window's corner is
+    /// beside them: under the toolbar's symbols, which the kit's toolbar
+    /// sets 16 pt in (its 36 pt items 8 pt from the edge, a 20 pt symbol
+    /// centred in each). Clear of the window's rounded corner.
+    static let statusEndInset: CGFloat = 16
     /// A search field in a bar: the least any field shrinks to, and the
     /// widest a filter grows.
     static let fieldMinWidth: CGFloat = 100
@@ -43,16 +46,6 @@ enum BarMetrics {
     /// the bars under it read as one chrome block over the content. Not
     /// `.bar`: nothing scrolls under a stacked bar for it to blur.
     static let background = Color(nsColor: .windowBackgroundColor)
-
-    /// A bezeled control's height at a size, as the system draws it.
-    static func controlHeight(_ size: ControlSize) -> CGFloat {
-        if let height = heights[size] { return height }
-        let height = NSHostingView(rootView: Button("Button") {}.buttonStyle(.bordered).controlSize(size)).fittingSize.height
-        heights[size] = height
-        return height
-    }
-
-    private static var heights: [ControlSize: CGFloat] = [:]
 }
 
 /// The app's text roles, each one of the system's text styles, so the
@@ -78,32 +71,55 @@ enum Typography {
 }
 
 extension View {
-    /// A pane bar's controls: AppKit's accessory-bar buttons at the bar's
-    /// size, on the chrome's background, inset from the pane's edges.
+    /// A pane bar's controls, one family in every bar: bordered controls
+    /// and control groups at the regular size, on the chrome's background,
+    /// inset from the pane's edges.
     func paneBarControls() -> some View {
         controlSize(BarMetrics.controlSize)
-            .buttonStyle(.accessoryBar)
+            .buttonStyle(.bordered)
+            .menuStyle(.button)
+            .labelStyle(.iconOnly)
             .lineLimit(1)
             .padding(.horizontal, BarMetrics.inset)
             .frame(maxWidth: .infinity)
             .background(BarMetrics.background)
     }
+
+    /// One control as a group of its own. The system's control group is the
+    /// regular size's 24 pt whatever it holds, as its neighbours are; a
+    /// bordered icon button or menu alone takes its symbol's height (the
+    /// ellipsis 12.5 pt, the share symbol 25.5).
+    func inControlGroup() -> some View {
+        ControlGroup { self }
+            .fixedSize()
+    }
 }
 
 /// A pane's actions: the row under the window toolbar (over the source,
-/// over the PDF, the build panel's header), in AppKit's accessory-bar
-/// controls, as Finder's and Mail's in-window bars have them: flat buttons
-/// that highlight on hover, a line between groups. Not glass: these bars
-/// sit above content, not over it.
+/// over the PDF, the build panel's header). Each child is a group of its
+/// own, a bordered control or a control group, spaced as the kit's
+/// toolbar spaces its items. Not glass: these bars sit above content, not
+/// over it.
 struct PaneBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        // Each child a group of its own (a group's controls abut), so
-        // groups apart, as the source's find bar spaces them.
-        HStack(spacing: BarMetrics.groupSpacing) { content }
+        HStack(spacing: BarMetrics.itemSpacing) { content }
             .frame(height: BarMetrics.barHeight)
             .paneBarControls()
+    }
+}
+
+/// A button's symbol alone, on the line its title would take: a bordered
+/// button is as tall as its label, and a symbol alone is shorter than a
+/// line of text (the compact Compile came out 21 pt beside 24 pt groups).
+/// A hidden title isn't read, so the button names itself for VoiceOver.
+struct SymbolOnTextLine: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 0) {
+            configuration.icon
+            configuration.title.hidden().frame(width: 0)
+        }
     }
 }
 
@@ -113,10 +129,8 @@ struct PaneBar<Content: View>: View {
 /// the same.
 struct SecondaryBar<Content: View>: View {
     var spacing = BarMetrics.spacing
-    /// From the row's ends to its items: the kit's 8 pt, or clear of a
-    /// window corner the row meets.
-    var leadingInset = BarMetrics.inset
-    var trailingInset = BarMetrics.inset
+    /// From the row's ends to its items.
+    var endInset = BarMetrics.inset
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -124,11 +138,41 @@ struct SecondaryBar<Content: View>: View {
             .font(Typography.secondary)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
-            .padding(.leading, leadingInset)
-            .padding(.trailing, trailingInset)
+            .padding(.horizontal, endInset)
             .frame(height: BarMetrics.secondaryBarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(BarMetrics.background)
+    }
+}
+
+/// A pane's chrome stacked over its content, as the source and the PDF
+/// have it: its bar of actions and its location row, then its find bar
+/// while that shows, then one line where the chrome meets the content.
+/// Stacked, not overlaid: the bars are opaque, and text under them was only
+/// hidden. No line between the bars: they are one block of chrome on one
+/// background, as the toolbar over them is.
+struct PaneStack<Bar: View, Location: View, Find: View, Content: View>: View {
+    let finding: Bool
+    @ViewBuilder var bar: Bar
+    @ViewBuilder var location: Location
+    @ViewBuilder var find: Find
+    @ViewBuilder var content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: 0) {
+            bar
+            location
+            if finding {
+                find
+                    // Sliding down from the rows over it; a dissolve with
+                    // Reduce Motion, as the HIG asks of slides.
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
+            Divider()
+            content
+        }
+        .animation(.snappy(duration: 0.25), value: finding)
     }
 }
 
@@ -150,12 +194,13 @@ extension Segment {
     }
 }
 
-/// Related icon actions side by side, icons only.
+/// Related icon actions side by side, icons only: the system's control
+/// group, one bordered piece with a line between its segments.
 struct ToolGroup: View {
     let items: [Segment]
 
     var body: some View {
-        HStack(spacing: 0) {
+        ControlGroup {
             ForEach(items) { item in
                 Button(item.title, systemImage: item.systemImage, action: item.action)
                     .disabled(!item.enabled)
@@ -167,23 +212,83 @@ struct ToolGroup: View {
     }
 }
 
-/// The line between a bar's groups, `BarMetrics.groupSpacing` either side.
+/// The line between the status bar's parts, `BarMetrics.groupSpacing`
+/// either side.
 struct ToolSeparator: View {
     var body: some View {
-        Divider().frame(height: BarMetrics.separatorHeight)
+        Divider()
+            .frame(height: BarMetrics.separatorHeight)
+            .padding(.horizontal, BarMetrics.groupSpacing)
     }
 }
 
-/// A find bar's previous / next.
-struct FindSteps: View {
-    let enabled: Bool
-    let step: (Int) -> Void
+/// Find, as Xcode's find bar has it: the field, previous / next, the count
+/// (while there is room) and Done, then, for the source, a second row to
+/// replace with, its field under the find field. Return and Shift-Return
+/// step, Escape closes. The source's and the PDF's find bars.
+struct FindBar<Replace: View>: View {
+    @Binding var query: String
+    let prompt: String
+    let focus: Int
+    var options: [SearchOption] = []
+    let matches: FindMatches
+    /// The query the matches are for, which the count reads.
+    let searched: String
+    let step: @MainActor (Int) -> Void
+    let close: @MainActor () -> Void
+    /// The replace row's cells, a `GridRow`: its field, then its buttons.
+    @ViewBuilder var replace: Replace
 
     var body: some View {
-        ToolGroup(items: [
-            Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up", enabled: enabled) { step(-1) },
-            Segment(id: "next", title: "Next Match", systemImage: "chevron.down", enabled: enabled) { step(1) },
-        ])
+        // A pane bar's controls, a row of them or two, inset as its one row is.
+        Grid(alignment: .leading, horizontalSpacing: BarMetrics.itemSpacing, verticalSpacing: BarMetrics.inset) {
+            GridRow {
+                SearchField(text: $query, prompt: prompt, focus: focus, options: options, step: step, close: close)
+                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+                HStack(spacing: BarMetrics.itemSpacing) {
+                    ToolGroup(items: [
+                        Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up", enabled: matches.total > 0) { step(-1) },
+                        Segment(id: "next", title: "Next Match", systemImage: "chevron.down", enabled: matches.total > 0) { step(1) },
+                    ])
+                    FindCount(label: matches.label(for: searched))
+                    Button("Done") { close() }
+                }
+                .gridColumnAlignment(.trailing)
+            }
+            replace
+        }
+        .padding(.vertical, BarMetrics.inset)
+        .frame(minHeight: BarMetrics.barHeight)
+        .paneBarControls()
+    }
+}
+
+extension FindBar where Replace == EmptyView {
+    init(query: Binding<String>, prompt: String, focus: Int, matches: FindMatches, searched: String,
+         step: @escaping @MainActor (Int) -> Void, close: @escaping @MainActor () -> Void) {
+        self.init(query: query, prompt: prompt, focus: focus, matches: matches, searched: searched,
+                  step: step, close: close) { EmptyView() }
+    }
+}
+
+/// A menu item checked while it is the one in use (the open file, the
+/// section at the cursor, the zoom), as a pop-up checks its choice;
+/// choosing it acts, as a button does.
+struct CheckedItem<Label: View>: View {
+    let checked: Bool
+    let action: () -> Void
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        // A toggle is the menu's checkable item; choosing the checked one
+        // acts too, rather than unchecking it.
+        Toggle(isOn: Binding(get: { checked }, set: { _ in action() })) { label }
+    }
+}
+
+extension CheckedItem where Label == Text {
+    init(_ title: String, checked: Bool, action: @escaping () -> Void) {
+        self.init(checked: checked, action: action) { Text(title) }
     }
 }
 
@@ -435,127 +540,4 @@ struct RenameField: View {
                 focused = true
             }
     }
-}
-
-/// AppKit's segmented control, for what SwiftUI's control group can't do
-/// and Apple's apps do with it: keep a segment at its widest label's width,
-/// so the control keeps its width as the label changes (as Pages' zoom
-/// keeps its own), with the label centred and no menu arrow; and open a
-/// picker from a segment (Share). Momentary, as a control group's segments
-/// are; each segment at the width AppKit gives it on its own, or its widest
-/// label's.
-struct SegmentedControl: NSViewRepresentable {
-    struct Segment {
-        var symbol: String?
-        var label: String?
-        /// The widest label the segment shows: it keeps that one's width.
-        var widest: String?
-        let help: String
-        var enabled = true
-        /// A menu to open on click, in place of `action`.
-        var menu: [MenuEntry] = []
-        /// Run on click, with the control and the segment's rect in it.
-        var action: (NSSegmentedControl, NSRect) -> Void = { _, _ in }
-    }
-
-    enum MenuEntry {
-        case item(String, checked: Bool, () -> Void)
-        case separator
-    }
-
-    let segments: [Segment]
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl()
-        control.trackingMode = .momentary
-        // A digit's width whatever the digit, so a scale's label keeps its width.
-        control.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        control.target = context.coordinator
-        control.action = #selector(Coordinator.clicked(_:))
-        return control
-    }
-
-    func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.segments = segments
-        control.segmentCount = segments.count
-        for (index, segment) in segments.enumerated() {
-            let image = segment.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: segment.help) }
-            control.setImage(image, forSegment: index)
-            control.setLabel(segment.label ?? "", forSegment: index)
-            control.setToolTip(segment.help, forSegment: index)
-            control.setEnabled(segment.enabled && context.environment.isEnabled, forSegment: index)
-            control.setWidth(Self.width(label: segment.widest ?? segment.label, symbol: segment.symbol, image: image,
-                                        font: control.font), forSegment: index)
-        }
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
-        nsView.intrinsicContentSize
-    }
-
-    /// The width AppKit gives a segment with this content on its own: a
-    /// one-segment control is its segment's width. Measured once per
-    /// content, as the scale's label changes with every pinch.
-    private static func width(label: String?, symbol: String?, image: NSImage?, font: NSFont?) -> CGFloat {
-        let key = "\(label ?? "")|\(symbol ?? "")"
-        if let width = widths[key] { return width }
-        let probe = NSSegmentedControl()
-        probe.segmentCount = 1
-        probe.font = font
-        probe.setLabel(label ?? "", forSegment: 0)
-        probe.setImage(image, forSegment: 0)
-        widths[key] = probe.intrinsicContentSize.width
-        return probe.intrinsicContentSize.width
-    }
-
-    private static var widths: [String: CGFloat] = [:]
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var segments: [Segment] = []
-
-        @objc func clicked(_ control: NSSegmentedControl) {
-            let index = control.selectedSegment
-            guard segments.indices.contains(index) else { return }
-            // The control is as wide as its segments, so each starts where
-            // the ones before it end.
-            let x = (0..<index).map(control.width(forSegment:)).reduce(0, +)
-            let rect = NSRect(x: x, y: 0, width: control.width(forSegment: index), height: control.bounds.height)
-            let segment = segments[index]
-            if segment.menu.isEmpty {
-                segment.action(control, rect)
-            } else {
-                let menu = NSMenu()
-                for entry in segment.menu {
-                    switch entry {
-                    case .separator: menu.addItem(.separator())
-                    case let .item(title, checked, run):
-                        let item = ActionMenuItem(title: title, run: run)
-                        item.state = checked ? .on : .off
-                        menu.addItem(item)
-                    }
-                }
-                // Under the segment, its leading edge on the segment's, as a
-                // pull-down's menu opens.
-                menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: control.isFlipped ? rect.maxY + 4 : -4), in: control)
-            }
-        }
-    }
-}
-
-/// A menu item that runs a closure.
-private final class ActionMenuItem: NSMenuItem {
-    private let run: () -> Void
-
-    init(title: String, run: @escaping () -> Void) {
-        self.run = run
-        super.init(title: title, action: #selector(runAction), keyEquivalent: "")
-        target = self
-    }
-
-    required init(coder: NSCoder) { fatalError() }
-
-    @objc private func runAction() { run() }
 }

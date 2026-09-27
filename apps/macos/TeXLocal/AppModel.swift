@@ -81,10 +81,6 @@ final class AppModel {
     var recentProjects = UserDefaults.standard.stringArray(forKey: "recentProjects") ?? [] {
         didSet { UserDefaults.standard.set(recentProjects, forKey: "recentProjects") }
     }
-    /// How far the project window's rounded corners reach into its detail
-    /// (SwiftUI's `containerCornerInsets`), for the views inside the split's
-    /// panes, which SwiftUI gives none: each pane is hosted on its own.
-    var windowCorners = RectangleCornerInsets()
 
     /// ⌘N in the gallery, or a template's card.
     func newProject(_ template: String = "article") {
