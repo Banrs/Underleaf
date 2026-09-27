@@ -116,6 +116,29 @@ Chrome is native per platform. Two surfaces stay web: the editor is CodeMirror e
 
 ## Next
 
+- **macOS pre-ship work (owner decisions, 2026-09-27):**
+  - Pane sizes:
+    - The sidebar column takes Xcode 27's navigator sizes. They aren't measured yet: open a scratch project in a new Xcode window and drag only its divider.
+    - The sidebar's minimum must stay at least about 140 pt. Below that, hiding the sidebar pushes the toolbar's sidebar toggle into the `>>` overflow, so there's no button to show it again. 118 always fails, 133–137 is flaky, 140 and up is fine.
+    - The build panel opens at 25%, and Files|Outline opens 50/50.
+    - Check the sidebar and build-panel slides frame by frame after any size change. Their ranges exist because the slides broke without them.
+  - Native swaps with no visible change:
+    - plain Buttons for Segment/ToolGroup;
+    - `setMenu` on the SegmentedControl;
+    - `.focused` for the find field, with the stock find-bar animation;
+    - a LazyVGrid symbol palette;
+    - `presentationSizing` for DialogSheet;
+    - `RenameButton`;
+    - the window-close flush on `onDisappear`.
+  - Trash with no dialog, and Edit › Undo puts the item back.
+  - The inspector as `Form(.columns)`.
+  - The PDF:
+    - PDFKit's own margins, dropping the top inset and the anchor/reload-offset code;
+    - the forward-sync flash replaced by the native animated selection.
+  - Real template thumbnails.
+  - System default sizes where they exist.
+  - CI on Xcode 27, then `.pickerStyle(.tabs)` behind `#available(macOS 27)`.
+  - Then a pre-ship audit of the Mac app and its editor page: eight auditors plus one merge, then a rewrite pass.
 - Push `main`, confirm CI, then bring PR #11 up to date with it and merge after the owner's review on Windows.
 - Deferred features: error hints; editor gutter markers; parsing `.blg` into Issues beyond errors; Clean and Compile; TinyTeX / package install; missing-package explanations; `!TEX` magic comments; more templates; version history; duplicate project; dropping an image to insert a figure; project import UI on Windows and the web; possibly a user-customizable toolbar (`toolbar(id:)` with `ToolbarItem(id:)`, which would bring back View › Customize Toolbar…).
 - Web follow-ups are in `docs/web.md`.
