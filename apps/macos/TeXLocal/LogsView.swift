@@ -190,7 +190,9 @@ private struct LogTextView: NSViewRepresentable {
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         // The bars' inset, so the log's text lines up with the header's controls.
+        // No line fragment padding either: its 5 pt put the text past them.
         view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
+        view.textContainer?.lineFragmentPadding = 0
         view.font = Typography.secondaryMono
         view.textColor = .labelColor
         return scroll
