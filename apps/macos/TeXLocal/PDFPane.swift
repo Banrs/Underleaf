@@ -114,7 +114,8 @@ struct PDFPane: View {
 
     /// Compile, zoom and Share, the PDF's actions, lined up with the
     /// source's bar beside it. Narrow panes shorten Compile to its symbol,
-    /// then leave Share to the File menu, then zoom to the View menu.
+    /// then leave Share to the File menu; narrower still, zoom goes to the
+    /// View menu instead, and Share, the narrower, comes back in its place.
     private var bar: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
@@ -202,18 +203,22 @@ struct PDFPane: View {
         .accessibilityLabel("Zoom")
     }
 
-    /// The system's share picker for the PDF, a group of its own so it is
-    /// zoom's height beside it.
+    /// The system's share picker for the PDF: a bordered button, its symbol
+    /// on a line of text so it is zoom's height beside it. Not in a control
+    /// group, where the share link lost its action and only its tooltip
+    /// showed (macOS 27.2).
     @ViewBuilder
     private var shareControl: some View {
         if project.pdfVersion > 0, let url = project.pdfURL {
             ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
+                .labelStyle(SymbolOnTextLine())
                 .help("Share PDF")
-                .inControlGroup()
+                .accessibilityLabel("Share PDF")
         } else {
             Button("Share PDF", systemImage: "square.and.arrow.up") {}
+                .labelStyle(SymbolOnTextLine())
                 .disabled(true)
-                .inControlGroup()
+                .accessibilityLabel("Share PDF")
         }
     }
 

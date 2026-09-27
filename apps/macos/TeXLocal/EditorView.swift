@@ -111,6 +111,7 @@ private struct SourcePane: View {
 /// with the way to open it in its own app.
 private struct FilePreview: View {
     let url: URL
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         if isPreviewFile(url.path), let image = NSImage(contentsOf: url) {
@@ -128,7 +129,7 @@ private struct FilePreview: View {
             } description: {
                 Text(url.lastPathComponent)
             } actions: {
-                Button("Open in Default App") { NSWorkspace.shared.open(url) }
+                Button("Open in Default App") { openURL(url) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -138,20 +139,23 @@ private struct FilePreview: View {
 /// The status bar, as Finder's is: a little text about the window's
 /// contents (HIG, Windows). How the build went (choose it for the panel's
 /// issues); past a line, the save state and where the cursor is; past
-/// another, the build panel's toggle. Both controls are borderless, as Xcode's bottom-bar
-/// controls are, the toggle tinted while the panel shows. The one place
-/// the build's summary shows. A narrow window drops whole items, never
-/// cutting one short: the engine first (the inspector and the Compile
-/// menu show it too), then the counts, then the save state.
+/// another, the build panel's toggle. Both controls are borderless, as
+/// Xcode's bottom-bar controls are, the toggle tinted while the panel
+/// shows. The one place the build's summary shows. A narrow window drops
+/// whole items, never cutting one short: the engine first (the inspector
+/// and the Compile menu show it too), then the counts, then the save state.
 private struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         @Bindable var project = project
-        // A borderless toggle past a line at the trailing end. Both ends
-        // the same whether a pane or the window's corner is beside them.
-        SecondaryBar(spacing: 0, endInset: BarMetrics.edgeInset) {
+        // A borderless toggle past a line at the trailing end. Each end in
+        // line with the bars above it where a pane is beside it, clear of
+        // the window's rounded corner where the corner is.
+        SecondaryBar(spacing: 0,
+                     leadingInset: app.sidebarVisible ? BarMetrics.inset : BarMetrics.edgeInset,
+                     trailingInset: app.showInspector ? BarMetrics.inset : BarMetrics.edgeInset) {
             // Shows or hides the issues. A button, not a toggle: the panel's
             // own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -231,11 +235,12 @@ private struct StatusBar: View {
             }
             if project.errorCount > 0, project.result?.failed != true {
                 badge("\(project.errorCount)", "xmark.octagon.fill", .red)
-                    .accessibilityLabel("\(project.errorCount) errors")
+                    // Singular for one, as the word count is.
+                    .accessibilityLabel(Text("^[\(project.errorCount) error](inflect: true)"))
             }
             if project.warningCount > 0 {
                 badge("\(project.warningCount)", "exclamationmark.triangle.fill", .orange)
-                    .accessibilityLabel("\(project.warningCount) warnings")
+                    .accessibilityLabel(Text("^[\(project.warningCount) warning](inflect: true)"))
             }
         }
         .monospacedDigit()
