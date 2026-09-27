@@ -37,6 +37,10 @@ struct PanelView: View {
             ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }
         // macOS 27's tabs: the panel's two views, read as tabs by VoiceOver.
+        // The current tab is a neutral knob, not the accent, as the kit's tab
+        // bars have it (Utility Panel/Tab Bar/Button/Selected); the accent
+        // fill is the select-one segmented control's. It draws the same on
+        // any bar background and takes no tint.
         .pickerStyle(.tabs)
         .labelsHidden()
         .fixedSize()
