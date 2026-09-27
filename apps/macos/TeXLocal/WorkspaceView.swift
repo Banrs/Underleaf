@@ -22,12 +22,21 @@ struct WorkspaceView: View {
                 SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
                           fraction: 0.28, keepsSize: true, shown: app.showInspector) {
                     // On edge-to-edge system glass, as an inspector sits
-                    // beside the content.
+                    // beside the content, running up under the toolbar as
+                    // Pages' does: stopped under it, its edge read as a line.
+                    // Only the glass: the controls keep below the toolbar.
                     InspectorView(project: project)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .glassEffect(.regular, in: .rect)
+                        .background {
+                            Color.clear
+                                .glassEffect(.regular, in: .rect)
+                                .ignoresSafeArea(.container, edges: .top)
+                        }
                 },
             ])
+            // Up to the window's top, so the inspector's glass can reach it;
+            // each pane's content keeps below the toolbar, in its safe area.
+            .ignoresSafeArea(.container, edges: .top)
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
             // Room for the inspector too, whether or not it shows: a minimum
