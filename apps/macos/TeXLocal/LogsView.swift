@@ -121,7 +121,7 @@ private struct IssueList: View {
         // By position: LaTeX repeats identical warnings, which would share
         // an id built from their contents.
         List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
-            IssueRow(item: item, location: location(of: item))
+            IssueRow(item: item)
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
@@ -147,24 +147,18 @@ private struct IssueList: View {
     private func open(_ item: LogItem) {
         if let file = item.file { Task { await project.open(file, line: item.line) } }
     }
-
-    /// Where a row opens, so every row that goes somewhere says where.
-    private func location(of item: LogItem) -> String? {
-        item.file.map { file in item.line.map { "\(file):\($0)" } ?? file }
-    }
 }
 
-/// An error or warning: its message, and where it is when the log says.
+/// An error or warning: its message, and where it is when the log says,
+/// so every row that goes somewhere says where.
 private struct IssueRow: View {
     let item: LogItem
-    /// "file:line", or the file alone; nil when the log names none.
-    let location: String?
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.message).lineLimit(3)
-                if let location {
+                if let location = location(line: ":") {
                     Text(location)
                         .font(Typography.secondary)
                         .foregroundStyle(.secondary)
@@ -174,8 +168,15 @@ private struct IssueRow: View {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(item.isError ? .red : .orange)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
+        // Spoken as words: "main.tex, line 12", not "main.tex colon 12".
+        .accessibilityValue(location(line: ", line ") ?? "")
+    }
+
+    /// The file, and its line after `line`; nil when the log names none.
+    private func location(line: String) -> String? {
+        item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file }
     }
 }
 
@@ -202,6 +203,8 @@ private struct LogTextView: NSViewRepresentable {
         view.textContainer?.lineFragmentPadding = 0
         view.font = Typography.secondaryMono
         view.textColor = .labelColor
+        // Named, as a text view has no title of its own for VoiceOver.
+        view.setAccessibilityLabel("Build Log")
         return scroll
     }
 
@@ -211,4 +214,20 @@ private struct LogTextView: NSViewRepresentable {
         view.string = text
         if scrollsToEnd { view.scrollToEndOfDocument(nil) } else { view.scrollToBeginningOfDocument(nil) }
     }
+}
+
+#Preview("Issues") {
+    List {
+        IssueRow(item: LogItem(type: "error", file: "chapters/intro.tex", line: 42, message: "Undefined control sequence."))
+        IssueRow(item: LogItem(type: "warning", file: "main.tex", line: nil, message: "Citation `knuth84' undefined."))
+        IssueRow(item: LogItem(type: "warning", file: nil, line: nil, message: "There were undefined references."))
+    }
+    .listStyle(.inset)
+    .frame(width: 480, height: 200)
+}
+
+#Preview("Build log") {
+    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).",
+                scrollsToEnd: false)
+        .frame(width: 480, height: 160)
 }

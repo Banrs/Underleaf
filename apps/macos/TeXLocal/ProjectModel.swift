@@ -3,7 +3,7 @@ import Observation
 import UserNotifications
 
 /// One open project: its files, the document in the editor, and its builds.
-/// Every command the menus, toolbar and editor shortcuts can run lands here.
+/// What the menus, bars and editor shortcuts do to a project lands here.
 @MainActor @Observable
 final class ProjectModel {
     let id: String
@@ -44,6 +44,7 @@ final class ProjectModel {
         panelTab = .issues
         showLogs = true
     }
+
     /// Remembered across projects and launches, like the web's.
     var showPDF = UserDefaults.standard.object(forKey: "showPDF") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showPDF, forKey: "showPDF") }
@@ -60,8 +61,8 @@ final class ProjectModel {
     private var watcher: FileWatcher?
     private var diskCheck: Task<Void, Never>?
 
-    /// The source's find bar (Edit › Find): CodeMirror's
-    /// search, driven from native fields, searched for as the query changes.
+    /// The source's find bar (Edit › Find): CodeMirror's search, driven
+    /// from native fields, searched for as the query changes.
     var findShown = false
     var findQuery = FindQuery() {
         didSet { if findQuery != oldValue { Task { await editor.setFind(findQuery) } } }
@@ -756,7 +757,7 @@ final class ProjectModel {
     /// Edit › Find's items in the source and wherever no pane has its own
     /// (`FindActions`): CodeMirror searches, from the find bar, and Use
     /// Selection for Find is its ⌘F, which takes the selection as the
-    /// query. With no text to search, Find goes to the PDF, as before.
+    /// query. With no text to search, Find goes to the PDF.
     func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
         guard editsText else {
             guard action == .showFindInterface, pdfVersion > 0 else { return nil }
