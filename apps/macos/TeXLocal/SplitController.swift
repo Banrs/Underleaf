@@ -294,8 +294,14 @@ struct SidebarSplit<Top: View, Bottom: View>: NSViewRepresentable {
         let was = coordinator.panes
         coordinator.panes = panes
         for (index, (view, pane)) in zip(coordinator.clips, panes).enumerated()
-        where was[index].collapsed != pane.collapsed && pane.shown && view.superview === split {
-            coordinator.fold(split, index, to: pane.collapsed, keeping: was[index].collapsed == nil) {
+        where was[index].collapsed != pane.collapsed {
+            if pane.shown, view.superview === split {
+                coordinator.fold(split, index, to: pane.collapsed, keeping: was[index].collapsed == nil) {
+                    pane.didFold?(pane.collapsed != nil)
+                }
+            } else {
+                // Out of the split, so nothing slides: folded or unfolded
+                // at once, and it comes back as it now is.
                 pane.didFold?(pane.collapsed != nil)
             }
         }

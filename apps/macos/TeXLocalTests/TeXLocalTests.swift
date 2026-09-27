@@ -416,7 +416,8 @@ final class SidebarSplitTests: XCTestCase {
     }
 }
 
-/// The splits as SwiftUI lays them out.
+/// The splits as SwiftUI lays them out, and the sidebar's outline folded
+/// while it's out of the sidebar.
 @MainActor
 struct SplitHostingTests {
     /// Hosts `view` in a window of `size`, laid out, until `body` returns;
@@ -459,6 +460,48 @@ struct SplitHostingTests {
                 #expect(host.fittingSize.height < minimum)
             }
         }
+    }
+
+    /// View › Hide File Outline during a project search, the outline out of
+    /// the sidebar: told at once, with nothing to slide, so the outline's
+    /// chevron closes and the pane comes back folded.
+    @Test func aFoldWhileTheOutlineIsOutIsToldAtOnce() {
+        let autosave = "SplitHostingTests \(UUID())"
+        var told: [Bool] = []
+        func sidebar(folded: Bool) -> SidebarSplit<Color, Color> {
+            SidebarSplit(app: AppModel(), autosave: autosave, top: SidebarPane(minimum: 100),
+                         bottom: SidebarPane(minimum: 80, shown: false, collapsed: folded ? 28 : nil,
+                                             didFold: { told.append($0) })) {
+                Color.clear
+            } bottomContent: {
+                Color.clear
+            }
+        }
+        host(sidebar(folded: false), autosave: autosave) { host in
+            host.rootView = sidebar(folded: true)
+            host.layoutSubtreeIfNeeded()
+            #expect(told == [true])
+            host.rootView = sidebar(folded: false)
+            host.layoutSubtreeIfNeeded()
+            #expect(told == [true, false])
+        }
+    }
+
+    /// The outline's rows follow what the fold was told: gone once folded,
+    /// back once unfolded, and a stale report changes nothing.
+    @Test func theOutlinesRowsFollowTheFold() {
+        let key = NavigatorView.outlineCollapsedKey
+        let before = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(before, forKey: key) }
+        let fold = OutlineFold()
+        UserDefaults.standard.set(true, forKey: key)
+        fold.slid(folded: false)
+        #expect(fold.rowsShown == !(before as? Bool ?? false))
+        fold.slid(folded: true)
+        #expect(!fold.rowsShown)
+        UserDefaults.standard.set(false, forKey: key)
+        fold.slid(folded: false)
+        #expect(fold.rowsShown)
     }
 }
 

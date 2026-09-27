@@ -313,10 +313,12 @@ private struct OutlineList: View {
 final class OutlineFold {
     var rowsShown = !(UserDefaults.standard.object(forKey: NavigatorView.outlineCollapsedKey) as? Bool ?? false)
 
-    /// A fold or unfold has finished sliding.
+    /// A fold or unfold has finished sliding, or happened at once while
+    /// the pane was out of the sidebar (during a project search), so it
+    /// comes back with its chevron as it is.
     func slid(folded: Bool) {
-        guard folded, UserDefaults.standard.bool(forKey: NavigatorView.outlineCollapsedKey) else { return }
-        withTransaction(Transaction(animation: nil)) { rowsShown = false }
+        guard folded == UserDefaults.standard.bool(forKey: NavigatorView.outlineCollapsedKey) else { return }
+        withTransaction(Transaction(animation: nil)) { rowsShown = !folded }
     }
 }
 
