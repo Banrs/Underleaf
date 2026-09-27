@@ -3,13 +3,13 @@
 ## Status (2026-09-27)
 
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
-- PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
+- PR #11 (`claude/windows-parity`: the Fluent redesign, WebView2 recovery, a trimmed SDK, an Inno Setup installer) has `main` merged in. `main`'s Windows Stop, clash dialog, Stop on first error and core `analyze` were folded into the branch's redesigned UI (Stop stays in the PDF pane; insert blocks go by id).
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
 ## Layout
 
 One Rust core (`crates/`) under three clients:
-- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 26.0. CI builds with the 26.5 SDK.
+- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 26.0. CI builds and tests on macOS 27 with Xcode 27.
 - **Windows** (`apps/windows`): WinUI 3, C#.
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
@@ -41,7 +41,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: `macos-26` runner and the XCTests;
+  - `macos-app.yml`: the `xcode-27` runner (macOS 27, in preview; there is no `macos-27` label) and the XCTests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
 - **Mac Debug build on screen:** run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>`.
@@ -88,12 +88,22 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Windows (`apps/windows`)
 
-- **Projects:** `TeXLocal.Core` (FFI, models, preferences), `TeXLocal.Tests` (xUnit) and `TeXLocal` (WinUI 3, unpackaged x64, .NET 10).
-- **Written blind:** the last pass wired Windows from the Mac without building it, so CI must confirm it builds with warnings as errors and that the tests pass.
-- **Still to check by hand:** shortcuts, the title bar, Settings, drops, Compile/Stop, SyncTeX and Narrator.
+- **Projects:** `TeXLocal.Core` (FFI, models, preferences, no WinUI), `TeXLocal.Tests` (xUnit) and `TeXLocal` (WinUI 3, unpackaged x64, .NET 10; .NET and the Windows App SDK are bundled).
+- **SDK packages:** WinUI, Foundation and InteractiveExperiences only, not the `Microsoft.WindowsAppSDK` metapackage (a Release publish went from 234 MB to 174 MB).
+- **Web surfaces:** the editor and PDF pages each run in a WebView2; `web\` is served at `app.texlocal`, the PDF at `project.texlocal`. A renderer crash reloads the page; if the whole browser process dies, `EmbeddedPage.Replace` puts a new WebView2 in the old one's place. Window shortcuts stand down while a page has focus; the pages post chords back.
+- **Layout (the 2026-09 Fluent redesign):** the Tall 48 px `TitleBar` over Mica (menus, a centred search box, PDF and Details toggles; `FitCaptionInset` corrects WinUI's caption column at scales above 100%); 48 px rows and 32 px detail rows; the sidebar and Details pane are inline `SplitView` panes that slide both ways; the source and PDF bars are `CommandBar`s whose overflow folds them. Motion is in `Motion.cs`.
+- **Insert blocks** are named by id (`LatexTemplates.Lists` / `Environments`) and sent with the editor's `block` command; `test/blocks.test.js` checks the ids.
+- **Compile/Stop:** the PDF pane shows Compile, or a spinner and Stop while a build runs (`stop_compile`); a stopped build reads "Build stopped" and sends no notification. Settings has Stop on first error, per project. An import onto taken names asks once (Replace, Keep both, Stop). The outline, words and lines come from the core's `analyze`.
+- **Installer:** `apps/windows/installer/TeXLocal.iss` (Inno Setup 6), per user into `%LOCALAPPDATA%\Programs\TeXLocal`; the Windows workflow's "Installer" job builds `TeXLocal-<version>-setup.exe`. By hand, build the core with `--release` first: a stale `target\release\texlocal_ffi.dll` was once published.
+- **Deviations:** settings cards and dividers are hand-written, not the Community Toolkit; Interface Size scales only the editor page.
+- **Verified by hand on Windows 11 (26340), TeX Live 2026, before `main`'s Stop / clash / analyze work was merged in:** PDF rendering and find, compiling and recompiling, choosing the TeX folder, the title bar's hit-testing, the redesign's measurements, pane motion, the source bar and its overflow, the symbol palette and section level, the outline following the editor, a file changed on disk reloading, and WebView2 browser-process recovery.
+- **Known issues:** a Release build once fail-fasted in `ucrtbase.dll` while idle (it linked the stale core; not reproduced since). A window once showed a frozen frame while it went on working.
+- **Running a Debug build beside the installed one** breaks the Debug build's WebView2 pages (they share `%LOCALAPPDATA%\TeXLocal\WebView2`); run one at a time.
+- **Still to check by hand:** the merged-in Stop, Stop on first error, import clash dialog and core-analyzed outline; shortcuts firing once from every pane; the title bar (themes, high contrast, Snap Layouts); access keys; dividers by keyboard; Settings surviving a restart; the unsaved-edits conflict dialog; drops; saving and closing during a compile; SyncTeX both ways; Narrator; no `latexmk` left after quitting; the installer's install and uninstall.
 
 ## Known issues
 
+- **Mac CI fails one test** (left to the Mac session): `SplitControllerTests.testThePanelKeepsItsSizeWithinItsLargestShare` gets `[464, 180]` for `[620, 180]` on the runner, on both macOS 26 and the `xcode-27` image. Growing the titled window to 801 pt leaves the split 645 pt; the likely cause is the runner's screen capping the window (the 601 pt steps pass, and the other split tests resize the split, not the window). Keeping the test's window at 601 pt or less would avoid it.
 - A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen; it hasn't been reproduced.
 - The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
@@ -105,7 +115,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## Next
 
 - **Clean-slate refactor, rewrite and visual check of the macOS app**, starting fresh.
-- Confirm CI on `main`, then update PR #11 and merge it after a Windows review.
+- Confirm CI on `main` and on PR #11, then merge it after a Windows review and the hand checks above.
 - Deferred features:
   - error hints and gutter markers;
   - `.blg` parsing;

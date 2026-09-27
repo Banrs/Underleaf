@@ -48,3 +48,37 @@ jobs:
         run: dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64
       - name: Test
         run: dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj -c Debug
+
+  installer:
+    name: Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: windows-installer
+      - run: cargo build --release -p texlocal-ffi
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish
+        run: dotnet publish apps/windows/TeXLocal/TeXLocal.csproj -c Release -p:Platform=x64 -r win-x64 -o release/windows
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc "/DSource=$PWD\release\windows" apps\windows\installer\TeXLocal.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TeXLocal-setup
+          path: release/TeXLocal-*-setup.exe

@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace TeXLocal.Tests;
 
 // The Rust core opens its library folder from TEXLOCAL_DATA, a process-wide
@@ -58,6 +60,53 @@ public sealed class OutlineTests
         Assert.Equal(new[] { "A", "B", "C" }, Outline.Chain(outline, 3).Select(i => i.Title));
         Assert.Equal(new[] { "A", "D" }, Outline.Chain(outline, 5).Select(i => i.Title));
         Assert.Empty(Outline.Chain(outline, 0));
+    }
+
+    [Fact]
+    public void HeadingsNestAsTheDocumentDoes()
+    {
+        // A subsection before any section sits flush; a chapter's sections sit under it.
+        OutlineItem[] items = [new(3, "A", 1), new(1, "B", 2), new(2, "C", 3), new(3, "D", 4), new(2, "E", 5), new(1, "(untitled)", 6)];
+        Assert.Equal(new[] { 0, 0, 1, 2, 1, 0 }, Outline.Depths(items));
+
+        var tree = Outline.Tree(items);
+        Assert.Equal(new[] { "A", "B", "(untitled)" }, tree.Select(n => n.Item.Title));
+        Assert.Equal(new[] { "C", "E" }, tree[1].Children.Select(n => n.Item.Title));
+        Assert.Equal("D", Assert.Single(tree[1].Children[0].Children).Item.Title);
+        Assert.Empty(tree[0].Children);
+        Assert.Equal("Untitled chapter", Outline.DisplayTitle(tree[2].Item));
+        Assert.Equal("B", Outline.DisplayTitle(tree[1].Item));
+    }
+
+    [Fact]
+    public void FoldKeysTellHeadingsOfTheSameNameApart()
+    {
+        OutlineItem[] items = [new(2, "A", 1), new(3, "B", 2), new(2, "A", 3), new(2, "(untitled)", 4)];
+        Assert.Equal(new[] { "2:A#1", "3:B#1", "2:A#2", "2:(untitled)#1" }, Outline.FoldKeys(items));
+        // A line added above keeps every key.
+        Assert.Equal(Outline.FoldKeys(items), Outline.FoldKeys(items.Select(i => i with { Line = i.Line + 1 }).ToList()));
+    }
+
+    [Fact]
+    public void TheSectionLevelIsTheCaretLinesHeading()
+    {
+        OutlineItem[] items = [new(2, "A", 2), new(5, "B", 4)];
+        Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 1));
+        Assert.Equal("Section", LatexTemplates.LevelAt(items, 2));
+        Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 3));
+        Assert.Equal("Paragraph", LatexTemplates.LevelAt(items, 4));
+    }
+
+    [Fact]
+    public void TheSymbolsAreTheBrowserVersions()
+    {
+        var source = WebSource.Read("sourcebar.js");
+        var table = source[source.IndexOf("SYMBOL_GROUPS", StringComparison.Ordinal)..];
+        table = table[..table.IndexOf("];", StringComparison.Ordinal)];
+        var web = Regex.Matches(table, @"\['([^']+)', '((?:[^'\\]|\\.)+)'\]")
+            .Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value)))
+            .ToList();
+        Assert.Equal(web, LatexTemplates.SymbolGroups.SelectMany(g => g.Symbols));
     }
 
     [Fact]
