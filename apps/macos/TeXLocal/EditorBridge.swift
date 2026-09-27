@@ -7,7 +7,6 @@ import WebKit
 /// content in native chrome. Host → page calls go through
 /// `window.texlocal`; the page posts `ready`, `changed`, `cursor`,
 /// `scroll`, `command` and its search's messages back.
-@MainActor
 @Observable
 final class EditorBridge: NSObject, WKScriptMessageHandler {
     static let scheme = "texlocal-app"

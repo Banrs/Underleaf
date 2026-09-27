@@ -3,6 +3,7 @@ import Testing
 import XCTest
 @testable import TeXLocal
 
+@MainActor
 final class SyncTeXGeometryTests: XCTestCase {
     // A US Letter page whose box starts at the origin, and one offset the way
     // some producers write a crop box.
@@ -505,6 +506,7 @@ struct SplitHostingTests {
     }
 }
 
+@MainActor
 final class CompileResultTests: XCTestCase {
     func testDurationsReadTheSameEverywhere() throws {
         let json = #"{"ok":true,"stopped":false,"durationMs":1234,"pdf":"build/main.pdf","errors":[],"warnings":[],"log":""}"#
@@ -513,6 +515,7 @@ final class CompileResultTests: XCTestCase {
     }
 }
 
+@MainActor
 final class RenameTests: XCTestCase {
     func testTheOpenFileMovesWithItsFolder() {
         XCTAssertEqual(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex"), "ch/start.tex")
@@ -557,6 +560,7 @@ struct InPlaceRenameTests {
     }
 }
 
+@MainActor
 struct TeXEngineTests {
     @Test func enginesReadAsTheMenusNameThem() {
         #expect(texEngineName("xelatex") == "XeLaTeX")
@@ -565,6 +569,7 @@ struct TeXEngineTests {
     }
 }
 
+@MainActor
 final class FindTests: XCTestCase {
     func testTheCountReadsAsXcodesDoes() {
         XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
@@ -582,6 +587,7 @@ final class FindTests: XCTestCase {
     }
 }
 
+@MainActor
 final class CommandTests: XCTestCase {
     func testAcceleratorsBecomeMenuShortcuts() {
         XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Return"), KeyboardShortcut(.return, modifiers: .command))

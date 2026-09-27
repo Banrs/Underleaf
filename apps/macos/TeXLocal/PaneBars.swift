@@ -194,7 +194,6 @@ struct Segment: Identifiable {
 
 extension Segment {
     /// A menu command; its shortcut shows in the menu, not the tooltip.
-    @MainActor
     init(_ command: MenuCommand, _ systemImage: String, app: AppModel, project: ProjectModel) {
         self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
                   enabled: app.isEnabled(command, on: project)) { app.perform(command, on: project) }
@@ -332,7 +331,6 @@ struct SearchField: NSViewRepresentable {
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
-    @MainActor
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
         var focus = 0
@@ -418,7 +416,8 @@ struct SearchField: NSViewRepresentable {
     }
 
     final class FindFieldEditor: NSTextView {
-        override func responds(to selector: Selector!) -> Bool {
+        // NSObject's, which any thread may ask.
+        nonisolated override func responds(to selector: Selector!) -> Bool {
             selector != #selector(performFindPanelAction(_:)) && super.responds(to: selector)
         }
     }
@@ -532,7 +531,7 @@ struct DialogSheet<Fields: View>: View {
 /// A list's rename in place, as Finder renames: the item whose name is
 /// being edited, and the name so far. Observable, so typing redraws only
 /// the row with the field, not every row that checks `id`.
-@MainActor @Observable
+@Observable
 final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
     var name = ""

@@ -15,12 +15,12 @@ struct CoreError: LocalizedError {
 /// a GCD thread, never Swift's cooperative pool, which must not block (WWDC21,
 /// Swift concurrency: Behind the scenes), and the main actor only encodes and
 /// decodes.
-@MainActor
 final class Core {
     static let shared = Core()
 
-    /// The Rust side accepts concurrent calls from any thread.
-    private final class Handle: @unchecked Sendable {
+    /// The Rust side accepts concurrent calls from any thread, so the
+    /// handle belongs to no actor: the GCD thread reads it.
+    private nonisolated final class Handle: @unchecked Sendable {
         let raw: OpaquePointer
         init(_ raw: OpaquePointer) { self.raw = raw }
     }

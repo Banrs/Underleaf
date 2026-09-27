@@ -50,7 +50,6 @@ struct Analysis: Decodable {
 /// breadcrumb.
 enum Outline {
     /// A document's outline, words and lines, from the core.
-    @MainActor
     static func analyze(_ text: String) async throws -> Analysis {
         try await Core.shared.call("analyze", ["text": text], as: Analysis.self)
     }

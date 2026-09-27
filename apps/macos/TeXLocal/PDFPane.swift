@@ -327,7 +327,7 @@ enum PDFPrefs {
 }
 
 /// What the pane's controls and the menus ask of the PDF view.
-@MainActor @Observable
+@Observable
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView?
     var page = 0
@@ -549,7 +549,6 @@ private struct PDFRepresentable: NSViewRepresentable {
     let controller: PDFController
     let darkPaper: Bool
 
-    @MainActor
     final class Coordinator {
         var version = 0
         var highlightToken = 0
@@ -672,7 +671,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         page.addAnnotation(mark)
         view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3), on: page)
         // As long as the web's flash fades (web/styles.css `.sync-flash`).
-        Task { @MainActor in
+        Task {
             try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)
         }

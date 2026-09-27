@@ -35,7 +35,7 @@ struct ExportFile: Transferable {
 }
 
 /// The library: projects on disk, TeX availability, and the open project.
-@MainActor @Observable
+@Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?

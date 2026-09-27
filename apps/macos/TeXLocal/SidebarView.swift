@@ -260,8 +260,8 @@ private struct TreeRows<Row: View>: View {
 
 /// The sidebar's selection capsule, as the UI kit draws a selected row
 /// (8 pt corners) and macOS 27.2 places one: 10 pt in from each side of
-/// the list, a row's height (measured).
-private enum SidebarSelection {
+/// the list, a row's height (measured). Nonisolated for the shape's sake.
+private nonisolated enum SidebarSelection {
     static let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
     static let inset: CGFloat = 10
 }
@@ -270,8 +270,9 @@ private enum SidebarSelection {
 /// before it, as the UI kit's selected row reaches past its content, to
 /// where the selection stops, the content running to 2 pt from the
 /// sidebar's edge; and 2 pt above and below it, a header's height
-/// (measured on macOS 27.2).
-private struct SidebarRowShape: Shape {
+/// (measured on macOS 27.2). Nonisolated: SwiftUI may ask a shape for its
+/// path off the main thread.
+private nonisolated struct SidebarRowShape: Shape {
     func path(in rect: CGRect) -> Path {
         let row = CGRect(x: rect.minX - 4, y: rect.minY - 2, width: rect.width + 4 - (SidebarSelection.inset - 2),
                          height: rect.height + 4)
@@ -399,7 +400,7 @@ private struct OutlineList: View {
 /// Whether the outline's section shows its rows: with the pane open, and
 /// until a fold has slid the pane down to its header, so the rows ride
 /// down with it rather than collapsing up into the header first.
-@MainActor @Observable
+@Observable
 final class OutlineFold {
     var rowsShown = !(UserDefaults.standard.object(forKey: NavigatorView.outlineCollapsedKey) as? Bool ?? false)
 
@@ -468,7 +469,7 @@ private struct HeadingRow: View, Equatable {
     let item: OutlineItem
     let isCurrent: Bool
 
-    nonisolated static func == (a: Self, b: Self) -> Bool {
+    static func == (a: Self, b: Self) -> Bool {
         a.project === b.project && a.item == b.item && a.isCurrent == b.isCurrent
     }
 

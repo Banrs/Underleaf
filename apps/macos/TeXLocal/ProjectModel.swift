@@ -4,7 +4,7 @@ import UserNotifications
 
 /// One open project: its files, the document in the editor, and its builds.
 /// What the menus, bars and editor shortcuts do to a project lands here.
-@MainActor @Observable
+@Observable
 final class ProjectModel {
     let id: String
     var settings: ProjectSettings?
@@ -795,7 +795,6 @@ final class ProjectModel {
 /// Tells when a file changes on disk: written, or replaced (as editors
 /// save, writing a new file and renaming it over the old one), in which
 /// case it follows the new file at the same path.
-@MainActor
 final class FileWatcher {
     private let url: URL
     private let changed: @MainActor () -> Void

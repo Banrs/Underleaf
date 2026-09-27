@@ -56,7 +56,6 @@ enum AppScene {
 
 /// Quit waits for the open document to reach disk, and refuses — keeping the
 /// window — when it cannot, rather than dropping the only copy of the edits.
-@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var app: AppModel?
 
@@ -64,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A save in flight counts: it has cleared `dirty` before its write
         // is on disk.
         guard let project = app?.project, project.dirty || project.saving else { return .terminateNow }
-        Task { @MainActor in
+        Task {
             sender.reply(toApplicationShouldTerminate: await project.flush())
         }
         return .terminateLater

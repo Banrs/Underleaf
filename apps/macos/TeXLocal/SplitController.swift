@@ -363,7 +363,6 @@ struct SidebarSplit<Top: View, Bottom: View>: NSViewRepresentable {
 /// shown or hidden, or the autosave), within its sizes. Shares rather than
 /// the sizes the last resize left, so a pane squeezed to its minimum in a
 /// small window gets its share back as the window grows.
-@MainActor
 final class SidebarSplitCoordinator: NSObject, NSSplitViewDelegate {
     let autosave: String
     var panes: [SidebarPane] = []

@@ -483,6 +483,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 			};
 			name = Release;
@@ -512,6 +514,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 			};
 			name = Debug;

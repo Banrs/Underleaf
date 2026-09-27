@@ -65,6 +65,10 @@ targets:
         # The build scripts run cargo and npm in the repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
+        # As Xcode 27's App template sets them: a UI module runs on the main
+        # actor unless it says otherwise (WWDC25 268, 270).
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
       # The core's archive by path rather than -ltexlocal_ffi: the crate's
       # cdylib sits beside it, ld64 prefers a dylib, and the app would then
       # load the core from target/ on the machine that built it.
