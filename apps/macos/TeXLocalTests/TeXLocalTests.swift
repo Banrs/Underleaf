@@ -221,7 +221,7 @@ final class SplitLayoutTests: XCTestCase {
         split.dividerStyle = .thin
         let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
         coordinator.panes = panes
-        coordinator.views = [NSView(), NSView()]
+        coordinator.clips = [PaneClip(content: NSView(), vertical: vertical), PaneClip(content: NSView(), vertical: vertical)]
         coordinator.views.forEach(split.addArrangedSubview)
         split.delegate = coordinator
         window.contentView?.addSubview(split)
