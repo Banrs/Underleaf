@@ -55,7 +55,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows.
 - `AppModel`: library, recents, imports, alerts.
 - `ProjectModel`: the open project, saves, builds, file watching.
-- `Core`, `Models`, `Commands`: menus and shortcuts.
+- `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`).
 - `WorkspaceView`: columns, toolbar, inspector.
 - `EditorView`: panes, previews, status bar.
 - `EditorBridge`: the `WebPage`.
@@ -69,6 +69,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `SplitController`: SwiftUI's `.inspector` crashes on resize on macOS 27, and `HSplitView`/`VSplitView` mislay panes.
 - `SidebarSplit` is a plain `NSSplitView`: inside `NSSplitViewController` items, SwiftUI sidebar lists start 10 pt lower.
 - `NSSegmentedControl` for zoom and Share, `NSSearchField` in the find bars, `PDFView`, and an `NSTextView` for the build log.
+- `FindMenuResponder`: Edit › Find is the system's (`TextEditingCommands`), whose items send `performFindPanelAction:` with a tag down the responder chain. Neither `WKWebView` nor `PDFView` answers it, so a responder after the project window takes it to the pane with the keyboard (`FocusedValues.find`); a find bar's field has its own field editor that passes the items on. Replacing `.textEditing` instead loses the spelling and substitution toggles' checkmarks.
 
 ## Core behaviour (every host)
 

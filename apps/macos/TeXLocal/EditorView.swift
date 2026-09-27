@@ -195,7 +195,7 @@ private struct StatusBar: View {
                 Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
             .labelStyle(.iconOnly)
-            .help(app.title(.viewToggleLogs))
+            .help(app.title(.viewToggleLogs, on: project))
         }
         // Borderless and tinted while on, as Xcode's bottom-bar toggles.
         .toggleStyle(.button)
@@ -203,7 +203,7 @@ private struct StatusBar: View {
         // What the bar shows is chosen where it shows, as Pages' word count
         // is (View › Show Word Count too), not in Settings.
         .contextMenu {
-            Button(app.showWordCount ? "Hide Word Count" : "Show Word Count") { app.showWordCount.toggle() }
+            Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
     }
 

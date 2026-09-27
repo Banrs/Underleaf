@@ -83,10 +83,10 @@ private struct FilesList: View {
         // the list's own menu on its empty space.
         .contextMenu(forSelectionType: String.self) { paths in
             if paths.isEmpty {
-                Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
+                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
                 Divider()
-                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
             }
         } primaryAction: { paths in
             // Double-click or Return on a folder opens or closes it, as

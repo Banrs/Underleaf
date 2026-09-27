@@ -52,6 +52,12 @@ struct WorkspaceView: View {
         .background {
             if let url = project.openURL { Color.clear.navigationDocument(url) }
         }
+        // Edit › Find's items, for whichever pane has the keyboard.
+        .background { FindMenuTarget(project: project) }
+        // The menus act on this window's project while it's in front
+        // (`AppCommands`). Set here at the root, the whole window's: its
+        // panes are hosted apart, each in the split's own controller.
+        .focusedSceneValue(project)
         .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
                       allowsMultipleSelection: true) { result in
             switch result {
@@ -115,8 +121,8 @@ struct WorkspaceView: View {
     private var toolbar: some ToolbarContent {
         // The panes' toggles, sharing one piece of glass as related buttons
         // do. Nothing here acts on the PDF alone: Share is the PDF bar's.
-        ToolbarItem(placement: .primaryAction) { PDFToggle() }
-        ToolbarItem(placement: .primaryAction) { InspectorToggle() }
+        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
+        ToolbarItem(placement: .primaryAction) { InspectorToggle(project: project) }
     }
 }
 
@@ -184,10 +190,11 @@ private struct GoToLineSheet: View {
 /// made the two toggles the toolbar's loudest controls.
 private struct PDFToggle: View {
     @Environment(AppModel.self) private var app
+    let project: ProjectModel
 
     var body: some View {
-        let title = app.title(.viewTogglePdf)
-        Button(title, systemImage: "doc.richtext") { app.perform(.viewTogglePdf) }
+        let title = app.title(.viewTogglePdf, on: project)
+        Button(title, systemImage: "doc.richtext") { app.perform(.viewTogglePdf, on: project) }
             .help(title)
     }
 }
@@ -195,11 +202,25 @@ private struct PDFToggle: View {
 /// Shows and hides the inspector, as View › Hide Inspector does.
 private struct InspectorToggle: View {
     @Environment(AppModel.self) private var app
+    let project: ProjectModel
 
     var body: some View {
-        let title = app.showInspector ? "Hide Inspector" : "Show Inspector"
-        Button(title, systemImage: "sidebar.trailing") { app.showInspector.toggle() }
+        let title = app.title(.viewToggleInspector, on: project)
+        Button(title, systemImage: "sidebar.trailing") { app.perform(.viewToggleInspector, on: project) }
             .help(title)
+    }
+}
+
+/// Edit › Find's items go to the pane with the keyboard, as its own find
+/// (`FocusedValues.find`); the source's wherever no pane has one: the
+/// sidebar, the inspector, a toolbar button. A view of its own, so a
+/// change of focus redraws it alone.
+private struct FindMenuTarget: View {
+    let project: ProjectModel
+    @FocusedValue(\.find) private var find
+
+    var body: some View {
+        FindMenuResponder(find: find ?? project.findAction)
     }
 }
 

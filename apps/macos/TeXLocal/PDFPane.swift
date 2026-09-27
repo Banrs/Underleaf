@@ -34,6 +34,9 @@ struct PDFPane: View {
             pages
         }
         .animation(.snappy(duration: 0.25), value: finding)
+        // Edit › Find's items while the pages or the find bar have the
+        // keyboard: the PDF's find, not the source's.
+        .focusedValue(\.find, findAction)
         .onChange(of: controller.page) { _, page in project.pdfPage = page }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
@@ -93,9 +96,9 @@ struct PDFPane: View {
             } actions: {
                 // The empty state's one action, prominent. Content, not a
                 // floating control, so not glass.
-                Button("Compile") { app.perform(.compileRun) }
+                Button("Compile") { app.perform(.compileRun, on: project) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!app.isEnabled(.compileRun))
+                    .disabled(!app.isEnabled(.compileRun, on: project))
             }
         }
     }
@@ -155,13 +158,13 @@ struct PDFPane: View {
             .fixedSize()
             .help("Stop")
         } else {
-            Button { app.perform(.compileRun) } label: {
+            Button { app.perform(.compileRun, on: project) } label: {
                 let compile = Label("Compile", systemImage: "play.fill")
                 if compact { compile.labelStyle(.iconOnly) } else { compile.labelStyle(.titleAndIcon) }
             }
             .buttonStyle(.borderedProminent)
             .fixedSize()
-            .disabled(!app.isEnabled(.compileRun))
+            .disabled(!app.isEnabled(.compileRun, on: project))
             .help("Compile")
         }
     }
@@ -228,6 +231,26 @@ struct PDFPane: View {
         }
     }
 
+    /// What Edit › Find's items do in the PDF (`FindActions`). It has no
+    /// Replace; Use Selection for Find searches for the selected text, as
+    /// Preview's does.
+    private func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
+        guard project.pdfVersion > 0 else { return nil }
+        switch action {
+        case .showFindInterface: return { perform(.find) }
+        case .nextMatch, .previousMatch:
+            guard !controller.matches.isEmpty else { return nil }
+            return { controller.step(action == .nextMatch ? 1 : -1) }
+        case .setSearchString:
+            guard let text = controller.view?.currentSelection?.string, !text.isEmpty else { return nil }
+            return {
+                findQuery = text
+                finding = true
+            }
+        default: return nil
+        }
+    }
+
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
     /// highlights with it.
     private func closeFind() {
@@ -250,7 +273,7 @@ private struct PageRow: View {
         SecondaryBar {
             if project.pdfVersion > 0, let freshness = project.pdfFreshness {
                 Button {
-                    if freshness == .edited { app.perform(.compileRun) } else { project.showBuildPanel() }
+                    if freshness == .edited { app.perform(.compileRun, on: project) } else { project.showBuildPanel() }
                 } label: {
                     Label {
                         Text(freshness.title)

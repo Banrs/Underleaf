@@ -41,8 +41,8 @@ struct SourceBar: View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
         // A group's room either side of each line, as every bar has it.
         return HStack(spacing: BarMetrics.groupSpacing) {
-            ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
-                + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
+            ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app, project: project)]
+                + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app, project: project)] : []))
             if project.isLaTeX {
                 if level {
                     ToolSeparator()
@@ -63,11 +63,11 @@ struct SourceBar: View {
     private func tools(_ group: Tools) -> some View {
         switch group {
         case .format:
-            ToolGroup(items: [Segment(.editBold, "bold", app: app), Segment(.editItalic, "italic", app: app)])
+            ToolGroup(items: [Segment(.editBold, "bold", app: app, project: project), Segment(.editItalic, "italic", app: app, project: project)])
         case .math:
             HStack(spacing: 0) {
                 ToolGroup(items: [
-                    Segment(.editMath, "x.squareroot", app: app),
+                    Segment(.editMath, "x.squareroot", app: app, project: project),
                     Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
                         project.format("displayMath")
                     },
@@ -92,8 +92,8 @@ struct SourceBar: View {
     private func moreMenu(folded: [Tools], level: Bool, redo: Bool) -> some View {
         Menu {
             if redo {
-                Button(MenuCommand.editRedo.title) { app.perform(.editRedo) }
-                    .disabled(!app.isEnabled(.editRedo))
+                Button(MenuCommand.editRedo.title) { app.perform(.editRedo, on: project) }
+                    .disabled(!app.isEnabled(.editRedo, on: project))
                 Divider()
             }
             if level {
@@ -103,10 +103,10 @@ struct SourceBar: View {
             ForEach(folded, id: \.self) { group in
                 switch group {
                 case .format:
-                    Button(MenuCommand.editBold.title) { app.perform(.editBold) }
-                    Button(MenuCommand.editItalic.title) { app.perform(.editItalic) }
+                    Button(MenuCommand.editBold.title) { app.perform(.editBold, on: project) }
+                    Button(MenuCommand.editItalic.title) { app.perform(.editItalic, on: project) }
                 case .math:
-                    Button(MenuCommand.editMath.title) { app.perform(.editMath) }
+                    Button(MenuCommand.editMath.title) { app.perform(.editMath, on: project) }
                     Button("Display Math") { project.format("displayMath") }
                     SymbolMenu(project: project)
                 case .references, .figures, .lists:
@@ -227,7 +227,7 @@ struct SectionLevelItems: View {
     }
 }
 
-/// The palette as a menu, for the Format menu and the bar's overflow.
+/// The palette as a menu, for the Insert menu and the bar's overflow.
 struct SymbolMenu: View {
     let project: ProjectModel?
 
@@ -474,15 +474,14 @@ struct SourceFindBar: View {
     }
 }
 
-/// The Format menu's LaTeX tools, as the source bar offers them: the line's
-/// section level, math and symbols, references, then what inserts a block.
+/// The Insert menu: what the source bar inserts, math and symbols, then
+/// references, then blocks. The line's level is Format's, a style.
 struct InsertMenuItems<InlineMath: View>: View {
     let project: ProjectModel?
     /// The menu bar's Inline Math item, with its shortcut.
     let inlineMath: InlineMath
 
     var body: some View {
-        SectionLevelItems(project: project)
         inlineMath
         Button("Display Math") { project?.format("displayMath") }
         SymbolMenu(project: project)

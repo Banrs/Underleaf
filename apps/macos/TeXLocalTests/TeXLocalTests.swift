@@ -205,12 +205,13 @@ final class SplitControllerTests: XCTestCase {
     private var window: NSWindow?
     private var autosave = ""
 
-    override func tearDown() {
+    // The async one: XCTest runs it on the main actor, where the window is.
+    override func tearDown() async throws {
         // Not saved again as it closes, into the app's own preferences.
         (window?.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
         window?.close()
         UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
-        super.tearDown()
+        try await super.tearDown()
     }
 
     /// A split of `size` as a window's content, laid out and its panes
@@ -463,6 +464,11 @@ final class CommandTests: XCTestCase {
         XCTAssertFalse(ids.contains("edit.comment"))
         XCTAssertFalse(ids.contains("edit.undo"))
         XCTAssertFalse(ids.contains("edit.redo"))
+        // The Mac's own chords, which the page would otherwise see first.
+        for id in ["project.open", "edit.findAndReplace", "view.toggleInspector", "view.actualSize", "compile.stop",
+                   "file.pageSetup", "file.print"] {
+            XCTAssertTrue(ids.contains(id), id)
+        }
     }
 
     /// web/src/workspace.js as the test scheme's pre-action copies it into
@@ -480,6 +486,12 @@ final class CommandTests: XCTestCase {
     /// the Mac is the system's to set.
     private let webOnly: Set<String> = ["app.settings", "view.uiScaleUp", "view.uiScaleDown"]
 
+    /// The Mac's commands the web has no need of: Open… reads a folder from
+    /// disk, and the rest are its menu bar's own (Page Setup…, the
+    /// inspector, Actual Size…).
+    private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
+                                              .viewToggleInspector, .viewToggleWordCount, .viewActualSize, .compileStop]
+
     /// The menu has every other command the web declares, with the same chord.
     func testTheMenuHasEveryWebCommand() throws {
         let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
@@ -493,7 +505,8 @@ final class CommandTests: XCTestCase {
                 .map { String($0.1).replacingOccurrences(of: "\\\\", with: "\\") }
             XCTAssertEqual(MenuCommand(rawValue: id)?.accel, accel, id)
         }
-        XCTAssertEqual(Set(MenuCommand.allCases.map(\.rawValue)), ids.subtracting(webOnly))
+        XCTAssertEqual(Set(MenuCommand.allCases.filter { !macOnly.contains($0) }.map(\.rawValue)), ids.subtracting(webOnly))
+        XCTAssertTrue(macOnly.allSatisfy { !ids.contains($0.rawValue) })
     }
 }
 
@@ -554,11 +567,135 @@ final class MenuBarTests: XCTestCase {
         XCTAssertTrue(["Show Build Panel", "Hide Build Panel"].contains(title), title)
     }
 
-    /// Replacing the text-editing group must keep the spelling commands the
-    /// editor's WebKit spell checking answers to.
+    /// The system's spelling commands, which the editor's WebKit spell
+    /// checking answers to.
     func testSpellingIsInTheEditMenu() {
         XCTAssertNotNil(item(";"), "Check Document Now ⌘;")
         XCTAssertNotNil(item(":"), "Show Spelling and Grammar ⌘:")
+    }
+}
+
+/// The menu bar's shape, as the HIG has it (The menu bar), in the running
+/// app's menus.
+@MainActor
+struct MenuStructureTests {
+    private func menu(_ title: String) throws -> NSMenu {
+        let menu = try #require(NSApp.mainMenu?.items.first { $0.title == title }?.submenu, "\(title) menu")
+        menu.delegate?.menuNeedsUpdate?(menu)
+        return menu
+    }
+
+    private func titles(_ menu: NSMenu) -> [String] {
+        menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+    }
+
+    private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
+        func all(_ menu: NSMenu) -> [NSMenuItem] {
+            menu.delegate?.menuNeedsUpdate?(menu)
+            return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
+        }
+        return try #require(all(menu).first { $0.title == title }, "\(title)")
+    }
+
+    /// The app's own menus between View and Window, Insert before Compile.
+    @Test func theAppsMenusGoBetweenViewAndWindow() throws {
+        let order = try #require(NSApp.mainMenu).items.map(\.title)
+        let view = try #require(order.firstIndex(of: "View")), window = try #require(order.firstIndex(of: "Window"))
+        #expect(Array(order[view...window]) == ["View", "Insert", "Compile", "Window"])
+        #expect(try #require(order.firstIndex(of: "Format")) < view)
+    }
+
+    /// The system's text-editing items stay whole, the app's searches
+    /// beside them: none of them lost to a group of the app's own.
+    @Test func editKeepsTheSystemsTextItems() throws {
+        let edit = try menu("Edit")
+        for title in ["Find", "Spelling and Grammar", "Substitutions", "Transformations", "Speech",
+                      "Find in Project…", "Find in PDF…", "Go to Line…"] {
+            #expect(titles(edit).contains(title), "\(title)")
+        }
+        let find = try item("Find", in: edit).submenu
+        #expect(find.map(titles) == ["Find…", "Find and Replace…", "Find Next", "Find Previous",
+                                     "Use Selection for Find", "Jump to Selection"])
+        #expect(try item("Use Selection for Find", in: edit).keyEquivalent == "e")
+        #expect(try item("Jump to Selection", in: edit).keyEquivalent == "j")
+        #expect(try item("Check Spelling While Typing", in: edit).action == #selector(NSTextView.toggleContinuousSpellChecking(_:)))
+    }
+
+    /// Format holds the text's attributes; what inserts text is Insert's.
+    @Test func formatStylesAndInsertInserts() throws {
+        let format = try menu("Format"), insert = try menu("Insert")
+        #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
+        #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Symbols", "Reference"]))
+        #expect(titles(insert).contains("Figure"))
+    }
+
+    /// Each Mac command has its HIG chord in the menu.
+    @Test func theMacsCommandsHaveTheirChords() throws {
+        let file = try menu("File"), view = try menu("View"), compile = try menu("Compile")
+        #expect(try item("Open…", in: file).keyEquivalent == "o")
+        #expect(try item("Print…", in: file).keyEquivalent == "p")
+        let setup = try item("Page Setup…", in: file)
+        // AppKit also spells Shift as an upper-case key.
+        #expect(setup.keyEquivalent.lowercased() == "p"
+                && (setup.keyEquivalent == "P" || setup.keyEquivalentModifierMask.contains(.shift)))
+        let inspector = try #require(view.items.first { $0.title.hasSuffix("Inspector") })
+        #expect(inspector.keyEquivalent == "i" && inspector.keyEquivalentModifierMask == [.command, .option])
+        #expect(try item("Stop", in: compile).keyEquivalent == ".")
+    }
+
+    /// Share… as the HIG names it, there even with nothing to share.
+    @Test func shareIsOneItem() throws {
+        let file = try menu("File")
+        #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
+    }
+}
+
+/// Edit › Find's items reach the pane with the keyboard through
+/// `FindMenuResponder`, by the item's tag.
+@MainActor
+struct FindMenuResponderTests {
+    @Test func theItemsTagPicksTheAction() {
+        let responder = FindMenuResponder.Responder()
+        var done: [NSTextFinder.Action] = []
+        responder.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
+        let item = NSMenuItem(title: "Find Next", action: #selector(FindMenuResponder.Responder.performFindPanelAction(_:)),
+                              keyEquivalent: "g")
+        item.tag = NSTextFinder.Action.nextMatch.rawValue
+        #expect(responder.validateMenuItem(item))
+        responder.performFindPanelAction(item)
+        #expect(done == [.nextMatch])
+        // A Find the pane can't do is off.
+        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        #expect(!responder.validateMenuItem(item))
+    }
+
+    /// It joins its window's responder chain, after the window, and leaves
+    /// it as it was.
+    @Test func itJoinsAndLeavesTheResponderChain() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: true)
+        let next = NSResponder()
+        window.nextResponder = next
+        let anchor = FindMenuResponder.Anchor()
+        window.contentView?.addSubview(anchor)
+        #expect(window.nextResponder === anchor.responder)
+        #expect(anchor.responder.nextResponder === next)
+        anchor.removeFromSuperview()
+        #expect(window.nextResponder === next)
+    }
+
+    /// A find bar's field leaves the Find items to its pane; a filter's
+    /// keeps the window's field editor.
+    @Test func aFindBarsFieldPassesFindOn() {
+        let find = SearchField.FocusingSearchField(), window = NSWindow()
+        let cell = find.cell as? SearchField.FindFieldCell
+        cell?.passesFind = true
+        let editor = cell?.fieldEditor(for: find)
+        #expect(editor?.isFieldEditor == true)
+        #expect(editor?.responds(to: #selector(NSTextView.performFindPanelAction(_:))) == false)
+        #expect(editor?.responds(to: #selector(NSTextView.centerSelectionInVisibleArea(_:))) == true)
+        cell?.passesFind = false
+        window.contentView?.addSubview(find)
+        #expect(cell?.fieldEditor(for: find) !== editor)
     }
 }
 

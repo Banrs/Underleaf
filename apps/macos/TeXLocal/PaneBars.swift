@@ -144,9 +144,9 @@ struct Segment: Identifiable {
 extension Segment {
     /// A menu command; its shortcut shows in the menu, not the tooltip.
     @MainActor
-    init(_ command: MenuCommand, _ systemImage: String, app: AppModel) {
+    init(_ command: MenuCommand, _ systemImage: String, app: AppModel, project: ProjectModel) {
         self.init(id: command.rawValue, title: command.title, systemImage: systemImage,
-                  enabled: app.isEnabled(command)) { app.perform(command) }
+                  enabled: app.isEnabled(command, on: project)) { app.perform(command, on: project) }
     }
 }
 
@@ -263,6 +263,11 @@ struct SearchField: NSViewRepresentable {
     final class FocusingSearchField: NSSearchField {
         var wantsFocus = false
 
+        override class var cellClass: AnyClass? {
+            get { FindFieldCell.self }
+            set { super.cellClass = newValue }
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if wantsFocus { takeFocus() }
@@ -283,8 +288,33 @@ struct SearchField: NSViewRepresentable {
         }
     }
 
+    /// A find bar's field edits in a field editor of its own, which leaves
+    /// Edit › Find's items to its pane (`FindMenuResponder`), so ⌘G steps
+    /// the bar's matches while typing in it. The window's shared field
+    /// editor answers them itself, and turns them off.
+    final class FindFieldCell: NSSearchFieldCell {
+        var passesFind = false
+        private lazy var findEditor: NSTextView = {
+            let editor = FindFieldEditor()
+            editor.isFieldEditor = true
+            return editor
+        }()
+
+        override func fieldEditor(for controlView: NSView) -> NSTextView? {
+            passesFind ? findEditor : super.fieldEditor(for: controlView)
+        }
+    }
+
+    final class FindFieldEditor: NSTextView {
+        override func responds(to selector: Selector!) -> Bool {
+            selector != #selector(performFindPanelAction(_:)) && super.responds(to: selector)
+        }
+    }
+
     func makeNSView(context: Context) -> NSSearchField {
         let view = FocusingSearchField()
+        // Only a find bar's: a filter has no matches to step.
+        (view.cell as? FindFieldCell)?.passesFind = step != nil
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator

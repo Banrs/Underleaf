@@ -161,11 +161,7 @@ final class ProjectModel {
         // A chord the editor handed back because the native menu owns it
         // (`MenuCommand.editorHostKeys`).
         editor.onCommand = { [weak self] id in
-            if id == MenuCommand.findAndReplace.id {
-                self?.findAndReplace()
-            } else if let command = MenuCommand(rawValue: id) {
-                self?.app?.perform(command)
-            }
+            if let self, let command = MenuCommand(rawValue: id) { app?.perform(command, on: self) }
         }
         editor.onFind = { [weak self] query in
             guard let self else { return }
@@ -755,6 +751,24 @@ final class ProjectModel {
         guard editsText else { return }
         replacing = true
         format("find")
+    }
+
+    /// Edit › Find's items in the source and wherever no pane has its own
+    /// (`FindActions`): CodeMirror searches, from the find bar, and Use
+    /// Selection for Find is its ⌘F, which takes the selection as the
+    /// query. With no text to search, Find goes to the PDF, as before.
+    func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
+        guard editsText else {
+            guard action == .showFindInterface, pdfVersion > 0 else { return nil }
+            return { [weak self] in self?.app?.requestPDF(.find) }
+        }
+        switch action {
+        case .showFindInterface, .setSearchString: return { self.format("find") }
+        case .showReplaceInterface: return findAndReplace
+        case .nextMatch: return { self.findStep(1) }
+        case .previousMatch: return { self.findStep(-1) }
+        default: return nil
+        }
     }
 
     private func findClosed() {
