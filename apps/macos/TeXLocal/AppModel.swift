@@ -40,7 +40,16 @@ final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
     var project: ProjectModel?
-    var alert: AppAlert?
+    var alert: AppAlert? {
+        // Its window is chosen as it comes, so it stays there: the gallery
+        // while it's in front (what it asked for failed), otherwise the
+        // project's window, if there is one.
+        didSet { if alert != nil { alertInGallery = project == nil || galleryInFront } }
+    }
+    /// Where `alert` shows (`appAlert`).
+    var alertInGallery = true
+    /// The gallery is the window in front (`appearsActive`).
+    @ObservationIgnored var galleryInFront = false
 
     // Requests from commands to the views that own the matching UI.
     /// The new-project sheet, on the template it starts with.
@@ -113,13 +122,20 @@ final class AppModel {
         tex = try? await core.call("status", as: TexStatus.self)
     }
 
-    /// While TeX is missing, look again now and then.
+    /// While TeX is missing, look again now and then. Each window watches,
+    /// so it goes on whichever is open, but they share one look per
+    /// interval.
     func watchForTeX() async {
+        let interval = Duration.seconds(10)
         while !(tex?.available ?? true), !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: interval)
+            guard ContinuousClock.now - texLooked >= interval else { continue }
+            texLooked = .now
             tex = try? await core.call("status", as: TexStatus.self)
         }
     }
+
+    @ObservationIgnored private var texLooked = ContinuousClock.now
 
     /// Settings' TeX folder: one the user chose, or nil to find TeX
     /// automatically. The core refuses a folder without latexmk.

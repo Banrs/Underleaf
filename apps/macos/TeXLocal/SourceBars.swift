@@ -3,7 +3,11 @@ import SwiftUI
 /// The bar over the source: a LaTeX writer's tools, as Overleaf's toolbar
 /// has them, then the rest in a ⋯ menu. Narrow panes fold groups into that
 /// menu from the end, then the section level and redo, so undo is never
-/// clipped. Commenting out stays in the Format menu (⌘/).
+/// clipped. Figures and lists are always there: the groups up to the
+/// references are as many as the bar showed before its controls had fills,
+/// and past them eight filled groups ran together (HIG, Toolbars: reduce
+/// the use of toolbar backgrounds). Commenting out stays in the Format
+/// menu (⌘/).
 struct SourceBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -12,6 +16,9 @@ struct SourceBar: View {
     /// The groups that fold, in the order they fold back from.
     private enum Tools: Int, CaseIterable {
         case format, math, references, figures, lists
+
+        /// How many the bar shows at its widest (`SourceBar`).
+        static let shownAtMost = references.rawValue + 1
 
         /// The templates whose buttons the group holds: those with a symbol.
         var templates: [Template] {
@@ -27,7 +34,7 @@ struct SourceBar: View {
     var body: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
-                ForEach((0...Tools.allCases.count).reversed(), id: \.self) { tools(showing: $0) }
+                ForEach((0...Tools.shownAtMost).reversed(), id: \.self) { tools(showing: $0) }
                 tools(showing: 0, level: false)
                 tools(showing: 0, level: false, redo: false)
             }
@@ -72,8 +79,9 @@ struct SourceBar: View {
             .fixedSize()
             // A control group draws its buttons as one control, so the
             // group holds the popover, its arrow at Symbols, the last of
-            // its three segments.
-            .popover(isPresented: $showSymbols, attachmentAnchor: .point(UnitPoint(x: 5.0 / 6, y: 1)), arrowEdge: .bottom) {
+            // its three segments: they measure 27.25, 24 and 23.75 pt on
+            // macOS 27.2, so Symbols' middle is 84% along the 75 pt group.
+            .popover(isPresented: $showSymbols, attachmentAnchor: .point(UnitPoint(x: 0.84, y: 1)), arrowEdge: .bottom) {
                 SymbolPalette { project.format("symbol", $0) }
             }
         case .references, .figures, .lists:

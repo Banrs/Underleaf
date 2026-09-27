@@ -300,22 +300,32 @@ private extension View {
 
 extension View {
     /// Takes files dropped from Finder, copied in (the pointer carries the
-    /// copy badge): file URLs only, not a link dragged from a browser.
-    /// `targeted` tells whether a drag is over it.
-    func fileDrop(targeted: @escaping (Bool) -> Void, action: @escaping ([URL]) -> Void) -> some View {
+    /// copy badge). Anything else, a link dragged from a browser or a file
+    /// `accepts` turns down, is refused as it's dragged, and slides back.
+    /// `targeted` tells whether a drag it takes is over it.
+    func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, targeted: @escaping (Bool) -> Void,
+                  action: @escaping ([URL]) -> Void) -> some View {
         dropDestination(for: URL.self) { urls, _ in
             targeted(false)
-            let files = urls.filter(\.isFileURL)
+            let files = urls.filter { $0.isFileURL && accepts($0) }
             if !files.isEmpty { action(files) }
         }
-        .dropConfiguration { _ in DropConfiguration(operation: .copy) }
+        .dropConfiguration { _ in DropConfiguration(operation: draggedFiles(accepts) ? .copy : .forbidden) }
         .onDropSessionUpdated { session in
             switch session.phase {
-            case .entering, .active: targeted(true)
+            case .entering, .active: targeted(draggedFiles(accepts))
             default: targeted(false)
             }
         }
     }
+}
+
+/// Whether a drag holds a file `accepts` takes. From the drag's pasteboard,
+/// AppKit's: a drop session names none of its items until they're dropped.
+private func draggedFiles(_ accepts: (URL) -> Bool) -> Bool {
+    let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
+                                                     options: [.urlReadingFileURLsOnly: true]) as? [URL]
+    return urls?.contains(where: accepts) ?? false
 }
 
 /// The open document's sections, as Overleaf's file outline, in a list of

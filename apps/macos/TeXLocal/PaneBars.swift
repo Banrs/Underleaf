@@ -33,11 +33,11 @@ enum BarMetrics {
     static let groupSpacing: CGFloat = 8
     /// The status bar's lines: the kit's toolbar separator, 1 × 16 pt.
     static let separatorHeight: CGFloat = 16
-    /// The window's own margin: the status bar's ends, whether a pane or
-    /// the window's corner is beside them, and the inspector's content.
-    /// Under the toolbar's symbols, which the kit's toolbar sets 16 pt in
-    /// (its 36 pt items 8 pt from the edge, a 20 pt symbol centred in
-    /// each). Clear of the window's rounded corner.
+    /// The window's own margin: the status bar's ends where the window's
+    /// corner is beside them, and the inspector's content. Under the
+    /// toolbar's symbols, which the kit's toolbar sets 16 pt in (its 36 pt
+    /// items 8 pt from the edge, a 20 pt symbol centred in each). Clear of
+    /// the window's rounded corner.
     static let edgeInset: CGFloat = 16
     /// A search field in a bar: the least any field shrinks to, and the
     /// widest a filter grows.
@@ -46,7 +46,7 @@ enum BarMetrics {
     /// Opaque, and what shows under the glass toolbar, so the toolbar and
     /// the bars under it read as one chrome block over the content. Not
     /// `.bar`: nothing scrolls under a stacked bar for it to blur.
-    static let background = Color(nsColor: .windowBackgroundColor)
+    static let background: some ShapeStyle = .windowBackground
 }
 
 /// The app's text roles, each one of the system's text styles, so the
@@ -95,7 +95,8 @@ extension View {
     /// One control as a group of its own. The system's control group is the
     /// regular size's 24 pt whatever it holds, as its neighbours are; a
     /// bordered icon button or menu alone takes its symbol's height (the
-    /// ellipsis 12.5 pt, the share symbol 25.5).
+    /// ellipsis 12.5 pt). Not for a share link, which loses its action in
+    /// a group (`SymbolOnTextLine` instead).
     func inControlGroup() -> some View {
         ControlGroup { self }
             .fixedSize()
@@ -118,13 +119,15 @@ struct PaneBar<Content: View>: View {
 }
 
 /// A button's symbol alone, on the line its title would take: a bordered
-/// button is as tall as its label, and a symbol alone is shorter than a
-/// line of text (the compact Compile came out 21 pt beside 24 pt groups).
-/// A hidden title isn't read, so the button names itself for VoiceOver.
+/// button is as tall as its label, and a symbol alone is shorter or taller
+/// than a line of text (the compact Compile came out 21 pt beside 24 pt
+/// groups, Share 25.5 pt). The symbol draws at its own size but takes no
+/// height, so the line's is the button's. A hidden title isn't read, so
+/// the button names itself for VoiceOver.
 struct SymbolOnTextLine: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 0) {
-            configuration.icon
+            configuration.icon.frame(height: 0)
             configuration.title.hidden().frame(width: 0)
         }
     }
@@ -137,7 +140,8 @@ struct SymbolOnTextLine: LabelStyle {
 struct SecondaryBar<Content: View>: View {
     var spacing = BarMetrics.spacing
     /// From the row's ends to its items.
-    var endInset = BarMetrics.inset
+    var leadingInset = BarMetrics.inset
+    var trailingInset = BarMetrics.inset
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -145,7 +149,8 @@ struct SecondaryBar<Content: View>: View {
             .font(Typography.secondary)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
-            .padding(.horizontal, endInset)
+            .padding(.leading, leadingInset)
+            .padding(.trailing, trailingInset)
             .frame(height: BarMetrics.secondaryBarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(BarMetrics.background)
@@ -614,7 +619,7 @@ struct RenameField: View {
 }
 
 #Preview("Secondary bar") {
-    SecondaryBar(spacing: 0, endInset: BarMetrics.edgeInset) {
+    SecondaryBar(spacing: 0, leadingInset: BarMetrics.edgeInset, trailingInset: BarMetrics.edgeInset) {
         Text("Saved")
         ToolSeparator()
         Spacer(minLength: 0)

@@ -28,16 +28,15 @@ struct HomeView: View {
         // A folder, .tex file or .zip dropped on the window opens as Open…
         // opens it, as Apple's start windows take a dropped document. It is
         // copied in, as the Open panel says: the pointer carries the copy
-        // badge, and a note says where it goes.
-        .fileDrop(targeted: { dropTargeted = $0 }) { urls in
-            guard let url = urls.first, AppModel.canOpen(url) else { return }
+        // badge, and a note says where it goes. Anything else is refused.
+        .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
+            guard let url = urls.first else { return }
             Task { await app.importProject(from: url) }
         }
         .overlay(alignment: .bottom) {
             if dropTargeted {
                 Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
-                    .padding(.horizontal, GalleryMetrics.margin)
-                    .padding(.vertical, BarMetrics.groupSpacing)
+                    .padding(GalleryMetrics.noteInsets)
                     .background(.regularMaterial, in: .capsule)
                     .padding(GalleryMetrics.margin)
                     .allowsHitTesting(false)
@@ -223,6 +222,10 @@ private enum GalleryMetrics {
     static let margin: CGFloat = 18
     /// The kit's group box corners, 12 pt.
     static let groupBoxCorner: CGFloat = 12
+    /// The drop note's capsule around its words, as the kit's large
+    /// bordered button (a 28 pt capsule) sets its label: 16 pt in from its
+    /// ends, 6 pt from its top and bottom.
+    static let noteInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 }
 
 /// A template's card, in the system's group box: a drawing of its first
