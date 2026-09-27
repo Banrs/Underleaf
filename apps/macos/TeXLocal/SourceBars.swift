@@ -162,9 +162,10 @@ private struct SectionLevelMenu: View {
             // The pop-up's ⇕, so it reads as a choice, not a label: the
             // accessory-bar style draws no indicator of its own.
             // One text, so the menu keeps the symbol after the words, where
-            // a pop-up has it.
+            // a pop-up has it, an en space (half the font's size) off the
+            // words: a plain space set it tighter than a pop-up does.
             let chevrons = Text(Image(systemName: "chevron.up.chevron.down")).font(.caption).foregroundStyle(.secondary)
-            Text("\(current.0) \(chevrons)")
+            Text("\(current.0)\u{2002}\(chevrons)")
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
