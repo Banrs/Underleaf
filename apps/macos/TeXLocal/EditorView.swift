@@ -104,6 +104,10 @@ private struct SourcePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        // Pinned to the top: the web view takes a whole number of points, so
+        // in a pane half a point taller the stack was centred and its bars
+        // sat half a point below the PDF's.
+        .frame(maxHeight: .infinity, alignment: .top)
         .animation(.snappy(duration: 0.25), value: project.findShown)
     }
 }
@@ -159,10 +163,13 @@ private struct StatusBar: View {
         // status metrics): a borderless toggle past a line, clear of the
         // window's rounded corner where the bar meets one (the sidebar or
         // the inspector hidden), 8 pt from a pane beside it otherwise.
+        // The corners are the detail's, which holds the inspector too: its
+        // trailing corner is the bar's only while the inspector is hidden.
         let corners = app.windowCorners
+        let trailingCorner = corners.bottomTrailing.width > 0 && !app.showInspector
         SecondaryBar(spacing: 0,
                      leadingInset: corners.bottomLeading.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset,
-                     trailingInset: corners.bottomTrailing.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset) {
+                     trailingInset: trailingCorner ? BarMetrics.statusEndInset : BarMetrics.inset) {
             // Shows or hides the issues. A button, not a toggle: the panel's
             // own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
