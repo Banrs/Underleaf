@@ -9,7 +9,7 @@
 ## Layout
 
 One Rust core (`crates/`) under three clients:
-- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 26.0. CI builds with the 26.5 SDK.
+- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 26.0. CI builds and tests on macOS 27 with Xcode 27.
 - **Windows** (`apps/windows`): WinUI 3, C#.
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
@@ -41,7 +41,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: `macos-26` runner and the XCTests;
+  - `macos-app.yml`: the `xcode-27` runner (macOS 27, in preview; there is no `macos-27` label) and the XCTests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
 - **Mac Debug build on screen:** run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>`.
