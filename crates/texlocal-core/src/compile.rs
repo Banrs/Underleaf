@@ -860,7 +860,7 @@ mod tests {
         std::fs::write(home.join(".latexmkrc"), "").unwrap();
         let rc = |path: &Path| Some(path.to_string_lossy().into_owned());
         assert_eq!(user_latexmkrc(env(home)), rc(&home.join(".latexmkrc")));
-        let config = home.join(".config/latexmk/latexmkrc");
+        let config = home.join(".config").join("latexmk").join("latexmkrc");
         std::fs::create_dir_all(config.parent().unwrap()).unwrap();
         std::fs::write(&config, "").unwrap();
         assert_eq!(user_latexmkrc(env(home)), rc(&config));
