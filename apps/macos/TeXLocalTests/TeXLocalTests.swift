@@ -327,34 +327,32 @@ final class SidebarSplitTests: XCTestCase {
     /// The window holding the test's split (a view doesn't keep its window).
     private var window: NSWindow?
 
-    /// Two panes in a split of `size` in a window, as the app has it, the
-    /// second dragged to `last` points.
+    /// Two panes, one over the other, in a split of `size` in a window, as
+    /// the app has it, the second dragged to `last` points.
     ///
     /// The window sizes the split once it has its delegate, which lays the
     /// panes out before the drag, as in the app. macOS 26's `setPosition`
     /// doesn't lay out panes added since the last layout (27's does), so a
     /// split never sized constrained the drag against empty frames there.
-    private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
-                       last: CGFloat) -> (NSSplitView, SidebarSplit.Coordinator) {
+    private func split(_ size: NSSize, _ panes: [SidebarPane],
+                       last: CGFloat) -> (NSSplitView, SidebarSplitCoordinator) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 1200),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         self.window = window
         let split = NSSplitView()
-        split.isVertical = vertical
+        split.isVertical = false
         split.dividerStyle = .thin
-        let coordinator = SidebarSplit.Coordinator(autosave: "SidebarSplitTests \(UUID())")
+        let coordinator = SidebarSplitCoordinator(autosave: "SidebarSplitTests \(UUID())")
         coordinator.panes = panes
-        coordinator.clips = [PaneClip(content: NSView(), vertical: vertical), PaneClip(content: NSView(), vertical: vertical)]
-        coordinator.views.forEach(split.addArrangedSubview)
+        coordinator.clips = [PaneClip(content: NSView()), PaneClip(content: NSView())]
+        coordinator.clips.forEach(split.addArrangedSubview)
         split.delegate = coordinator
         window.contentView?.addSubview(split)
         resize(split, to: size)
         // Laid out before the drag: the panes fill the split.
-        let length = vertical ? size.width : size.height
-        let end = split.arrangedSubviews[1].frame
-        XCTAssertEqual(vertical ? end.maxX : end.maxY, length)
-        split.setPosition(length - last - split.dividerThickness, ofDividerAt: 0)
+        XCTAssertEqual(split.arrangedSubviews[1].frame.maxY, size.height)
+        split.setPosition(size.height - last - split.dividerThickness, ofDividerAt: 0)
         layOut(split)
         return (split, coordinator)
     }
@@ -371,24 +369,23 @@ final class SidebarSplitTests: XCTestCase {
         split.window?.layoutIfNeeded()
     }
 
-    private func widths(_ split: NSSplitView) -> [CGFloat] {
-        split.arrangedSubviews.map(\.frame.width)
+    private func heights(_ split: NSSplitView) -> [CGFloat] {
+        split.arrangedSubviews.map(\.frame.height)
     }
 
     /// A pane squeezed to its minimum by a small window gets its share back
     /// as the window grows, rather than staying at the minimum.
     func testAPaneGetsItsShareBackAfterASmallWindow() throws {
-        // Two panes side by side, the second dragged narrow.
-        let (split, coordinator) = split(NSSize(width: 936, height: 400),
-                                         [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
-                                         last: 200)
-        XCTAssertEqual(widths(split), [735, 200])
-        resize(split, to: NSSize(width: 300, height: 400))
-        XCTAssertEqual(widths(split), [159, 140])
+        // The second pane dragged short.
+        let (split, coordinator) = split(NSSize(width: 250, height: 936),
+                                         [SidebarPane(minimum: 140), SidebarPane(minimum: 140)], last: 200)
+        XCTAssertEqual(heights(split), [735, 200])
+        resize(split, to: NSSize(width: 250, height: 300))
+        XCTAssertEqual(heights(split), [159, 140])
         // Hidden now, it would come back at the share it had, not squeezed.
         XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
-        resize(split, to: NSSize(width: 936, height: 400))
-        XCTAssertEqual(widths(split), [735, 200])
+        resize(split, to: NSSize(width: 250, height: 936))
+        XCTAssertEqual(heights(split), [735, 200])
     }
 
     /// The sidebar's outline folded to its header: the files take the
@@ -396,17 +393,17 @@ final class SidebarSplitTests: XCTestCase {
     /// drag, and unfolding brings back the height it had.
     func testAFoldedPaneKeepsItsHeaderAndUnfoldsToItsHeight() {
         let panes = [
-            SplitPane(minimum: 100) { EmptyView() },
-            SplitPane(minimum: 80, fraction: 0.45, keepsSize: true) { EmptyView() },
+            SidebarPane(minimum: 100),
+            SidebarPane(minimum: 80, fraction: 0.45, keepsSize: true),
         ]
-        let (split, coordinator) = split(NSSize(width: 250, height: 600), vertical: false, panes, last: 240)
+        let (split, coordinator) = split(NSSize(width: 250, height: 600), panes, last: 240)
         defer { UserDefaults.standard.removeObject(forKey: "\(coordinator.autosave) Unfolded 1") }
         var folded = panes
         folded[1].collapsed = 28
         coordinator.panes = folded
         coordinator.fold(split, 1, to: 28)
         layOut(split)
-        XCTAssertEqual(split.arrangedSubviews.map(\.frame.height), [571, 28])
+        XCTAssertEqual(heights(split), [571, 28])
         XCTAssertEqual(coordinator.splitView(split, effectiveRect: NSRect(x: 0, y: 571, width: 250, height: 1),
                                              forDrawnRect: .zero, ofDividerAt: 0), .zero)
         resize(split, to: NSSize(width: 250, height: 800))
@@ -416,6 +413,52 @@ final class SidebarSplitTests: XCTestCase {
         coordinator.fold(split, 1, to: nil)
         layOut(split)
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 240)
+    }
+}
+
+/// The splits as SwiftUI lays them out.
+@MainActor
+struct SplitHostingTests {
+    /// Hosts `view` in a window of `size`, laid out, until `body` returns;
+    /// the autosave it wrote forgotten.
+    private func host<V: View>(_ view: V, _ size: CGSize = CGSize(width: 400, height: 600), autosave: String,
+                               _ body: (NSHostingView<V>) -> Void) {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .resizable],
+                              backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: view)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        body(host)
+        window.contentView = nil
+        window.close()
+        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
+    }
+
+    /// Neither split's panes' minimums reach the window's layout: the
+    /// window can be as small as the app lets it be, not as the panes add
+    /// up. The split view controller's items constrain its view, so
+    /// `SplitController` sizes itself to the proposal; the sidebar's plain
+    /// split has no constraints to pass on.
+    @Test func theSplitsLeaveTheWindowItsMinimum() {
+        let autosave = "SplitHostingTests \(UUID())"
+        let minimum: CGFloat = 300
+        let panes = SplitController(app: AppModel(), axis: .vertical, autosave: autosave, panes: [
+            SplitPane(minimum: minimum) { Color.clear },
+            SplitPane(minimum: minimum) { Color.clear },
+        ])
+        let sidebar = SidebarSplit(app: AppModel(), autosave: autosave,
+                                   top: SidebarPane(minimum: minimum), bottom: SidebarPane(minimum: minimum)) {
+            Color.clear
+        } bottomContent: {
+            Color.clear
+        }
+        for split in [AnyView(panes), AnyView(sidebar)] {
+            host(split, CGSize(width: 900, height: 900), autosave: autosave) { host in
+                // The size the window's layout asks of it.
+                #expect(host.fittingSize.height < minimum)
+            }
+        }
     }
 }
 

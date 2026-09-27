@@ -21,14 +21,15 @@ struct NavigatorView: View {
     @State private var fold = OutlineFold()
 
     var body: some View {
-        SidebarSplit(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
-            SplitPane(minimum: 100) { FilesList(project: project) },
-            SplitPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
-                      collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,
-                      didFold: { [fold] folded in fold.slid(folded: folded) }) {
-                OutlineList(project: project, fold: fold)
-            },
-        ])
+        SidebarSplit(app: app, autosave: "OutlineSplit",
+                     top: SidebarPane(minimum: 100),
+                     bottom: SidebarPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
+                                         collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,
+                                         didFold: { [fold] folded in fold.slid(folded: folded) })) {
+            FilesList(project: project)
+        } bottomContent: {
+            OutlineList(project: project, fold: fold)
+        }
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
         .searchFocused($searchFocused)
         .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
@@ -73,7 +74,9 @@ private struct FilesList: View {
     private var files: some View {
         List(selection: $selection) {
             Section {
-                rows(project.tree)
+                TreeRows(nodes: project.tree, expanded: $expanded) { node in
+                    row(node).tag(node.path)
+                }
             } header: {
                 Text("Files")
             }
@@ -140,27 +143,6 @@ private struct FilesList: View {
         }
     }
 
-    /// The tree as the sidebar shows one: native disclosure triangles on
-    /// the folders, each open or closed as `expanded` has it.
-    private func rows(_ nodes: [TreeNode]) -> AnyView {
-        AnyView(ForEach(nodes) { node in
-            if let children = node.children {
-                DisclosureGroup(isExpanded: Binding(
-                    get: { expanded.contains(node.path) },
-                    set: { open in
-                        if open { expanded.insert(node.path) } else { expanded.remove(node.path) }
-                    }
-                )) {
-                    rows(children)
-                } label: {
-                    row(node).tag(node.path)
-                }
-            } else {
-                row(node).tag(node.path)
-            }
-        })
-    }
-
     private func row(_ node: TreeNode) -> some View {
         let isMain = node.path == project.settings?.mainFile
         return Label {
@@ -215,6 +197,33 @@ private struct FilesList: View {
         guard !name.isEmpty, name != node.name, !name.contains("/") else { return }
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
+    }
+}
+
+/// The tree as the sidebar shows one: native disclosure triangles on the
+/// folders, each open or closed as `expanded` has it.
+private struct TreeRows<Row: View>: View {
+    let nodes: [TreeNode]
+    @Binding var expanded: Set<String>
+    @ViewBuilder let row: (TreeNode) -> Row
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expanded.contains(node.path) },
+                    set: { open in
+                        if open { expanded.insert(node.path) } else { expanded.remove(node.path) }
+                    }
+                )) {
+                    TreeRows(nodes: children, expanded: $expanded, row: row)
+                } label: {
+                    row(node)
+                }
+            } else {
+                row(node)
+            }
+        }
     }
 }
 
@@ -329,7 +338,7 @@ private struct OutlineRows: View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node.item)) {
-                    AnyView(OutlineRows(nodes: children, context: context, folded: $folded))
+                    OutlineRows(nodes: children, context: context, folded: $folded)
                 } label: {
                     row(node.item)
                 }
