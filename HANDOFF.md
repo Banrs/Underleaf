@@ -1,9 +1,9 @@
 # Handoff: TeXLocal
 
-## Status (2026-09-27)
+## Status (2026-09-28)
 
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
-- `claude/macos-polish` (not pushed) is the Mac polish pass: Office-style windows, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, and main-actor default isolation. Its Mac build has no Swift warnings and its tests pass.
+- `claude/macos-polish` (not pushed) is the Mac polish pass: Office-style windows, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
 - PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
@@ -53,7 +53,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## macOS app (`apps/macos/TeXLocal`)
 
 **Files:**
-- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows. `alert(_:)` shows any `AppAlert`, in whichever window is the app's.
+- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows. The project window is `.windowManagerRole(.principal)`: without it, a second `Window` scene only zooms, with no full screen. `alert(_:)` shows any `AppAlert`: in the gallery if it was in front when the alert came, otherwise in the project window.
 - `AppModel`: library, recents, imports, alerts.
 - `ProjectModel`: the open project, saves, builds, file watching.
 - `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`). Insert sits between View and Window; Format keeps Bold, Italic, the section level and Comment.
@@ -75,7 +75,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `PDFView`: SwiftUI has no PDF view.
 - An `NSTextView` for the build log: a SwiftUI `Text` lays out LaTeX's megabyte logs whole on every change.
 - The `AppDelegate`'s terminate-later reply, so Quit waits for the open document's save.
-- `FindMenuResponder`: Edit › Find is the system's (`TextEditingCommands`), whose items send `performFindPanelAction:` with a tag down the responder chain. Neither `WKWebView` nor `PDFView` answers it, so a responder after the project window takes it to the pane with the keyboard (`FocusedValues.find`); a find bar's field has its own field editor that passes the items on. Replacing `.textEditing` instead loses the spelling and substitution toggles' checkmarks.
+- `FindMenuResponder`: Edit › Find is the system's (`TextEditingCommands`), whose items send `performFindPanelAction:` with a tag down the responder chain. `PDFView` doesn't answer it, so a responder after the project window takes it to the pane with the keyboard (`FocusedValues.find`). The editor's web view does answer it, with WebKit's own find bar, which searches only the lines CodeMirror has drawn; `.findDisabled()` doesn't stop that on 27.2, so a second responder goes in front of the web view's wrapper whenever it takes the keyboard. A find bar's field has its own field editor that passes the items on. Replacing `.textEditing` instead loses the spelling and substitution toggles' checkmarks.
+- The drag pasteboard (`NSPasteboard(name: .drag)`): a SwiftUI drop session names none of its items before the drop, so the file drops read it to refuse what they can't take while it's dragged.
 
 ## Core behaviour (every host)
 
@@ -101,13 +102,14 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Known issues
 
-- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen; it hasn't been reproduced. Its prime suspect, the Home→Workspace toolbar swap, went with the separate gallery window.
+- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen. Its prime suspect, the Home→Workspace toolbar swap, went with the separate gallery window. On `claude/macos-polish` the repro (the project window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen) passes with nothing on stderr.
 - The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
-- Not yet seen on screen: drag and drop, the clash alert, the nested section menu, focus rings.
+- Not yet seen on screen: drag and drop (the gallery's and the sidebar's, including a refused drag), and focus rings with Keyboard navigation on.
+- The PDF bar's Share is a lone bordered button, 38 × 24 pt, wider than the source bar's More, a symbol grouped alone: a `ShareLink` in a `ControlGroup` loses its action on 27.2.
 
 ## Next
 
@@ -129,6 +131,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - Retire Tauri once both apps are verified: delete `src-tauri`, the Tauri path in `bridge.js`, `@tauri-apps/cli`, and the Tauri entries in `check-version.mjs`, `ci.yml` and `release.yml`.
 
 ## Gotchas
+
+- **`-ApplePersistenceIgnoreState YES` writes the new state to a temporary folder** and leaves the old one, so the next launch without it restores the state from before. Restoration repros need both launches without it.
 
 - **A launch with saved window state presents no default window.** The gallery stays restorable: with `.restorationBehavior(.disabled)`, state holding only the gallery (a crash, or Quit and Keep Windows) opened the app with no window at all. Launch scratch builds with `-ApplePersistenceIgnoreState YES` for a clean start.
 
