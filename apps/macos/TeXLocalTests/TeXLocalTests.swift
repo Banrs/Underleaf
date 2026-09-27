@@ -143,14 +143,19 @@ struct PaneBarLayoutTests {
 
     /// Every control in a bar is the kit's regular height, whatever its
     /// symbol: a group, one control grouped alone (a bordered ellipsis
-    /// alone was 12.5 pt), and the compact Compile (21 pt as a symbol alone).
+    /// alone was 12.5 pt), and a symbol on a line of text: the compact
+    /// Compile (21 pt as a symbol alone) and Share (25.5 pt), a share link
+    /// as the PDF bar has it.
     @Test func everyControlIsTheKitsRegularHeight() {
         let undo = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
         let more = Menu { Button("Figure") {} } label: { Label("More", systemImage: "ellipsis") }.inControlGroup()
-        let share = Button("Share PDF", systemImage: "square.and.arrow.up") {}.inControlGroup()
+        let share = ShareLink(item: URL(fileURLWithPath: "/tmp/main.pdf")) {
+            Label("Share PDF", systemImage: "square.and.arrow.up")
+        }
+        .labelStyle(SymbolOnTextLine())
         let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(SymbolOnTextLine()) }
             .buttonStyle(.borderedProminent)
         let done = Button("Done") {}
