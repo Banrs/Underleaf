@@ -27,3 +27,6 @@ xcuserdata/
 .vscode/
 .idea/
 .claude/
+
+# Apple UI kits: local reference only (licence, and too large for GitHub).
+/design/

@@ -9,7 +9,7 @@
 ## Layout
 
 One Rust core (`crates/`) under three clients:
-- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 26.0. CI builds with the 26.5 SDK.
+- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 27.0. CI builds with Xcode 27 on the `xcode-27` runner image.
 - **Windows** (`apps/windows`): WinUI 3, C#.
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
@@ -37,11 +37,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
   - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed.
-- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk -target arm64-apple-macos26.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
+- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: `macos-26` runner and the XCTests;
+  - `macos-app.yml`: `xcode-27` runner and the XCTests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
 - **Mac Debug build on screen:** run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>`.

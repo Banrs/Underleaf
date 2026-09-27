@@ -24,7 +24,8 @@ concurrency:
 jobs:
   build:
     name: Build and test
-    runs-on: macos-26
+    # Xcode 27 on macOS 27: the app targets macOS 27 (preview image).
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,7 +48,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: macos-app-26.0
+          key: macos-app-27.0
       - run: npm ci
       - name: Build
         working-directory: apps/macos
