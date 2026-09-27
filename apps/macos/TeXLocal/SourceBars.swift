@@ -142,29 +142,36 @@ struct SourceBar: View {
 }
 
 /// The line's section level, as a word processor shows its paragraph
-/// style; choosing one makes the line that heading, or plain text. The
-/// system's pop-up, so it checks the level; VoiceOver names it by the
-/// picker's hidden label. A view of its own, so a caret move redraws it
-/// and not the whole bar.
+/// style; choosing one makes the line that heading, or plain text. A menu
+/// in the bar's accessory-bar style, flat until the pointer is over it as
+/// its neighbours are (a pop-up button drew the one filled control in the
+/// row), its level checked in the menu. A view of its own, so a caret move
+/// redraws it and not the whole bar.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
 
     var body: some View {
         let level = project.outline.first { $0.line == project.cursorLine }?.level
-        let current = level.map { headingLevels[$0 + 1].1 } ?? headingLevels[0].1
-        Picker("Section Level", selection: Binding(
-            get: { current },
-            set: { project.format("heading", $0) }
-        )) {
+        let current = level.map { headingLevels[$0 + 1] } ?? headingLevels[0]
+        Menu {
             ForEach(headingLevels, id: \.1) { title, command in
-                Text(title).tag(command)
+                CheckedItem(title, checked: command == current.1) { project.format("heading", command) }
                 if command.isEmpty { Divider() }
             }
+        } label: {
+            // The pop-up's ⇕, so it reads as a choice, not a label: the
+            // accessory-bar style draws no indicator of its own.
+            // One text, so the menu keeps the symbol after the words, where
+            // a pop-up has it.
+            let chevrons = Text(Image(systemName: "chevron.up.chevron.down")).font(.caption).foregroundStyle(.secondary)
+            Text("\(current.0) \(chevrons)")
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help("Section Level")
+        .accessibilityLabel("Section Level")
+        .accessibilityValue(current.0)
     }
 }
 
