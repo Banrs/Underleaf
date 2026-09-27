@@ -2,12 +2,13 @@ import SwiftUI
 
 /// The start window, as Word's and Overleaf's open: new documents from
 /// templates across the top, each with a preview of its page, then recent
-/// projects as a table — name, main file, when last changed — to search,
-/// sort and open.
+/// projects as a list — name, main file, when last changed — to search
+/// and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
-    @State private var selection: Set<ProjectInfo.ID> = []
-    @State private var sortOrder = [KeyPathComparator(\ProjectInfo.mtime, order: .reverse)]
+    /// One project at a time, as Xcode's welcome list: every action here
+    /// acts on one.
+    @State private var selection: ProjectInfo.ID?
     /// The project whose name is being edited in place, and the name so far.
     @State private var renaming: ProjectInfo.ID?
     @State private var newName = ""
@@ -24,41 +25,28 @@ struct HomeView: View {
             Divider()
             recents
         }
+        // A folder, .tex file or .zip dropped on the window opens as Open…
+        // opens it, as Apple's start windows take a dropped document.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first, AppModel.canOpen(url) else { return false }
+            Task { await app.importProject(from: url) }
+            return true
+        }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Open", systemImage: "folder") { app.openingProject = true }
+                    .help("Open a Folder, .tex File or .zip as a Project")
                 Button("New Project", systemImage: "plus") { app.newProject() }
                     .help("New Project")
             }
-            // Apart, or + and the field share one glass piece.
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            // The kit's toolbar search: about 180 pt at the trailing edge.
-            // SwiftUI's `.searchable` grew to half the window beside a
-            // lone +, and neither its width nor `searchToolbarBehavior
-            // (.minimize)` can be set on macOS. The toolbar draws the
-            // field on its own glass capsule, as the kit's search is.
-            ToolbarItem(placement: .primaryAction) {
-                SearchField(text: $query, prompt: "Search Projects")
-                    // The toolbar's 36 pt, as the + beside it.
-                    .controlSize(.extraLarge)
-                    .frame(width: Self.searchWidth)
-            }
         }
-        .task(id: app.tex?.available) { await app.watchForTeX() }
-        // `presenting`, so the title keeps its name while the dialog closes.
-        .confirmationDialog(
-            "Move “\(deleting?.name ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { project in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await app.delete(project) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
-        }
+        .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
+        // No line under the toolbar, as the workspace has none: the window
+        // reads the same whichever it shows.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
     /// The window's margin: where the inset table starts its column titles
@@ -66,7 +54,6 @@ struct HomeView: View {
     /// macOS 27. The section titles and template cards take the same edge,
     /// so New, Recent, Name and the rows start on one line.
     private static let margin: CGFloat = 18
-    private static let searchWidth: CGFloat = 180
 
     // ---------- new ----------
 
@@ -75,12 +62,12 @@ struct HomeView: View {
             Text("New")
                 .font(Typography.sectionTitle)
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: TemplateCard.spacing) {
+                HStack(alignment: .top) {
                     ForEach(ProjectTemplate.all) { template in
                         Button { app.newProject(template.id) } label: {
                             TemplateCard(template: template)
                         }
-                        .buttonStyle(CardButtonStyle())
+                        .buttonStyle(.plain)
                         .help("New \(template.title) Project")
                     }
                 }
@@ -97,27 +84,14 @@ struct HomeView: View {
             Text("Recent")
                 .font(Typography.sectionTitle)
                 .padding([.horizontal, .top], Self.margin)
-            Table(shown, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("Name", value: \.name) { project in
-                    // A view of its own that reads the rename through
-                    // bindings: the table redraws a cell only when its
-                    // row's value changes.
-                    ProjectNameCell(project: project, renaming: $renaming, newName: $newName) {
-                        commitRename(project)
-                    }
+            List(shown, selection: $selection) { project in
+                // A view of its own that reads the rename through bindings:
+                // the list redraws a row only when its value changes.
+                ProjectRow(project: project, renaming: $renaming, newName: $newName) {
+                    commitRename(project)
                 }
-                .width(min: 180, ideal: 320)
-                TableColumn("Main File", value: \.mainFile) { project in
-                    Text(project.mainFile).foregroundStyle(.secondary)
-                }
-                .width(min: 100, ideal: 160)
-                TableColumn("Modified", value: \.mtime) { project in
-                    Text(project.modified, format: .relative(presentation: .named))
-                        .foregroundStyle(.secondary)
-                }
-                .width(min: 100, ideal: 140)
             }
-            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .listStyle(.inset)
             .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
                 if let project = app.projects.first(where: { ids.contains($0.id) }) {
                     Button("Open") { Task { await app.open(project.id) } }
@@ -137,7 +111,7 @@ struct HomeView: View {
             }
             // Delete, as Finder's ⌘⌫ and every list's Delete key do.
             .onDeleteCommand {
-                if let project = app.projects.first(where: { selection.contains($0.id) }) { deleting = project }
+                if let project = app.projects.first(where: { $0.id == selection }) { deleting = project }
             }
             .overlay {
                 if !query.isEmpty, shown.isEmpty {
@@ -160,10 +134,9 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
+    /// Newest first, as `AppModel.refresh` sorts them.
     private var shown: [ProjectInfo] {
-        let matching = query.isEmpty
-            ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        return matching.sorted(using: sortOrder)
+        query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
     private var texMissing: some View {
@@ -180,37 +153,32 @@ struct HomeView: View {
     }
 }
 
-/// A project's name in the table, or, while it is renamed, a field in its
-/// place: Return or clicking away renames, Escape leaves it as it was.
-private struct ProjectNameCell: View {
+/// A recent project as Xcode's and Keynote's welcome windows list them: its
+/// name over its main file and when it last changed. While it is renamed,
+/// a field takes the name's place: Return or clicking away renames, Escape
+/// leaves it as it was.
+private struct ProjectRow: View {
     let project: ProjectInfo
     @Binding var renaming: ProjectInfo.ID?
     @Binding var newName: String
     let commit: () -> Void
-    @FocusState private var focused: Bool
 
     var body: some View {
         Label {
-            if renaming == project.id {
-                TextField("Name", text: $newName)
-                    .labelsHidden()
-                    .focused($focused)
-                    .onSubmit(commit)
-                    .onExitCommand { renaming = nil }
-                    .onChange(of: focused) { was, now in
-                        if was, !now { commit() }
-                    }
-                    // Once the context menu has closed and handed the table
-                    // its focus back, or the table takes it from the field.
-                    .task {
-                        try? await Task.sleep(for: .milliseconds(150))
-                        focused = true
-                    }
-            } else {
-                Text(project.name)
+            VStack(alignment: .leading, spacing: 2) {
+                if renaming == project.id {
+                    RenameField(text: $newName, commit: commit) { renaming = nil }
+                } else {
+                    Text(project.name).font(.headline)
+                }
+                Text("\(project.mainFile) · \(project.modified.formatted(.relative(presentation: .named)))")
+                    .font(Typography.secondary)
+                    .foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: "doc.text")
+                .font(.title2)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -250,24 +218,35 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
-/// A template's card, as the kit's group box: a drawing of its first page,
-/// then its name, on a faint fill with continuous corners.
+/// A template's card, in the system's group box: a drawing of its first
+/// page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
     /// A drawing of a Letter page: the thumbnail's size and its corners.
     private static let page = CGSize(width: 120, height: 156)
     private static let corner: CGFloat = 6
-    /// The kit's group box: 12 pt corners, 12 pt around its content here
-    /// (the kit's 20 made the row wider than the window's minimum), cards
-    /// 12 pt apart.
-    static let radius: CGFloat = 12
-    static let padding: CGFloat = 12
-    static let spacing: CGFloat = 12
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
-            PagePreview(page: template.page)
+        GroupBox {
+            VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
+                page
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.title).font(.headline)
+                    Text(template.detail)
+                        .font(Typography.secondary)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2, reservesSpace: true)
+                        .frame(width: Self.page.width, alignment: .leading)
+                }
+            }
+        }
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var page: some View {
+        PagePreview(page: template.page)
                 .frame(width: Self.page.width, height: Self.page.height)
                 // Paper is white in either appearance, dimmed a little in
                 // dark mode as the HIG dims a white PDF page; its drawing in
@@ -279,44 +258,9 @@ private struct TemplateCard: View {
                         .strokeBorder(.separator)
                 }
                 .environment(\.colorScheme, .light)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(template.title).font(.headline)
-                Text(template.detail)
-                    .font(Typography.secondary)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2, reservesSpace: true)
-                    .frame(width: Self.page.width, alignment: .leading)
-            }
-        }
-        .padding(Self.padding)
-        .contentShape(.rect(cornerRadius: Self.radius, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// The template cards' look: the kit's group box, its fill a step
-/// stronger under the pointer and again while pressed, and the system's
-/// focus ring.
-private struct CardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Card(configuration: configuration)
-    }
-
-    private struct Card: View {
-        let configuration: Configuration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .background(fill, in: .rect(cornerRadius: TemplateCard.radius, style: .continuous))
-                .onHover { hovering = $0 }
-        }
-
-        private var fill: AnyShapeStyle {
-            if configuration.isPressed { AnyShapeStyle(.fill.secondary) }
-            else if hovering { AnyShapeStyle(.fill.tertiary) }
-            else { AnyShapeStyle(.fill.quinary) }
-        }
+                // A drawing: the card is read by its name ("Blank", not
+                // "Add, Blank").
+                .accessibilityHidden(true)
     }
 }
 
@@ -384,8 +328,12 @@ private struct PagePreview: View {
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name = "Untitled"
-    @State private var template = "article"
+    @State private var template: String
     @FocusState private var nameFocused: Bool
+
+    init(template: String) {
+        _template = State(initialValue: template)
+    }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
 
@@ -401,9 +349,6 @@ struct NewProjectSheet: View {
                 ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
             }
         }
-        .onAppear {
-            template = app.newProjectTemplate
-            nameFocused = true
-        }
+        .onAppear { nameFocused = true }
     }
 }

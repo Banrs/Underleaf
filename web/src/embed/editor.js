@@ -216,13 +216,6 @@ window.texlocal = {
     if (path) path = moved(path);
   },
   getText: () => editor?.getContent() ?? null,
-  // A math symbol from the host's palette (\alpha): as it is in math, as
-  // $\alpha$ in text, the caret after it. False with no file open.
-  insertSymbol(text) {
-    if (!editor) return false;
-    editor.insertSymbol(text ?? '');
-    return true;
-  },
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
@@ -276,7 +269,7 @@ window.texlocal = {
     else if (name === 'findPrevious') { if (hostFind) step(findPrevious); else editor.findPrevious(); }
     else if (name === 'replaceNext') step(replaceNext);
     else if (name === 'replaceAll') step(replaceAll);
-    else if (name === 'insert') editor.insertTemplate(arg);
+    else if (name === 'block') return editor.insertBlock(arg);
     else if (name === 'heading') editor.setHeading(arg ?? '');
     else if (name === 'text') editor.insertText(arg ?? '');
     else if (name === 'symbol') editor.insertSymbol(arg ?? '');

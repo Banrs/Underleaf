@@ -319,9 +319,10 @@ public sealed partial class WorkspaceView : UserControl
         BuildProgress.IsActive = p.Compiling;
         BuildProgress.Visibility = p.Compiling ? Visibility.Visible : Visibility.Collapsed;
         BuildSucceeded.Visibility = !p.Compiling && p.Result is { Ok: true } ? Visibility.Visible : Visibility.Collapsed;
-        BuildFailed.Visibility = !p.Compiling && p.Result is { Ok: false } ? Visibility.Visible : Visibility.Collapsed;
+        BuildFailed.Visibility = !p.Compiling && p.Result is { Failed: true } ? Visibility.Visible : Visibility.Collapsed;
         BuildText.Text = p.Compiling ? "Compiling…"
             : p.Result is { Ok: true } ok ? $"Compiled in {ok.DurationMs / 1000.0:0.0} s"
+            : p.Result is { Stopped: true } ? "Build stopped"
             : p.Result is not null ? "Build failed"
             // A PDF from an earlier session, but no build from this one.
             : p.PdfVersion > 0 ? "Ready" : "Not compiled";
@@ -469,11 +470,11 @@ public sealed partial class WorkspaceView : UserControl
         AddLevels(level.Items, current: null);
         AddLatex(items, level);
         AddLatex(items, Submenu("Reference", LatexTemplates.References, "inline"));
-        AddLatex(items, Submenu("List", LatexTemplates.Lists));
+        AddLatex(items, Submenu("List", LatexTemplates.Lists, "block"));
         items.Add(new MenuFlyoutSeparator());
-        foreach (var (label, template) in LatexTemplates.Environments)
+        foreach (var (label, id) in LatexTemplates.Environments)
         {
-            AddLatex(items, ContextMenus.Item(label, () => Format("insert", template)));
+            AddLatex(items, ContextMenus.Item(label, () => Format("block", id)));
         }
     }
 
@@ -489,13 +490,13 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    /// <summary>A menu of templates: blocks inserted, or, for "inline", put around the selection.</summary>
-    private MenuFlyoutSubItem Submenu(string title, IReadOnlyList<(string Label, string Template)> templates, string how = "insert")
+    /// <summary>A menu of templates: for "block", blocks inserted by id; for "inline", put around the selection.</summary>
+    private MenuFlyoutSubItem Submenu(string title, IReadOnlyList<(string Label, string Arg)> items, string how)
     {
         var submenu = new MenuFlyoutSubItem { Text = title };
-        foreach (var (label, template) in templates)
+        foreach (var (label, arg) in items)
         {
-            submenu.Items.Add(ContextMenus.Item(label, () => Format(how, template)));
+            submenu.Items.Add(ContextMenus.Item(label, () => Format(how, arg)));
         }
         return submenu;
     }
@@ -895,7 +896,7 @@ public sealed partial class WorkspaceView : UserControl
 
     /// <summary>An environment or a list; the button's Tag is its label.</summary>
     private void OnInsert(object sender, RoutedEventArgs e) =>
-        Format("insert", LatexTemplates.Environments.Concat(LatexTemplates.Lists).First(t => t.Label == (string)((FrameworkElement)sender).Tag).Template);
+        Format("block", LatexTemplates.Environments.Concat(LatexTemplates.Lists).First(t => t.Label == (string)((FrameworkElement)sender).Tag).Id);
 
     private void OnLevelMenuOpening(object? sender, object e)
     {

@@ -207,6 +207,21 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <FontIcon Glyph="&#xE71A;" Style="{StaticResource CardIcon}" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="Stop on first error" />
+                    <TextBlock Text="Halt at the first LaTeX error instead of compiling past it"
+                               Style="{StaticResource CardDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="StopOnFirstErrorSwitch" Grid.Column="2" MinWidth="0" VerticalAlignment="Center"
+                              AutomationProperties.Name="Stop on first error" Toggled="OnStopOnFirstErrorToggled" />
+            </Grid>
+            <Grid Style="{StaticResource Card}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE946;" Style="{StaticResource CardIcon}" />
                 <StackPanel Grid.Column="1" Style="{StaticResource CardHeader}">
                     <TextBlock Text="TeX distribution" />

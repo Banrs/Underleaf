@@ -54,8 +54,11 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public bool Compiling { get; private set => Set(ref field, value); }
     public CompileResult? Result { get; private set => Set(ref field, value); }
 
-    // Only a successful build moves the PDF on screen, so a new main file keeps
-    // showing the last PDF until its own exists; PdfVersion counts each new one.
+    /// <summary>
+    /// The PDF on screen, and a counter bumped whenever a new one is on disk.
+    /// Only a build that wrote one moves it, so a new main file keeps showing
+    /// the last PDF until its own exists.
+    /// </summary>
     public string? PdfPath { get; private set; }
     public int PdfVersion { get; private set => Set(ref field, value); }
 
@@ -239,13 +242,38 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         CursorLine = TopLine = 1;
         diskText = file.Text;
         _ = WatchOpenFileAsync();
-        Analyze(path, file.Text);
+        _ = AnalyzeAsync(path, file.Text);
         await editor.OpenAsync($"{Id}/{path}", file.Text);
         return true;
     }
 
-    private void Analyze(string path, string text) =>
-        Stats = path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) ? Outline.Analyze(text) : null;
+    private int analysis;
+
+    /// <summary>
+    /// The outline, breadcrumb and word count, from the core; as in the web,
+    /// only a .tex file has them. The latest reading of the open file wins.
+    /// </summary>
+    private async Task AnalyzeAsync(string path, string text)
+    {
+        var request = ++analysis;
+        DocumentStats? stats = null;
+        if (path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                stats = await Outline.AnalyzeAsync(core, text);
+            }
+            catch (CoreException)
+            {
+                // The outline and counts stay as they were; the next save reads again.
+                return;
+            }
+        }
+        if (request == analysis && path == OpenPath)
+        {
+            Stats = stats;
+        }
+    }
 
     // Whether unsaved edits were in the editor page when its renderer died.
     private bool lostInCrash;
@@ -361,7 +389,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             writes++;
             if (path == OpenPath)
             {
-                Analyze(path, text);
+                _ = AnalyzeAsync(path, text);
             }
             await RefreshSymbolsAsync();
             return true;
@@ -538,13 +566,15 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         var top = TopLine;
         autosave?.Cancel();
         Dirty = false;
-        Analyze(path, text);
+        _ = AnalyzeAsync(path, text);
         await editor.OpenAsync($"{Id}/{path}", text, focus: false);
         await editor.RevealAsync(top, atTop: true, focus: false);
         CursorLine = await editor.CurrentLineAsync();
     }
 
     private bool compileQueued;
+    // Stop was pressed before the build it stops had started (while saving).
+    private bool stopRequested;
 
     private Task CompileIfAutoAsync() => AutoCompile ? CompileAsync(auto: true) : Task.CompletedTask;
 
@@ -566,11 +596,12 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         // Busy from the first moment, so a second request queues rather than
         // starting a parallel compile while this one saves.
         Compiling = true;
+        stopRequested = false;
         var saved = false;
         try
         {
             saved = await FlushAsync();
-            if (!saved)
+            if (!saved || stopRequested)
             {
                 return;
             }
@@ -581,7 +612,11 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 return;
             }
             Result = result;
-            if (result.Ok && await CompiledPdfAsync() is { } pdf)
+            // Builds compile past their errors, as Overleaf's do: whenever
+            // this one wrote a PDF it shows, with the count on the log
+            // button. The log takes its place only when a failed build left
+            // nothing to show.
+            if (result.Pdf is not null && await CompiledPdfAsync() is { } pdf)
             {
                 PdfPath = pdf;
                 PdfVersion++;
@@ -589,7 +624,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 // Edits made, or saves landed, while it built aren't in it.
                 Freshness = Dirty || writes != built ? PdfFreshness.Edited : null;
             }
-            else if (!result.Ok)
+            else if (result.Failed)
             {
                 if (PdfVersion > 0)
                 {
@@ -599,7 +634,11 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 PanelTab = result.Errors.Count > 0 ? PanelTab.Issues : PanelTab.Log;
                 ShowLogs = true;
             }
-            app.NotifyCompiled(result);
+            // Whoever stopped a build knows.
+            if (!result.Stopped)
+            {
+                app.NotifyCompiled(result);
+            }
         }
         catch (CoreException e)
         {
@@ -626,14 +665,19 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Stop the build in progress: its process tree is killed and the compile returns failed.</summary>
-    public void StopCompile()
+    /// <summary>
+    /// Stop this project's build, and any queued behind it: the compile then
+    /// reports itself stopped.
+    /// </summary>
+    public async Task StopCompileAsync()
     {
-        if (Compiling)
+        if (!Compiling)
         {
-            compileQueued = false;
-            core.KillAll();
+            return;
         }
+        compileQueued = false;
+        stopRequested = true;
+        await TryAsync(() => core.PerformAsync("stop_compile", new { id = Id }), "Couldn’t stop the build");
     }
 
     private Task<bool> PatchSettingsAsync(object patch, string failure) =>
@@ -656,6 +700,15 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         if (await PatchSettingsAsync(new { mainFile = path }, "Couldn’t change the main file"))
         {
             await CompileAsync(auto: true);
+        }
+    }
+
+    /// <summary>Halt builds at the first error, or (by default) compile past them.</summary>
+    public async Task SetStopOnFirstErrorAsync(bool on)
+    {
+        if (on != Settings?.StopOnFirstError)
+        {
+            await PatchSettingsAsync(new { stopOnFirstError = on }, "Couldn’t change Stop on first error");
         }
     }
 
@@ -776,10 +829,30 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Copy files and folders from elsewhere into the project, at the root or into a folder.</summary>
-    public async Task ImportFilesAsync(IReadOnlyList<string> paths, string dir = "")
+    /// <summary>
+    /// Copy files and folders from elsewhere into the project, at the root or
+    /// into a folder. Names already taken there are asked about once for the
+    /// whole import, as on the Mac, then it runs again with the answer:
+    /// "replace" (the old ones go to the Recycle Bin) or "keepBoth" ("a 2.png").
+    /// </summary>
+    public async Task ImportFilesAsync(IReadOnlyList<string> paths, string dir = "", string? conflict = null)
     {
-        await TryAsync(() => core.CallAsync<ImportResult>("import_files", new { id = Id, dir, paths }), "Couldn’t add the files");
+        try
+        {
+            var imported = await core.CallAsync<ImportResult>("import_files", new { id = Id, dir, paths, conflict });
+            if (conflict is null && imported.Existing.Count > 0)
+            {
+                if (await app.AskImportClashAsync(imported.Existing) is { } answer)
+                {
+                    await ImportFilesAsync(paths, dir, answer);
+                }
+                return;
+            }
+        }
+        catch (CoreException e)
+        {
+            Report(e, "Couldn’t add the files");
+        }
         // Even after a failure: the files copied before it are there.
         await ReloadTreeAsync();
         await RefreshSymbolsAsync();

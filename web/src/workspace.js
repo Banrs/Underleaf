@@ -24,6 +24,8 @@ let disposeCommands = null;
 let restoreAppearanceHandler = null;
 let texWatcher = null;
 let pendingCompile = false;
+// Stop was pressed before the build it stops had started (while saving).
+let stopRequested = false;
 let workspaceGeneration = 0;
 let openGeneration = 0;
 let pdfFindTimer = null;
@@ -204,16 +206,16 @@ function buildChrome(id) {
   }, zoomLabel, icon('chevron-down'));
 
   // Wired like the icon buttons, so it is disabled whenever the command is
-  // (no TeX found, or a build already running).
+  // (no TeX found). While a build runs it is Stop instead (see compile).
   const compileButton = el('button', {
     class: 'btn primary', title: tooltip('compile.run'), dataset: { command: 'compile.run' },
-    onclick: () => runCommand('compile.run'),
+    onclick: () => (state.compiling ? stopCompile() : runCommand('compile.run')),
   }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
   const pdfScroll = el('div', { class: 'pdf-scroll' });
   const logsView = buildLogsView({
     onJump: async (file, line) => {
-      if (line == null) return;
+      if (file == null || line == null) return;
       await openFile(file);
       if (state.openPath === file) state.editor?.gotoLine(line);
     },
@@ -299,6 +301,7 @@ function buildChrome(id) {
   state.pdf = new PdfViewer(pdfScroll, {
     onZoomChange: (pct) => { zoomLabel.textContent = `${pct}%`; },
     onPageChange: (p, total) => { pageIndicator.textContent = `${p} of ${total}`; },
+    onDocument: refreshCommands,
     onSyncClick: async (page, x, y) => {
       try {
         const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
@@ -506,8 +509,13 @@ async function openFile(path) {
     if (IMAGE_FILE.test(path)) {
       state.editor?.destroy();
       state.editor = null;
-      host.replaceChildren(el('div', { class: 'image-preview' },
-        el('img', { src: api.rawFileUrl(state.projectId, path), alt: path })));
+      const img = el('img', { alt: path });
+      host.replaceChildren(el('div', { class: 'image-preview' }, img));
+      api.rawFileUrl(projectId, path).then((src) => {
+        // The <img> keeps the decoded image, so a blob: URL can go once read.
+        if (src.startsWith('blob:')) img.onload = img.onerror = () => URL.revokeObjectURL(src);
+        img.src = src;
+      }, (err) => { if (stillCurrent()) toast(err.message, 'error'); });
     } else {
       showEditorPlaceholder(`No preview for ${path.split('/').pop()}`);
     }
@@ -656,6 +664,7 @@ async function compile({ auto = false } = {}) {
   if (!state.projectId || !state.tex.available) return;
   if (state.compiling) { pendingCompile = true; return; }
   state.compiling = true;
+  stopRequested = false;
   refreshCommands();
   const generation = workspaceGeneration;
   const projectId = state.projectId;
@@ -664,40 +673,48 @@ async function compile({ auto = false } = {}) {
   let saveFailed = false;
   // Busy from the first moment, not only once the save has flushed: the
   // spinner is the only sign a compile (auto, menu, or engine switch) started.
+  // Meanwhile the button stops it, so it leaves the command's enabled state.
   if (btn) {
-    btn.disabled = true;
+    delete btn.dataset.command;
+    btn.disabled = false;
     btn.classList.add('busy');
     btn.setAttribute('aria-busy', 'true');
-    btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Compiling…');
+    btn.title = 'Stop the build';
+    btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop');
   }
   refreshSidebarChrome();
 
   try {
     if (!(await flushCurrent())) return;
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
+    if (stopRequested) return;
 
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
-    state.logOpen = !result.ok;
+    // A build compiles past its errors, as Overleaf's do, and `pdf` is set
+    // whenever this run wrote one: the PDF shows, errors or not, with the
+    // count on the log button. The log takes the PDF's place only when a
+    // failed build left nothing to show.
+    const failed = !result.ok && !result.stopped;
+    state.logOpen = failed && !result.pdf;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });
 
-    // A failed run may leave a previous PDF on disk. Keep the preview already
-    // on screen rather than reloading and presenting that stale output as this
-    // run's result.
-    if (result.ok && result.pdf) {
+    if (result.pdf) {
       // A new PDF invalidates every match and text position from the previous
       // document. Closing the bar also invalidates the workspace debounce.
       closePdfFind();
-      const loaded = await viewer.load(api.pdfUrl(projectId));
+      const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
       setPdfFreshness(loaded ? '' : 'Preview could not reload');
     } else if (viewer.doc) {
-      setPdfFreshness('Last successful build');
+      // A stopped build says nothing about the preview; leave its label be.
+      if (!result.stopped) setPdfFreshness('Last successful build');
     } else {
       showPdfEmpty();
     }
 
-    if (!auto) {
+    // Whoever stopped a build knows; it gets no toast, as on the Mac.
+    if (!auto && !result.stopped) {
       if (result.ok) {
         const warns = result.warnings.length;
         toast(`Compiled in ${(result.durationMs / 1000).toFixed(1)}s${warns ? ` · ${warns} warning${warns === 1 ? '' : 's'}` : ''}`);
@@ -716,9 +733,11 @@ async function compile({ auto = false } = {}) {
     if (generation !== workspaceGeneration || state.projectId !== projectId) return;
     state.compiling = false;
     if (btn) {
+      btn.dataset.command = 'compile.run';
       btn.disabled = !state.tex.available;
       btn.classList.remove('busy');
       btn.removeAttribute('aria-busy');
+      btn.title = tooltip('compile.run');
       btn.replaceChildren('Compile');
     }
     refreshSidebarChrome();
@@ -729,6 +748,15 @@ async function compile({ auto = false } = {}) {
       compile({ auto: true });
     }
   }
+}
+
+// Stop this project's build (the core's stop_compile), and anything queued
+// behind it; the compile then reports itself stopped.
+function stopCompile() {
+  if (!state.compiling) return;
+  pendingCompile = false;
+  stopRequested = true;
+  api.stopCompile(state.projectId).catch((err) => toast(err.message, 'error'));
 }
 
 function toggleLogs() {
@@ -782,7 +810,7 @@ async function loadPdf() {
   const viewer = state.pdf;
   const current = () => generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
   try {
-    const loaded = await viewer.load(api.pdfUrl(projectId)) && current();
+    const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders) && current();
     if (loaded) setPdfFreshness('');
     return loaded;
   } catch {

@@ -19,6 +19,9 @@ server.log
 
 # macOS
 .DS_Store
+# Xcode's per-user state
+xcuserdata/
+*.xcuserstate
 
 # Editor/IDE / tooling
 .vscode/

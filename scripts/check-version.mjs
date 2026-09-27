@@ -4,11 +4,17 @@ const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url
 const tauri = JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
 const cargo = await readFile(new URL('../Cargo.toml', import.meta.url), 'utf8');
 const workspaceVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+// The macOS project is kept by hand beside project.yml, so both are checked.
+const macSpec = await readFile(new URL('../apps/macos/project.yml', import.meta.url), 'utf8');
+const pbxproj = await readFile(new URL('../apps/macos/TeXLocal.xcodeproj/project.pbxproj', import.meta.url), 'utf8');
+const pbxVersions = [...new Set([...pbxproj.matchAll(/MARKETING_VERSION = ([^;]+);/g)].map((m) => m[1]))];
 const expected = pkg.version;
 const versions = {
   'package.json': pkg.version,
   'Cargo.toml [workspace.package]': workspaceVersion,
   'src-tauri/tauri.conf.json': tauri.version,
+  'apps/macos/project.yml': macSpec.match(/MARKETING_VERSION: "([^"]+)"/)?.[1],
+  'apps/macos/TeXLocal.xcodeproj': pbxVersions.length === 1 ? pbxVersions[0] : pbxVersions.join(', ') || undefined,
 };
 
 for (const [file, version] of Object.entries(versions)) {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What went wrong, as the HIG shapes an alert: a short, specific title
 /// (at most two lines) and the detail in the message.
@@ -17,6 +18,22 @@ struct AppAlert: Sendable {
     }
 }
 
+/// A file Save PDF As… or Export Project as ZIP… writes where the save
+/// panel says (`fileExporter`): made once the panel is done, then copied
+/// there by the system.
+struct ExportFile: Transferable {
+    let name: String
+    let type: UTType
+    let make: @MainActor @Sendable () async throws -> URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .pdf) { SentTransferredFile(try await $0.make()) }
+            .suggestedFileName(\.name)
+        FileRepresentation(exportedContentType: .zip) { SentTransferredFile(try await $0.make()) }
+            .suggestedFileName(\.name)
+    }
+}
+
 /// The library: projects on disk, TeX availability, and the open project.
 @MainActor @Observable
 final class AppModel {
@@ -26,19 +43,17 @@ final class AppModel {
     var alert: AppAlert?
 
     // Requests from commands to the views that own the matching UI.
-    var showNewProject = false
-    /// The template the new-project sheet starts on: the card chosen.
-    var newProjectTemplate = "article"
+    /// The new-project sheet, on the template it starts with.
+    var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
+    /// File › Open…'s panel (RootView), Add Files…' (WorkspaceView).
+    var openingProject = false
+    var addingFiles = false
+    /// Save PDF As… or Export Project as ZIP…, while its panel shows.
+    var exporting: ExportFile?
     var searchFocusToken = 0
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
-
-    init() {
-        // The pane bars' Large size (Settings › General › Toolbar Size) is
-        // gone: the bars have the one, standard size.
-        UserDefaults.standard.removeObject(forKey: "paneBarSize")
-    }
 
     // Settings the menus and models read, remembered across launches; held
     // here so they are observed. Settings the views alone read are
@@ -56,19 +71,25 @@ final class AppModel {
     var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
         didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
     }
+    /// File › Open Recent: the projects last opened, newest first, by id.
+    var recentProjects = UserDefaults.standard.stringArray(forKey: "recentProjects") ?? [] {
+        didSet { UserDefaults.standard.set(recentProjects, forKey: "recentProjects") }
+    }
+    /// How far the project window's rounded corners reach into its detail
+    /// (SwiftUI's `containerCornerInsets`), for the views inside the split's
+    /// panes, which SwiftUI gives none: each pane is hosted on its own.
+    var windowCorners = RectangleCornerInsets()
 
     /// ⌘N on the home screen, or a template's card.
     func newProject(_ template: String = "article") {
-        newProjectTemplate = template
-        showNewProject = true
+        newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
 
     /// Ask the PDF pane for something, showing the pane so it is done now
-    /// rather than whenever the pane next appears. Find floats over the
-    /// pages, so it leaves the build panel open.
+    /// rather than whenever the pane next appears. Find in PDF is a bar
+    /// over the pages that leaves the build panel open.
     func requestPDF(_ action: PDFAction) {
         project?.showPDF = true
-        if action != .find { project?.showLogs = false }
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
@@ -88,13 +109,18 @@ final class AppModel {
         tex = try? await core.call("status", as: TexStatus.self)
     }
 
-    /// While TeX is missing, look again now and then so installing it takes
-    /// effect without a restart of this screen.
+    /// While TeX is missing, look again now and then.
     func watchForTeX() async {
         while !(tex?.available ?? true), !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
             tex = try? await core.call("status", as: TexStatus.self)
         }
+    }
+
+    /// Settings' TeX folder: one the user chose, or nil to find TeX
+    /// automatically. The core refuses a folder without latexmk.
+    func setTeXFolder(_ path: String?) async throws {
+        tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
 
     func create(name: String, template: String) async {
@@ -107,9 +133,32 @@ final class AppModel {
         }
     }
 
+    /// What File › Open… opens: a folder, a .tex file or a .zip.
+    static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
+
+    /// Whether Open… takes an item dropped or handed to the app.
+    static func canOpen(_ url: URL) -> Bool {
+        url.isFileURL && (url.hasDirectoryPath || ["tex", "zip"].contains(url.pathExtension.lowercased()))
+    }
+
+    /// File › Open…: a folder, a .tex file or a .zip from anywhere, made a
+    /// project in the library and opened. The original stays where it is.
+    /// The core copies it in (off the main actor, as every core call runs)
+    /// and removes a project it couldn't finish, so a bad zip leaves none.
+    func importProject(from url: URL) async {
+        do {
+            let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
+            await refresh()
+            await open(info.id)
+        } catch {
+            alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
+        }
+    }
+
     func rename(_ project: ProjectInfo, to name: String) async {
         do {
-            _ = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
+            let renamed = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
+            recentProjects = recentProjects.map { $0 == project.id ? renamed.id : $0 }
         } catch {
             alert = AppAlert("Couldn’t Rename “\(project.name)”", error)
         }
@@ -125,23 +174,21 @@ final class AppModel {
         await refresh()
     }
 
-    /// Select the project's folder in Finder: its main file's path, less
-    /// the main file's own components.
+    /// Select the project's folder in Finder.
     func revealProject(_ project: ProjectInfo) {
         Task {
-            guard let abs = try? await core.call("raw_path", ["id": project.id, "path": project.mainFile], as: String.self)
-            else { return }
-            var root = URL(fileURLWithPath: abs)
-            for _ in project.mainFile.split(separator: "/") { root.deleteLastPathComponent() }
-            NSWorkspace.shared.activateFileViewerSelecting([root])
+            guard let root = try? await core.call("project_root", ["id": project.id], as: String.self) else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root)])
         }
     }
 
-    func open(_ id: String) async {
-        guard await close() else { return }
+    /// Open a project; reopening at launch, where it was left.
+    func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
+        guard project?.id != id, await close() else { return }
+        recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
-        await model.load()
+        await model.load(restoring: saved?.project == id ? saved : nil)
     }
 
     /// Save, then leave the project. Returns false — and stays — when the save

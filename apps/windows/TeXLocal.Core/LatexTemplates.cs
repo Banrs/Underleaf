@@ -41,21 +41,18 @@ public static class LatexTemplates
         ("Label", "\\label{$0}"), ("Link", "\\href{$0}{}"), ("URL", "\\url{$0}"),
     ];
 
-    public static readonly IReadOnlyList<(string Label, string Template)> Lists =
+    // The blocks are named by their ids in the editor page's one table of
+    // them (web/src/latex-data.js BLOCK_TEMPLATES), which holds their LaTeX.
+    public static readonly IReadOnlyList<(string Label, string Id)> Lists =
     [
-        ("Bulleted list", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-        ("Numbered list", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-        ("Description list", "\\begin{description}\n  \\item[$0] \n\\end{description}\n"),
+        ("Bulleted list", "itemize"), ("Numbered list", "enumerate"), ("Description list", "description"),
     ];
 
     /// <summary>Environments; the lists are in <see cref="Lists"/>.</summary>
-    public static readonly IReadOnlyList<(string Label, string Template)> Environments =
+    public static readonly IReadOnlyList<(string Label, string Id)> Environments =
     [
-        ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-        ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-        ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-        ("Align (multi-line math)", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-        ("Code block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
+        ("Figure", "figure"), ("Table", "table"), ("Equation", "equation"),
+        ("Align (multi-line math)", "align"), ("Code block", "code"),
     ];
 
     /// <summary>The engines a project can compile with: the core's id, then its name.</summary>

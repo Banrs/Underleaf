@@ -3,9 +3,8 @@ import SwiftUI
 /// The web's Settings dialog (web/src/settings.js) as a standard macOS
 /// Settings window: a tab per area, each a grouped form. Its "Floating
 /// panels", "Interface size" and theme have no counterpart: macOS draws its
-/// own sidebar and toolbar (View › Customize Toolbar… arranges it), sizes
-/// its own text, and the app follows the system's appearance (HIG, Dark
-/// Mode).
+/// own sidebar and toolbar, sizes its own text, and the app follows the
+/// system's appearance (HIG, Dark Mode).
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -30,6 +29,8 @@ extension View {
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
     @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @State private var choosingTeX = false
+    @State private var alert: AppAlert?
 
     var body: some View {
         @Bindable var app = app
@@ -49,28 +50,59 @@ private struct GeneralSettings: View {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing.")
                 }
-                LabeledContent("TeX Distribution") {
-                    Text(app.tex?.available == true ? texVersion : "Not found — compiling is off")
+                // One row: where TeX is (or Not Found, with where to get
+                // it), Choose… for a folder the automatic search misses, and
+                // Use Automatic once one is chosen. A spinner until the
+                // status is in, rather than "Not Found" for a moment at launch.
+                LabeledContent {
+                    HStack {
+                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
+                        Button("Choose…") { choosingTeX = true }
+                    }
+                } label: {
+                    Text("TeX")
+                    if let tex = app.tex {
+                        if tex.available {
+                            Text(tex.texDir ?? tex.found.map { "\($0), Automatic" } ?? "Automatic")
+                        } else {
+                            Text("Not Found")
+                            Link("Get MacTeX…", destination: macTeXURL)
+                        }
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                 }
             }
         }
+        .fileImporter(isPresented: $choosingTeX, allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result { setTeXFolder(url.path) }
+        }
+        .fileDialogConfirmationLabel("Choose")
+        .fileDialogMessage("Choose the folder latexmk is in, such as a TeX distribution’s bin folder.")
+        // Here, not in the project window, whose alert the Settings window
+        // may be covering.
+        .alert(alert?.title ?? "", isPresented: Binding(presenting: $alert), presenting: alert) { _ in
+            Button("OK") {}
+        } message: { alert in
+            Text(alert.message)
+        }
     }
 
-    /// The distribution ("TeX Live 2026"); else latexmk's banner
-    /// ("Latexmk, John Collins, 9 March 2026. Version 4.88") as
-    /// "latexmk 4.88"; anything else as the core reported it.
-    private var texVersion: String {
-        if let distribution = app.tex?.distribution { return distribution }
-        guard let version = app.tex?.version else { return "Found" }
-        if let match = version.firstMatch(of: /Version ([0-9][0-9.a-z]*)/) { return "latexmk \(match.1)" }
-        return version
+    private func setTeXFolder(_ path: String?) {
+        Task {
+            do {
+                try await app.setTeXFolder(path)
+            } catch {
+                alert = AppAlert("Couldn’t Use “\(((path ?? "") as NSString).lastPathComponent)”", error)
+            }
+        }
     }
 }
 
 private struct EditorSettings: View {
-    @AppStorage("editorPalette") private var palette = "onedark"
-    @AppStorage("editorFont") private var font = "system"
-    @AppStorage("editorFontSize") private var fontSize = 13
+    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
 
     var body: some View {
         Form {

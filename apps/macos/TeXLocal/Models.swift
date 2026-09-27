@@ -23,28 +23,24 @@ struct TreeNode: Decodable, Identifiable {
     var isDirectory: Bool { type == "dir" }
 }
 
+extension [TreeNode] {
+    /// Every entry, each folder before what it holds.
+    var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
+}
+
 struct TexStatus: Decodable {
     let available: Bool
-    let version: String?
+    /// The TeX folder chosen in Settings; nil finds TeX automatically.
+    var texDir: String?
     /// The folder latexmk runs from.
     var found: String?
-
-    /// The distribution latexmk belongs to, from the folder it runs from
-    /// with links followed (/Library/TeX/texbin is MacTeX's link into
-    /// /usr/local/texlive/2026/bin/…): "TeX Live 2026", "MiKTeX", or nil.
-    var distribution: String? {
-        guard let found else { return nil }
-        let path = URL(fileURLWithPath: found).resolvingSymlinksInPath().path
-        if let match = path.firstMatch(of: /texlive\/(\d{4})\//) { return "TeX Live \(match.1)" }
-        if path.localizedCaseInsensitiveContains("miktex") { return "MiKTeX" }
-        return nil
-    }
 }
 
 struct ProjectSettings: Decodable {
     let mainFile: String
     let engine: String
     let shellEscape: Bool
+    let stopOnFirstError: Bool
 }
 
 struct LogItem: Decodable {
@@ -56,12 +52,21 @@ struct LogItem: Decodable {
     var isError: Bool { type == "error" }
 }
 
+/// A build's outcome. It compiles past errors, as Overleaf's do, so a
+/// failed build may still have written a PDF (`pdf`); `stopped` is a build
+/// Stop, a newer build or quitting ended.
 struct CompileResult: Decodable {
     let ok: Bool
+    let stopped: Bool
+    let pdf: String?
     let durationMs: Int
     let errors: [LogItem]
     let warnings: [LogItem]
     let log: String
+
+    /// Ended on its own without a clean run: "Build Failed", where a stopped
+    /// build reads "Build Stopped".
+    var failed: Bool { !ok && !stopped }
 
     /// How long the build took, as every place that shows it reads it: "1.2 s".
     var durationText: String {
@@ -103,6 +108,16 @@ struct InverseLoc: Decodable {
     let line: Int
 }
 
+/// `import_files`' result: the incoming paths that already exist here.
+/// Asked nothing about them, it writes nothing.
+struct Imported: Decodable {
+    struct Clash: Decodable {
+        let path: String
+    }
+
+    let existing: [Clash]
+}
+
 /// `rename_entry`'s result: both paths normalised.
 struct RenameResult: Decodable {
     let from: String
@@ -117,11 +132,29 @@ func remapPath(_ path: String, from: String, to: String) -> String {
     return path
 }
 
-/// The extensions the core treats as text (projects.rs `TEXT_EXT`); anything
-/// else opens in its own app rather than the editor.
+/// The files the editor opens (web/src/state.js `TEXT_FILE`).
 func isTextFile(_ path: String) -> Bool {
     [
         "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-        "py", "r", "dat", "def", "clo", "tikz", "svg",
+        "py", "r", "dat", "def", "clo", "tikz",
     ].contains((path as NSString).pathExtension.lowercased())
+}
+
+/// A file kind's symbol, as the sidebar and the location row show it.
+func fileSymbol(_ path: String, directory: Bool = false) -> String {
+    if directory { return "folder" }
+    switch (path as NSString).pathExtension.lowercased() {
+    case "tex": return "doc.text"
+    case "bib": return "books.vertical"
+    case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg": return "photo"
+    case "pdf": return "doc.richtext"
+    default: return "doc"
+    }
+}
+
+/// The files previewed in the source pane: images (web/src/state.js
+/// `IMAGE_FILE`, SVG among them) and PDF figures. Any other file that isn't
+/// text shows No Preview there, with Open in Default App.
+func isPreviewFile(_ path: String) -> Bool {
+    ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "pdf"].contains((path as NSString).pathExtension.lowercased())
 }

@@ -35,8 +35,12 @@ final class SyncTeXGeometryTests: XCTestCase {
     }
 }
 
+/// The core's analysis as the views take it. The counting rules themselves
+/// are checked against the web's by the core's shared fixtures
+/// (crates/texlocal-core/tests/fixtures/analyze.json).
+@MainActor
 final class OutlineTests: XCTestCase {
-    func testSectionsWithDepthTitlesAndLines() {
+    func testSectionsWithDepthTitlesAndLines() async throws {
         let text = """
         \\documentclass{article}
         \\section{Intro}
@@ -44,84 +48,59 @@ final class OutlineTests: XCTestCase {
         \\subsection*[short]{Details}
         text \\section{}
         """
-        let items = Outline.parse(text)
+        let items = try await Outline.analyze(text).items
         XCTAssertEqual(items.map(\.title), ["Intro", "Details", "(untitled)"])
         XCTAssertEqual(items.map(\.level), [2, 3, 2])
         XCTAssertEqual(items.map(\.line), [2, 4, 5])
     }
 
-    func testWordsCountAsTheWebCountsThem() {
-        // Each count is what web/src/state.js lineWords gives, run in Node.
-        let cases: [(Substring, Int)] = [
-            ("Hello world", 2),
-            ("\\section{Introduction} text here", 3),
-            ("A \\textbf{bold} and \\emph{it} word", 5),
-            ("Cost is 50\\% of total % a comment here", 4),
-            ("\\begin{itemize}[leftmargin=*] item", 3),
-            ("\\cite[p.~4]{knuth} says so", 3),
-            ("\\foo*[x bar", 2),
-            ("$x^2 + y_1$ is math", 4),
-            ("Ünïcödé naïve café", 3),
-            ("e\u{301}t\u{E9}", 1),
-            ("x=1 2 3 ---", 1),
-            ("tab\tseparated\u{A0}words", 3),
-            ("don't stop", 2),
-            ("a\\\\%b c", 3),
-            ("50% off", 0),
-            ("a % b\u{2028}c d", 4),
-            ("a % b\u{2028}c % d", 3),
-            ("", 0),
-        ]
-        for (line, words) in cases {
-            XCTAssertEqual(Outline.lineWords(line), words, String(line))
-        }
-    }
-
-    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() {
-        let doc = Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
+    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() async throws {
+        let doc = try await Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
         XCTAssertEqual(doc.lines, 4)
         XCTAssertEqual(doc.words, 4)
-        XCTAssertEqual(doc.outline.map(\.title), ["One"])
-        XCTAssertEqual(Outline.analyze("").lines, 1)
+        XCTAssertEqual(doc.items.map(\.title), ["One"])
+        let empty = try await Outline.analyze("")
+        XCTAssertEqual(empty.lines, 1)
     }
 
-    func testTheBreadcrumbIsTheChainOfEnclosingHeadings() {
-        let outline = Outline.parse("""
+    func testTheBreadcrumbIsTheChainOfEnclosingHeadings() async throws {
+        let outline = try await Outline.analyze("""
         \\chapter{A}
         \\section{B}
         \\subsection{C}
         \\section{D}
         text
-        """)
+        """).items
         XCTAssertEqual(Outline.chain(outline, at: 3).map(\.title), ["A", "B", "C"])
         XCTAssertEqual(Outline.chain(outline, at: 5).map(\.title), ["A", "D"])
         XCTAssertEqual(Outline.chain(outline, at: 0).map(\.title), [])
     }
 }
 
+@MainActor
 final class OutlineDisplayTests: XCTestCase {
-    func testDepthFollowsTheNestingNotTheLevel() {
+    func testDepthFollowsTheNestingNotTheLevel() async throws {
         // A subsection before any section has no parent: it sits flush, as
         // does the section after it; the subsection under that section is
         // one in.
-        let outline = Outline.parse("""
+        let outline = try await Outline.analyze("""
         \\subsection{}
         \\section{First Section}
         \\subsection{Detail}
         \\subsubsection{Finer}
         \\section{Second}
-        """)
+        """).items
         XCTAssertEqual(Outline.depths(outline), [0, 0, 1, 2, 0])
     }
 
-    func testTheTreeNestsAsTheHeadingsDo() {
-        let outline = Outline.parse("""
+    func testTheTreeNestsAsTheHeadingsDo() async throws {
+        let outline = try await Outline.analyze("""
         \\subsection{}
         \\section{A}
         \\subsection{A1}
         \\subsection{A2}
         \\section{B}
-        """)
+        """).items
         let tree = Outline.tree(outline)
         XCTAssertEqual(tree.map(\.item.title), ["(untitled)", "A", "B"])
         XCTAssertNil(tree[0].children)
@@ -131,16 +110,16 @@ final class OutlineDisplayTests: XCTestCase {
 
     /// A fold is keyed by the heading's level, title and which of its
     /// namesakes it is, so headings added above leave it where it was.
-    func testFoldKeysSurviveRenumbering() {
+    func testFoldKeysSurviveRenumbering() async throws {
         let text = "\\section{A}\n\\subsection{Results}\n\\section{B}\n\\subsection{Results}"
-        let keys = Outline.foldKeys(Outline.parse(text))
+        let keys = Outline.foldKeys(try await Outline.analyze(text).items)
         XCTAssertEqual(keys, ["2:A#1", "3:Results#1", "2:B#1", "3:Results#2"])
-        let later = Outline.foldKeys(Outline.parse("\\section{New}\n\\subsection{Other}\n" + text))
+        let later = Outline.foldKeys(try await Outline.analyze("\\section{New}\n\\subsection{Other}\n" + text).items)
         XCTAssertEqual(Array(later.dropFirst(2)), keys)
     }
 
-    func testEmptyHeadingsAreNamedByKind() {
-        let outline = Outline.parse("\\subsection{}\n\\chapter{}\n\\section{Named}")
+    func testEmptyHeadingsAreNamedByKind() async throws {
+        let outline = try await Outline.analyze("\\subsection{}\n\\chapter{}\n\\section{Named}").items
         XCTAssertEqual(outline.map(Outline.displayTitle), ["Untitled Subsection", "Untitled Chapter", "Named"])
     }
 }
@@ -170,20 +149,17 @@ final class PaneBarLayoutTests: XCTestCase {
     }
 }
 
-/// The controls floating over the PDF, measured off screen.
+/// A find bar, measured off screen.
 @MainActor
-final class FloatingGlassTests: XCTestCase {
-    /// A capsule is the kit's XL toolbar pill, 36 pt, as the toolbar's
-    /// glass items beside it are: large controls with 4 pt of glass around.
-    func testACapsuleIsTheToolbarsHeight() {
-        let capsule = HStack(spacing: FloatingMetrics.itemSpacing) {
-            Button("Previous Page", systemImage: "chevron.up") {}.onGlass()
-            Text("Page 1 of 2")
-            Button("Next Page", systemImage: "chevron.down") {}.onGlass()
+final class FindBarTests: XCTestCase {
+    /// Its field and buttons fit a pane bar, so it is the bars' height.
+    func testAFindBarIsABarsHeight() {
+        let bar = PaneBar {
+            SearchField(text: .constant(""), prompt: "Find in PDF").frame(width: 160)
+            FindSteps(enabled: true) { _ in }
+            Button("Done") {}.buttonStyle(.bordered)
         }
-        .floatingGlass()
-        let height = NSHostingView(rootView: capsule).fittingSize.height
-        XCTAssertEqual(height, FloatingMetrics.height, accuracy: 1)
+        XCTAssertEqual(NSHostingView(rootView: bar).fittingSize.height, BarMetrics.barHeight)
     }
 }
 
@@ -223,21 +199,155 @@ final class FileWatcherTests: XCTestCase {
 }
 
 @MainActor
-final class SplitLayoutTests: XCTestCase {
-    /// Two panes in a split of `size`, the second dragged to `last` points.
+final class SplitControllerTests: XCTestCase {
+    /// The window holding the test's split, and the autosave to forget.
+    private var window: NSWindow?
+    private var autosave = ""
+
+    override func tearDown() {
+        // Not saved again as it closes, into the app's own preferences.
+        (window?.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
+        window?.close()
+        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
+        super.tearDown()
+    }
+
+    /// A split of `size` as a window's content, laid out and its panes
+    /// opened at their shares, as when it appears.
+    private func split(_ size: NSSize, vertical: Bool, _ panes: [SplitPane]) -> PaneSplitViewController {
+        autosave = "SplitControllerTests \(UUID())"
+        let controller = PaneSplitViewController(app: AppModel(), vertical: vertical, autosave: autosave, panes: panes)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .resizable],
+                              backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        // At its size before it's the window's content, which would
+        // otherwise take the view's.
+        controller.view.setFrameSize(size)
+        window.contentViewController = controller
+        self.window = window
+        resize(to: size)
+        // On screen, unseen, as the app shows it: it appears, and its panes
+        // open at their shares.
+        window.alphaValue = 0
+        window.orderFront(nil)
+        return controller
+    }
+
+    private func resize(to size: NSSize) {
+        window?.setContentSize(size)
+        window?.layoutIfNeeded()
+    }
+
+    private func heights(_ controller: PaneSplitViewController) -> [CGFloat] {
+        controller.splitViewItems.map(\.viewController.view.frame.height)
+    }
+
+    /// The build panel opens at its share, keeps its size as the window
+    /// grows, gives way beyond two fifths in a small window, and has its
+    /// size back as the window grows again.
+    func testThePanelKeepsItsSizeWithinItsLargestShare() {
+        let controller = split(NSSize(width: 400, height: 601), vertical: false, [
+            SplitPane(minimum: 120) { EmptyView() },
+            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.3, keepsSize: true) { EmptyView() },
+        ])
+        XCTAssertEqual(heights(controller), [420, 180])
+        resize(to: NSSize(width: 400, height: 801))
+        XCTAssertEqual(heights(controller), [620, 180])
+        resize(to: NSSize(width: 400, height: 401))
+        XCTAssertEqual(heights(controller)[1], 160, accuracy: 0.5)
+        resize(to: NSSize(width: 400, height: 601))
+        XCTAssertEqual(heights(controller), [420, 180])
+    }
+
+    /// The inspector is the system's: its behaviour and its standard
+    /// width, not one of ours.
+    func testTheInspectorIsTheSystemsAtItsStandardWidth() {
+        let controller = split(NSSize(width: 1000, height: 600), vertical: true, [
+            SplitPane { EmptyView() },
+            SplitPane(inspector: true) { EmptyView() },
+        ])
+        let inspector = controller.splitViewItems[1]
+        XCTAssertEqual(inspector.behavior, .inspector)
+        // NSSplitViewItem.h's standard inspector width, not resizable.
+        XCTAssertEqual(inspector.viewController.view.frame.width, 270)
+        XCTAssertEqual(inspector.minimumThickness, 270)
+        XCTAssertEqual(inspector.maximumThickness, 270)
+        // Shown and hidden by the app, not by a drag on its divider.
+        XCTAssertFalse(inspector.canCollapse)
+    }
+
+    /// A pane hidden at first opens at its share the first time it shows,
+    /// not at its minimum, sliding in; hidden again it collapses.
+    func testAHiddenPaneOpensAtItsShare() async throws {
+        func panes(shown: Bool) -> [SplitPane] {
+            [SplitPane(minimum: 120) { EmptyView() },
+             SplitPane(minimum: 80, fraction: 0.3, keepsSize: true, shown: shown) { EmptyView() }]
+        }
+        let controller = split(NSSize(width: 400, height: 601), vertical: false, panes(shown: false))
+        XCTAssertTrue(controller.splitViewItems[1].isCollapsed)
+        controller.update(panes(shown: true))
+        try await waitUntil { !controller.splitViewItems[1].isCollapsed }
+        try await waitUntil { self.heights(controller) == [420, 180] }
+        controller.update(panes(shown: false))
+        try await waitUntil { controller.splitViewItems[1].isCollapsed }
+    }
+
+    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+        for _ in 0..<40 where !condition() {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(condition())
+    }
+}
+
+/// The sidebar's split (Files over the File Outline), a plain NSSplitView.
+@MainActor
+final class SidebarSplitTests: XCTestCase {
+    /// The window holding the test's split (a view doesn't keep its window).
+    private var window: NSWindow?
+
+    /// Two panes in a split of `size` in a window, as the app has it, the
+    /// second dragged to `last` points.
+    ///
+    /// The window sizes the split once it has its delegate, which lays the
+    /// panes out before the drag, as in the app. macOS 26's `setPosition`
+    /// doesn't lay out panes added since the last layout (27's does), so a
+    /// split never sized constrained the drag against empty frames there.
     private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
-                       last: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
-        let split = NSSplitView(frame: NSRect(origin: .zero, size: size))
+                       last: CGFloat) -> (NSSplitView, SidebarSplit.Coordinator) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 1200),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        self.window = window
+        let split = NSSplitView()
         split.isVertical = vertical
         split.dividerStyle = .thin
-        let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
+        let coordinator = SidebarSplit.Coordinator(autosave: "SidebarSplitTests \(UUID())")
         coordinator.panes = panes
-        coordinator.views = [NSView(), NSView()]
+        coordinator.clips = [PaneClip(content: NSView(), vertical: vertical), PaneClip(content: NSView(), vertical: vertical)]
         coordinator.views.forEach(split.addArrangedSubview)
         split.delegate = coordinator
+        window.contentView?.addSubview(split)
+        resize(split, to: size)
+        // Laid out before the drag: the panes fill the split.
         let length = vertical ? size.width : size.height
+        let end = split.arrangedSubviews[1].frame
+        XCTAssertEqual(vertical ? end.maxX : end.maxY, length)
         split.setPosition(length - last - split.dividerThickness, ofDividerAt: 0)
+        layOut(split)
         return (split, coordinator)
+    }
+
+    /// The window resizing the split: its new frame, then a layout pass.
+    private func resize(_ split: NSSplitView, to size: NSSize) {
+        split.setFrameSize(size)
+        layOut(split)
+    }
+
+    /// The window's layout pass, which lays the split out again: the
+    /// panes stay as they were.
+    private func layOut(_ split: NSSplitView) {
+        split.window?.layoutIfNeeded()
     }
 
     private func widths(_ split: NSSplitView) -> [CGFloat] {
@@ -247,31 +357,17 @@ final class SplitLayoutTests: XCTestCase {
     /// A pane squeezed to its minimum by a small window gets its share back
     /// as the window grows, rather than staying at the minimum.
     func testAPaneGetsItsShareBackAfterASmallWindow() throws {
-        // Source | PDF with the PDF dragged narrow.
+        // Two panes side by side, the second dragged narrow.
         let (split, coordinator) = split(NSSize(width: 936, height: 400),
                                          [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
                                          last: 200)
         XCTAssertEqual(widths(split), [735, 200])
-        split.setFrameSize(NSSize(width: 300, height: 400))
+        resize(split, to: NSSize(width: 300, height: 400))
         XCTAssertEqual(widths(split), [159, 140])
         // Hidden now, it would come back at the share it had, not squeezed.
         XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
-        split.setFrameSize(NSSize(width: 936, height: 400))
+        resize(split, to: NSSize(width: 936, height: 400))
         XCTAssertEqual(widths(split), [735, 200])
-    }
-
-    /// A pane that keeps its size gives way beyond its largest share: the
-    /// build panel in a small window leaves the editors the room.
-    func testAPaneKeepsWithinItsLargestShare() {
-        let (split, _) = split(NSSize(width: 400, height: 1000), vertical: false, [
-            SplitPane(minimum: 120) { EmptyView() },
-            SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
-        ], last: 300)
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
-        split.setFrameSize(NSSize(width: 400, height: 500))
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
-        split.setFrameSize(NSSize(width: 400, height: 1000))
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
     }
 
     /// The sidebar's outline folded to its header: the files take the
@@ -288,30 +384,23 @@ final class SplitLayoutTests: XCTestCase {
         folded[1].collapsed = 28
         coordinator.panes = folded
         coordinator.fold(split, 1, to: 28)
+        layOut(split)
         XCTAssertEqual(split.arrangedSubviews.map(\.frame.height), [571, 28])
         XCTAssertEqual(coordinator.splitView(split, effectiveRect: NSRect(x: 0, y: 571, width: 250, height: 1),
                                              forDrawnRect: .zero, ofDividerAt: 0), .zero)
-        split.setFrameSize(NSSize(width: 250, height: 800))
+        resize(split, to: NSSize(width: 250, height: 800))
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 28)
-        split.setFrameSize(NSSize(width: 250, height: 600))
+        resize(split, to: NSSize(width: 250, height: 600))
         coordinator.panes = panes
         coordinator.fold(split, 1, to: nil)
+        layOut(split)
         XCTAssertEqual(split.arrangedSubviews[1].frame.height, 240)
     }
 }
 
 final class CompileResultTests: XCTestCase {
-    func testTheSourceFindCountReadsAsXcodesDoes() {
-        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
-        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
-        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
-        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
-        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
-        XCTAssertEqual(FindMatches().label(for: ""), "")
-    }
-
     func testDurationsReadTheSameEverywhere() throws {
-        let json = #"{"ok":true,"durationMs":1234,"pdf":null,"errors":[],"warnings":[],"log":""}"#
+        let json = #"{"ok":true,"stopped":false,"durationMs":1234,"pdf":"build/main.pdf","errors":[],"warnings":[],"log":""}"#
         let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
         XCTAssertEqual(result.durationText, "1.2 s")
     }
@@ -328,12 +417,14 @@ final class RenameTests: XCTestCase {
     }
 }
 
-final class PDFFindTests: XCTestCase {
-    func testTheCountReadsAsTheWebsDoes() {
-        XCTAssertEqual(PDFFind.countLabel(query: "", total: 0, index: 1, limited: false), "")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 0, index: 1, limited: false), "Not found")
-        XCTAssertEqual(PDFFind.countLabel(query: "x", total: 12, index: 3, limited: false), "3 of 12")
-        XCTAssertEqual(PDFFind.countLabel(query: "e", total: 5000, index: 1, limited: true), "1 of 5000+")
+final class FindTests: XCTestCase {
+    func testTheCountReadsAsXcodesDoes() {
+        XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
+        XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
+        XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
+        XCTAssertEqual(FindMatches(index: 2, total: 1000, limited: true).label(for: "a"), "2 of 1000+")
+        XCTAssertEqual(FindMatches().label(for: "loop"), "Not found")
+        XCTAssertEqual(FindMatches().label(for: ""), "")
     }
 
     func testQueriesAreTrimmedAndCapped() {
@@ -353,8 +444,10 @@ final class CommandTests: XCTestCase {
     }
 
     func testEveryAcceleratorParses() {
-        for command in MenuCommand.allCases where command.accel != nil {
-            XCTAssertNotNil(command.shortcut, command.rawValue)
+        for command in MenuCommand.allCases {
+            for accel in [command.accel, command.macAccel].compactMap(\.self) {
+                XCTAssertNotNil(MenuCommand.shortcut(for: accel), command.rawValue)
+            }
         }
     }
 
@@ -439,8 +532,20 @@ final class MenuBarTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
     }
 
-    func testTheSidebarToggleIsCommandBackslash() throws {
-        XCTAssertTrue(try XCTUnwrap(item("\\")).title.hasSuffix("Sidebar"))
+    /// Apple's chords where the shared table's differ (`MenuCommand.macAccel`).
+    func testTheViewMenuHasApplesChords() throws {
+        XCTAssertTrue(try XCTUnwrap(item("s", [.command, .control])).title.hasSuffix("Sidebar"))
+        XCTAssertEqual(try XCTUnwrap(item("0")).title, "Actual Size")
+        XCTAssertEqual(try XCTUnwrap(item("9")).title, "Fit Width")
+        XCTAssertEqual(try XCTUnwrap(item("9", [.command, .option])).title, "Fit Height")
+    }
+
+    /// TextEdit's and Xcode's: ⌘F Find…, ⌥⌘F Find and Replace…; Find in
+    /// PDF… has no chord of its own.
+    func testFindHasApplesChords() throws {
+        XCTAssertEqual(try XCTUnwrap(item("f")).title, "Find…")
+        XCTAssertEqual(try XCTUnwrap(item("f", [.command, .option])).title, "Find and Replace…")
+        XCTAssertEqual(items().first { $0.title == "Find in PDF…" }?.keyEquivalent, "")
     }
 
     func testTheBottomPanelIsTheBuildPanel() throws {

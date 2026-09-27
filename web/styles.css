@@ -316,7 +316,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 .btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 78%, black); }
 .btn.primary:disabled { background: var(--fill-2); color: var(--label-3); }
 /* Busy is not disabled: the button keeps its fill while its spinner runs. */
-.btn.primary.busy:disabled { background: var(--accent-fill); color: var(--on-accent); }
 
 .btn.destructive { background: var(--red-fill); color: #fff; }
 .btn.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--red-fill) 88%, black); }
@@ -430,6 +429,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .badge.error { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
 .badge.warning { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--orange-text); }
 .badge.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green-text); }
+.badge.neutral { background: var(--fill-1); color: var(--label-2); }
 
 .count-badge {
   min-width: var(--sp-4);

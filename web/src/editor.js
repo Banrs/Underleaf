@@ -12,7 +12,7 @@ import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, fin
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
-import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES } from './latex-data.js';
+import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES, BLOCK_TEMPLATES } from './latex-data.js';
 
 const themeCompartment = new Compartment();
 
@@ -591,8 +591,11 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: line.from + cursor } });
       view.focus();
     },
-    // Insert a multi-line template at the cursor; "$0" marks the cursor spot.
-    insertTemplate(template) {
+    // Insert a block (latex-data.js BLOCK_TEMPLATES) at the cursor, on a
+    // line of its own; false for an id there is none of.
+    insertBlock(id) {
+      const template = BLOCK_TEMPLATES[id];
+      if (!template) return false;
       const { from, to } = view.state.selection.main;
       const line = view.state.doc.lineAt(from);
       const needsNewline = /\S/.test(line.text) ? '\n' : '';
@@ -601,6 +604,7 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       const anchor = from + (cursorAt === -1 ? text.length : needsNewline.length + cursorAt);
       view.dispatch({ changes: { from, to, insert: text }, selection: { anchor } });
       view.focus();
+      return true;
     },
     openSearch: () => openSearchPanel(view),
     // The next or previous match of the find panel's query; with no query

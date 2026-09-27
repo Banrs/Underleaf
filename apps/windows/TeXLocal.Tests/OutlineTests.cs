@@ -2,10 +2,33 @@ using System.Text.RegularExpressions;
 
 namespace TeXLocal.Tests;
 
+// The Rust core opens its library folder from TEXLOCAL_DATA, a process-wide
+// setting, so the tests that open one run one at a time.
+[CollectionDefinition("Rust core", DisableParallelization = true)]
+public sealed class RustCoreCollection;
+
+[Collection("Rust core")]
 public sealed class OutlineTests
 {
+    /// <summary>The core's analyze, on a scratch library folder.</summary>
+    private static async Task<DocumentStats> AnalyzeAsync(string text)
+    {
+        var data = Directory.CreateTempSubdirectory("texlocal-test-").FullName;
+        Environment.SetEnvironmentVariable("TEXLOCAL_DATA", data);
+        try
+        {
+            return await Outline.AnalyzeAsync(new Core(), text);
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
+    }
+
+    // The core's own fixtures (crates/texlocal-core/tests/fixtures/analyze.json)
+    // hold the reading's cases; these check what reaches the app.
     [Fact]
-    public void SectionsWithDepthTitlesAndLines()
+    public async Task HeadingsComeWithTheirLevelsTitlesAndLines()
     {
         const string text = """
             \documentclass{article}
@@ -14,17 +37,36 @@ public sealed class OutlineTests
             \subsection*[short]{Details}
             text \section{}
             """;
-        var items = Outline.Parse(text.ReplaceLineEndings("\r\n"));
-        Assert.Equal(new[] { "Intro", "Details", "(untitled)" }, items.Select(i => i.Title));
-        Assert.Equal(new[] { 2, 3, 2 }, items.Select(i => i.Level));
-        Assert.Equal(new[] { 2, 4, 5 }, items.Select(i => i.Line));
+        var doc = await AnalyzeAsync(text.ReplaceLineEndings("\r\n"));
+        Assert.Equal(new[] { "Intro", "Details", "(untitled)" }, doc.Outline.Select(i => i.Title));
+        Assert.Equal(new[] { 2, 3, 2 }, doc.Outline.Select(i => i.Level));
+        Assert.Equal(new[] { 2, 4, 5 }, doc.Outline.Select(i => i.Line));
+    }
+
+    [Fact]
+    public async Task LinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords()
+    {
+        var doc = await AnalyzeAsync("\\section{One} two words\r\n  % three four\rfive\n");
+        Assert.Equal(4, doc.Lines);
+        Assert.Equal(4, doc.Words);
+        Assert.Equal("One", Assert.Single(doc.Outline).Title);
+        Assert.Equal(1, (await AnalyzeAsync("")).Lines);
+    }
+
+    [Fact]
+    public void TheBreadcrumbIsTheChainOfEnclosingHeadings()
+    {
+        OutlineItem[] outline = [new(1, "A", 1), new(2, "B", 2), new(3, "C", 3), new(2, "D", 4)];
+        Assert.Equal(new[] { "A", "B", "C" }, Outline.Chain(outline, 3).Select(i => i.Title));
+        Assert.Equal(new[] { "A", "D" }, Outline.Chain(outline, 5).Select(i => i.Title));
+        Assert.Empty(Outline.Chain(outline, 0));
     }
 
     [Fact]
     public void HeadingsNestAsTheDocumentDoes()
     {
         // A subsection before any section sits flush; a chapter's sections sit under it.
-        var items = Outline.Parse("\\subsection{A}\n\\chapter{B}\n\\section{C}\n\\subsection{D}\n\\section{E}\n\\chapter{}");
+        OutlineItem[] items = [new(3, "A", 1), new(1, "B", 2), new(2, "C", 3), new(3, "D", 4), new(2, "E", 5), new(1, "(untitled)", 6)];
         Assert.Equal(new[] { 0, 0, 1, 2, 1, 0 }, Outline.Depths(items));
 
         var tree = Outline.Tree(items);
@@ -39,16 +81,16 @@ public sealed class OutlineTests
     [Fact]
     public void FoldKeysTellHeadingsOfTheSameNameApart()
     {
-        var items = Outline.Parse("\\section{A}\n\\subsection{B}\n\\section{A}\n\\section{}");
+        OutlineItem[] items = [new(2, "A", 1), new(3, "B", 2), new(2, "A", 3), new(2, "(untitled)", 4)];
         Assert.Equal(new[] { "2:A#1", "3:B#1", "2:A#2", "2:(untitled)#1" }, Outline.FoldKeys(items));
         // A line added above keeps every key.
-        Assert.Equal(Outline.FoldKeys(items), Outline.FoldKeys(Outline.Parse("x\n\\section{A}\n\\subsection{B}\n\\section{A}\n\\section{}")));
+        Assert.Equal(Outline.FoldKeys(items), Outline.FoldKeys(items.Select(i => i with { Line = i.Line + 1 }).ToList()));
     }
 
     [Fact]
     public void TheSectionLevelIsTheCaretLinesHeading()
     {
-        var items = Outline.Parse("intro\n\\section{A}\ntext\n\\paragraph{B} more");
+        OutlineItem[] items = [new(2, "A", 2), new(5, "B", 4)];
         Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 1));
         Assert.Equal("Section", LatexTemplates.LevelAt(items, 2));
         Assert.Equal("Normal text", LatexTemplates.LevelAt(items, 3));
@@ -74,53 +116,5 @@ public sealed class OutlineTests
         Assert.True(TextFiles.IsText("refs.bib"));
         Assert.False(TextFiles.IsText("figures/plot.png"));
         Assert.False(TextFiles.IsText("Makefile"));
-    }
-}
-
-public sealed class WordCountTests
-{
-    // Each count is what web/src/state.js lineWords gives, run in Node — the
-    // cases apps/macos checks its own port against.
-    [Theory]
-    [InlineData("Hello world", 2)]
-    [InlineData("\\section{Introduction} text here", 3)]
-    [InlineData("A \\textbf{bold} and \\emph{it} word", 5)]
-    [InlineData("Cost is 50\\% of total % a comment here", 4)]
-    [InlineData("\\begin{itemize}[leftmargin=*] item", 3)]
-    [InlineData("\\cite[p.~4]{knuth} says so", 3)]
-    [InlineData("\\foo*[x bar", 2)]
-    [InlineData("$x^2 + y_1$ is math", 4)]
-    [InlineData("Ünïcödé naïve café", 3)]
-    [InlineData("e\u0301t\u00E9", 1)]
-    [InlineData("x=1 2 3 ---", 1)]
-    [InlineData("tab\tseparated\u00A0words", 3)]
-    [InlineData("don't stop", 2)]
-    [InlineData("a\\\\%b c", 3)]
-    [InlineData("50% off", 0)]
-    [InlineData("a % b\u2028c d", 4)]
-    [InlineData("a % b\u2028c % d", 3)]
-    [InlineData("", 0)]
-    public void WordsCountAsTheWebCountsThem(string line, int words)
-    {
-        Assert.Equal(words, Outline.LineWords(line));
-    }
-
-    [Fact]
-    public void LinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords()
-    {
-        var doc = Outline.Analyze("\\section{One} two words\r\n  % three four\rfive\n");
-        Assert.Equal(4, doc.Lines);
-        Assert.Equal(4, doc.Words);
-        Assert.Equal("One", Assert.Single(doc.Outline).Title);
-        Assert.Equal(1, Outline.Analyze("").Lines);
-    }
-
-    [Fact]
-    public void TheBreadcrumbIsTheChainOfEnclosingHeadings()
-    {
-        var outline = Outline.Parse("\\chapter{A}\n\\section{B}\n\\subsection{C}\n\\section{D}\ntext");
-        Assert.Equal(new[] { "A", "B", "C" }, Outline.Chain(outline, 3).Select(i => i.Title));
-        Assert.Equal(new[] { "A", "D" }, Outline.Chain(outline, 5).Select(i => i.Title));
-        Assert.Empty(Outline.Chain(outline, 0));
     }
 }

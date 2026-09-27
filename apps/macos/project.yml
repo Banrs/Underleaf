@@ -4,12 +4,12 @@ name: TeXLocal
 options:
   bundleIdPrefix: com.texlocal
   deploymentTarget:
-    macOS: "27.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "27.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
     ARCHS: arm64
 targets:
   TeXLocal:
@@ -17,6 +17,32 @@ targets:
     platform: macOS
     sources:
       - path: TeXLocal
+    # What Finder's Open With and the Dock icon can hand the app, as Open…
+    # takes them: a .tex file, a .zip or a folder. Alternate, so TeXLocal
+    # never becomes their default app; org.tug.tex is TeX distributions'
+    # own type, imported for Macs without one.
+    info:
+      path: TeXLocal/Info.plist
+      properties:
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: LaTeX Document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.tug.tex]
+          - CFBundleTypeName: ZIP Archive
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive]
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.folder]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.tug.tex
+            UTTypeDescription: LaTeX Document
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [tex]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.texlocal.mac

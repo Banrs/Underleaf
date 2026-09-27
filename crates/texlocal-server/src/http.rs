@@ -40,10 +40,6 @@ impl Request {
     pub fn path(&self) -> &str {
         self.target.split('?').next().unwrap_or_default()
     }
-
-    pub fn query(&self) -> Option<&str> {
-        self.target.split_once('?').map(|(_, q)| q)
-    }
 }
 
 pub struct Response {

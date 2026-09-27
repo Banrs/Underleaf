@@ -32,8 +32,7 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      # The app targets macOS 27, so it needs the newest Xcode on the image,
-      # which is not always the default one.
+      # The newest Xcode on the image, which is not always the default one.
       - name: Select the newest Xcode
         run: |
           ls -d /Applications/Xcode*.app
@@ -42,29 +41,17 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep -i macos
           sw_vers
-      # The project targets macOS 27. While the runner image is older, build
-      # and test for the older of the host and the SDK instead: an SDK that
-      # predates 27 fails the build on any API that needs 27 either way.
-      - name: Deployment target for this runner
-        run: |
-          HOST=$(sw_vers -productVersion | cut -d. -f1-2)
-          SDK=$(xcrun --sdk macosx --show-sdk-version)
-          TARGET=$(printf '%s\n' "$HOST" "$SDK" | sort -V | head -1)
-          if [ "${TARGET%%.*}" -lt 27 ]; then
-            echo "::warning::Runner has macOS $HOST and SDK $SDK; building for $TARGET instead of 27.0"
-            echo "TARGET_OVERRIDE=MACOSX_DEPLOYMENT_TARGET=$TARGET" >> "$GITHUB_ENV"
-          fi
-      # Keyed on the deployment target: cargo does not rebuild dependencies
+      # Keyed on the deployment target (project.yml): cargo does not rebuild
       # when it changes, and objects cached for a newer macOS than the app
       # links for draw a linker warning each.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: macos-app-${{ env.TARGET_OVERRIDE }}
+          key: macos-app-26.0
       - run: npm ci
       - name: Build
         working-directory: apps/macos
-        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE build-for-testing
+        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' build-for-testing
       # The core must be linked in, not loaded: a dylib from target/ would be
       # loaded from its build path, which exists only on the machine that
       # built the app.
@@ -79,4 +66,4 @@ jobs:
           fi
       - name: Test
         working-directory: apps/macos
-        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' $TARGET_OVERRIDE test-without-building
+        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' test-without-building

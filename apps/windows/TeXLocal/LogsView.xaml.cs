@@ -37,10 +37,11 @@ public sealed partial class LogsView : UserControl
 
         var errors = result?.Errors.Count ?? 0;
         var warnings = result?.Warnings.Count ?? 0;
-        SuccessIcon.Visibility = result is not null && errors == 0 ? Visibility.Visible : Visibility.Collapsed;
+        SuccessIcon.Visibility = result is { Ok: true } && errors == 0 ? Visibility.Visible : Visibility.Collapsed;
         FailureIcon.Visibility = errors > 0 ? Visibility.Visible : Visibility.Collapsed;
         WarningIcon.Visibility = WarningText.Visibility = warnings > 0 ? Visibility.Visible : Visibility.Collapsed;
         OutcomeText.Text = result is null ? "Not compiled yet"
+            : result.Stopped ? "Build stopped"
             : errors > 0 ? Count(errors, "error")
             : result.Ok ? "Compiled"
             : "Failed";
@@ -92,8 +93,8 @@ public sealed partial class LogsView : UserControl
             : result is null ? ("\uE90F", "Not compiled yet", "Compile to see errors and warnings here.")
             : issueCount > 0 ? null
             : filter.Length > 0 ? ("\uE721", "No matches", $"No issues match “{filter}”.")
-            : result.Ok ? ("\uE73E", "No issues", "")
-            // TeX stopped without a recognised error (a missing format, a crash).
+            : !result.Failed ? ("\uE73E", "No issues", "")
+            // The core names a cause for every failure; this is a fallback.
             : ("\uE783", "Build failed", "The compile failed without a recognisable error. See the build log for TeX’s own output.");
 
         Issues.Visibility = !ShowingLog && empty is null ? Visibility.Visible : Visibility.Collapsed;

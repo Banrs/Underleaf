@@ -14,11 +14,6 @@ struct TeXLocalApp: App {
         .defaultSize(width: 1200, height: 760)
         .commands {
             AppCommands(app: app)
-            // Show/Hide Toolbar and Customize Toolbar… in the View menu.
-            // AppKit's items, sent to the key window, which names and toggles
-            // its toolbar; with no key window (TeXLocal in the background,
-            // driven by System Events) they read "Show Toolbar" and do nothing.
-            ToolbarCommands()
             // The app has no help book; the default item only said so.
             CommandGroup(replacing: .help) {
                 Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
@@ -65,8 +60,28 @@ extension Binding where Value == Bool {
     }
 }
 
+extension View {
+    /// Asks before moving an item to the Trash. Not destructive-styled: moving
+    /// it was chosen, and the Trash gives it back (HIG, Alerts). `presenting`,
+    /// so the title keeps its name while the dialog closes.
+    func trashConfirmation<Item: Sendable>(_ item: Binding<Item?>, name: @escaping (Item) -> String,
+                                           perform: @escaping (Item) -> Void) -> some View {
+        confirmationDialog("Move “\(item.wrappedValue.map(name) ?? "")” to the Trash?", isPresented: Binding(presenting: item),
+                           titleVisibility: .visible, presenting: item.wrappedValue) { value in
+            Button("Move to Trash") { perform(value) }
+        } message: { _ in
+            Text("You can restore it from the Trash.")
+        }
+    }
+}
+
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    /// The open project and where it was left, kept with the window's
+    /// restored state: it opens again at launch as it was when the system
+    /// restores windows (System Settings › Desktop & Dock › Close windows
+    /// when quitting an application, or Quit and Keep Windows).
+    @SceneStorage("workspace") private var savedWorkspace: Data?
 
     var body: some View {
         @Bindable var app = app
@@ -84,15 +99,41 @@ struct RootView: View {
         // constraint passes then looped until AppKit threw.
         .frame(minWidth: WindowMetrics.minimum.width, minHeight: WindowMetrics.contentMinHeight)
         .task {
+            // Only the alert below has anything to show.
+            guard Core.shared.isOpen else { return }
             await app.refresh()
             // `open TeXLocal.app --args -openProject <id>` opens a project at
             // launch; launch arguments land in UserDefaults' argument domain
             // for this run only.
-            if let id = UserDefaults.standard.string(forKey: "openProject"), app.project == nil {
-                await app.open(id)
+            let saved = savedWorkspace.flatMap { try? JSONDecoder().decode(SavedWorkspace.self, from: $0) }
+                .flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
+            if let id = UserDefaults.standard.string(forKey: "openProject") ?? saved?.project, app.project == nil {
+                await app.open(id, restoring: saved)
             }
         }
-        .sheet(isPresented: $app.showNewProject) { NewProjectSheet() }
+        .onChange(of: app.project?.saved) { _, saved in savedWorkspace = saved.flatMap { try? JSONEncoder().encode($0) } }
+        // A .tex file, a .zip or a folder from Finder's Open With or the
+        // Dock icon, opened as Open… opens it.
+        .onOpenURL { url in
+            if AppModel.canOpen(url) { Task { await app.importProject(from: url) } }
+        }
+        // While TeX is missing, look for it now and then, whichever screen
+        // shows, so installing it takes effect without a restart.
+        .task(id: app.tex?.available) { await app.watchForTeX() }
+        // On a view of its own: a file dialog's labels reach every dialog
+        // presented from inside the view they're set on.
+        .background {
+            Color.clear
+                .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
+                    switch result {
+                    case .success(let url): Task { await app.importProject(from: url) }
+                    case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+                    }
+                }
+                .fileDialogConfirmationLabel("Open")
+                .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
+        }
+        .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
         // The title says what happened, briefly, as the HIG asks; the
         // detail is the message. `presenting`, so the text stays while the
         // alert closes.
@@ -100,6 +141,14 @@ struct RootView: View {
             Button("OK") {}
         } message: { alert in
             Text(alert.message)
+        }
+        // The library folder can't be made or opened: say so and quit, rather
+        // than leave a crash report that explains nothing.
+        .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
+            Button("Quit") { NSApp.terminate(nil) }
+        } message: {
+            let folder = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"] ?? "~/TeXLocal"
+            Text("Make sure you can create and write to \(folder), then open TeXLocal again.")
         }
     }
 }
@@ -112,4 +161,11 @@ enum WindowMetrics {
     static let minimum = CGSize(width: 960, height: 600)
     static let toolbarHeight: CGFloat = 52
     static var contentMinHeight: CGFloat { minimum.height - toolbarHeight }
+}
+
+extension NSApplication {
+    /// The project window (the "main" scene's), even while Settings is key.
+    var projectWindow: NSWindow? {
+        windows.first { $0.identifier?.rawValue == "main" }
+    }
 }

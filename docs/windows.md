@@ -11,8 +11,15 @@ still ships.
   (SyncTeX included). Covered by a test.
 - **ZIP export** uses the Rust `zip` crate (`zipexport.rs`); no `zip` CLI.
 - **Processes.** Every `latexmk` and `synctex` spawn passes `CREATE_NO_WINDOW`,
-  or each one flashes a console. A timed-out or superseded compile kills the
-  tree with `taskkill /PID <pid> /T /F`, where POSIX signals the process group.
+  or each one flashes a console. A stopped, timed-out or superseded compile
+  kills the tree with `taskkill /PID <pid> /T /F`, where POSIX signals the
+  process group.
+- **Saves** are atomic (`atomic.rs`): a temporary file beside the target, then a
+  rename. Windows refuses to rename over a file another program holds open
+  without sharing, so there the old file steps aside first and comes back if
+  the move still fails.
+- **Replace** on a name clash moves the old file to the Recycle Bin, as a
+  delete does.
 
 ## TeX discovery
 

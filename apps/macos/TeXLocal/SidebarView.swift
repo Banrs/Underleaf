@@ -8,20 +8,25 @@ import SwiftUI
 /// section tinted. The outline folds to its header, docked at the foot of
 /// the sidebar, and the files take the room.
 struct NavigatorView: View {
-    /// The outline folded to its header (the sidebar's section chevron, or
-    /// View › Hide File Outline).
+    /// The outline folded to its header (its section's chevron, or View ›
+    /// Hide File Outline).
     static let outlineCollapsedKey = "OutlineCollapsed"
+    /// The folded outline's height: its header, the secondary rows'
+    /// height, so the divider over it continues the status bar's hairline.
+    static var outlineHeaderHeight: CGFloat { BarMetrics.secondaryBarHeight }
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @FocusState private var searchFocused: Bool
     @AppStorage(Self.outlineCollapsedKey) private var outlineCollapsed = false
+    @State private var fold = OutlineFold()
 
     var body: some View {
-        SplitController(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
+        SidebarSplit(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
             SplitPane(minimum: 100) { FilesList(project: project) },
             SplitPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
-                      collapsed: outlineCollapsed ? OutlineHeader.height : nil) {
-                OutlineList(project: project)
+                      collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,
+                      didFold: { [fold] folded in fold.slid(folded: folded) }) {
+                OutlineList(project: project, fold: fold)
             },
         ])
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
@@ -31,21 +36,23 @@ struct NavigatorView: View {
 
     /// Search results take the whole sidebar.
     private var showsOutline: Bool {
-        project.searchQuery.isEmpty && project.openPath?.hasSuffix(".tex") == true
+        project.searchQuery.isEmpty && project.isLaTeX
     }
 }
 
-/// The project's files, with adding at the header as Overleaf has it, or
-/// the project search's results while there is a query.
+/// The project's files, or the project search's results while there is a
+/// query.
 private struct FilesList: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var selection: String?
+    @State private var hit: SearchHit.ID?
     @State private var deleting: String?
     /// The row whose name is being edited in place, and the name so far.
     @State private var renaming: String?
     @State private var newName = ""
-    @FocusState private var renameFocused: Bool
+    /// The open folders, by path.
+    @State private var expanded: Set<String> = []
 
     var body: some View {
         // Two lists rather than one whose sections change shape: the
@@ -58,68 +65,58 @@ private struct FilesList: View {
             Task { await project.importFiles(urls) }
             return true
         }
-        .confirmationDialog(
-            "Move “\((deleting.map { ($0 as NSString).lastPathComponent }) ?? "")” to the Trash?",
-            isPresented: Binding(presenting: $deleting),
-            titleVisibility: .visible,
-            presenting: deleting
-        ) { path in
-            // Not destructive-styled: moving to the Trash was chosen, and the
-            // Trash gives it back (HIG, Alerts).
-            Button("Move to Trash") { Task { await project.deleteEntry(path) } }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
+        .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
+            Task { await project.deleteEntry(path) }
         }
     }
 
     private var files: some View {
         List(selection: $selection) {
             Section {
-                OutlineGroup(project.tree, children: \.children) { node in
-                    row(node).tag(node.path)
-                }
+                rows(project.tree)
             } header: {
-                filesHeader
+                Text("Files")
             }
         }
         .listStyle(.sidebar)
+        // Adding, where Finder and Apple's lists keep it: the File menu, and
+        // the list's own menu on its empty space.
+        .contextMenu(forSelectionType: String.self) { paths in
+            if paths.isEmpty {
+                Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
+                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
+                Divider()
+                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
+            }
+        } primaryAction: { paths in
+            // Double-click or Return on a folder opens or closes it, as
+            // Xcode's navigator does; a file is open once it's chosen.
+            guard let path = paths.first, project.tree.flattened.contains(where: { $0.path == path && $0.isDirectory }) else { return }
+            if expanded.remove(path) == nil { expanded.insert(path) }
+        }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, isTextFile(path) { Task { await project.open(path, focus: false) } }
+            if let path, path != project.openPath,
+               project.tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) {
+                Task { await project.open(path, focus: false) }
+            }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         // ⌫, as Finder and the projects table take it.
         .onDeleteCommand { if let selection { deleting = selection } }
     }
 
+    /// Choosing a hit opens it, as Xcode's find navigator does.
     private var results: some View {
-        List { searchResults }
+        List(selection: $hit) { searchResults }
             .listStyle(.sidebar)
+            .onChange(of: hit) { _, id in
+                if let found = project.searchHits.first(where: { $0.id == id }) {
+                    Task { await project.open(found.file, line: found.line) }
+                }
+            }
             .overlay {
                 if project.searchHits.isEmpty { ContentUnavailableView.search(text: project.searchQuery) }
             }
-    }
-
-    /// Adding, at the header, as Overleaf has it.
-    private var filesHeader: some View {
-        HStack {
-            Text("Files")
-            Spacer()
-            Menu("Add", systemImage: "plus") {
-                Button(MenuCommand.fileNew.title) { app.perform(.fileNew) }
-                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder) }
-                Divider()
-                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload) }
-            }
-            // A sidebar header's accessory: a plain small glyph, not a pane
-            // bar's button.
-            .menuStyle(.button)
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .menuIndicator(.hidden)
-            .labelStyle(.iconOnly)
-            .fixedSize()
-            .help("Add Files")
-        }
     }
 
     /// Hits grouped by file, each line with its match picked out.
@@ -129,24 +126,39 @@ private struct FilesList: View {
         ForEach(groups, id: \.key) { file, hits in
             Section("\(file) — \(hits.count)") {
                 ForEach(hits) { hit in
-                    Button {
-                        Task { await project.open(hit.file, line: hit.line) }
-                    } label: {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(hit.before)\(Text(hit.match).bold().foregroundStyle(.tint))\(hit.after)")
-                                .lineLimit(2)
-                            Spacer(minLength: 4)
-                            Text("\(hit.line)")
-                                .font(Typography.secondary)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(.rect)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
+                            .lineLimit(2)
+                        Spacer(minLength: BarMetrics.spacing)
+                        Text("\(hit.line)")
+                            .font(Typography.secondary)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+
+    /// The tree as the sidebar shows one: native disclosure triangles on
+    /// the folders, each open or closed as `expanded` has it.
+    private func rows(_ nodes: [TreeNode]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expanded.contains(node.path) },
+                    set: { open in
+                        if open { expanded.insert(node.path) } else { expanded.remove(node.path) }
+                    }
+                )) {
+                    rows(children)
+                } label: {
+                    row(node).tag(node.path)
+                }
+            } else {
+                row(node).tag(node.path)
+            }
+        })
     }
 
     private func row(_ node: TreeNode) -> some View {
@@ -154,7 +166,7 @@ private struct FilesList: View {
         return Label {
             HStack {
                 if renaming == node.path {
-                    nameField(node)
+                    RenameField(text: $newName) { commitRename(node) } cancel: { renaming = nil }
                 } else {
                     Text(node.name)
                 }
@@ -168,10 +180,18 @@ private struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: icon(for: node))
+            Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
         }
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
+        // Into the folder dropped on, or the one the file dropped on is in,
+        // as Windows' tree takes them; elsewhere the list's own drop adds
+        // them at the top.
+        .dropDestination(for: URL.self) { urls, _ in
+            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            Task { await project.importFiles(urls, into: folder) }
+            return true
+        }
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
                 Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
@@ -188,25 +208,6 @@ private struct FilesList: View {
         }
     }
 
-    /// The row's name, edited in place: Return or clicking away renames,
-    /// Escape leaves it as it was.
-    private func nameField(_ node: TreeNode) -> some View {
-        TextField("Name", text: $newName)
-            .labelsHidden()
-            .focused($renameFocused)
-            .onSubmit { commitRename(node) }
-            .onExitCommand { renaming = nil }
-            .onChange(of: renameFocused) { was, focused in
-                if was, !focused { commitRename(node) }
-            }
-            // Once the context menu has closed and handed the list its
-            // focus back, or the list takes it straight from the field.
-            .task {
-                try? await Task.sleep(for: .milliseconds(150))
-                renameFocused = true
-            }
-    }
-
     private func commitRename(_ node: TreeNode) {
         guard renaming == node.path else { return }
         renaming = nil
@@ -215,76 +216,75 @@ private struct FilesList: View {
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
     }
-
-    /// The file kind's symbol, as every list of the project's files shows it.
-    private func icon(for node: TreeNode) -> String {
-        if node.isDirectory { return "folder" }
-        switch (node.name as NSString).pathExtension.lowercased() {
-        case "tex": return "doc.text"
-        case "bib": return "books.vertical"
-        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg": return "photo"
-        case "pdf": return "doc.richtext"
-        default: return "doc"
-        }
-    }
 }
 
 /// The open document's sections, as Overleaf's file outline, in a list of
-/// their own under the files, under a pinned "File Outline" header
-/// (`OutlineHeader`) whose chevron folds the whole outline away, leaving
-/// only the header docked at the foot of the sidebar while the files take
-/// the room, and opens it again at the height it had.
+/// their own under the files: one sidebar section, "File Outline", whose
+/// header's chevron folds the whole outline away, leaving only the header
+/// docked at the foot of the sidebar while the files take the room, and
+/// opens it again at the height it had.
 ///
 /// The headings nest with native disclosure triangles, in the sidebar's
 /// Small rows (a size under the files'). They take no part in any
-/// selection, so no row draws a selection capsule; the current section,
-/// the one at the top of the source (`ProjectModel.topLine`, not the
-/// caret), is in the accent colour and semibold instead, its sections
-/// opened and kept in view as the source scrolls. Choosing a heading
-/// scrolls it to the top of the source and leaves focus where it was.
+/// selection, so no row draws a selection capsule; the current section is
+/// in the accent colour and semibold instead, its sections opened and kept
+/// in view, as Overleaf's outline highlights where you are: the caret's
+/// section, or the one at the top of the source once it scrolls, whichever
+/// moved last. Choosing a heading scrolls it to the top of the source and
+/// leaves focus where it was.
 ///
 /// Only this view reads the top line, so scrolling the source re-renders
 /// the outline, not the files, and only the headings whose state changed
 /// (`HeadingRow` is equatable).
+///
+/// Folding slides the pane down to its header and unfolding slides it back
+/// up, the rows riding with it as a drawer's contents do: the section
+/// empties once the slide is over and fills before it starts, rather than
+/// its rows collapsing up into the header while the pane moves down.
 private struct OutlineList: View {
     /// Folded headings, by file and `Outline.foldKeys`.
     private static let foldedKey = "OutlineFolded"
     let project: ProjectModel
+    let fold: OutlineFold
     @AppStorage(NavigatorView.outlineCollapsedKey) private var collapsed = false
     @State private var folded = Set(UserDefaults.standard.stringArray(forKey: Self.foldedKey) ?? [])
+    /// The line the highlight follows: the caret's or the top line,
+    /// whichever changed last.
+    @State private var line = 1
 
     var body: some View {
         let outline = project.outline
-        let current = Outline.chain(outline, at: project.topLine).last?.id
+        let current = Outline.chain(outline, at: line).last?.id
         let prefix = "\(project.id)/\(project.openPath ?? "")\t"
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
-        VStack(spacing: 0) {
-            OutlineHeader(collapsed: $collapsed)
-            if !collapsed {
-                list(outline: outline, current: current, keys: keys)
-            }
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private func list(outline: [OutlineItem], current: Int?, keys: [String]) -> some View {
         ScrollViewReader { proxy in
             List {
-                if outline.isEmpty {
-                    Text("No Sections").foregroundStyle(.secondary)
-                } else {
-                    OutlineRows(nodes: Outline.tree(outline), context: OutlineRows.Context(
-                        project: project, current: current, keys: keys), folded: $folded)
+                Section("File Outline", isExpanded: Binding(get: { fold.rowsShown }, set: { collapsed = !$0 })) {
+                    if outline.isEmpty {
+                        Text("No Sections").foregroundStyle(.secondary)
+                    } else {
+                        OutlineRows(nodes: Outline.tree(outline), context: OutlineRows.Context(
+                            project: project, current: current, keys: keys), folded: $folded)
+                    }
                 }
             }
             .listStyle(.sidebar)
             // A table of contents under a list of files: the sidebar's
             // compact rows, a size under the files'.
             .environment(\.sidebarRowSize, .small)
+            // Centres the header in the docked bar when folded.
+            .padding(.top, BarMetrics.spacing)
+            // Filled before the pane slides open; emptied once it has slid
+            // shut (`OutlineFold.slid`).
+            .onChange(of: collapsed) { _, collapsed in
+                if !collapsed { withTransaction(Transaction(animation: nil)) { fold.rowsShown = true } }
+            }
+            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
+            .onChange(of: project.topLine) { _, top in line = top }
             // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in
-                let chain = Outline.chain(outline, at: project.topLine).dropLast()
+                let chain = Outline.chain(outline, at: line).dropLast()
                 let opened = folded.subtracting(chain.map { keys[$0.id] })
                 if opened != folded { folded = opened }
                 guard let id else { return }
@@ -297,51 +297,18 @@ private struct OutlineList: View {
     }
 }
 
-/// The outline's header, pinned over its headings (they scroll under it,
-/// it never scrolls away): the title in the kit's sidebar-header style
-/// (Bold 11 in the tertiary label colour) and, trailing, a borderless
-/// chevron button that folds and opens the outline, always visible.
-/// Clicking the title folds too. The chevron is the sidebar's disclosure
-/// vocabulary, as on the headings and folders under and over it: down
-/// while open, right while folded (a state, not a direction, so it reads
-/// the same docked at the foot of the sidebar). The button takes keyboard
-/// focus as every button does (with Keyboard Navigation on), Space toggles
-/// it, and VoiceOver reads "File Outline" with its state. 28 pt, the status
-/// bar's height: folded to it, the pane's divider continues the status
-/// bar's top hairline in one line across the window.
-private struct OutlineHeader: View {
-    static let height = BarMetrics.secondaryBarHeight
-    @Binding var collapsed: Bool
+/// Whether the outline's section shows its rows: with the pane open, and
+/// until a fold has slid the pane down to its header, so the rows ride
+/// down with it rather than collapsing up into the header first.
+@MainActor @Observable
+final class OutlineFold {
+    var rowsShown = !(UserDefaults.standard.object(forKey: NavigatorView.outlineCollapsedKey) as? Bool ?? false)
 
-    var body: some View {
-        HStack(spacing: 0) {
-            Text("File Outline")
-                .font(.subheadline.bold())
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            Spacer(minLength: BarMetrics.spacing)
-            Button(collapsed ? "Show File Outline" : "Hide File Outline",
-                   systemImage: collapsed ? "chevron.right" : "chevron.down") { collapsed.toggle() }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .controlSize(.small)
-                .foregroundStyle(.secondary)
-                .help(collapsed ? "Show File Outline" : "Hide File Outline")
-                .accessibilityLabel("File Outline")
-                .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
-                .accessibilityHint(collapsed ? "Shows the outline" : "Hides the outline")
-        }
-        .padding(.leading, Self.leading)
-        .padding(.trailing, Self.trailing)
-        .frame(height: Self.height)
-        .contentShape(.rect)
-        .onTapGesture { collapsed.toggle() }
+    /// A fold or unfold has finished sliding.
+    func slid(folded: Bool) {
+        guard folded, UserDefaults.standard.bool(forKey: NavigatorView.outlineCollapsedKey) else { return }
+        withTransaction(Transaction(animation: nil)) { rowsShown = false }
     }
-
-    /// The Files header's title and accessory insets, so the two headers
-    /// line up.
-    static let leading: CGFloat = 14
-    static let trailing: CGFloat = 5
 }
 
 /// The headings as the sidebar shows a hierarchy: native disclosure
@@ -425,7 +392,7 @@ private struct HeadingRow: View, Equatable {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
-        .accessibilityValue(headingLevels.indices.contains(item.level + 1) ? headingLevels[item.level + 1].0 : "")
+        .accessibilityValue(item.kind)
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

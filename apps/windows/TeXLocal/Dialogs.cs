@@ -22,11 +22,15 @@ internal static class Dialogs
     };
 
     /// <summary>Whether the primary action was chosen.</summary>
-    private static async Task<bool> ShowAsync(ContentDialog dialog, XamlRoot root)
+    private static async Task<bool> ShowAsync(ContentDialog dialog, XamlRoot root) =>
+        await ChooseAsync(dialog, root) == ContentDialogResult.Primary;
+
+    /// <summary>The button chosen; None when another dialog is already open.</summary>
+    private static async Task<ContentDialogResult> ChooseAsync(ContentDialog dialog, XamlRoot root)
     {
         if (IsOpen)
         {
-            return false;
+            return ContentDialogResult.None;
         }
         dialog.XamlRoot = root;
         dialog.Style = (Style)Application.Current.Resources["DefaultContentDialogStyle"];
@@ -39,7 +43,7 @@ internal static class Dialogs
         IsOpen = true;
         try
         {
-            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+            return await dialog.ShowAsync();
         }
         finally
         {
@@ -63,6 +67,48 @@ internal static class Dialogs
     /// <summary>A destructive action, which Cancel guards by default.</summary>
     public static Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string action, string cancel = "Cancel") =>
         ShowAsync(Dialog(title, new TextBlock { Text = body, TextWrapping = TextWrapping.Wrap }, action, cancel, ContentDialogButton.Close), root);
+
+    /// <summary>
+    /// Names an import would take, asked about once for them all, in the
+    /// Mac's words: "replace", "keepBoth", or null to stop.
+    /// </summary>
+    public static async Task<string?> ImportClashAsync(XamlRoot root, IReadOnlyList<ImportClash> clashes)
+    {
+        var names = clashes.Select(c => c.Path).ToList();
+        var one = names.Count == 1;
+        var replace = one
+            ? "Do you want to replace it with the one you’re copying? The one here will be moved to the Recycle Bin."
+            : "Do you want to replace them with the ones you’re copying? The ones here will be moved to the Recycle Bin.";
+        // A few by name, so a folder's worth doesn't fill the dialog.
+        var shown = names.Take(3).Select(n => $"“{n}”").ToList();
+        if (names.Count > shown.Count)
+        {
+            shown.Add($"{names.Count - shown.Count} more");
+        }
+        var list = shown.Count switch
+        {
+            1 => shown[0],
+            2 => $"{shown[0]} and {shown[1]}",
+            _ => $"{string.Join(", ", shown[..^1])}, and {shown[^1]}",
+        };
+        var dialog = new ContentDialog
+        {
+            Title = one
+                ? $"An item named “{names[0][(names[0].LastIndexOf('/') + 1)..]}” already exists here"
+                : $"{names.Count} items with these names already exist here",
+            Content = new TextBlock { Text = one ? replace : $"{list}. {replace}", TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = "Replace",
+            SecondaryButtonText = "Keep both",
+            CloseButtonText = "Stop",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        return await ChooseAsync(dialog, root) switch
+        {
+            ContentDialogResult.Primary => "replace",
+            ContentDialogResult.Secondary => "keepBoth",
+            _ => null,
+        };
+    }
 
     public static async Task<(string Name, string Template)?> NewProjectAsync(XamlRoot root, string template)
     {

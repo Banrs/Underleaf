@@ -60,42 +60,92 @@ pub fn mime_for(path: &Path) -> &'static str {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Unsatisfiable;
 
-// A single RFC 7233 byte range. pdf.js uses this to fetch large PDFs in chunks;
-// suffix and open-ended forms are included because WebView engines may choose
-// either. Multiple ranges would need multipart/byteranges and are rejected.
+/// The one byte range a `Range` header asks for, or None to send the whole
+/// file. pdf.js fetches large PDFs in ranges; the suffix and open-ended forms
+/// are here because WebView engines may choose either. RFC 9110 §14.2 has a
+/// server ignore a unit it doesn't know and lets it ignore several ranges
+/// (which would need multipart/byteranges), so those, and a header that
+/// doesn't parse, get the whole file. Only a well-formed range that starts
+/// past the end is refused.
 pub fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, Unsatisfiable> {
-    let Some(spec) = header.strip_prefix("bytes=") else {
-        return Err(Unsatisfiable);
+    let spec = header
+        .strip_prefix("bytes=")
+        .filter(|spec| !spec.contains(','));
+    let Some((start, end)) = spec.and_then(|spec| spec.split_once('-')) else {
+        return Ok(None);
     };
-    if len == 0 || spec.contains(',') {
-        return Err(Unsatisfiable);
-    }
-    let Some((start, end)) = spec.split_once('-') else {
-        return Err(Unsatisfiable);
-    };
-
-    if start.is_empty() {
-        let suffix = end.parse::<u64>().map_err(|_| Unsatisfiable)?;
-        if suffix == 0 {
-            return Err(Unsatisfiable);
+    let (first, last) = match (start.parse::<u64>(), end.parse::<u64>()) {
+        // The last n bytes.
+        (Err(_), Ok(n)) if start.is_empty() => {
+            if n == 0 || len == 0 {
+                return Err(Unsatisfiable);
+            }
+            (len - n.min(len), len - 1)
         }
-        let take = suffix.min(len);
-        return Ok(Some((len - take, len - 1)));
-    }
-
-    let start = start.parse::<u64>().map_err(|_| Unsatisfiable)?;
-    if start >= len {
-        return Err(Unsatisfiable);
-    }
-    let end = if end.is_empty() {
-        len - 1
-    } else {
-        end.parse::<u64>().map_err(|_| Unsatisfiable)?.min(len - 1)
+        (Ok(first), Err(_)) if end.is_empty() => (first, u64::MAX),
+        (Ok(first), Ok(last)) if first <= last => (first, last),
+        _ => return Ok(None),
     };
-    if end < start {
+    if first >= len {
         return Err(Unsatisfiable);
     }
-    Ok(Some((start, end)))
+    Ok(Some((first, last.min(len - 1))))
+}
+
+/// A file as an HTTP response, for a host to wrap in its own type.
+pub struct Served {
+    pub status: u16,
+    pub headers: Vec<(&'static str, String)>,
+    pub body: Vec<u8>,
+}
+
+/// `path` as an HTTP response, whole or the part a `Range` header asks for.
+/// A sandboxed response carries its CSP whatever the status, so no answer
+/// about a project file can run as a document.
+pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Served {
+    let mut headers = Vec::new();
+    if sandboxed {
+        headers.push((
+            "Content-Security-Policy",
+            "sandbox; default-src 'none'".into(),
+        ));
+    }
+    let text = |status, message: &str, mut headers: Vec<_>| {
+        headers.push(("Content-Type", "text/plain; charset=utf-8".into()));
+        Served {
+            status,
+            headers,
+            body: message.into(),
+        }
+    };
+    let len = match tokio::fs::metadata(path).await {
+        Ok(meta) if meta.is_file() => meta.len(),
+        _ => return text(404, "Not found", headers),
+    };
+    let range = match range.map(|header| parse_range(header, len)).transpose() {
+        Ok(range) => range.flatten(),
+        Err(Unsatisfiable) => {
+            headers.push(("Content-Range", format!("bytes */{len}")));
+            return text(416, "Range not satisfiable", headers);
+        }
+    };
+    let Ok(body) = read_file_range(path, range).await else {
+        return text(404, "Not found", headers);
+    };
+    headers.extend([
+        ("Content-Type", mime_for(path).into()),
+        ("Cache-Control", "no-store".into()),
+        ("Accept-Ranges", "bytes".into()),
+    ]);
+    if let Some((start, end)) = range {
+        headers.push(("Content-Range", format!("bytes {start}-{end}/{len}")));
+    }
+    let status = if range.is_some() { 206 } else { 200 };
+    Served {
+        status,
+        headers,
+        body,
+    }
 }
 
 pub async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
@@ -124,7 +174,7 @@ fn read_range_blocking(path: &Path, range: Option<(u64, u64)>) -> std::io::Resul
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_range, read_file_range};
+    use super::{parse_range, read_file_range, Unsatisfiable};
 
     #[test]
     fn parses_closed_open_and_suffix_ranges() {
@@ -135,12 +185,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_or_unsatisfiable_ranges() {
-        assert!(parse_range("items=0-1", 100).is_err());
-        assert!(parse_range("bytes=100-", 100).is_err());
-        assert!(parse_range("bytes=20-10", 100).is_err());
-        assert!(parse_range("bytes=0-1,4-5", 100).is_err());
-        assert!(parse_range("bytes=-0", 100).is_err());
+    fn ignores_ranges_it_cannot_serve_and_refuses_those_past_the_end() {
+        // RFC 9110: an unknown unit, several ranges or a malformed one get
+        // the whole file.
+        for header in [
+            "items=0-1",
+            "bytes=0-1,4-5",
+            "bytes=20-10",
+            "bytes=x-",
+            "bytes",
+        ] {
+            assert_eq!(parse_range(header, 100), Ok(None), "{header}");
+        }
+        for (header, len) in [("bytes=100-", 100), ("bytes=-0", 100), ("bytes=0-", 0)] {
+            assert_eq!(parse_range(header, len), Err(Unsatisfiable), "{header}");
+        }
     }
 
     #[tokio::test]

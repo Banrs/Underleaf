@@ -13,24 +13,35 @@ struct WorkspaceView: View {
             get: { app.sidebarVisible ? .all : .detailOnly },
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
+            // The sidebar's widths, the UI kit's window sidebar its ideal: the
+            // system's own default opened it at 144 pt (15% of the window)
+            // with no maximum.
             NavigatorView(project: project)
                 .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
                                                 max: Metrics.sidebarWidth.upperBound)
         } detail: {
             SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
-                SplitPane(minimum: Metrics.editorsMinWidth) { EditorArea(project: project) },
-                SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
-                          fraction: 0.28, keepsSize: true, shown: app.showInspector, glass: true) {
-                    InspectorView(project: project)
-                },
+                SplitPane { EditorArea(project: project) },
+                // The system's inspector: its width, and its glass up under
+                // the toolbar to the window's top, as Pages' inspector.
+                SplitPane(inspector: true, shown: app.showInspector) { InspectorView(project: project) },
             ])
+            // Up to the window's top, so the inspector reaches it; the
+            // editors keep below the toolbar, in their safe area.
+            .ignoresSafeArea(.container, edges: .top)
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            .frame(minWidth: Metrics.editorsMinWidth, minHeight: 280)
+            .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: {
+                app.windowCorners = $0
+            }
             // On the detail, as Apple's Landmarks sample has it: on the split
             // view itself the spacers were dropped and every item ran
             // together in one pill.
             .toolbar { toolbar }
+            // No line under the toolbar, as Xcode has none over its jump
+            // bar: the toolbar and the pane bars under it read as one strip,
+            // and the system's automatic line came and went with resizes.
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
         .navigationTitle(project.openPath.map { ($0 as NSString).lastPathComponent } ?? project.id)
         .navigationSubtitle(project.openPath == nil ? "" : project.id)
@@ -41,12 +52,39 @@ struct WorkspaceView: View {
         .background {
             if let url = project.openURL { Color.clear.navigationDocument(url) }
         }
+        .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
+                      allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await project.importFiles(urls) }
+            case .failure(let error): app.alert = AppAlert("Couldn’t Add the Files", error)
+            }
+        }
+        .fileDialogConfirmationLabel("Add")
+        .fileExporter(isPresented: Binding(presenting: $app.exporting), item: app.exporting,
+                      contentTypes: app.exporting.map { [$0.type] } ?? [],
+                      defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
+            if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
+        }
+        // Save PDF As… saves, as every Save As does; a zip is exported.
+        .fileExporterFilenameLabel(app.exporting?.type == .pdf ? "Save As:" : "Export As:")
+        .fileDialogConfirmationLabel(app.exporting?.type == .pdf ? "Save" : "Export")
         .sheet(item: $app.prompt) { prompt in
             switch prompt {
             case .newFile: NewEntrySheet(project: project, directory: false)
             case .newFolder: NewEntrySheet(project: project, directory: true)
             case .gotoLine: GoToLineSheet(project: project)
             }
+        }
+        // An import onto names already here: Finder's question and answers,
+        // Replace the default.
+        .alert(project.importClash?.title ?? "", isPresented: Binding(presenting: $project.importClash),
+               presenting: project.importClash) { clash in
+            Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
+                .keyboardShortcut(.defaultAction)
+            Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
+            Button("Stop", role: .cancel) {}
+        } message: { clash in
+            Text(clash.message)
         }
         // The open file changed on disk while it has edits here.
         .alert(project.diskConflict.map { "“\(($0 as NSString).lastPathComponent)” Changed on Disk" } ?? "",
@@ -57,21 +95,21 @@ struct WorkspaceView: View {
         } message: { path in
             Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
-            // This window's only: closing Settings is no reason to save.
-            guard (note.object as? NSWindow) === app.editor.webView.window else { return }
-            Task { await project.flush() }
+        .task {
+            for await note in NotificationCenter.default.notifications(named: NSWindow.willCloseNotification) {
+                // This window's only: closing Settings is no reason to save.
+                guard (note.object as? NSWindow) === NSApp.projectWindow else { continue }
+                // Its own task: the view's goes with the closing window.
+                Task { await project.flush() }
+            }
         }
     }
 
-    /// The columns' widths. The sidebar's ideal is the UI kit's window
-    /// sidebar; the window's own minimum (960 × 600) is set once, in the app.
+    /// The sidebar's widths; the window's own minimum (960 × 600) is set
+    /// once, in the app.
     private enum Metrics {
         static let sidebarWidth: ClosedRange<CGFloat> = 200...320
         static let sidebarIdeal: CGFloat = 256
-        /// The source and the PDF, side by side at their smallest.
-        static let editorsMinWidth: CGFloat = 441
-        static let inspectorWidth: ClosedRange<CGFloat> = 220...320
     }
 
     // ---------- toolbar ----------
@@ -92,10 +130,9 @@ struct WorkspaceView: View {
             .help("Back to Projects")
         }
 
-        // Two pieces of glass, as they are two functions: adjacent plain
-        // buttons would share one.
-        ToolbarItem(placement: .primaryAction) { PDFToggle(project: project) }
-        ToolbarSpacer(.fixed, placement: .primaryAction)
+        // The panes' toggles, sharing one piece of glass as related buttons
+        // do. Nothing here acts on the PDF alone: Share is the PDF bar's.
+        ToolbarItem(placement: .primaryAction) { PDFToggle() }
         ToolbarItem(placement: .primaryAction) { InspectorToggle() }
     }
 }
@@ -128,16 +165,12 @@ private struct NewEntrySheet: View {
                 .focused($nameFocused)
             Picker("Where", selection: $folder) {
                 Label(project.id, systemImage: "folder").tag("")
-                ForEach(folders(project.tree), id: \.self) { path in
+                ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in
                     Label(path, systemImage: "folder").tag(path)
                 }
             }
         }
         .onAppear { nameFocused = true }
-    }
-
-    private func folders(_ nodes: [TreeNode]) -> [String] {
-        nodes.filter(\.isDirectory).flatMap { [$0.path] + folders($0.children ?? []) }
     }
 }
 
@@ -167,11 +200,11 @@ private struct GoToLineSheet: View {
 /// inspector button are: a toggle draws its on state accent-filled, which
 /// made the two toggles the toolbar's loudest controls.
 private struct PDFToggle: View {
-    @Bindable var project: ProjectModel
+    @Environment(AppModel.self) private var app
 
     var body: some View {
-        let title = project.showPDF ? "Hide PDF" : "Show PDF"
-        Button(title, systemImage: "doc.richtext") { project.showPDF.toggle() }
+        let title = app.title(.viewTogglePdf)
+        Button(title, systemImage: "doc.richtext") { app.perform(.viewTogglePdf) }
             .help(title)
     }
 }
@@ -182,59 +215,10 @@ private struct InspectorToggle: View {
 
     var body: some View {
         let title = app.showInspector ? "Hide Inspector" : "Show Inspector"
-        Button(title, systemImage: "sidebar.right") { app.showInspector.toggle() }
+        Button(title, systemImage: "sidebar.trailing") { app.showInspector.toggle() }
             .help(title)
     }
 }
-
-/// The Format menu's LaTeX tools, as the source bar offers them: the line's
-/// section level, math and symbols, references, then what inserts a block.
-struct InsertMenuItems<InlineMath: View>: View {
-    let project: ProjectModel?
-    /// The menu bar's Inline Math item, with its shortcut.
-    let inlineMath: InlineMath
-
-    var body: some View {
-        Menu("Section Level") {
-            ForEach(headingLevels, id: \.1) { title, command in
-                Button(title) { project?.format("heading", command) }
-            }
-        }
-        inlineMath
-        Button("Display Math") { project?.format("displayMath") }
-        SymbolMenu(project: project)
-        Menu("Reference") {
-            ForEach(referenceTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("inline", template) }
-            }
-        }
-        Divider()
-        ForEach(insertTemplates, id: \.0) { label, template in
-            Button(label) { project?.format("insert", template) }
-        }
-        Menu("List") {
-            ForEach(listTemplates, id: \.0) { label, template in
-                Button(label) { project?.format("insert", template) }
-            }
-        }
-    }
-}
-
-/// The engines a project can compile with, for the compile menu and Settings.
-let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
-
-/// web/src/sourcebar.js `INSERT_TEMPLATES` (the lists are `listTemplates`);
-/// "$0" marks where the cursor lands. The source bar finds them by title
-/// (`ProjectModel.insert`). Titles are menu items here, so title case
-/// without the web's parenthetical: "Aligned Equations" is the web's
-/// "Align (multi-line math)".
-let insertTemplates: [(String, String)] = [
-    ("Figure", "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n"),
-    ("Table", "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n"),
-    ("Equation", "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n"),
-    ("Aligned Equations", "\\begin{align}\n  $0 \\\\\n\\end{align}\n"),
-    ("Code Block", "\\begin{verbatim}\n$0\n\\end{verbatim}\n"),
-]
 
 /// The trailing inspector: the project's build settings, then facts about
 /// the open file and the PDF — what the web kept in its settings popover and
@@ -243,76 +227,107 @@ struct InspectorView: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        Form {
-            Section("Project") {
-                Picker("Main File", selection: Binding(
-                    get: { project.settings?.mainFile ?? "" },
-                    set: { path in Task { await project.setMainFile(path) } }
-                )) {
-                    ForEach(texFiles(project.tree), id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Engine", selection: Binding(
-                    get: { project.settings?.engine ?? "pdflatex" },
-                    set: { engine in Task { await project.setEngine(engine) } }
-                )) {
-                    ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
-                }
-                Toggle(isOn: Binding(
-                    get: { project.settings?.shellEscape ?? false },
-                    set: { on in Task { await project.setShellEscape(on) } }
-                )) {
-                    Text("Shell Escape")
-                    Text("Lets packages such as minted run programs. Only for projects you trust.")
-                }
-            }
-            .disabled(project.settings == nil)
-
-            if let path = project.openPath {
-                Section("Document") {
-                    LabeledContent("Name", value: (path as NSString).lastPathComponent)
-                    LabeledContent("Folder", value: folder(of: path))
+        // Label-and-value rows straight on the pane's glass, as Xcode's
+        // inspector has them: a bold title per section, a hairline between
+        // sections, labels right-aligned in one column. Grouped boxes read
+        // as a layer of their own on glass.
+        ScrollView {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: BarMetrics.groupSpacing,
+                 verticalSpacing: BarMetrics.groupSpacing) {
+                header("Project")
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
+                pickerRow("Engine", project.settings?.engine ?? "pdflatex", texEngines, set: project.setEngine)
+                toggleRow("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
+                          project.settings?.shellEscape ?? false, set: project.setShellEscape)
+                toggleRow("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
+                          project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
+                if let path = project.openPath {
+                    separator
+                    header("Document")
+                    row("Name", (path as NSString).lastPathComponent)
+                    row("Folder", folder(of: path))
                     if let counts = project.counts {
-                        LabeledContent("Words", value: counts.words.formatted())
-                        LabeledContent("Lines", value: counts.lines.formatted())
+                        row("Words", counts.words.formatted())
+                        row("Lines", counts.lines.formatted())
                     }
                     if !project.outline.isEmpty {
-                        LabeledContent("Sections", value: project.outline.count.formatted())
+                        row("Sections", project.outline.count.formatted())
                     }
                 }
-            }
-
-            Section("Build") {
+                separator
+                header("Build")
                 if let result = project.result {
-                    LabeledContent("Last Build", value: result.ok ? "Succeeded" : "Failed")
-                    LabeledContent("Duration") {
-                        Text(result.durationText).monospacedDigit()
-                    }
-                    LabeledContent("Errors", value: project.errorCount.formatted())
-                    LabeledContent("Warnings", value: project.warningCount.formatted())
+                    row("Last Build", result.stopped ? "Stopped" : result.ok ? "Succeeded" : "Failed")
+                    row("Duration", result.durationText)
+                    row("Errors", project.errorCount.formatted())
+                    row("Warnings", project.warningCount.formatted())
                 } else {
                     // The status bar's phrase, shortened to fit beside its
                     // label in a narrow inspector.
-                    LabeledContent("Last Build", value: project.pdfVersion > 0 ? "None Yet" : "None")
+                    row("Last Build", project.pdfVersion > 0 ? "None Yet" : "None")
                 }
                 if let freshness = project.pdfFreshness {
-                    Label(freshness.title, systemImage: freshness.systemImage)
-                        .foregroundStyle(.secondary)
+                    GridRow {
+                        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        Label(freshness.title, systemImage: freshness.systemImage)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .disabled(project.settings == nil)
+            .monospacedDigit()
+            .padding(BarMetrics.inset * 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .formStyle(.grouped)
-        // The pane's glass shows through, as an inspector's does.
-        .scrollContentBackground(.hidden)
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title).font(Typography.groupTitle).gridCellColumns(2)
+    }
+
+    private var separator: some View {
+        Divider().gridCellColumns(2).padding(.vertical, BarMetrics.spacing)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+    }
+
+    /// A setting's pop-up at its own width, as Xcode's inspectors have them.
+    private func pickerRow(_ title: String, _ value: String, _ options: [(String, String)],
+                           set: @escaping (String) async -> Void) -> some View {
+        GridRow {
+            label(title)
+            Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
+                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+
+    /// A setting's checkbox under the pop-ups, its description beneath it.
+    private func toggleRow(_ title: String, _ detail: String, _ isOn: Bool,
+                           set: @escaping (Bool) async -> Void) -> some View {
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            Toggle(isOn: Binding(get: { isOn }, set: { on in Task { await set(on) } })) {
+                Text(title)
+                Text(detail)
+            }
+        }
+    }
+
+    private func row(_ name: String, _ value: String) -> some View {
+        GridRow {
+            label(name)
+            Text(value).textSelection(.enabled)
+        }
     }
 
     private func folder(of path: String) -> String {
         let dir = (path as NSString).deletingLastPathComponent
         return dir.isEmpty ? project.id : dir
-    }
-
-    private func texFiles(_ nodes: [TreeNode]) -> [String] {
-        nodes.flatMap { node in
-            node.isDirectory ? texFiles(node.children ?? []) : (node.path.hasSuffix(".tex") ? [node.path] : [])
-        }
     }
 }

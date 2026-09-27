@@ -227,7 +227,7 @@ public sealed partial class MainWindow
                 await project.CompileAsync();
                 break;
             case MenuCommand.CompileStop:
-                project.StopCompile();
+                await project.StopCompileAsync();
                 break;
             case MenuCommand.SyncForward:
                 await project.ForwardSyncAsync();

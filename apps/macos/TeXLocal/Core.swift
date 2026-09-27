@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import TeXLocalCore
 
 /// A command the Rust core refused, with the status it gave (400 for a bad
@@ -11,8 +11,10 @@ struct CoreError: LocalizedError {
 
 /// The Rust core through its C ABI (crates/texlocal-ffi): JSON in, JSON out,
 /// the same command names the browser version uses. `tl_call` blocks for as
-/// long as the command runs — minutes, for a compile — so every call runs on a
-/// detached task and the main actor only encodes and decodes.
+/// long as the command runs — minutes, for a compile — so every call runs on
+/// a GCD thread, never Swift's cooperative pool, which must not block (WWDC21,
+/// Swift concurrency: Behind the scenes), and the main actor only encodes and
+/// decodes.
 @MainActor
 final class Core {
     static let shared = Core()
@@ -23,28 +25,13 @@ final class Core {
         init(_ raw: OpaquePointer) { self.raw = raw }
     }
 
-    /// None when the library folder can't be opened; the app then says so
-    /// and quits.
+    /// None when the library folder can't be opened; the window then says
+    /// so, and the app quits.
     private let handle: Handle?
+    var isOpen: Bool { handle != nil }
 
     private init() {
         handle = tl_open(nil).map(Handle.init)
-        // Not from here: the first use is inside SwiftUI's first update, and
-        // a modal alert run there aborts the app.
-        if handle == nil { DispatchQueue.main.async { Self.cannotOpenLibrary() } }
-    }
-
-    /// The library folder can't be made or opened: say so and quit, rather
-    /// than leave a crash report that explains nothing.
-    private static func cannotOpenLibrary() -> Never {
-        let folder = ProcessInfo.processInfo.environment["TEXLOCAL_DATA"] ?? "~/TeXLocal"
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "TeXLocal can’t open its library folder."
-        alert.informativeText = "Make sure you can create and write to \(folder), then open TeXLocal again."
-        alert.addButton(withTitle: "Quit")
-        alert.runModal()
-        exit(1)
     }
 
     private nonisolated static func run(_ handle: Handle, _ command: String, _ json: String) -> Data {
@@ -70,7 +57,9 @@ final class Core {
         guard let handle else {
             throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
         }
-        return await Task.detached { Core.run(handle, command, json) }.value
+        return await withCheckedContinuation { done in
+            DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: Core.run(handle, command, json)) }
+        }
     }
 
     /// The command's result, nil when it gave none; its error thrown.

@@ -75,6 +75,15 @@ fn commands_round_trip_through_the_c_abi() {
         "x"
     );
 
+    assert_eq!(
+        call(
+            handle,
+            "analyze",
+            Some(json!({ "text": "\\section{Intro}\nHello world" }))
+        )["ok"],
+        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1 }], "words": 3, "lines": 2 })
+    );
+
     // Errors come back as an envelope with the core's status, never a crash.
     let bad = call(
         handle,
@@ -104,6 +113,8 @@ fn native_only_commands_resolve_absolute_paths() {
         Some(json!({ "id": "P", "path": "../../x" })),
     );
     assert_eq!(escape["status"], 400);
+    let root = call(handle, "project_root", Some(json!({ "id": "P" })));
+    assert!(root["ok"].as_str().unwrap().ends_with("P"));
 
     let dest = dir.path().join("out.zip");
     let exported = call(
@@ -179,6 +190,57 @@ fn dropped_files_and_folders_import_into_the_project() {
     );
     assert_eq!(malformed["status"], 400);
 
+    unsafe { tl_close(handle) };
+}
+
+#[test]
+fn a_drop_onto_existing_files_asks_first_and_can_keep_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open_with_project(&dir.path().join("data"));
+
+    let drop = dir.path().join("drop");
+    std::fs::create_dir_all(drop.join("figs/.git")).unwrap();
+    std::fs::write(drop.join("figs/.git/HEAD"), b"ref").unwrap();
+    std::fs::write(drop.join("figs/.DS_Store"), b"x").unwrap();
+    std::fs::write(drop.join("figs/a.png"), b"a").unwrap();
+    std::fs::write(drop.join("main.tex"), b"new").unwrap();
+    let paths = strings([drop.join("figs"), drop.join("main.tex")]);
+    let args = |conflict: Value| json!({ "id": "P", "paths": paths, "conflict": conflict });
+
+    // Without an answer nothing is written; the clash is reported.
+    let asked = call(handle, "import_files", Some(args(Value::Null)));
+    assert_eq!(
+        asked["ok"],
+        json!({ "saved": [], "existing": [{ "path": "main.tex", "keepBoth": "main 2.tex" }] })
+    );
+    let main = dir.path().join("data/P/main.tex");
+    let original = std::fs::read(&main).unwrap();
+
+    let kept = call(handle, "import_files", Some(args(json!("keepBoth"))));
+    // Hidden files inside a dropped folder stay behind.
+    assert_eq!(saved(&kept), ["figs/a.png", "main 2.tex"]);
+    assert_eq!(std::fs::read(&main).unwrap(), original);
+    assert_eq!(
+        std::fs::read(dir.path().join("data/P/main 2.tex")).unwrap(),
+        b"new"
+    );
+
+    let bad = call(handle, "import_files", Some(args(json!("merge"))));
+    assert_eq!(bad["status"], 400);
+
+    unsafe { tl_close(handle) };
+}
+
+#[test]
+fn file_open_imports_a_chosen_file_as_a_new_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let handle = open(&dir.path().join("data"));
+    let tex = dir.path().join("essay.tex");
+    std::fs::write(&tex, "\\documentclass{article}").unwrap();
+    let [src] = strings([tex]);
+    let out = call(handle, "import_project", Some(json!({ "src": src })));
+    assert_eq!(out["ok"]["id"], "essay");
+    assert_eq!(out["ok"]["mainFile"], "essay.tex");
     unsafe { tl_close(handle) };
 }
 

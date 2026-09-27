@@ -3,7 +3,13 @@
 //! token printed at startup. That is not optional hardening: a project can turn
 //! on `-shell-escape`, so anything that can reach `/api/compile` can run
 //! commands as this user. The Host check stops DNS rebinding, and the Origin
-//! check and SameSite cookie stop another site's page from driving the API.
+//! check stops another site's page from driving the API.
+//!
+//! The token travels in an `X-TeXLocal-Token` header, never a cookie: cookies
+//! ignore ports, so one would also go to every other service on 127.0.0.1,
+//! another account's among them. The page keeps the token from its first
+//! URL in sessionStorage, which is per origin and so per port. The web UI's
+//! own files hold no data and stay open, so that page can load to read it.
 
 pub mod http;
 
@@ -19,7 +25,8 @@ use texlocal_core::{paths, serve, zipexport, CoreError};
 pub use http::{Request, Response};
 use tokio::net::TcpListener;
 
-const COOKIE: &str = "texlocal_token";
+/// The header every request for project data carries the token in.
+const TOKEN_HEADER: &str = "x-texlocal-token";
 /// Uploads and whole documents travel in one body.
 pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
@@ -28,7 +35,6 @@ pub struct App {
     web_dir: Arc<Path>,
     token: String,
     hosts: [String; 2],
-    origins: [String; 2],
 }
 
 /// 32 random bytes as hex.
@@ -88,10 +94,6 @@ impl App {
             web_dir: web_dir.into(),
             token,
             hosts: [format!("127.0.0.1:{port}"), format!("localhost:{port}")],
-            origins: [
-                format!("http://127.0.0.1:{port}"),
-                format!("http://localhost:{port}"),
-            ],
         }
     }
 
@@ -118,7 +120,19 @@ impl App {
         } else {
             Response::text(405, "Method not allowed")
         };
-        response.with("X-Content-Type-Options", "nosniff")
+        // No page may frame the app: a clickjacked frame could turn on shell
+        // escape and compile. A sandboxed project file already has its own
+        // CSP, and no frame shows one.
+        let response = if response.header("content-security-policy").is_none() {
+            response.with("Content-Security-Policy", "frame-ancestors 'none'")
+        } else {
+            response
+        };
+        response
+            .with("X-Frame-Options", "DENY")
+            .with("X-Content-Type-Options", "nosniff")
+            // The first page's URL holds the token until its script drops it.
+            .with("Referrer-Policy", "no-referrer")
     }
 
     /// Host, Origin and the token, from the request head alone: the server
@@ -132,34 +146,27 @@ impl App {
             return Some(Response::text(403, "Forbidden host"));
         }
         let safe_method = matches!(req.method.as_str(), "GET" | "HEAD");
+        // An Origin must be this server's own: http:// and one of its hosts.
         if let Some(origin) = req.header("origin") {
-            if !safe_method && !self.origins.iter().any(|a| a == origin) {
+            let own = origin
+                .strip_prefix("http://")
+                .is_some_and(|host| self.hosts.iter().any(|a| a == host));
+            if !safe_method && !own {
                 return Some(Response::text(403, "Forbidden origin"));
             }
         }
 
-        // The printed URL carries the token once; trade it for a cookie and
-        // drop it from the address bar.
-        let offered = req
-            .query()
-            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")));
-        if let Some(offered) = offered {
-            if !same(offered, &self.token) {
-                return Some(Response::text(401, "Wrong token"));
-            }
-            return Some(Response::text(303, "").with("Location", req.path()).with(
-                "Set-Cookie",
-                format!("{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/", self.token),
-            ));
+        // Only the routes that reach projects need the token. The web UI's
+        // files are the same for everyone, and the page has to load before
+        // it can read the token from its URL.
+        let path = req.path();
+        if !(path.starts_with("/api/") || path.starts_with("/__")) {
+            return None;
         }
-
-        let cookie = req
-            .headers
-            .iter()
-            .filter(|(n, _)| n == "cookie")
-            .flat_map(|(_, v)| v.split(';'))
-            .find_map(|pair| pair.trim().strip_prefix(COOKIE)?.strip_prefix('='));
-        if !cookie.is_some_and(|t| same(t, &self.token)) {
+        if !req
+            .header(TOKEN_HEADER)
+            .is_some_and(|t| same(t, &self.token))
+        {
             return Some(Response::text(
                 401,
                 "Open the URL texlocal-server printed at startup",
@@ -200,7 +207,8 @@ impl App {
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
-    /// the same shape as the desktop's `upload_file` invoke.
+    /// the same shape as the desktop's `upload_file` invoke; `X-Replace: true`
+    /// moves an entry in its place to the Trash.
     async fn upload(&self, req: Request) -> Response {
         let header = |name: &str| {
             req.header(name)
@@ -212,36 +220,24 @@ impl App {
             Ok(names) => names,
             Err(e) => return error(e),
         };
+        // The answer to Replace in the host's Replace / Keep Both / Stop.
+        let replace = req.header("x-replace") == Some("true");
         let body = req.body;
-        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body))
+        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body, replace))
             .await
             .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }
 
-    /// Path resolution and the stat run on the blocking pool with everything
-    /// else that touches the disk.
+    /// Path resolution runs on the blocking pool with everything else that
+    /// touches the disk.
     async fn file(&self, path: &str, range: Option<&str>) -> Response {
         let segments = segments(path);
-        let located = self
-            .blocking(move |service| {
-                let resolved = serve::resolve(service, &segments)?;
-                let len = file_len(&resolved.path);
-                Ok((resolved, len))
-            })
-            .await;
-        let (resolved, len) = match located {
-            Ok(located) => located,
-            Err(e) => return Response::text(e.status, &e.message),
-        };
-        let response = match len {
-            Some(len) => send_file(&resolved.path, len, range).await,
-            None => not_found(),
-        };
-        if resolved.sandboxed {
-            // A project file must never execute as a document.
-            response.with("Content-Security-Policy", "sandbox; default-src 'none'")
-        } else {
-            response
+        match self
+            .blocking(move |service| serve::resolve(service, &segments))
+            .await
+        {
+            Ok(resolved) => served(serve::respond(&resolved.path, range, resolved.sandboxed).await),
+            Err(e) => Response::text(e.status, &e.message),
         }
     }
 
@@ -252,14 +248,12 @@ impl App {
         let web_dir = Arc::clone(&self.web_dir);
         let located = tokio::task::spawn_blocking(move || {
             let rel = if rel.is_empty() { "index.html" } else { &rel };
-            let abs = paths::safe_path(&web_dir, rel).ok()?;
-            let len = file_len(&abs)?;
-            Some((abs, len))
+            paths::safe_path(&web_dir, rel).ok()
         })
         .await;
         match located {
-            Ok(Some((abs, len))) => send_file(&abs, len, None).await,
-            _ => not_found(),
+            Ok(Some(abs)) => served(serve::respond(&abs, None, false).await),
+            _ => Response::text(404, "Not found"),
         }
     }
 
@@ -287,41 +281,11 @@ impl App {
     }
 }
 
-fn not_found() -> Response {
-    Response::text(404, "Not found")
-}
-
-/// The length of a regular file; None for anything else or nothing at all.
-fn file_len(path: &Path) -> Option<u64> {
-    std::fs::metadata(path)
-        .ok()
-        .filter(|meta| meta.is_file())
-        .map(|meta| meta.len())
-}
-
-/// `len` is the file's length as `file_len` found it, for the range check.
-async fn send_file(path: &Path, len: u64, range: Option<&str>) -> Response {
-    let range = match range.map(|h| serve::parse_range(h, len)) {
-        Some(Ok(r)) => r,
-        Some(Err(serve::Unsatisfiable)) => {
-            return Response::text(416, "Range not satisfiable")
-                .with("Content-Range", format!("bytes */{len}"))
-        }
-        None => None,
-    };
-    let Ok(bytes) = serve::read_file_range(path, range).await else {
-        return not_found();
-    };
-    let response = Response::new(
-        if range.is_some() { 206 } else { 200 },
-        serve::mime_for(path),
-        bytes,
-    )
-    .with("Cache-Control", "no-store")
-    .with("Accept-Ranges", "bytes");
-    match range {
-        Some((start, end)) => response.with("Content-Range", format!("bytes {start}-{end}/{len}")),
-        None => response,
+fn served(file: serve::Served) -> Response {
+    Response {
+        status: file.status,
+        headers: file.headers,
+        body: file.body,
     }
 }
 

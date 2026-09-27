@@ -5,18 +5,20 @@ import test from 'node:test';
 // have to be in place before the module is imported.
 globalThis.navigator ??= { platform: '', userAgent: '' };
 const calls = [];
+let existing = [];
 globalThis.window = {
   __TAURI__: {
     core: {
       invoke: async (command, args, options) => {
         calls.push({ command, args, options });
-        return command === 'upload_file' ? { saved: ['notes ü.tex'] } : null;
+        if (command === 'upload_file') return { saved: [decodeURIComponent(options.headers['x-path'])] };
+        return args?.command === 'validate_uploads' ? { existing } : null;
       },
     },
     event: { listen: () => {} },
   },
 };
-const { api } = await import('../web/src/api.js');
+const { api, keepBoth } = await import('../web/src/api.js');
 
 const fileLike = (name) => ({
   name,
@@ -41,9 +43,48 @@ test('upload percent-encodes its header metadata', async () => {
 test('upload validates the whole set before sending any file', async () => {
   calls.length = 0;
   await api.upload('p', [fileLike('a.tex'), fileLike('b.tex')]);
-  assert.equal(calls[0].command, 'validate_uploads');
-  assert.deepEqual(calls[0].args.files, [
+  // A core command reaches the desktop shell through its one `call`.
+  assert.equal(calls[0].command, 'call');
+  assert.equal(calls[0].args.command, 'validate_uploads');
+  assert.deepEqual(calls[0].args.args.files, [
     { path: 'a.tex', size: 3 },
     { path: 'b.tex', size: 3 },
   ]);
+});
+
+const uploads = () => calls.filter((c) => c.command === 'upload_file').map((c) => c.options.headers);
+
+test('names already taken are asked about once, and Stop uploads nothing', async () => {
+  calls.length = 0;
+  existing = [{ path: 'a.tex', keepBoth: 'a 2.tex' }, { path: 'figs', keepBoth: 'figs 2' }];
+  const asked = [];
+  const figure = { ...fileLike('p.png'), _relPath: 'figs/p.png' };
+  const result = await api.upload('p', [fileLike('a.tex'), figure], '', async (e) => { asked.push(e); return null; });
+  assert.deepEqual(result, { saved: [], stopped: true });
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0], existing);
+  assert.deepEqual(uploads(), []);
+  existing = [];
+});
+
+test('Replace sends only the clashing files with x-replace; Keep Both renames them', async () => {
+  existing = [{ path: 'a.tex', keepBoth: 'a 2.tex' }, { path: 'figs', keepBoth: 'figs 2' }];
+  const files = () => [fileLike('a.tex'), fileLike('b.tex'), { ...fileLike('p.png'), _relPath: 'figs/p.png' }];
+
+  calls.length = 0;
+  await api.upload('p', files(), '', async () => 'replace');
+  assert.deepEqual(uploads().map((h) => [h['x-path'], h['x-replace']]),
+    [['a.tex', 'true'], ['b.tex', undefined], ['figs%2Fp.png', 'true']]);
+
+  calls.length = 0;
+  const { saved } = await api.upload('p', files(), '', async () => 'keepBoth');
+  assert.deepEqual(saved, ['a 2.tex', 'b.tex', 'figs 2/p.png']);
+  assert.ok(uploads().every((h) => !('x-replace' in h)));
+  existing = [];
+});
+
+test('Keep Both renames a clash and whatever lies under it, nothing else', () => {
+  const clash = { path: 'notes', keepBoth: 'notes 2' };
+  assert.equal(keepBoth('notes', clash), 'notes 2');
+  assert.equal(keepBoth('notes/a.tex', clash), 'notes 2/a.tex');
 });

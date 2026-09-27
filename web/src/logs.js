@@ -40,9 +40,11 @@ export function renderLogs({ pdfScroll, logsButton }) {
   const summary = !r
     ? el('span', { class: 'logs-summary' }, 'Not compiled yet')
     : el('span', { class: 'logs-summary' },
-      errs.length
-        ? el('span', { class: 'badge error' }, plural(errs.length, 'error'))
-        : el('span', { class: 'badge ok' }, 'Compiled'),
+      r.stopped
+        ? el('span', { class: 'badge neutral' }, 'Build stopped')
+        : errs.length
+          ? el('span', { class: 'badge error' }, plural(errs.length, 'error'))
+          : el('span', { class: 'badge ok' }, 'Compiled'),
       warns.length ? el('span', { class: 'badge warning' }, plural(warns.length, 'warning')) : null,
       r.durationMs ? el('span', { class: 'logs-duration' }, `${(r.durationMs / 1000).toFixed(1)}s`) : null,
     );
@@ -65,11 +67,12 @@ export function renderLogs({ pdfScroll, logsButton }) {
       const items = [...errs, ...warns];
       if (!items.length) body.appendChild(el('p', { class: 'placeholder' }, 'No issues'));
       for (const it of items) {
-        // Without a line there is nowhere to jump to.
+        // Without a file and line there is nowhere to jump to. A file the
+        // core couldn't name stays unnamed, rather than guessed as the main.
         body.appendChild(el('button', {
           class: `log-item ${it.type}`,
-          disabled: it.line == null ? '' : null,
-          onclick: () => onJump?.(it.file ?? state.settings.mainFile, it.line),
+          disabled: it.file == null || it.line == null ? '' : null,
+          onclick: () => onJump?.(it.file, it.line),
         },
           el('span', { class: 'log-kind' }, it.type === 'error' ? 'Error' : 'Warning'),
           el('span', { class: 'log-loc' }, it.file || it.line ? `${it.file ?? ''}${it.line ? `:${it.line}` : ''}` : ''),

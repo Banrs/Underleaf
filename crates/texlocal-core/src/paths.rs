@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::CoreError;
-use crate::SETTINGS_FILE;
+use crate::{BUILD_DIR, SETTINGS_FILE};
 
 /// True for `/x`, `\\x`, and `C:...` forms — anything that doesn't stay
 /// relative to the base it's joined onto.
@@ -98,7 +98,13 @@ fn ensure_existing_ancestor_within(
     loop {
         match fs::symlink_metadata(existing) {
             Ok(_) => break,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // A file where the path wants a folder ends the path there too.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 existing = existing
                     .parent()
                     .ok_or_else(|| CoreError::bad_request(escape_err))?;
@@ -163,6 +169,29 @@ fn join_within(root: &Path, segments: &[&str]) -> Result<PathBuf, CoreError> {
 /// Absolute path for a user-supplied relative path inside a project.
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     join_within(root, &safe_segments(rel)?)
+}
+
+/// `safe_path` for a path about to be created or written. The project's
+/// top-level `build` folder holds compile output, so no file or folder of the
+/// author's may take that name, in any case: on a case-insensitive volume
+/// `Build` is the same folder, and the tree hides it.
+pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+    let segments = safe_segments(rel)?;
+    if segments[0].eq_ignore_ascii_case(BUILD_DIR) {
+        return Err(CoreError::bad_request(
+            "“build” holds the compiled PDF. Choose another name.",
+        ));
+    }
+    join_within(root, &segments)
+}
+
+/// A path as the volume compares it: macOS's and Windows' ignore case.
+pub(crate) fn fold_case(path: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        path.to_lowercase()
+    } else {
+        path.to_owned()
+    }
 }
 
 /// The normalized forward-slash spelling of a user-supplied project path, for

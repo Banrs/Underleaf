@@ -91,13 +91,14 @@
     :root[data-host-find] .cm-panels { display: none !important; }
 
     /* Completions and the math preview as the system's menus are: a raised
-       surface with the menu shadow and the kit's 12 px menu corners, 24 px
-       rows at the editor's font and size with 8 px corners, the selection in
-       the system's selected-content colour, details in the secondary colour.
-       No per-kind icons: a Mac completion list is text. */
+       surface with the menu shadow and the kit's 12 px menu corners, rows at
+       the editor's font and size with 8 px corners (24 px at 13 px, growing
+       with the font), the selection in the system's selected-content colour,
+       details in the secondary colour. No per-kind icons: a Mac completion
+       list is text. */
     :root[data-host] .cm-tooltip {
       background: var(--bg-raised) !important;
-      color: var(--label) !important;
+      color: var(--host-text) !important;
       border: none !important;
       border-radius: 12px;
       box-shadow: var(--shadow-menu);
@@ -108,9 +109,12 @@
       font-size: var(--editor-fs, 13px);
       max-height: 240px !important;
     }
+    /* The line box follows the font, or glyphs past 16 px would be clipped
+       (CodeMirror hides a row's overflow): 16 px at 13 px, a menu row's
+       text, rounded to whole pixels so rows stay crisp. */
     :root[data-host] .cm-tooltip-autocomplete > ul > li {
       padding: 4px 8px !important;
-      line-height: 16px;
+      line-height: round(1.25em, 1px);
       border-radius: 8px;
     }
     :root[data-host] .cm-tooltip-autocomplete > ul > li[aria-selected] {
@@ -120,9 +124,14 @@
     :root[data-host] .cm-completionIcon { display: none; }
     :root[data-host] .cm-completionLabel { font-family: inherit; }
     :root[data-host] .cm-completionMatchedText { text-decoration: none; font-weight: 600; }
+    /* A step smaller than the completion, as 11 px is beside 13 px, in a
+       line box no taller than itself: at the row's line height the smaller
+       font's baseline would stretch the row by half a pixel. */
     :root[data-host] .cm-completionDetail {
       margin-left: 12px;
-      font: var(--fs-micro)/var(--lh-micro) var(--font);
+      font-family: var(--font);
+      font-size: 0.85em;
+      line-height: 1;
       font-style: normal;
       color: var(--host-secondary-label);
     }

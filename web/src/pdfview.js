@@ -42,11 +42,12 @@ function textWidth(str, size, family) {
 }
 
 export class PdfViewer {
-  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange } = {}) {
+  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange, onDocument } = {}) {
     this.scrollEl = scrollEl;
     this.onSyncClick = onSyncClick;
     this.onPageChange = onPageChange;
     this.onZoomChange = onZoomChange;
+    this.onDocument = onDocument;
 
     this.doc = null;
     this.loadingTask = null;
@@ -158,8 +159,9 @@ export class PdfViewer {
 
   get numPages() { return this.doc?.numPages ?? 0; }
 
-  async load(url) {
-    const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href });
+  // `httpHeaders` go with every request pdf.js makes for the file.
+  async load(url, httpHeaders) {
+    const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href, httpHeaders });
     const generation = ++this._loadGeneration;
     // Every await below can be overtaken by a newer load. Failing and being
     // superseded need the same cleanup, so the task is destroyed unless this
@@ -184,6 +186,9 @@ export class PdfViewer {
       this.loadingTask = task;
       this.doc = doc;
       this.pageProxies = proxies;
+      // The commands that need a document work from here on. The render below
+      // never settles in a hidden window, so they can't wait for load().
+      this.onDocument?.();
       await prev?.destroy().catch(() => {});
       await this.render();
       return !superseded() && this.doc === doc;

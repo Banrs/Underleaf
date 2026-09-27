@@ -10,22 +10,24 @@ struct SourceBar: View {
     @State private var showSymbols = false
 
     /// The groups that fold, in the order they fold back from.
-    private enum Tools: Int, CaseIterable { case format, math, references, figures, lists }
+    private enum Tools: Int, CaseIterable {
+        case format, math, references, figures, lists
 
-    /// The templates with a button of their own, by title and symbol.
-    private static let references = [("Link", "link"), ("Reference", "number"), ("Citation", "text.quote")]
-    private static let figures = [("Figure", "photo"), ("Table", "tablecells")]
-    private static let lists = [("Bulleted List", "list.bullet"), ("Numbered List", "list.number")]
+        /// The templates whose buttons the group holds: those with a symbol.
+        var templates: [Template] {
+            switch self {
+            case .format, .math: []
+            case .references: referenceTemplates
+            case .figures: insertTemplates
+            case .lists: listTemplates
+            }
+        }
+    }
 
     var body: some View {
         PaneBar {
             ViewThatFits(in: .horizontal) {
-                tools(showing: 5)
-                tools(showing: 4)
-                tools(showing: 3)
-                tools(showing: 2)
-                tools(showing: 1)
-                tools(showing: 0)
+                ForEach((0...Tools.allCases.count).reversed(), id: \.self) { tools(showing: $0) }
                 tools(showing: 0, level: false)
                 tools(showing: 0, level: false, redo: false)
             }
@@ -37,10 +39,11 @@ struct SourceBar: View {
     /// fold last, for a source pane at its narrowest.
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
-        return HStack(spacing: BarMetrics.spacing) {
+        // A group's room either side of each line, as every bar has it.
+        return HStack(spacing: BarMetrics.groupSpacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app)]
-                + (redo || !isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
-            if isLaTeX {
+                + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app)] : []))
+            if project.isLaTeX {
                 if level {
                     ToolSeparator()
                     SectionLevelMenu(project: project)
@@ -78,13 +81,9 @@ struct SourceBar: View {
                     }
             }
             .fixedSize()
-        case .references:
-            ToolGroup(items: Self.references.map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.inline(title) }
-            })
-        case .figures, .lists:
-            ToolGroup(items: (group == .figures ? Self.figures : Self.lists).map { title, symbol in
-                Segment(id: title, title: title, systemImage: symbol) { project.insert(title) }
+        case .references, .figures, .lists:
+            ToolGroup(items: group.templates.compactMap { template in
+                template.symbol.map { Segment(id: template.title, title: template.title, systemImage: $0) { project.insert(template) } }
             })
         }
     }
@@ -98,11 +97,7 @@ struct SourceBar: View {
                 Divider()
             }
             if level {
-                Menu("Section Level") {
-                    ForEach(headingLevels, id: \.1) { title, command in
-                        Button(title) { project.format("heading", command) }
-                    }
-                }
+                SectionLevelItems(project: project)
                 Divider()
             }
             ForEach(folded, id: \.self) { group in
@@ -114,27 +109,14 @@ struct SourceBar: View {
                     Button(MenuCommand.editMath.title) { app.perform(.editMath) }
                     Button("Display Math") { project.format("displayMath") }
                     SymbolMenu(project: project)
-                case .references:
-                    ForEach(Self.references, id: \.0) { title, _ in
-                        Button(title) { project.inline(title) }
-                    }
-                case .figures, .lists:
-                    ForEach(group == .figures ? Self.figures : Self.lists, id: \.0) { title, _ in
-                        Button(title) { project.insert(title) }
-                    }
+                case .references, .figures, .lists:
+                    items(group.templates.filter { $0.symbol != nil })
                 }
                 Divider()
             }
-            ForEach(insertTemplates.filter { title, _ in !Self.figures.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("insert", template) }
-            }
-            ForEach(listTemplates.filter { title, _ in !Self.lists.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("insert", template) }
-            }
+            items((insertTemplates + listTemplates).filter { $0.symbol == nil })
             Divider()
-            ForEach(referenceTemplates.filter { title, _ in !Self.references.contains { $0.0 == title } }, id: \.0) { title, template in
-                Button(title) { project.format("inline", template) }
-            }
+            items(referenceTemplates.filter { $0.symbol == nil })
         } label: {
             Label("More", systemImage: "ellipsis")
         }
@@ -145,14 +127,18 @@ struct SourceBar: View {
         .help("More")
     }
 
-    private var isLaTeX: Bool { project.openPath?.hasSuffix(".tex") == true }
+    private func items(_ templates: [Template]) -> some View {
+        ForEach(templates, id: \.title) { template in
+            Button(template.title) { project.insert(template) }
+        }
+    }
 }
 
 /// The line's section level, as a word processor shows its paragraph
 /// style; choosing one makes the line that heading, or plain text. The
-/// system's pop-up, so it checks the level; named for VoiceOver, which
-/// otherwise read the pop-up's symbol name. A view of its own, so a caret
-/// move redraws it and not the whole bar.
+/// system's pop-up, so it checks the level; VoiceOver names it by the
+/// picker's hidden label. A view of its own, so a caret move redraws it
+/// and not the whole bar.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
 
@@ -171,30 +157,9 @@ private struct SectionLevelMenu: View {
         .pickerStyle(.menu)
         .labelsHidden()
         .fixedSize()
-        .accessibilityLabel("Section Level")
         .help("Section Level")
     }
 }
-
-/// Symbols by kind, each inserted as its command: the palette LaTeX editors
-/// keep beside the source (TeXstudio, TeXShop, Overleaf).
-let symbolGroups: [(String, [(String, String)])] = [
-    ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
-               ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
-               ("μ", "\\mu"), ("ν", "\\nu"), ("ξ", "\\xi"), ("π", "\\pi"), ("ρ", "\\rho"), ("σ", "\\sigma"),
-               ("τ", "\\tau"), ("φ", "\\phi"), ("χ", "\\chi"), ("ψ", "\\psi"), ("ω", "\\omega"),
-               ("Γ", "\\Gamma"), ("Δ", "\\Delta"), ("Θ", "\\Theta"), ("Λ", "\\Lambda"), ("Π", "\\Pi"),
-               ("Σ", "\\Sigma"), ("Φ", "\\Phi"), ("Ψ", "\\Psi"), ("Ω", "\\Omega")]),
-    ("Operators", [("±", "\\pm"), ("×", "\\times"), ("÷", "\\div"), ("·", "\\cdot"), ("∑", "\\sum"),
-                   ("∏", "\\prod"), ("∫", "\\int"), ("∮", "\\oint"), ("√", "\\sqrt{}"), ("∂", "\\partial"),
-                   ("∇", "\\nabla"), ("∞", "\\infty"), ("∘", "\\circ"), ("⊗", "\\otimes"), ("⊕", "\\oplus")]),
-    ("Relations", [("≤", "\\leq"), ("≥", "\\geq"), ("≠", "\\neq"), ("≈", "\\approx"), ("≡", "\\equiv"),
-                   ("∼", "\\sim"), ("∝", "\\propto"), ("∈", "\\in"), ("∉", "\\notin"), ("⊂", "\\subset"),
-                   ("⊆", "\\subseteq"), ("∪", "\\cup"), ("∩", "\\cap"), ("∅", "\\emptyset")]),
-    ("Arrows and Logic", [("→", "\\rightarrow"), ("←", "\\leftarrow"), ("↔", "\\leftrightarrow"),
-                          ("⇒", "\\Rightarrow"), ("⇐", "\\Leftarrow"), ("⇔", "\\Leftrightarrow"), ("↦", "\\mapsto"),
-                          ("∀", "\\forall"), ("∃", "\\exists"), ("¬", "\\neg"), ("∧", "\\wedge"), ("∨", "\\vee")]),
-]
 
 /// The symbol palette: one grid, so the columns line up across the kinds;
 /// each symbol a flat button named by its command. The popover draws its
@@ -248,6 +213,20 @@ private struct SymbolPalette: View {
     }
 }
 
+/// The line's section level as a submenu, for the Format menu and the
+/// bar's overflow.
+struct SectionLevelItems: View {
+    let project: ProjectModel?
+
+    var body: some View {
+        Menu("Section Level") {
+            ForEach(headingLevels, id: \.1) { title, command in
+                Button(title) { project?.format("heading", command) }
+            }
+        }
+    }
+}
+
 /// The palette as a menu, for the Format menu and the bar's overflow.
 struct SymbolMenu: View {
     let project: ProjectModel?
@@ -256,8 +235,13 @@ struct SymbolMenu: View {
         Menu("Symbols") {
             ForEach(symbolGroups, id: \.0) { title, symbols in
                 Menu(title) {
+                    // The glyph over its command, the menu's own title and
+                    // subtitle, rather than the two spaced apart in one title.
                     ForEach(symbols, id: \.1) { glyph, command in
-                        Button("\(glyph)   \(command)") { project?.format("symbol", command) }
+                        Button { project?.format("symbol", command) } label: {
+                            Text(glyph)
+                            Text(command)
+                        }
                     }
                 }
             }
@@ -265,10 +249,10 @@ struct SymbolMenu: View {
     }
 }
 
-/// Where the cursor is, as Xcode's jump bar shows it: the project, its
-/// folders, the file (a menu of its siblings) and the section (a menu of
-/// the file's sections). Narrow panes drop the project and folders, then
-/// the section.
+/// Where the cursor is, as Xcode's jump bar shows it, every crumb a menu:
+/// the project and its folders (each a menu of what it holds), the file (a
+/// menu of its siblings) and the section (a menu of the file's sections).
+/// Narrow panes drop the project and folders, then the section.
 struct SourceLocation: View {
     let project: ProjectModel
 
@@ -290,10 +274,11 @@ struct SourceLocation: View {
         let parts = path.split(separator: "/").map(String.init)
         return HStack(spacing: BarMetrics.spacing) {
             if folders {
-                crumb(project.id, "folder")
-                ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { _, folder in
+                folderMenu(project.id, contents: project.tree)
+                ForEach(Array(parts.dropLast().enumerated()), id: \.offset) { index, folder in
                     chevron
-                    crumb(folder, "folder")
+                    let path = parts[...index].joined(separator: "/")
+                    folderMenu(folder, contents: project.tree.flattened.first { $0.path == path }?.children ?? [])
                 }
                 chevron
             }
@@ -307,13 +292,23 @@ struct SourceLocation: View {
     }
 
     private var chevron: some View {
-        Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+        // Decoration: VoiceOver read each one as "Compact Forward Chevron".
+        Image(systemName: "chevron.compact.forward").foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
     }
 
-    private func crumb(_ title: String, _ systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(.secondary)
+    /// The project or a folder, a menu of what it holds: its folders as
+    /// submenus, its files to open.
+    private func folderMenu(_ name: String, contents: [TreeNode]) -> some View {
+        Menu {
+            FolderMenuItems(nodes: contents) { path in Task { await project.open(path) } }
+        } label: {
+            Label(name, systemImage: "folder").labelStyle(.titleAndIcon)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.accessoryBar)
+        .menuIndicator(.hidden)
+        .help(name)
     }
 
     /// The file, a menu of the text files in its folder.
@@ -323,10 +318,11 @@ struct SourceLocation: View {
                 Button((file as NSString).lastPathComponent) { Task { await project.open(file) } }
             }
         } label: {
-            Label(name, systemImage: "doc.text").labelStyle(.titleAndIcon)
+            Label(name, systemImage: fileSymbol(path)).labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        // A quiet fill under the pointer, as Xcode's jump bar has.
+        .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help(path)
     }
@@ -334,13 +330,8 @@ struct SourceLocation: View {
     /// The text files in the open file's folder, walked once per update.
     private func siblings(of path: String) -> [String] {
         let folder = (path as NSString).deletingLastPathComponent
-        return textFiles(project.tree).filter { ($0 as NSString).deletingLastPathComponent == folder }
-    }
-
-    private func textFiles(_ nodes: [TreeNode]) -> [String] {
-        nodes.flatMap { node in
-            node.isDirectory ? textFiles(node.children ?? []) : (isTextFile(node.path) ? [node.path] : [])
-        }
+        return project.tree.flattened.filter { !$0.isDirectory && isTextFile($0.path) }.map(\.path)
+            .filter { ($0 as NSString).deletingLastPathComponent == folder }
     }
 }
 
@@ -351,12 +342,9 @@ private struct SectionCrumb: View {
 
     var body: some View {
         let chain = Outline.chain(project.outline, at: project.cursorLine)
-        let depths = Outline.depths(project.outline)
         Menu {
-            ForEach(project.outline) { item in
-                Button(String(repeating: "    ", count: depths[item.id]) + Outline.displayTitle(item)) {
-                    if let path = project.openPath { Task { await project.open(path, line: item.line) } }
-                }
+            SectionMenuItems(nodes: Outline.tree(project.outline)) { item in
+                if let path = project.openPath { Task { await project.open(path, line: item.line) } }
             }
         } label: {
             // On the label's text, not the menu: the pop-up takes its colour
@@ -370,91 +358,111 @@ private struct SectionCrumb: View {
             .labelStyle(.titleAndIcon)
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(.accessoryBar)
         .menuIndicator(.hidden)
         .help("Go to a Section")
     }
 }
 
-/// Find and replace in the source, as Xcode's find bar has it; CodeMirror
-/// does the searching, its own panel hidden. Text actions are push buttons.
-/// Narrow panes fold it so the fields and Done are never clipped.
-struct SourceFindBar: View {
-    @Bindable var project: ProjectModel
+/// A folder's contents as a menu: each folder a submenu, each file an
+/// item that opens it.
+private struct FolderMenuItems: View {
+    let nodes: [TreeNode]
+    let open: (String) -> Void
 
     var body: some View {
-        PaneBarRows {
-            ViewThatFits(in: .horizontal) {
-                // Replace All folds into Replace's menu, and the fields
-                // narrow, before the count goes: the minimum window still
-                // says "Not found".
-                rows(count: true, replaceMenu: false)
-                rows(count: true, replaceMenu: true)
-                rows(count: true, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
-                rows(count: false, replaceMenu: true, fieldWidth: BarMetrics.fieldMinWidth)
-                rows(count: false, replaceMenu: true, fieldWidth: 0)
-            }
-            .placingFields([0, 1]) { id in
-                if id == 0 {
-                    SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
-                                options: options, step: { project.findStep($0) }, close: { project.closeFind() })
-                } else {
-                    SearchField(text: $project.findQuery.replace, prompt: "Replace", searches: false,
-                                submit: { project.replace(all: false) }, close: { project.closeFind() })
+        ForEach(nodes) { node in
+            if node.isDirectory {
+                Menu {
+                    FolderMenuItems(nodes: node.children ?? [], open: open)
+                } label: {
+                    Label(node.name, systemImage: "folder")
+                }
+            } else {
+                Button { open(node.path) } label: {
+                    Label(node.name, systemImage: fileSymbol(node.path))
                 }
             }
         }
     }
+}
 
-    /// The fields' slots share the one flexible column, so they take what
-    /// the buttons leave and line up; the buttons' column keeps to the
-    /// trailing edge, Done ending the first row. The fields themselves are
-    /// drawn over the slots (`placingFields`), the same views in every layout.
-    private func rows(count: Bool, replaceMenu: Bool, fieldWidth: CGFloat = BarMetrics.fieldWidth) -> some View {
+/// The sections as the outline nests them: a heading with subsections is
+/// a submenu, itself its first item, as a menu can't both open a submenu
+/// and act.
+private struct SectionMenuItems: View {
+    let nodes: [OutlineNode]
+    let go: (OutlineItem) -> Void
+
+    var body: some View {
+        ForEach(nodes) { node in
+            let title = Outline.displayTitle(node.item)
+            if let children = node.children {
+                Menu(title) {
+                    Button(title) { go(node.item) }
+                    Divider()
+                    SectionMenuItems(nodes: children, go: go)
+                }
+            } else {
+                Button(title) { go(node.item) }
+            }
+        }
+    }
+}
+
+/// Find and replace in the source, as Xcode's find bar has it; CodeMirror
+/// does the searching, its own panel hidden. Text actions are push buttons.
+/// One layout: in a narrow pane the fields narrow, the count goes and
+/// Replace All folds into Replace's menu.
+struct SourceFindBar: View {
+    @Bindable var project: ProjectModel
+    @FocusState private var replaceFocused: Bool
+
+    var body: some View {
+        // Two rows of a pane bar's controls, inset as its one row is.
         Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
             GridRow {
-                FieldSlot(id: 0, minWidth: fieldWidth, idealWidth: fieldWidth)
+                SearchField(text: $project.findQuery.search, prompt: "Find", focus: project.findFocus,
+                            options: options, step: { project.findStep($0) }, close: { project.closeFind() })
+                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
                 HStack(spacing: BarMetrics.groupSpacing) {
-                    ToolGroup(items: [
-                        Segment(id: "previous", title: "Previous Match", systemImage: "chevron.up",
-                                enabled: project.findMatches.total > 0) { project.findStep(-1) },
-                        Segment(id: "next", title: "Next Match", systemImage: "chevron.down",
-                                enabled: project.findMatches.total > 0) { project.findStep(1) },
-                    ])
-                    if count {
-                        Text(project.findMatches.label(for: project.findQuery.search))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
+                    FindSteps(enabled: project.findMatches.total > 0) { project.findStep($0) }
+                    FindCount(label: project.findMatches.label(for: project.findQuery.search))
                     Button("Done") { project.closeFind() }
                         .buttonStyle(.bordered)
                 }
-                .fixedSize()
                 .gridColumnAlignment(.trailing)
             }
             GridRow {
-                FieldSlot(id: 1, minWidth: fieldWidth, idealWidth: fieldWidth)
-                Group {
-                    if replaceMenu {
-                        // Replace, with Replace All in its menu.
-                        Menu("Replace") {
-                            Button("Replace All") { project.replace(all: true) }
-                        } primaryAction: {
-                            project.replace(all: false)
-                        }
-                        .menuStyle(.button)
-                    } else {
-                        HStack(spacing: BarMetrics.spacing) {
-                            Button("Replace") { project.replace(all: false) }
-                            Button("Replace All") { project.replace(all: true) }
-                        }
+                TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { project.replace(all: false) }
+                    .onExitCommand { project.closeFind() }
+                    .focused($replaceFocused)
+                    // Find and Replace…, as the bar opens or while it shows.
+                    .task(id: project.replaceFocus) {
+                        if project.replaceFocus > 0 { replaceFocused = true }
                     }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: BarMetrics.spacing) {
+                        Button("Replace") { project.replace(all: false) }
+                        Button("Replace All") { project.replace(all: true) }
+                    }
+                    // Replace, with Replace All in its menu.
+                    Menu("Replace") {
+                        Button("Replace All") { project.replace(all: true) }
+                    } primaryAction: {
+                        project.replace(all: false)
+                    }
+                    .menuStyle(.button)
                 }
                 .buttonStyle(.bordered)
-                .fixedSize()
                 .disabled(project.findMatches.total == 0)
             }
         }
+        .padding(.vertical, BarMetrics.inset)
+        .paneBarControls()
     }
 
     private var options: [SearchOption] {
@@ -466,37 +474,27 @@ struct SourceFindBar: View {
     }
 }
 
-/// The section levels, as the line's style: plain text, then the
-/// sectioning commands in the order the web's outline ranks them.
-let headingLevels: [(String, String)] = [
-    ("Normal Text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
-    ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
-]
+/// The Format menu's LaTeX tools, as the source bar offers them: the line's
+/// section level, math and symbols, references, then what inserts a block.
+struct InsertMenuItems<InlineMath: View>: View {
+    let project: ProjectModel?
+    /// The menu bar's Inline Math item, with its shortcut.
+    let inlineMath: InlineMath
 
-/// Cross-references, citations and links; each opens completion inside
-/// its braces.
-let referenceTemplates: [(String, String)] = [
-    ("Reference", "\\ref{$0}"), ("Equation Reference", "\\eqref{$0}"), ("Citation", "\\cite{$0}"),
-    ("Label", "\\label{$0}"), ("Link", "\\href{$0}{}"), ("URL", "\\url{$0}"),
-]
-
-/// The lists: web/src/sourcebar.js `LIST_TEMPLATES`.
-let listTemplates: [(String, String)] = [
-    ("Bulleted List", "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n"),
-    ("Numbered List", "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n"),
-    ("Description List", "\\begin{description}\n  \\item[$0] \n\\end{description}\n"),
-]
-
-extension ProjectModel {
-    /// A block from `insertTemplates` or `listTemplates`, by its title.
-    func insert(_ title: String) {
-        if let template = (insertTemplates + listTemplates).first(where: { $0.0 == title })?.1 {
-            format("insert", template)
-        }
+    var body: some View {
+        SectionLevelItems(project: project)
+        inlineMath
+        Button("Display Math") { project?.format("displayMath") }
+        SymbolMenu(project: project)
+        Menu("Reference") { items(referenceTemplates) }
+        Divider()
+        items(insertTemplates)
+        Menu("List") { items(listTemplates) }
     }
 
-    /// A template from `referenceTemplates` around the selection, by its title.
-    func inline(_ title: String) {
-        if let template = referenceTemplates.first(where: { $0.0 == title })?.1 { format("inline", template) }
+    private func items(_ templates: [Template]) -> some View {
+        ForEach(templates, id: \.title) { template in
+            Button(template.title) { project?.insert(template) }
+        }
     }
 }

@@ -3,6 +3,7 @@
 // check it runs, which cache it invalidates — lives here once, not per host.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -11,11 +12,13 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::analyze;
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
-use crate::projects::{self, FileStamp, ProjectInfo, RenameResult, SearchHit, Symbols, TreeNode};
-use crate::settings::{self, Settings};
-use crate::synctex::{self, ForwardLoc, InverseLoc};
-use crate::{paths, CoreError};
+use crate::paths::fold_case;
+use crate::projects::{self, FileStamp, Symbols};
+use crate::settings;
+use crate::synctex;
+use crate::{atomic, paths, CoreError};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
@@ -49,6 +52,51 @@ pub struct UploadSpec {
     pub size: usize,
 }
 
+/// An entry an upload would land on: an incoming file's own place, or a
+/// folder on its path that is a file here. Both paths are relative to the
+/// upload's folder, as the host names the files; `keep_both` is a free name
+/// beside it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Clash {
+    pub path: String,
+    pub keep_both: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UploadCheck {
+    pub existing: Vec<Clash>,
+}
+
+/// An upload file's path once Keep Both has renamed the clash it lies under.
+pub fn keep_both(path: &str, clashes: &[Clash]) -> String {
+    let path = path.replace('\\', "/");
+    clashes
+        .iter()
+        .find_map(|c| {
+            let rest = path.strip_prefix(&c.path)?;
+            (rest.is_empty() || rest.starts_with('/')).then(|| format!("{}{rest}", c.keep_both))
+        })
+        .unwrap_or(path)
+}
+
+/// The first entry in `rel`'s way under `base`: the file itself if it
+/// exists, or a folder on its path that exists as something else.
+fn clash(base: &Path, rel: &str) -> Option<String> {
+    let mut end = 0;
+    loop {
+        end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+        let abs = base.join(&rel[..end]);
+        let meta = fs::symlink_metadata(&abs).ok()?;
+        // A link to a folder is a folder on the way: the path checks have
+        // already kept it inside the project.
+        if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
+            return Some(rel[..end].to_string());
+        }
+        end += 1;
+    }
+}
+
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
@@ -64,14 +112,6 @@ fn upload_rel(dir: &str, name: &str) -> String {
     } else {
         format!("{}/{}", dir.trim_end_matches('/'), name)
     }
-}
-
-/// Write a file, creating the folders it sits in.
-fn write_creating(abs: &Path, contents: impl AsRef<[u8]>) -> Result<(), CoreError> {
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(std::fs::write(abs, contents)?)
 }
 
 fn too_large() -> CoreError {
@@ -188,7 +228,10 @@ impl Service {
             }
         };
         let text = json!({ "texDir": chosen.map(|d| d.to_string_lossy().into_owned()) });
-        std::fs::write(self.data_dir.join(APP_SETTINGS_FILE), text.to_string())?;
+        atomic::write(
+            &self.data_dir.join(APP_SETTINGS_FILE),
+            text.to_string().as_bytes(),
+        )?;
         Ok(self.status().await)
     }
 
@@ -223,49 +266,7 @@ impl Service {
         })
     }
 
-    // ---------- projects ----------
-
-    pub fn list_projects(&self) -> Result<Vec<ProjectInfo>, CoreError> {
-        projects::list_projects(&self.data_dir)
-    }
-
-    pub fn create_project(
-        &self,
-        name: &str,
-        template: Option<&str>,
-    ) -> Result<ProjectInfo, CoreError> {
-        projects::create_project(&self.data_dir, name, template.unwrap_or("article"))
-    }
-
-    pub fn rename_project(&self, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
-        let old = self.project_root(id)?;
-        let info = projects::rename_project(&self.data_dir, id, name)?;
-        self.forget_project(&old);
-        Ok(info)
-    }
-
-    pub fn delete_project(&self, id: &str) -> Result<(), CoreError> {
-        let old = self.project_root(id)?;
-        projects::delete_project(&self.data_dir, id)?;
-        self.forget_project(&old);
-        Ok(())
-    }
-
-    // ---------- settings ----------
-
-    pub fn get_settings(&self, id: &str) -> Result<Settings, CoreError> {
-        Ok(settings::read_settings(&self.project_root(id)?))
-    }
-
-    pub fn set_settings(&self, id: &str, patch: &Value) -> Result<Settings, CoreError> {
-        settings::write_settings(&self.project_root(id)?, patch)
-    }
-
     // ---------- files ----------
-
-    pub fn file_tree(&self, id: &str) -> Result<Vec<TreeNode>, CoreError> {
-        projects::file_tree(&self.project_root(id)?)
-    }
 
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
         let root = self.project_root(id)?;
@@ -283,77 +284,88 @@ impl Service {
         Ok(symbols)
     }
 
-    pub fn search_project(&self, id: &str, query: &str) -> Result<Vec<SearchHit>, CoreError> {
-        projects::search_project(&self.project_root(id)?, query, SEARCH_LIMIT)
-    }
-
-    pub fn read_file(&self, id: &str, path: &str) -> Result<String, CoreError> {
-        let bytes = std::fs::read(paths::safe_path(&self.project_root(id)?, path)?)?;
-        Ok(crate::lossy_string(bytes))
-    }
-
-    pub fn write_file(&self, id: &str, path: &str, text: &str) -> Result<(), CoreError> {
-        self.edit(id, |root| {
-            write_creating(&paths::safe_path(root, path)?, text)
-        })
-    }
-
-    pub fn create_entry(&self, id: &str, path: &str, dir: bool) -> Result<(), CoreError> {
-        self.edit(id, |root| projects::create_file(root, path, dir))
-    }
-
-    pub fn rename_entry(&self, id: &str, from: &str, to: &str) -> Result<RenameResult, CoreError> {
-        self.edit(id, |root| projects::rename_entry(root, from, to))
-    }
-
-    pub fn delete_entry(&self, id: &str, path: &str) -> Result<(), CoreError> {
-        self.edit(id, |root| projects::delete_entry(root, path))
-    }
-
     /// Validate a complete upload before the first write, so a late unsafe path
-    /// or oversize file cannot produce a predictable half-import.
+    /// or oversize file cannot produce a predictable half-import. Returns the
+    /// entries the upload would land on, for the host to ask about as Finder
+    /// does: Replace (upload with `replace`), Keep Both (rename the files
+    /// under each clash's `path` to its `keepBoth`, as `keep_both` does) or
+    /// Stop.
     pub fn validate_uploads(
         &self,
         id: &str,
         dir: &str,
         files: &[UploadSpec],
-    ) -> Result<(), CoreError> {
+    ) -> Result<UploadCheck, CoreError> {
         let root = self.project_root(id)?;
+        let base = root.join(paths::rel_key(dir).unwrap_or_default());
         let mut seen = HashSet::new();
+        let mut rels = Vec::new();
         for file in files {
             if file.size > UPLOAD_MAX_BYTES {
                 return Err(too_large());
             }
-            let abs = paths::safe_path(&root, &upload_rel(dir, &file.path))?;
-            let key = if cfg!(any(windows, target_os = "macos")) {
-                abs.to_string_lossy().to_ascii_lowercase()
-            } else {
-                abs.to_string_lossy().into_owned()
-            };
-            if !seen.insert(key) {
+            paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
+            // Relative to `dir`, as the host names the files.
+            let rel = paths::rel_key(&file.path)?;
+            if !seen.insert(fold_case(&rel)) {
                 return Err(CoreError::bad_request(
                     "The upload contains duplicate paths",
                 ));
             }
+            rels.push(rel);
         }
-        Ok(())
+        // Names a Keep Both may not take: every path the upload creates.
+        let mut taken: HashSet<String> = rels
+            .iter()
+            .flat_map(|rel| rel.match_indices('/').map(|(i, _)| &rel[..i]))
+            .map(fold_case)
+            .chain(seen)
+            .collect();
+        let mut existing: Vec<Clash> = Vec::new();
+        for rel in &rels {
+            let Some(path) = clash(&base, rel) else {
+                continue;
+            };
+            if existing.iter().any(|c| c.path == path) {
+                continue;
+            }
+            let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
+            let keep_both = (2..)
+                .map(|n| upload_rel(parent, &projects::numbered(name, n)))
+                .find(|free| {
+                    fs::symlink_metadata(base.join(free)).is_err() && taken.insert(fold_case(free))
+                })
+                .expect("a free name");
+            existing.push(Clash { path, keep_both });
+        }
+        Ok(UploadCheck { existing })
     }
 
     /// One file of an upload the host has already passed to
-    /// `validate_uploads`. Returns the project-relative path written.
+    /// `validate_uploads`. Returns the project-relative path written. An
+    /// entry in its place is an error, unless `replace` moves it to the
+    /// Trash first.
     pub fn upload_file(
         &self,
         id: &str,
         dir: &str,
         path: &str,
         bytes: &[u8],
+        replace: bool,
     ) -> Result<String, CoreError> {
         if bytes.len() > UPLOAD_MAX_BYTES {
             return Err(too_large());
         }
         let rel = upload_rel(dir, path);
         self.edit(id, |root| {
-            write_creating(&paths::safe_path(root, &rel)?, bytes)
+            let abs = paths::safe_write_path(root, &rel)?;
+            if let Some(taken) = clash(root, &paths::rel_key(&rel)?) {
+                if !replace {
+                    return Err(CoreError::conflict(format!("“{taken}” already exists")));
+                }
+                projects::discard_replaced(root, &taken)?;
+            }
+            projects::write_creating(&abs, bytes)
         })?;
         Ok(rel)
     }
@@ -368,7 +380,7 @@ impl Service {
         paths::safe_path(&self.project_root(id)?, rel)
     }
 
-    // ---------- compile / synctex ----------
+    // ---------- compile ----------
 
     pub async fn compile(
         &self,
@@ -382,25 +394,6 @@ impl Service {
                 self.tex_dir().as_deref(),
             )
             .await
-    }
-
-    pub async fn synctex_forward(
-        &self,
-        id: &str,
-        file: &str,
-        line: u32,
-    ) -> Result<ForwardLoc, CoreError> {
-        synctex::synctex_forward(&self.project_root(id)?, file, line, &self.tex_path()).await
-    }
-
-    pub async fn synctex_inverse(
-        &self,
-        id: &str,
-        page: f64,
-        x: f64,
-        y: f64,
-    ) -> Result<InverseLoc, CoreError> {
-        synctex::synctex_inverse(&self.project_root(id)?, page, x, y, &self.tex_path()).await
     }
 
     // ---------- dispatch ----------
@@ -418,43 +411,77 @@ impl Service {
     /// The exception is the TeX folder: `set_tex_dir` and `list_dirs` take an
     /// absolute path by name, because a browser page has no native folder
     /// picker. That grants nothing new. The browser server listens on
-    /// 127.0.0.1 only, behind its token cookie and Host/Origin checks, and a
+    /// 127.0.0.1 only, behind its token header and Host/Origin checks, and a
     /// caller that can compile can already run code as this user, so choosing
     /// which latexmk runs adds no power; `list_dirs` returns folder names, never
     /// file contents.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
         let s = |key: &str| arg::<String>(args, key);
+        let root = || self.project_root(&s("id")?);
         match command {
             "status" => out(self.status().await),
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
             "list_dirs" => out(self.list_dirs(arg::<Option<String>>(args, "path")?.as_deref())?),
-            "list_projects" => out(self.list_projects()?),
-            "create_project" => out(self.create_project(
+            "list_projects" => out(projects::list_projects(&self.data_dir)?),
+            "create_project" => out(projects::create_project(
+                &self.data_dir,
                 &s("name")?,
-                arg::<Option<String>>(args, "template")?.as_deref(),
+                arg::<Option<String>>(args, "template")?
+                    .as_deref()
+                    .unwrap_or("article"),
             )?),
-            "rename_project" => out(self.rename_project(&s("id")?, &s("name")?)?),
-            "delete_project" => out(self.delete_project(&s("id")?)?),
-            "get_settings" => out(self.get_settings(&s("id")?)?),
-            "set_settings" => out(self.set_settings(&s("id")?, &arg::<Value>(args, "patch")?)?),
-            "file_tree" => out(self.file_tree(&s("id")?)?),
+            "rename_project" => {
+                let old = root()?;
+                let info = projects::rename_project(&self.data_dir, &s("id")?, &s("name")?)?;
+                self.forget_project(&old);
+                out(info)
+            }
+            "delete_project" => {
+                let old = root()?;
+                projects::delete_project(&self.data_dir, &s("id")?)?;
+                self.forget_project(&old);
+                out(())
+            }
+            "get_settings" => out(settings::read_settings(&root()?)),
+            "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
+            "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
-            "search_project" => out(self.search_project(&s("id")?, &s("query")?)?),
+            "analyze" => out(analyze::analyze(&s("text")?)),
+            "search_project" => out(projects::search_project(
+                &root()?,
+                &s("query")?,
+                SEARCH_LIMIT,
+            )?),
             // Already a Value: out() would serialize it again, copying the
             // whole document.
-            "read_file" => Ok(json!({ "text": self.read_file(&s("id")?, &s("path")?)? })),
+            "read_file" => {
+                let bytes = fs::read(paths::safe_path(&root()?, &s("path")?)?)?;
+                Ok(json!({ "text": crate::lossy_string(bytes) }))
+            }
             // `text` is required: a call that lost it must fail, not empty
             // the file.
-            "write_file" => out(self.write_file(&s("id")?, &s("path")?, &s("text")?)?),
-            "create_entry" => out(self.create_entry(
-                &s("id")?,
-                &s("path")?,
-                arg::<Option<bool>>(args, "dir")?.unwrap_or(false),
-            )?),
-            "rename_entry" => out(self.rename_entry(&s("id")?, &s("from")?, &s("to")?)?),
-            "delete_entry" => out(self.delete_entry(&s("id")?, &s("path")?)?),
+            "write_file" => {
+                let (path, text) = (s("path")?, s("text")?);
+                out(self.edit(&s("id")?, |root| {
+                    projects::write_creating(&paths::safe_write_path(root, &path)?, text.as_bytes())
+                })?)
+            }
+            "create_entry" => {
+                let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
+                out(self.edit(&s("id")?, |root| {
+                    projects::create_file(root, &path, dir.unwrap_or(false))
+                })?)
+            }
+            "rename_entry" => {
+                let (from, to) = (s("from")?, s("to")?);
+                out(self.edit(&s("id")?, |root| projects::rename_entry(root, &from, &to))?)
+            }
+            "delete_entry" => {
+                let path = s("path")?;
+                out(self.edit(&s("id")?, |root| projects::delete_entry(root, &path))?)
+            }
             "validate_uploads" => out(self.validate_uploads(
                 &s("id")?,
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
@@ -466,23 +493,31 @@ impl Service {
                     &arg::<Option<CompileOverrides>>(args, "options")?.unwrap_or_default(),
                 )
                 .await?),
-            "synctex_forward" => out(self
-                .synctex_forward(&s("id")?, &s("file")?, arg(args, "line")?)
-                .await?),
-            "synctex_inverse" => out(self
-                .synctex_inverse(
-                    &s("id")?,
-                    arg(args, "page")?,
-                    arg(args, "x")?,
-                    arg(args, "y")?,
-                )
-                .await?),
+            // The project's own build, which reports itself stopped; true
+            // when one was running.
+            "stop_compile" => out(self.compile.stop(&root()?).await),
+            "synctex_forward" => out(synctex::synctex_forward(
+                &root()?,
+                &s("file")?,
+                arg(args, "line")?,
+                &self.tex_path(),
+            )
+            .await?),
+            "synctex_inverse" => out(synctex::synctex_inverse(
+                &root()?,
+                arg(args, "page")?,
+                arg(args, "x")?,
+                arg(args, "y")?,
+                &self.tex_path(),
+            )
+            .await?),
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }
 }
 
-fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
+/// Argument `key` of a JSON command, which a missing key reads as null.
+pub fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError> {
     // Straight from the borrowed Value, with no intermediate clone of it.
     T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))

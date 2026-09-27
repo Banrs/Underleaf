@@ -186,12 +186,96 @@ fn uploads_are_validated_as_a_batch_before_any_write() {
         );
     }
 
-    let saved = service.upload_file("P", "img", "c.png", b"png").unwrap();
+    let saved = service
+        .upload_file("P", "img", "c.png", b"png", false)
+        .unwrap();
     assert_eq!(saved, "img/c.png");
     assert_eq!(
         std::fs::read(service.data_dir.join("P/img/c.png")).unwrap(),
         b"png"
     );
+}
+
+#[test]
+fn an_upload_reports_what_it_would_land_on_and_never_overwrites_unasked() {
+    let (_dir, service) = with_project();
+    let root = service.data_dir.join("P");
+    std::fs::create_dir_all(root.join("figs")).unwrap();
+    std::fs::write(root.join("figs/a.png"), "old").unwrap();
+    std::fs::write(root.join("figs/a 2.png"), "older").unwrap();
+    std::fs::write(root.join("notes"), "a file").unwrap();
+    let spec = |path: &str| texlocal_core::service::UploadSpec {
+        path: path.into(),
+        size: 1,
+    };
+    let batch = [
+        spec("main.tex"),
+        spec("figs/a.png"),
+        spec("figs/b.png"),
+        spec("notes/x.tex"),
+        spec("notes/y.tex"),
+        // Keep Both must not pick a name the upload itself brings.
+        spec("main 2.tex"),
+    ];
+    let check = serde_json::to_value(service.validate_uploads("P", "", &batch).unwrap()).unwrap();
+    assert_eq!(
+        check["existing"],
+        json!([
+            { "path": "main.tex", "keepBoth": "main 3.tex" },
+            { "path": "figs/a.png", "keepBoth": "figs/a 3.png" },
+            // A folder of the upload that is a file here, once.
+            { "path": "notes", "keepBoth": "notes 2" },
+        ])
+    );
+    let clashes: Vec<_> = service.validate_uploads("P", "", &batch).unwrap().existing;
+    let renamed = |p: &str| texlocal_core::service::keep_both(p, &clashes);
+    assert_eq!(renamed("notes/x.tex"), "notes 2/x.tex");
+    assert_eq!(renamed("figs/b.png"), "figs/b.png");
+    assert_eq!(renamed("notesy/x.tex"), "notesy/x.tex");
+
+    let err = service
+        .upload_file("P", "", "figs/a.png", b"new", false)
+        .unwrap_err();
+    assert_eq!(
+        (err.status, err.message.as_str()),
+        (409, "“figs/a.png” already exists")
+    );
+    assert_eq!(std::fs::read(root.join("figs/a.png")).unwrap(), b"old");
+    // Replacing a folder that holds the main file is refused before the Trash.
+    std::fs::create_dir(root.join("ch")).unwrap();
+    std::fs::rename(root.join("main.tex"), root.join("ch/main.tex")).unwrap();
+    texlocal_core::settings::write_settings(&root, &json!({ "mainFile": "ch/main.tex" })).unwrap();
+    let err = service.upload_file("P", "", "ch", b"x", true).unwrap_err();
+    assert_eq!(err.status, 409);
+    // However the upload spells it, on a volume that ignores case.
+    #[cfg(any(windows, target_os = "macos"))]
+    assert_eq!(
+        service
+            .upload_file("P", "", "CH", b"x", true)
+            .unwrap_err()
+            .status,
+        409
+    );
+    assert!(root.join("ch/main.tex").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_folder_in_the_project_is_a_folder_an_upload_goes_into() {
+    let (_dir, service) = with_project();
+    let root = service.data_dir.join("P");
+    std::fs::create_dir(root.join("figs")).unwrap();
+    std::os::unix::fs::symlink(root.join("figs"), root.join("link")).unwrap();
+    let spec = texlocal_core::service::UploadSpec {
+        path: "link/a.png".into(),
+        size: 1,
+    };
+    let check = service.validate_uploads("P", "", &[spec]).unwrap();
+    assert!(check.existing.is_empty());
+    service
+        .upload_file("P", "", "link/a.png", b"png", false)
+        .unwrap();
+    assert_eq!(std::fs::read(root.join("figs/a.png")).unwrap(), b"png");
 }
 
 #[test]
