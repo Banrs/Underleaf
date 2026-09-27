@@ -103,6 +103,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Known issues
 
+- **Mac CI fails one test** (left to the Mac session): `SplitControllerTests.testThePanelKeepsItsSizeWithinItsLargestShare` gets `[464, 180]` for `[620, 180]` on the runner, on both macOS 26 and the `xcode-27` image. Growing the titled window to 801 pt leaves the split 645 pt; the likely cause is the runner's screen capping the window (the 601 pt steps pass, and the other split tests resize the split, not the window). Keeping the test's window at 601 pt or less would avoid it.
 - A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen; it hasn't been reproduced.
 - The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
