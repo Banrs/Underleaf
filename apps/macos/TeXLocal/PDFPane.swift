@@ -435,6 +435,68 @@ final class SyncPDFView: PDFView {
         }
     }
 
+    /// The spot of the page at the top of what shows as a resize begins,
+    /// put back at the top once laid out. PDFKit keeps its place against the
+    /// scroll view's edge, not under its top inset, and loses a little with
+    /// every step of a sliding pane: hiding the sidebar scrolled the pages
+    /// 70 pt and the gap above page one away.
+    private var anchor: (page: PDFPage, point: CGPoint)?
+
+    /// Where the pages start showing, in the view: under the top inset.
+    private var topEdge: CGFloat {
+        let inset = scrollView?.contentInsets.top ?? 0
+        return isFlipped ? bounds.minY + inset : bounds.maxY - inset
+    }
+
+    private var scrollView: NSScrollView? { documentView?.enclosingScrollView }
+
+    override func setFrameSize(_ size: NSSize) {
+        if anchor == nil, size != frame.size, frame.size != .zero,
+           let page = page(for: CGPoint(x: bounds.midX, y: topEdge), nearest: true) {
+            anchor = (page, convert(CGPoint(x: bounds.midX, y: topEdge), to: page))
+        }
+        if size != frame.size { resizes += 1 }
+        super.setFrameSize(size)
+    }
+
+    /// Resizes so far, so the anchor is let go once they stop.
+    private var resizes = 0
+
+    override func layout() {
+        super.layout()
+        guard anchor != nil else { return }
+        restoreAnchor()
+        // PDFKit sets a fitted scale after the layout that resized it, and a
+        // sliding pane resizes it many times: the one anchor, put back each
+        // time, until the resizing has stopped.
+        let resize = resizes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.resizes == resize else { return }
+            self.restoreAnchor()
+            self.anchor = nil
+        }
+    }
+
+    private func restoreAnchor() {
+        guard let (page, point) = anchor, let clip = scrollView?.contentView else { return }
+        layoutDocumentView()
+        let drift = convert(point, from: page).y - topEdge
+        // Drift is measured in this view; the clip view scrolls the other
+        // way when one of them is flipped.
+        var origin = clip.bounds.origin
+        origin.y += isFlipped == clip.isFlipped ? drift : -drift
+        clip.scroll(to: origin)
+        scrollView?.reflectScrolledClipView(clip)
+    }
+
+    /// The first page's top at the top of what shows, the gap above it, at
+    /// the next layout: a new document is shown at the scroll view's edge.
+    func scrollToTop() {
+        guard let page = document?.page(at: 0) else { return }
+        anchor = (page, CGPoint(x: 0, y: page.bounds(for: displayBox).maxY))
+        needsLayout = true
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 2, let document else {
             super.mouseDown(with: event)
@@ -487,12 +549,18 @@ private struct PDFRepresentable: NSViewRepresentable {
         }
         controller.view = view
         let center = NotificationCenter.default
+        // Each read once as it starts watching too: the first PDF's fitted
+        // scale was set before the watch began, and the zoom showed 100%.
         context.coordinator.watches = [
             Task { [controller] in
-                for await _ in center.notifications(named: .PDFViewPageChanged, object: view) { controller.pageChanged() }
+                let changes = center.notifications(named: .PDFViewPageChanged, object: view)
+                controller.pageChanged()
+                for await _ in changes { controller.pageChanged() }
             },
             Task { [controller] in
-                for await _ in center.notifications(named: .PDFViewScaleChanged, object: view) { controller.scaleChanged() }
+                let changes = center.notifications(named: .PDFViewScaleChanged, object: view)
+                controller.scaleChanged()
+                for await _ in changes { controller.scaleChanged() }
             },
         ]
         return view
@@ -538,11 +606,14 @@ private struct PDFRepresentable: NSViewRepresentable {
             view.layoutDocumentView()
             clip.scroll(to: offset)
             clip.enclosingScrollView?.reflectScrolledClipView(clip)
-        } else if let restore, let page = document.page(at: restore) {
+        } else if let restore, restore > 0, let page = document.page(at: restore) {
             view.go(to: page)
+        } else {
+            view.scrollToTop()
         }
         controller.pageCount = document.pageCount
         controller.pageChanged()
+        controller.scaleChanged()
         return true
     }
 

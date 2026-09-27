@@ -126,6 +126,6 @@ Chrome is native per platform. Two surfaces stay web: the editor is CodeMirror e
 
 - `static.crates.io` is blocked on the owner's Mac (GitHub works). Before adding a Rust dependency check `~/.cargo/registry/cache`, or pin a dependency-free crate to its GitHub tag.
 - Tauri must not regress while it ships: `npm run app`.
-- PDFKit re-anchors page one's top on every resize while fitting the width, so the gap above page one is a scroll-view content inset; a rebuilt PDF keeps its scroll offset (`currentDestination` and `go(to:)` disagree by that inset). PDFKit draws hyperref's link boxes, so `hideLinkBorders` zeroes them.
+- PDFKit re-anchors page one's top on every resize while fitting the width, so the gap above page one is a scroll-view content inset; a rebuilt PDF keeps its scroll offset (`currentDestination` and `go(to:)` disagree by that inset). PDFKit keeps its place against the scroll view's edge, not under that inset, and loses a little on every step of a sliding pane, so `SyncPDFView` pins the spot at the top of what shows through a resize, and a new document scrolls to page one's top with the gap. PDFKit draws hyperref's link boxes, so `hideLinkBorders` zeroes them.
 - Core Image filters work in linear light: dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16. Pick the input for the grey wanted out.
 - macOS 26's `setPosition` doesn't lay out panes just added, as 27's does, so split tests put the split in a window and size it once it has its delegate (CI runs on 26).
