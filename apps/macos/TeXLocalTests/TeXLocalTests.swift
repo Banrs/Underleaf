@@ -141,30 +141,28 @@ struct PaneBarLayoutTests {
         #expect(height(PaneBar { Button("Done") {} }) == BarMetrics.barHeight)
     }
 
-    /// Every control in a bar is one height, whatever its symbol: a group
-    /// of icons, one icon alone, and the share link, each a capsule of glass
-    /// (the kit's toolbar group: 20 pt items 2 pt in, so 24 pt), and the
-    /// titled glass buttons (Compile, Done) beside them.
-    @Test func everyControlIsOneHeight() {
+    /// Every control fits the bar with the kit's 8 pt above and below:
+    /// the accessory-bar groups, the zoom and Share pills (AppKit's
+    /// segmented control), and the bordered buttons beside them.
+    @Test func everyControlFitsTheBar() {
         let undo = ToolGroup(items: [
             Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
             Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
         ])
-        let more = Menu { Button("Figure") {} } label: { Label("More", systemImage: "ellipsis") }.inGlassCapsule()
-        let share = ShareLink(item: URL(fileURLWithPath: "/tmp/main.pdf")) {
-            Label("Share PDF", systemImage: "square.and.arrow.up")
-        }
-        .inGlassCapsule()
+        let zoom = SegmentedControl(segments: [
+            .init(symbol: "minus", help: "Zoom Out"),
+            .init(label: "100%", widest: "000%", help: "Zoom"),
+            .init(symbol: "plus", help: "Zoom In"),
+        ]).fixedSize()
+        let share = SegmentedControl(segments: [.init(symbol: "square.and.arrow.up", help: "Share PDF")]).fixedSize()
         let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon) }
-            .buttonStyle(.glassProminent)
-        let done = Button("Done") {}
-        let capsule = BarMetrics.glassItem + 2 * BarMetrics.glassItemInset
-        #expect(capsule == BarMetrics.controlHeight)
-        #expect(height(undo) == capsule)
-        #expect(height(more) == capsule)
-        #expect(height(share) == capsule)
-        #expect(height(compile) == height(done))
-        #expect(height(done) <= BarMetrics.barHeight - 2 * BarMetrics.inset + 4)
+            .buttonStyle(.borderedProminent)
+        let done = Button("Done") {}.buttonStyle(.bordered)
+        for control in [height(undo), height(zoom), height(share), height(compile), height(done)] {
+            #expect(control <= BarMetrics.controlHeight)
+        }
+        // The two pills are one control, one height.
+        #expect(height(zoom) == height(share))
     }
 }
 

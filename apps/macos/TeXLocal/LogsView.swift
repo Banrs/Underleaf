@@ -37,10 +37,8 @@ struct PanelView: View {
             ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }
         // A segmented control, which the HIG gives switching between a
-        // view's parts: a capsule, as the glass and the Filter field beside
-        // it are, its current part clearly marked. macOS 27's tabs style
-        // drew a rounded rectangle with a near-invisible current tab in
-        // light mode (242 on 236).
+        // view's parts: its current part clearly marked. macOS 27's tabs
+        // style drew a near-invisible current tab in light mode (242 on 236).
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
@@ -60,7 +58,8 @@ struct PanelView: View {
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 .accessibilityLabel("Warnings")
                 .accessibilityAddTraits(showWarnings ? .isSelected : [])
-                .inGlassCapsule()
+                .labelStyle(.iconOnly)
+
             }
         } else {
             Button("Copy Log", systemImage: "document.on.document") {
@@ -68,8 +67,9 @@ struct PanelView: View {
                 NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
             }
             .help("Copy Log")
+            .labelStyle(.iconOnly)
             .disabled(project.result?.log.isEmpty ?? true)
-            .inGlassCapsule()
+
         }
         SearchField(text: $filter, prompt: "Filter")
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)

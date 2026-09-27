@@ -408,9 +408,9 @@ struct AppCommands: Commands {
             item(.pdfSave)
             item(.projectExport)
             Divider()
-            let pdf = project.flatMap { $0.pdfVersion > 0 ? $0.pdfURL : nil }
-            ShareLink("Share…", items: pdf.map { [$0] } ?? [])
-                .disabled(pdf == nil)
+            // Opened at the bar's Share button (`ProjectModel.sharePDF`).
+            Button("Share…") { project?.sharePDF() }
+                .disabled(project.map { $0.pdfVersion == 0 || $0.pdfURL == nil } ?? true)
         }
         CommandGroup(replacing: .printItem) {
             item(.filePageSetup)

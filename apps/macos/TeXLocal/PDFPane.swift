@@ -139,30 +139,24 @@ struct PDFPane: View {
         }
     }
 
-    /// Overleaf's Recompile, the pane's one prominent control. While a build
-    /// runs, the system's spinner and a Stop symbol in its place, as
-    /// Safari's reload becomes a stop: the spinner says it's running, the
-    /// symbol how to end it (HIG, Progress indicators: let people cancel a
-    /// lengthy task). Nothing follows it on its side of the bar, so the
-    /// swap moves nothing.
+    /// Overleaf's Recompile, the pane's one prominent control; while a build
+    /// runs, Stop in its place, the system's spinner as its icon. Nothing
+    /// follows it on its side of the bar, so the swap moves nothing.
     @ViewBuilder
     private var compileControls: some View {
         if project.compiling {
-            HStack(spacing: BarMetrics.glassItemSpacing) {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: BarMetrics.glassItem, height: BarMetrics.glassItem)
-                    .accessibilityLabel("Compiling")
-                Button("Stop", systemImage: "stop.fill") { project.stopCompile() }
-                    .help("Stop")
-                    .glassItem()
+            Button { project.stopCompile() } label: {
+                Label { Text("Stop") } icon: { ProgressView().controlSize(.small) }
+                    .labelStyle(.titleAndIcon)
             }
-            .glassCapsule()
+            .buttonStyle(.bordered)
+            .fixedSize()
+            .help("Stop")
         } else {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.borderedProminent)
             .fixedSize()
             .disabled(!app.isEnabled(.compileRun, on: project))
             .help("Compile")
@@ -170,65 +164,45 @@ struct PDFPane: View {
         }
     }
 
-    /// Zoom out | the scale | zoom in, one capsule of glass. The
-    /// scale is a menu of ways to fit and preset scales, the one in use
-    /// checked (while fitting, no preset is, even at a preset's scale). It
-    /// keeps the width of its widest ("000%"), centred, so − and + stay put
-    /// as it changes, as Pages' zoom keeps its own.
+    /// Zoom out | the scale | zoom in, AppKit's segmented control: one pill,
+    /// the scale kept at its widest label's width ("000%"), centred, so −
+    /// and + stay put as it changes; a click on the scale opens its menu of
+    /// ways to fit and preset scales, the one in use checked (while fitting,
+    /// no preset is, even at a preset's scale). SwiftUI's control group
+    /// drew three separate pieces here.
     private var zoomControls: some View {
-        HStack(spacing: BarMetrics.glassItemSpacing) {
-            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
-                .help("Zoom Out")
-                .glassItem()
-            Menu {
-                CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
-                CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
-                Divider()
-                ForEach(Self.zoomPresets, id: \.self) { percent in
-                    CheckedItem("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
-                        controller.setScale(CGFloat(percent) / 100)
-                    }
-                }
-            } label: {
-                Text("000%").hidden()
-                    .overlay { Text(controller.zoomLabel) }
-                    .monospacedDigit()
+        let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
+            .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
+                controller.setScale(CGFloat(percent) / 100)
             }
-            .menuIndicator(.hidden)
-            .buttonStyle(.borderless)
-            .menuStyle(.button)
-            .foregroundStyle(.primary)
-            .fixedSize()
-            .frame(height: BarMetrics.glassItem)
-            .help("Zoom")
-            // Named for what it sets, the scale its value, not a bare number.
-            .accessibilityLabel("Scale")
-            .accessibilityValue(controller.zoomLabel)
-            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
-                .help("Zoom In")
-                .glassItem()
         }
-        .glassCapsule()
+        return SegmentedControl(segments: [
+            .init(symbol: "minus", help: "Zoom Out") { _, _ in controller.zoom(in: false) },
+            .init(label: controller.zoomLabel, widest: "000%", help: "Zoom", menu: [
+                .item("Fit Width", checked: controller.fit == .width) { controller.fitWidth() },
+                .item("Fit Height", checked: controller.fit == .height) { controller.fitHeight() },
+                .separator,
+            ] + presets),
+            .init(symbol: "plus", help: "Zoom In") { _, _ in controller.zoom(in: true) },
+        ])
+        .fixedSize()
         .disabled(project.pdfVersion == 0)
-        // One named group, its three controls inside it.
-        .accessibilityElement(children: .contain)
         .accessibilityLabel("Zoom")
+        .accessibilityValue(controller.zoomLabel)
     }
 
-    /// The system's share picker for the PDF, a capsule of its own.
-    @ViewBuilder
+    /// Share, a one-segment control of the same kind as zoom's, so the two
+    /// pills are one height. It opens the system's share picker at itself,
+    /// as File › Share… does (`ProjectModel.sharePDF`).
     private var shareControl: some View {
-        if project.pdfVersion > 0, let url = project.pdfURL {
-            ShareLink(item: url) { Label("Share PDF", systemImage: "square.and.arrow.up") }
-                .help("Share PDF")
-                .accessibilityLabel("Share PDF")
-                .inGlassCapsule()
-        } else {
-            Button("Share PDF", systemImage: "square.and.arrow.up") {}
-                .disabled(true)
-                .accessibilityLabel("Share PDF")
-                .inGlassCapsule()
-        }
+        SegmentedControl(segments: [
+            .init(symbol: "square.and.arrow.up", help: "Share PDF", enabled: project.pdfVersion > 0 && project.pdfURL != nil) { _, _ in
+                project.sharePDF()
+            },
+        ])
+        .fixedSize()
+        .accessibilityLabel("Share PDF")
+        .background { ShareAnchor(project: project) }
     }
 
     private static let zoomPresets = [50, 75, 100, 125, 150, 200]
@@ -688,6 +662,41 @@ private struct PDFRepresentable: NSViewRepresentable {
         Task {
             try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)
+        }
+    }
+}
+
+/// Reports the bar's Share button to its project, so File › Share… opens
+/// the picker there, as Share in a Mac app's menu opens at the toolbar's
+/// Share button. AppKit, as SwiftUI can open a share picker only from a
+/// `ShareLink` itself, never from a menu item at another control.
+private struct ShareAnchor: NSViewRepresentable {
+    let project: ProjectModel
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        project.shareAnchor = view
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        project.shareAnchor = view
+    }
+}
+
+extension ProjectModel {
+    /// File › Share…: the system's share picker for the PDF, under the
+    /// bar's Share button while it shows, else under the toolbar, centred.
+    func sharePDF() {
+        guard pdfVersion > 0, let url = pdfURL else { return }
+        let picker = NSSharingServicePicker(items: [url])
+        if let anchor = shareAnchor, anchor.window?.isVisible == true, !anchor.isHiddenOrHasHiddenAncestor,
+           !anchor.visibleRect.isEmpty {
+            picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
+        } else if let content = NSApp.keyWindow?.contentView {
+            let area = content.safeAreaRect
+            let top = NSRect(x: area.midX, y: content.isFlipped ? area.minY : area.maxY - 1, width: 1, height: 1)
+            picker.show(relativeTo: top, of: content, preferredEdge: content.isFlipped ? .maxY : .minY)
         }
     }
 }

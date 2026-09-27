@@ -35,6 +35,8 @@ final class ProjectModel {
     var pdfPage = 0
     /// The page to show once the PDF first loads, when reopening.
     @ObservationIgnored var restorePDFPage: Int?
+    /// The PDF bar's Share button, where File › Share… opens its picker.
+    @ObservationIgnored weak var shareAnchor: NSView?
     /// Which of the panel's tabs is showing.
     var panelTab: PanelTab = .issues
 

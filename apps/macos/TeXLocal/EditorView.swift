@@ -153,7 +153,7 @@ private struct StatusBar: View {
         // A borderless toggle past a line at the trailing end. Each end in
         // line with the bars above it where a pane is beside it, clear of
         // the window's rounded corner where the corner is.
-        SecondaryBar(spacing: 0, height: BarMetrics.statusBarHeight, font: Typography.status,
+        SecondaryBar(spacing: 0,
                      leadingInset: app.sidebarVisible ? BarMetrics.inset : BarMetrics.edgeInset,
                      trailingInset: app.showInspector ? BarMetrics.inset : BarMetrics.edgeInset) {
             // Shows or hides the issues. A button, not a toggle: the panel's

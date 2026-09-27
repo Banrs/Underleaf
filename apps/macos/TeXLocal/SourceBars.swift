@@ -46,14 +46,20 @@ struct SourceBar: View {
     /// fold last, for a source pane at its narrowest.
     private func tools(showing count: Int, level: Bool = true, redo: Bool = true) -> some View {
         let shown = Tools.allCases.filter { $0.rawValue < count }
-        return HStack(spacing: BarMetrics.itemSpacing) {
+        // A group's room either side of each line, as every bar has it.
+        return HStack(spacing: BarMetrics.groupSpacing) {
             ToolGroup(items: [Segment(.editUndo, "arrow.uturn.backward", app: app, project: project)]
                 + (redo || !project.isLaTeX ? [Segment(.editRedo, "arrow.uturn.forward", app: app, project: project)] : []))
             if project.isLaTeX {
-                if level { SectionLevelMenu(project: project) }
+                if level {
+                    BarSeparator()
+                    SectionLevelMenu(project: project)
+                }
                 ForEach(shown, id: \.self) { group in
+                    BarSeparator()
                     tools(group)
                 }
+                BarSeparator()
                 moreMenu(folded: Tools.allCases.filter { $0.rawValue >= count }, level: !level, redo: !redo)
             }
         }
@@ -66,23 +72,22 @@ struct SourceBar: View {
         case .format:
             ToolGroup(items: [Segment(.editBold, "bold", app: app, project: project), Segment(.editItalic, "italic", app: app, project: project)])
         case .math:
-            HStack(spacing: BarMetrics.glassItemSpacing) {
-                Button(MenuCommand.editMath.title, systemImage: "x.squareroot") { app.perform(.editMath, on: project) }
-                    .disabled(!app.isEnabled(.editMath, on: project))
-                    .help(MenuCommand.editMath.title)
-                    .glassItem()
-                Button("Display Math", systemImage: "sum") { project.format("displayMath") }
-                    .help("Display Math")
-                    .glassItem()
-                // Its own item, so the popover points at it.
+            HStack(spacing: 0) {
+                ToolGroup(items: [
+                    Segment(.editMath, "x.squareroot", app: app, project: project),
+                    Segment(id: "displayMath", title: "Display Math", systemImage: "sum") {
+                        project.format("displayMath")
+                    },
+                ])
+                // Its own button, so the popover points at it.
                 Button("Symbols", systemImage: "pi") { showSymbols = true }
+                    .labelStyle(.iconOnly)
                     .help("Symbols")
-                    .glassItem()
                     .popover(isPresented: $showSymbols, arrowEdge: .bottom) {
                         SymbolPalette { project.format("symbol", $0) }
                     }
             }
-            .glassCapsule()
+            .fixedSize()
         case .references, .figures, .lists:
             ToolGroup(items: group.templates.compactMap { template in
                 template.symbol.map { Segment(id: template.title, title: template.title, systemImage: $0) { project.insert(template) } }
@@ -122,9 +127,11 @@ struct SourceBar: View {
         } label: {
             Label("More", systemImage: "ellipsis")
         }
+        .menuStyle(.button)
         .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
+        .fixedSize()
         .help("More")
-        .inGlassCapsule()
     }
 
     private func items(_ templates: [Template]) -> some View {
@@ -156,7 +163,7 @@ private struct SectionLevelMenu: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
-        .glassTextPill()
+        .fixedSize()
         .help("Section Level")
     }
 }
@@ -445,7 +452,7 @@ struct SourceFindBar: View {
                         if project.replaceFocus > 0 { replaceFocused = true }
                     }
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: BarMetrics.groupSpacing) {
+                    HStack(spacing: BarMetrics.spacing) {
                         Button("Replace") { project.replace(all: false) }
                         Button("Replace All") { project.replace(all: true) }
                     }
@@ -457,6 +464,7 @@ struct SourceFindBar: View {
                         project.replace(all: false)
                     }
                 }
+                .buttonStyle(.bordered)
                 .disabled(project.findMatches.total == 0)
                 .gridColumnAlignment(.trailing)
             }
