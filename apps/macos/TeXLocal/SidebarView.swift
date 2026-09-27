@@ -151,7 +151,10 @@ private struct FilesList: View {
                             .font(Typography.secondary)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Line \(hit.line)")
                     }
+                    // One hit, its line and where on it, as one element.
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -244,6 +247,25 @@ private struct TreeRows<Row: View>: View {
             }
         }
     }
+}
+
+#Preview("File tree") {
+    @Previewable @State var expanded: Set<String> = ["figures"]
+    let file = { (path: String) in TreeNode(type: "file", name: (path as NSString).lastPathComponent, path: path, children: nil) }
+    List {
+        Section("Files") {
+            TreeRows(nodes: [
+                TreeNode(type: "dir", name: "figures", path: "figures",
+                         children: [file("figures/plot.pdf"), file("figures/diagram.png")]),
+                file("main.tex"), file("references.bib"),
+            ], expanded: $expanded) { node in
+                Label(node.name, systemImage: fileSymbol(node.path, directory: node.isDirectory))
+            }
+        }
+    }
+    .listStyle(.sidebar)
+    // The kit's window sidebar is 256 pt wide.
+    .frame(width: 256, height: 240)
 }
 
 /// The sidebar's selection capsule, as the UI kit draws a selected row

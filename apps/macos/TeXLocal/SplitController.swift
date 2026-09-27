@@ -74,8 +74,8 @@ struct SplitController: NSViewControllerRepresentable {
 final class PaneSplitViewController: NSSplitViewController {
     private let app: AppModel
     private let vertical: Bool
-    let autosave: String
-    private(set) var panes: [SplitPane]
+    private let autosave: String
+    private var panes: [SplitPane]
     /// The panes with a size of their own: those showing when the split
     /// remembers its sizes, otherwise each once it has opened.
     private var sized: Set<Int>
@@ -158,7 +158,7 @@ final class PaneSplitViewController: NSSplitViewController {
     }
 
     /// The shares the panes first open at, once the split has its size.
-    func placeOpeningPanes() {
+    private func placeOpeningPanes() {
         let opening = panes.indices.filter { !sized.contains($0) && !splitViewItems[$0].isCollapsed }
         guard !opening.isEmpty, splitView.length > 0 else { return }
         for index in opening { hold(index, at: panes[index].fraction.map { $0 * splitView.length }) }
@@ -394,8 +394,9 @@ final class SidebarSplitCoordinator: NSObject, NSSplitViewDelegate {
     }
 
     /// Moves a divider to `position` as the system slides a pane, eased
-    /// over a quarter second (at once off screen or with Reduce Motion),
-    /// then runs `done`. A slide under way arrives first.
+    /// over a quarter second, `NSAnimationContext`'s default (at once off
+    /// screen or with Reduce Motion), then runs `done`. A slide under way
+    /// arrives first.
     ///
     /// On a Timer, not the split's display link, which stops while the
     /// screen is locked and left a pane mid-slide, its limits aside.
@@ -417,6 +418,7 @@ final class SidebarSplitCoordinator: NSObject, NSSplitViewDelegate {
             return
         }
         let start = CACurrentMediaTime()
+        // A step per frame at ProMotion's 120 Hz.
         let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self, weak split] timer in
             let t = min((CACurrentMediaTime() - start) / 0.25, 1)
             if t >= 1 || self == nil || split == nil { timer.invalidate() }
