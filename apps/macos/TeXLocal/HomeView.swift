@@ -31,17 +31,9 @@ struct HomeView: View {
         // opens it, as Apple's start windows take a dropped document. It is
         // copied in, as the Open panel says: the pointer carries the copy
         // badge, and a note says where it goes.
-        .dropDestination(for: URL.self) { urls, _ in
-            dropTargeted = false
+        .fileDrop(targeted: { dropTargeted = $0 }) { urls in
             guard let url = urls.first, AppModel.canOpen(url) else { return }
             Task { await app.importProject(from: url) }
-        }
-        .dropConfiguration { _ in DropConfiguration(operation: .copy) }
-        .onDropSessionUpdated { session in
-            switch session.phase {
-            case .entering, .active: dropTargeted = true
-            default: dropTargeted = false
-            }
         }
         .overlay(alignment: .bottom) {
             if dropTargeted {
@@ -263,6 +255,9 @@ private struct TemplateCard: View {
             }
         }
         .contentShape(.rect)
+        // Its focus ring on the group box's corners (the UI kit's 12 pt),
+        // not a square around them.
+        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 

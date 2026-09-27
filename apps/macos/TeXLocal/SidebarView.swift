@@ -28,6 +28,7 @@ struct NavigatorView: View {
                                          didFold: { [fold] folded in fold.slid(folded: folded) })) {
             FilesList(project: project)
         } bottomContent: {
+            // Takes no drops: files go into the list above.
             OutlineList(project: project, fold: fold)
         }
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
@@ -54,6 +55,9 @@ private struct FilesList: View {
     @State private var newName = ""
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
+    /// Files dragged over the list's empty space, or over a row.
+    @State private var listTargeted = false
+    @State private var rowTargeted: TreeNode?
 
     var body: some View {
         // Two lists rather than one whose sections change shape: the
@@ -62,13 +66,16 @@ private struct FilesList: View {
         Group {
             if project.searchQuery.isEmpty { files } else { results }
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            Task { await project.importFiles(urls) }
-            return true
-        }
         .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
             Task { await project.deleteEntry(path) }
         }
+    }
+
+    /// The folder a drop would go into ("" the project's top level): the
+    /// row's, or the folder of the file it's over.
+    private var dropFolder: String? {
+        rowTargeted.map { $0.isDirectory ? $0.path : ($0.path as NSString).deletingLastPathComponent }
+            ?? (listTargeted ? "" : nil)
     }
 
     private var files: some View {
@@ -78,10 +85,17 @@ private struct FilesList: View {
                     row(node).tag(node.path)
                 }
             } header: {
-                Text("Files")
+                // The project's top level, marked as a folder row is while a
+                // drop would go there.
+                Text("Files").headerDropHighlight(dropFolder == "")
             }
         }
         .listStyle(.sidebar)
+        // Into the project's top level; a row takes a drop into its folder.
+        // Only here, not over search results, whose rows aren't the tree.
+        .fileDrop(targeted: { listTargeted = $0 }) { urls in
+            Task { await project.importFiles(urls) }
+        }
         // Adding, where Finder and Apple's lists keep it: the File menu, and
         // the list's own menu on its empty space.
         .contextMenu(forSelectionType: String.self) { paths in
@@ -164,15 +178,20 @@ private struct FilesList: View {
         } icon: {
             Image(systemName: fileSymbol(node.path, directory: node.isDirectory))
         }
+        // The whole row a drop target, not only its name.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+        .dropHighlight(node.isDirectory && dropFolder == node.path)
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         // Into the folder dropped on, or the one the file dropped on is in,
         // as Windows' tree takes them; elsewhere the list's own drop adds
         // them at the top.
-        .dropDestination(for: URL.self) { urls, _ in
+        .fileDrop(targeted: { over in
+            if over { rowTargeted = node } else if rowTargeted?.path == node.path { rowTargeted = nil }
+        }) { urls in
             let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
             Task { await project.importFiles(urls, into: folder) }
-            return true
         }
         .contextMenu {
             if !node.isDirectory && node.path.hasSuffix(".tex") {
@@ -222,6 +241,65 @@ private struct TreeRows<Row: View>: View {
                 }
             } else {
                 row(node)
+            }
+        }
+    }
+}
+
+/// The sidebar's selection capsule, as the UI kit draws a selected row
+/// (8 pt corners) and macOS 27.2 places one: 10 pt in from each side of
+/// the list, a row's height (measured).
+private enum SidebarSelection {
+    static let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+    static let inset: CGFloat = 10
+}
+
+/// A row's content outlined as the sidebar's selection is: from 4 pt
+/// before it, as the UI kit's selected row reaches past its content, to
+/// where the selection stops, the content running to 2 pt from the
+/// sidebar's edge; and 2 pt above and below it, a header's height
+/// (measured on macOS 27.2).
+private struct SidebarRowShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let row = CGRect(x: rect.minX - 4, y: rect.minY - 2, width: rect.width + 4 - (SidebarSelection.inset - 2),
+                         height: rect.height + 4)
+        return SidebarSelection.shape.path(in: row)
+    }
+}
+
+private extension View {
+    /// A row where a drop would go, marked as a selection is but tinted a
+    /// level under one, so its text keeps its colours.
+    func dropHighlight(_ isOn: Bool) -> some View {
+        listRowBackground(isOn ? SidebarSelection.shape.fill(.tint.quaternary)
+            .padding(.horizontal, SidebarSelection.inset) : nil)
+    }
+
+    /// The same for a section's header, which a list gives no row
+    /// background: marked around its content.
+    func headerDropHighlight(_ isOn: Bool) -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if isOn { SidebarRowShape().fill(.tint.quaternary) }
+            }
+    }
+}
+
+extension View {
+    /// Takes files dropped from Finder, copied in (the pointer carries the
+    /// copy badge): file URLs only, not a link dragged from a browser.
+    /// `targeted` tells whether a drag is over it.
+    func fileDrop(targeted: @escaping (Bool) -> Void, action: @escaping ([URL]) -> Void) -> some View {
+        dropDestination(for: URL.self) { urls, _ in
+            targeted(false)
+            let files = urls.filter(\.isFileURL)
+            if !files.isEmpty { action(files) }
+        }
+        .dropConfiguration { _ in DropConfiguration(operation: .copy) }
+        .onDropSessionUpdated { session in
+            switch session.phase {
+            case .entering, .active: targeted(true)
+            default: targeted(false)
             }
         }
     }
@@ -399,6 +477,8 @@ private struct HeadingRow: View, Equatable {
                              : item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
+            // Its focus ring in the row's shape, not the title's rectangle.
+            .contentShape(.focusEffect, SidebarRowShape())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
