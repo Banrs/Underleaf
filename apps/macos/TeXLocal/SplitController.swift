@@ -80,9 +80,13 @@ final class PaneSplitViewController: NSSplitViewController {
     private let vertical: Bool
     let autosave: String
     private(set) var panes: [SplitPane]
-    /// The panes with a size of their own: all of them when the split
-    /// remembers its sizes, otherwise each once it has opened at its share.
+    /// The panes with a size of their own: those showing when the split
+    /// remembers its sizes, otherwise each once it has opened.
     private var sized: Set<Int>
+    /// Each pane's size when the window last closed, from the autosave:
+    /// what a pane hidden since launch opens at, which the split alone
+    /// opened at its minimum.
+    private let saved: [Int: CGFloat]
     /// Each item's own sizes, which a held pane gets back: ours, or the
     /// system's for an inspector.
     private var limits: [(minimum: CGFloat, maximum: CGFloat)] = []
@@ -95,9 +99,14 @@ final class PaneSplitViewController: NSSplitViewController {
         self.vertical = vertical
         self.autosave = autosave
         self.panes = panes
-        let remembered = UserDefaults.standard.object(forKey: "NSSplitView Subview Frames \(autosave)") != nil
+        // "x, y, width, height, collapsed, hidden" per pane.
+        let frames = UserDefaults.standard.stringArray(forKey: "NSSplitView Subview Frames \(autosave)")
         // Only a pane with a share to open at is placed.
-        sized = Set(panes.indices.filter { remembered || panes[$0].fraction == nil })
+        sized = Set(panes.indices.filter { (frames != nil && panes[$0].shown) || panes[$0].fraction == nil })
+        saved = (frames ?? []).enumerated().reduce(into: [:]) { saved, frame in
+            let values = frame.element.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            if values.count >= 4, values[vertical ? 2 : 3] > 0 { saved[frame.offset] = values[vertical ? 2 : 3] }
+        }
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -172,9 +181,10 @@ final class PaneSplitViewController: NSSplitViewController {
         panes = new
         guard isViewLoaded else { return }
         for (index, (item, pane)) in zip(splitViewItems, new).enumerated() where item.isCollapsed == pane.shown {
-            // Opened for the first time: at its share, not its minimum.
+            // Opened for the first time: at its size when the window last
+            // closed, or its share, not its minimum.
             let opening = pane.shown && !sized.contains(index)
-            if opening { hold(index, at: pane.fraction.map { $0 * splitView.length }) }
+            if opening { hold(index, at: openingSize(index)) }
             NSAnimationContext.runAnimationGroup { _ in
                 item.animator().isCollapsed = !pane.shown
             } completionHandler: { [weak self] in
@@ -182,6 +192,14 @@ final class PaneSplitViewController: NSSplitViewController {
             }
             if pane.shown { cap(index) }
         }
+    }
+
+    /// A pane's size the first time it opens: its size when the window
+    /// last closed, or its share, within its most.
+    private func openingSize(_ index: Int) -> CGFloat? {
+        let pane = panes[index]
+        guard let size = saved[index] ?? pane.fraction.map({ $0 * splitView.length }) else { return nil }
+        return pane.maxFraction.map { min(size, $0 * splitView.length) } ?? size
     }
 
     /// Holds a pane at a size (a slide to it, or a first layout), which

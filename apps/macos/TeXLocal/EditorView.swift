@@ -49,7 +49,7 @@ struct EditorArea: View {
             SplitPane(minimum: 120) { SourceAndPDF(project: project) },
             // At most two fifths of the height, so in a small window the
             // source and the PDF keep the room, not the panel.
-            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.3, keepsSize: true, shown: project.showLogs) {
+            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.25, keepsSize: true, shown: project.showLogs) {
                 PanelView(project: project)
             },
         ])
