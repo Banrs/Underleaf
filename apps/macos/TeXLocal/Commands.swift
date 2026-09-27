@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 
 /// The app's commands, with the browser version's ids and accelerators
 /// (web/src/workspace.js `commandDefs`), then the Mac's own. The accelerator
@@ -488,11 +489,16 @@ struct AppCommands: Commands {
 
 /// Answers Edit › Find's items for a window. The system's items send
 /// `performFindPanelAction:` down the responder chain, tagged with which
-/// Find they are, and neither the editor's web view nor PDFView answers it;
-/// SwiftUI's `onCommand` drops the tag. So an AppKit responder after the
-/// window in the chain takes what nothing in it answered, and hands it to
-/// the pane with the keyboard. A find bar's field passes the items on to it
-/// too (`SearchField`); the build log's text view answers them itself.
+/// Find they are; SwiftUI's `onCommand` drops the tag. PDFView doesn't
+/// answer it, so an AppKit responder after the window in the chain takes
+/// what nothing in it answered, and hands it to the pane with the keyboard.
+/// The editor's web view does answer it, in the view SwiftUI's `WebView`
+/// wraps it in, with WebKit's own find bar, which searches only the lines
+/// CodeMirror has drawn, so its Replace All missed the rest; `findDisabled`
+/// doesn't turn it off (macOS 27.2). So a second responder goes between
+/// the web view and that wrapper whenever the web view takes the keyboard.
+/// A find bar's field passes the items on too (`SearchField`); the build
+/// log's text view answers them itself.
 struct FindMenuResponder: NSViewRepresentable {
     let find: FindActions
 
@@ -500,12 +506,16 @@ struct FindMenuResponder: NSViewRepresentable {
 
     func updateNSView(_ anchor: Anchor, context: Context) {
         anchor.responder.find = find
+        anchor.webResponder.find = find
     }
 
     /// Puts the responder after the window it's in, and takes it out again.
     final class Anchor: NSView {
         let responder = Responder()
+        let webResponder = Responder()
         private weak var chained: NSWindow?
+        private weak var web: WKWebView?
+        private var focus: NSKeyValueObservation?
 
         // Not there to click.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -519,11 +529,25 @@ struct FindMenuResponder: NSViewRepresentable {
                 while let next = link.nextResponder, next !== responder { link = next }
                 if link.nextResponder === responder { link.nextResponder = responder.nextResponder }
             }
+            if let web, web.nextResponder === webResponder { web.nextResponder = webResponder.nextResponder }
             chained = window
+            focus = nil
             if let window {
                 responder.nextResponder = window.nextResponder
                 window.nextResponder = responder
+                focus = window.observe(\.firstResponder, options: .initial) { [weak self] window, _ in
+                    MainActor.assumeIsolated { self?.front(window.firstResponder) }
+                }
             }
+        }
+
+        /// In front of the web view's wrapper, once per time it's hosted:
+        /// moving it to another view resets its next responder.
+        private func front(_ first: NSResponder?) {
+            guard let web = first as? WKWebView, web.nextResponder !== webResponder else { return }
+            webResponder.nextResponder = web.nextResponder
+            web.nextResponder = webResponder
+            self.web = web
         }
     }
 
