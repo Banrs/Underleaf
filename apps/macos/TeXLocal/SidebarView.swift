@@ -18,13 +18,15 @@ struct NavigatorView: View {
     @Bindable var project: ProjectModel
     @FocusState private var searchFocused: Bool
     @AppStorage(Self.outlineCollapsedKey) private var outlineCollapsed = false
+    @State private var fold = OutlineFold()
 
     var body: some View {
         SplitController(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
             SplitPane(minimum: 100) { FilesList(project: project) },
             SplitPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
-                      collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil) {
-                OutlineList(project: project)
+                      collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,
+                      didFold: { [fold] folded in fold.slid(folded: folded) }) {
+                OutlineList(project: project, fold: fold)
             },
         ])
         .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
@@ -243,9 +245,8 @@ private struct OutlineList: View {
     /// Folded headings, by file and `Outline.foldKeys`.
     private static let foldedKey = "OutlineFolded"
     let project: ProjectModel
+    let fold: OutlineFold
     @AppStorage(NavigatorView.outlineCollapsedKey) private var collapsed = false
-    /// The section's rows showing: `collapsed`, a slide later when folding.
-    @State private var expanded = !(UserDefaults.standard.object(forKey: NavigatorView.outlineCollapsedKey) as? Bool ?? false)
     @State private var folded = Set(UserDefaults.standard.stringArray(forKey: Self.foldedKey) ?? [])
     /// The line the highlight follows: the caret's or the top line,
     /// whichever changed last.
@@ -258,7 +259,7 @@ private struct OutlineList: View {
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
         ScrollViewReader { proxy in
             List {
-                Section("File Outline", isExpanded: Binding(get: { expanded }, set: { collapsed = !$0 })) {
+                Section("File Outline", isExpanded: Binding(get: { fold.rowsShown }, set: { collapsed = !$0 })) {
                     if outline.isEmpty {
                         Text("No Sections").foregroundStyle(.secondary)
                     } else {
@@ -273,15 +274,10 @@ private struct OutlineList: View {
             .environment(\.sidebarRowSize, .small)
             // Centres the header in the docked bar when folded.
             .padding(.top, BarMetrics.spacing)
+            // Filled before the pane slides open; emptied once it has slid
+            // shut (`OutlineFold.slid`).
             .onChange(of: collapsed) { _, collapsed in
-                if collapsed {
-                    Task {
-                        try? await Task.sleep(for: .seconds(0.25))
-                        if self.collapsed { withTransaction(Transaction(animation: nil)) { expanded = false } }
-                    }
-                } else {
-                    withTransaction(Transaction(animation: nil)) { expanded = true }
-                }
+                if !collapsed { withTransaction(Transaction(animation: nil)) { fold.rowsShown = true } }
             }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
             .onChange(of: project.topLine) { _, top in line = top }
@@ -298,6 +294,20 @@ private struct OutlineList: View {
                 UserDefaults.standard.set(Array(folded).sorted(), forKey: Self.foldedKey)
             }
         }
+    }
+}
+
+/// Whether the outline's section shows its rows: with the pane open, and
+/// until a fold has slid the pane down to its header, so the rows ride
+/// down with it rather than collapsing up into the header first.
+@MainActor @Observable
+final class OutlineFold {
+    var rowsShown = !(UserDefaults.standard.object(forKey: NavigatorView.outlineCollapsedKey) as? Bool ?? false)
+
+    /// A fold or unfold has finished sliding.
+    func slid(folded: Bool) {
+        guard folded, UserDefaults.standard.bool(forKey: NavigatorView.outlineCollapsedKey) else { return }
+        withTransaction(Transaction(animation: nil)) { rowsShown = false }
     }
 }
 

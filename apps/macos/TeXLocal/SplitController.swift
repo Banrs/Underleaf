@@ -15,11 +15,13 @@ struct SplitPane {
     /// Folded to this size (its header), its divider fixed; unfolding
     /// brings back the size it had, remembered across launches.
     var collapsed: CGFloat?
+    /// Told when a fold or unfold has finished sliding: whether it's folded.
+    var didFold: ((Bool) -> Void)?
     let content: AnyView
 
     init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
          keepsSize: Bool = false, shown: Bool = true, collapsed: CGFloat? = nil,
-         @ViewBuilder content: () -> some View) {
+         didFold: ((Bool) -> Void)? = nil, @ViewBuilder content: () -> some View) {
         self.minimum = minimum
         self.maximum = maximum
         self.maxFraction = maxFraction
@@ -27,6 +29,7 @@ struct SplitPane {
         self.keepsSize = keepsSize
         self.shown = shown
         self.collapsed = collapsed
+        self.didFold = didFold
         self.content = AnyView(content())
     }
 }
@@ -83,7 +86,9 @@ struct SplitController: NSViewRepresentable {
         for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() {
             let before = was.indices.contains(index) ? was[index].collapsed : pane.collapsed
             if before != pane.collapsed, pane.shown, view.superview === split {
-                coordinator.fold(split, index, to: pane.collapsed, keeping: before == nil)
+                coordinator.fold(split, index, to: pane.collapsed, keeping: before == nil) {
+                    pane.didFold?(pane.collapsed != nil)
+                }
             }
         }
         for (index, (view, pane)) in zip(coordinator.views, panes).enumerated() {
@@ -226,9 +231,10 @@ struct SplitController: NSViewRepresentable {
 
         /// Folds a pane to `size`, keeping the size it had to come back
         /// to (`keeping`: it was unfolded), or (`size` nil) unfolds it to
-        /// that size. Only a pane after the first: it moves the divider
-        /// before it.
-        func fold(_ split: NSSplitView, _ index: Int, to size: CGFloat?, keeping: Bool = true) {
+        /// that size, then runs `done`. Only a pane after the first: it
+        /// moves the divider before it.
+        func fold(_ split: NSSplitView, _ index: Int, to size: CGFloat?, keeping: Bool = true,
+                  done: @escaping () -> Void = {}) {
             let view = views[index]
             guard let place = split.arrangedSubviews.firstIndex(of: view), place > 0 else { return }
             let end = span(split, place).1
@@ -243,6 +249,7 @@ struct SplitController: NSViewRepresentable {
             }
             slide(split, divider: place - 1, to: end - target - split.dividerThickness) { [weak split] in
                 split?.adjustSubviews()
+                done()
             }
         }
 
