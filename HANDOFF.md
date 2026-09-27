@@ -3,13 +3,14 @@
 ## Status (2026-09-27)
 
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
+- `claude/macos-polish` (not pushed) is the Mac polish pass: Office-style windows, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, and main-actor default isolation. Its Mac build has no Swift warnings and its tests pass.
 - PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
 ## Layout
 
 One Rust core (`crates/`) under three clients:
-- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 27.0. CI builds with Xcode 27 on the `xcode-27` runner image.
+- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 27.0, Swift 6 with Approachable Concurrency and main-actor default isolation, as Xcode 27's App template sets them. CI builds with Xcode 27 on the `xcode-27` runner image.
 - **Windows** (`apps/windows`): WinUI 3, C#.
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
@@ -37,7 +38,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
   - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed.
-- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
+- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -default-isolation MainActor -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
@@ -52,23 +53,28 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## macOS app (`apps/macos/TeXLocal`)
 
 **Files:**
-- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows.
+- `TeXLocalApp`: two windows, Office style: the gallery (templates and recents) and one project window. Closing the project window closes the project and brings the gallery back; the app keeps running with no windows. `alert(_:)` shows any `AppAlert`, in whichever window is the app's.
 - `AppModel`: library, recents, imports, alerts.
 - `ProjectModel`: the open project, saves, builds, file watching.
-- `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`).
+- `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`). Insert sits between View and Window; Format keeps Bold, Italic, the section level and Comment.
 - `WorkspaceView`: columns, toolbar, inspector.
 - `EditorView`: panes, previews, status bar.
 - `EditorBridge`: the `WebPage`.
 - `SourceBars`, `PDFPane`, `LogsView`: the build panel.
 - `SidebarView`, `Outline`, `HomeView`, `SettingsView`.
-- `PaneBars`: bar metrics (the UI kit's) and pieces: every bar control is a bordered control or `ControlGroup` at 24 pt; `PaneStack` and `FindBar` serve both panes.
+- `PaneBars`: bar metrics (the UI kit's), `Typography`, and pieces: every bar control is a bordered control or `ControlGroup` at 24 pt; `PaneStack` and `FindBar` serve both panes; `DialogSheet` is every small sheet; `InPlaceRename`, `RenameField` and `ItemMenuItems` are the gallery's and the sidebar's rename and item menu.
+- `EditorPrefs` and `PDFPrefs` hold the keys and defaults Settings shares with the editor and the PDF pane.
+- Leaf views have `#Preview`s that need no Rust core.
 - `SplitController`: `NSSplitViewController` panes, plus the sidebar's `SidebarSplit`.
 - `SyncTeXGeometry`.
 
 **AppKit that remains, and why:**
 - `SplitController`: SwiftUI's `.inspector` crashes on resize on macOS 27, and `HSplitView`/`VSplitView` mislay panes.
 - `SidebarSplit` is a plain `NSSplitView`: inside `NSSplitViewController` items, SwiftUI sidebar lists start 10 pt lower.
-- `NSSearchField` in the find bars and the log filter (SwiftUI's search field is toolbar or sidebar only), `PDFView`, and an `NSTextView` for the build log.
+- `NSSearchField` in the find bars and the log filter: SwiftUI's search field is toolbar or sidebar only.
+- `PDFView`: SwiftUI has no PDF view.
+- An `NSTextView` for the build log: a SwiftUI `Text` lays out LaTeX's megabyte logs whole on every change.
+- The `AppDelegate`'s terminate-later reply, so Quit waits for the open document's save.
 - `FindMenuResponder`: Edit › Find is the system's (`TextEditingCommands`), whose items send `performFindPanelAction:` with a tag down the responder chain. Neither `WKWebView` nor `PDFView` answers it, so a responder after the project window takes it to the pane with the keyboard (`FocusedValues.find`); a find bar's field has its own field editor that passes the items on. Replacing `.textEditing` instead loses the spelling and substitution toggles' checkmarks.
 
 ## Core behaviour (every host)
@@ -95,7 +101,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Known issues
 
-- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen; it hasn't been reproduced.
+- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen; it hasn't been reproduced. Its prime suspect, the Home→Workspace toolbar swap, went with the separate gallery window.
 - The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
 - Compile flakes, each seen once:
@@ -126,6 +132,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 - **A launch with saved window state presents no default window.** The gallery stays restorable: with `.restorationBehavior(.disabled)`, state holding only the gallery (a crash, or Quit and Keep Windows) opened the app with no window at all. Launch scratch builds with `-ApplePersistenceIgnoreState YES` for a clean start.
 
+- **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 - **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its autosaved size, or its share, and then lets it go.
 - **PDFKit** re-anchors page one on every resize while fitting the width. `SyncPDFView` keeps the reading position through resizes and rebuilds, and `hideLinkBorders` hides hyperref's boxes.
