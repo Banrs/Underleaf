@@ -163,11 +163,11 @@ private struct SymbolPalette: View {
 
     private static let columns = 10
 
-    /// Each glyph a large (28 pt) accessory-bar button, the HIG's default
-    /// control size, rather than a line of the glyphs' text high; the
-    /// glyph in a column as wide as a line is high, so every glyph, narrow
-    /// or wide, takes the same room. The button's own padding makes the
-    /// hit area wider still.
+    /// Each glyph a large accessory-bar button (the kit's large controls
+    /// are 28 pt), rather than a line of the glyphs' text high; the glyph
+    /// in a column as wide as a line is high, so every glyph, narrow or
+    /// wide, takes the same room. The button's own padding makes the hit
+    /// area wider still.
     private static var glyphWidth: CGFloat {
         let font = NSFont.preferredFont(forTextStyle: .title3)
         return (font.ascender - font.descender + font.leading).rounded(.up)
@@ -180,6 +180,7 @@ private struct SymbolPalette: View {
                 Text(title)
                     .font(Typography.secondary)
                     .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
                     .padding(.top, index == 0 ? 0 : BarMetrics.inset)
                     .padding(.bottom, BarMetrics.spacing)
                     .gridCellColumns(Self.columns)
@@ -488,4 +489,8 @@ struct InsertMenuItems<InlineMath: View>: View {
             Button(template.title) { project?.insert(template) }
         }
     }
+}
+
+#Preview("Symbol palette") {
+    SymbolPalette { _ in }
 }

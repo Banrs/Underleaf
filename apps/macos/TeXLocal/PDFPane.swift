@@ -10,7 +10,7 @@ struct PDFPane: View {
     @State private var finding = false
     /// Bumped to put the cursor in the find field, its text selected.
     @State private var findFocus = 0
-    @AppStorage("pdfPaper") private var pdfPaper = "white"
+    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @Environment(\.colorScheme) private var colorScheme
     @State private var controller = PDFController()
 
@@ -46,7 +46,6 @@ struct PDFPane: View {
         }
     }
 
-    /// "auto" follows the app's appearance (web/src/prefs.js).
     private var darkPaper: Bool { pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark) }
 
     @ViewBuilder
@@ -190,13 +189,17 @@ struct PDFPane: View {
             }
             .menuIndicator(.hidden)
             .help("Zoom")
+            // Named for what it sets, the scale its value, not a bare number.
+            .accessibilityLabel("Scale")
+            .accessibilityValue(controller.zoomLabel)
             Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
                 .help("Zoom In")
         }
         .fixedSize()
         .disabled(project.pdfVersion == 0)
+        // One named group, its three controls inside it.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Zoom")
-        .accessibilityValue(controller.zoomLabel)
     }
 
     /// The system's share picker for the PDF, a group of its own so it is
@@ -312,7 +315,15 @@ enum PDFFind {
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
+}
 
+/// The PDF's setting, shared by Settings and the pane so its key and
+/// default can't drift apart, as `EditorPrefs` are.
+enum PDFPrefs {
+    static let paperKey = "pdfPaper"
+    /// "white", "dark", or "auto", which follows the app's appearance
+    /// (web/src/prefs.js).
+    static let paper = "white"
 }
 
 /// What the pane's controls and the menus ask of the PDF view.

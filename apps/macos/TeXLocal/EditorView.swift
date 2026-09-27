@@ -137,8 +137,8 @@ private struct FilePreview: View {
 
 /// The status bar, as Finder's is: a little text about the window's
 /// contents (HIG, Windows). How the build went (choose it for the panel's
-/// issues), the save state and where the cursor is, then, past a line, the
-/// build panel's toggle. Both are borderless, as Xcode's bottom-bar
+/// issues); past a line, the save state and where the cursor is; past
+/// another, the build panel's toggle. Both controls are borderless, as Xcode's bottom-bar
 /// controls are, the toggle tinted while the panel shows. The one place
 /// the build's summary shows. A narrow window drops whole items, never
 /// cutting one short: the engine first (the inspector and the Compile
@@ -213,7 +213,8 @@ private struct StatusBar: View {
     private var buildStatus: some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             if project.compiling {
-                ProgressView().controlSize(.small)
+                // At the row's small control size.
+                ProgressView()
                 Text("Compiling…")
             } else if let result = project.result {
                 if result.stopped {

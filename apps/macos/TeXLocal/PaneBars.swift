@@ -437,6 +437,9 @@ struct SearchField: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.field = self
         view.placeholderString = prompt
+        // Its name for VoiceOver: a placeholder is only a hint, gone once
+        // there is text.
+        view.setAccessibilityLabel(prompt)
         // The SDK maps SwiftUI's sizes to AppKit's, so the field matches its neighbours.
         view.controlSize = NSControl.ControlSize(context.environment.controlSize) ?? .regular
         view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
@@ -476,13 +479,16 @@ struct DialogSheet<Fields: View>: View {
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
 
-    /// A grouped form's own inset, so the title lines up with its sections.
+    /// A grouped form's own inset, so the title lines up with its sections:
+    /// the kit's dialogs set their content 20 pt from every edge.
     private static var formInset: CGFloat { 20 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: BarMetrics.spacing) {
-                Text(title).font(Typography.sectionTitle)
+                Text(title)
+                    .font(Typography.sectionTitle)
+                    .accessibilityAddTraits(.isHeader)
                 if let message {
                     Text(message)
                         .font(Typography.secondary)
@@ -540,4 +546,33 @@ struct RenameField: View {
                 focused = true
             }
     }
+}
+
+#Preview("Find bar") {
+    @Previewable @State var query = "theorem"
+    FindBar(query: $query, prompt: "Find", focus: 0, matches: FindMatches(index: 3, total: 12),
+            searched: query, step: { _ in }, close: {})
+        .frame(width: 480)
+}
+
+#Preview("Pane bar") {
+    PaneBar {
+        ToolGroup(items: [
+            Segment(id: "bold", title: "Bold", systemImage: "bold") {},
+            Segment(id: "italic", title: "Italic", systemImage: "italic") {},
+        ])
+        Spacer(minLength: 0)
+        Button("More", systemImage: "ellipsis") {}.inControlGroup()
+    }
+    .frame(width: 480)
+}
+
+#Preview("Secondary bar") {
+    SecondaryBar(spacing: 0, endInset: BarMetrics.statusEndInset) {
+        Text("Saved")
+        ToolSeparator()
+        Spacer(minLength: 0)
+        Text("Line 12").monospacedDigit()
+    }
+    .frame(width: 480)
 }

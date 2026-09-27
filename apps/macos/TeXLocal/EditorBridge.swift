@@ -5,8 +5,8 @@ import WebKit
 
 /// The CodeMirror editor (web/embed/editor.html) in a SwiftUI `WebPage`:
 /// content in native chrome. Host → page calls go through
-/// `window.texlocal`; the page posts `changed` / `cursor` / `command`
-/// messages back.
+/// `window.texlocal`; the page posts `ready`, `changed`, `cursor`,
+/// `scroll`, `command` and its search's messages back.
 @MainActor
 @Observable
 final class EditorBridge: NSObject, WKScriptMessageHandler {
@@ -39,8 +39,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     @ObservationIgnored private var ready = false
     @ObservationIgnored private var restarting = false
     @ObservationIgnored private var whenReady: [CheckedContinuation<Void, Never>] = []
-    /// The latest host keys, symbols and appearance, sent again to a page
-    /// reloaded after its web process died.
+    /// The latest host keys, host find, symbols and appearance, sent again
+    /// to a page reloaded after its web process died.
     @ObservationIgnored private var kept: [String: (body: String, args: [String: Any])] = [:]
     /// The last appearance from Settings, sent again with fresh system
     /// colours when the user changes the accent or highlight colour.

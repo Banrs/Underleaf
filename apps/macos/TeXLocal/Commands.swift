@@ -198,6 +198,7 @@ enum Prompt: String, Identifiable {
     var id: String { rawValue }
 }
 
+/// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
     case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, find, inverseFromView, print
 }
@@ -227,7 +228,7 @@ extension AppModel {
         case .compileStop: project?.compiling == true
         case .pdfSave, .filePrint, .pdfFind, .viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight,
              .syncInverse:
-            project?.pdfVersion ?? 0 > 0
+            (project?.pdfVersion ?? 0) > 0
         case .syncForward: (project?.pdfVersion ?? 0) > 0 && project?.editsText == true
         default: project != nil
         }
