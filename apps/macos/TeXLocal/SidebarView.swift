@@ -21,7 +21,7 @@ struct NavigatorView: View {
     @State private var fold = OutlineFold()
 
     var body: some View {
-        SplitController(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
+        SidebarSplit(app: app, axis: .vertical, autosave: "OutlineSplit", panes: [
             SplitPane(minimum: 100) { FilesList(project: project) },
             SplitPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
                       collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,

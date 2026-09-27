@@ -1,29 +1,34 @@
 import SwiftUI
 
-/// A pane of a `SplitController`.
+/// A pane of a `SplitController` (an `NSSplitViewItem` holding a SwiftUI
+/// view) or of the sidebar's `SidebarSplit`.
 struct SplitPane {
-    var minimum: CGFloat
-    var maximum: CGFloat?
+    /// An inspector (`NSSplitViewItem(inspectorWithViewController:)`): the
+    /// system's inspector width and background, up under the toolbar.
+    var inspector = false
+    var minimum: CGFloat?
     /// At most this share of the split, so a pane that keeps its size gives
     /// way to the others in a small window.
     var maxFraction: CGFloat?
-    /// The share it opens at.
+    /// The share it opens at, until the split remembers one.
     var fraction: CGFloat?
-    /// Keeps its size as the window resizes.
+    /// Keeps its size as the window resizes: it holds its size above the
+    /// others' holding priority.
     var keepsSize = false
     var shown = true
     /// Folded to this size (its header), its divider fixed; unfolding
-    /// brings back the size it had, remembered across launches.
+    /// brings back the size it had, remembered across launches. The
+    /// sidebar's split only.
     var collapsed: CGFloat?
     /// Told when a fold or unfold has finished sliding: whether it's folded.
     var didFold: ((Bool) -> Void)?
     let content: AnyView
 
-    init(minimum: CGFloat, maximum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
+    init(inspector: Bool = false, minimum: CGFloat? = nil, maxFraction: CGFloat? = nil, fraction: CGFloat? = nil,
          keepsSize: Bool = false, shown: Bool = true, collapsed: CGFloat? = nil,
          didFold: ((Bool) -> Void)? = nil, @ViewBuilder content: () -> some View) {
+        self.inspector = inspector
         self.minimum = minimum
-        self.maximum = maximum
         self.maxFraction = maxFraction
         self.fraction = fraction
         self.keepsSize = keepsSize
@@ -34,15 +39,183 @@ struct SplitPane {
     }
 }
 
-/// AppKit's split view: its dividers and resize pointers, a pane that hides
-/// collapsing with its divider, and divider positions remembered under
-/// `autosave`.
+/// AppKit's split view controller, for the inspector beside the editors,
+/// the build panel under them and the PDF beside the source: its dividers
+/// and resize pointers, its items' sizes and holding priorities, a pane
+/// that hides sliding shut and comes back at the size it had (`isCollapsed`
+/// through the animator), the system's inspector, and divider positions
+/// remembered under `autosave`.
 ///
 /// Not SwiftUI's: HSplitView and VSplitView laid their panes out past their
 /// bounds, and `.inspector` crashed the window on resize ("more Update
-/// Constraints passes than views"). Not NSSplitViewController either: it
-/// blurs the top of each pane under the toolbar, where the pane bars sit.
-struct SplitController: NSViewRepresentable {
+/// Constraints passes than views"), still on macOS 27.
+///
+/// Each pane is its own hosting controller, made once: its views observe
+/// the models themselves.
+struct SplitController: NSViewControllerRepresentable {
+    let app: AppModel
+    let axis: Axis
+    let autosave: String
+    let panes: [SplitPane]
+
+    func makeNSViewController(context: Context) -> PaneSplitViewController {
+        PaneSplitViewController(app: app, vertical: axis == .horizontal, autosave: autosave, panes: panes)
+    }
+
+    func updateNSViewController(_ controller: PaneSplitViewController, context: Context) {
+        controller.update(panes)
+    }
+
+    /// The whole proposal: the split fills its place, and its panes'
+    /// minimums don't reach the window's layout.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsViewController: PaneSplitViewController,
+                      context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+}
+
+/// A `SplitController`'s split view controller: an item per pane.
+final class PaneSplitViewController: NSSplitViewController {
+    private let app: AppModel
+    private let vertical: Bool
+    let autosave: String
+    private(set) var panes: [SplitPane]
+    /// The panes with a size of their own: all of them when the split
+    /// remembers its sizes, otherwise each once it has opened at its share.
+    private var sized: Set<Int>
+    /// Each item's own sizes, which a held pane gets back: ours, or the
+    /// system's for an inspector.
+    private var limits: [(minimum: CGFloat, maximum: CGFloat)] = []
+    /// Each pane's share of the split at most, as a constraint against the
+    /// split's length (`SplitPane.maxFraction`).
+    private var caps: [Int: NSLayoutConstraint] = [:]
+
+    init(app: AppModel, vertical: Bool, autosave: String, panes: [SplitPane]) {
+        self.app = app
+        self.vertical = vertical
+        self.autosave = autosave
+        self.panes = panes
+        let remembered = UserDefaults.standard.object(forKey: "NSSplitView Subview Frames \(autosave)") != nil
+        // Only a pane with a share to open at is placed.
+        sized = Set(panes.indices.filter { remembered || panes[$0].fraction == nil })
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        splitView.isVertical = vertical
+        for pane in panes {
+            let host = NSHostingController(rootView: AnyView(pane.content.environment(app)))
+            // SwiftUI's sizes stay out of Auto Layout; each item's sizes
+            // bound the pane instead.
+            host.sizingOptions = []
+            let item = pane.inspector
+                ? NSSplitViewItem(inspectorWithViewController: host)
+                : NSSplitViewItem(viewController: host)
+            if let minimum = pane.minimum { item.minimumThickness = minimum }
+            if pane.keepsSize { item.holdingPriority = .defaultLow + 1 }
+            // Shown and hidden by the app only, not by dragging its divider.
+            item.canCollapse = false
+            // Collapsed before it's added: its view loads when first shown.
+            item.isCollapsed = !pane.shown
+            addSplitViewItem(item)
+            limits.append((item.minimumThickness, item.maximumThickness))
+        }
+        splitView.autosaveName = autosave
+        // The panes as the app has them, whatever the autosave held.
+        for (item, pane) in zip(splitViewItems, panes) where item.isCollapsed == pane.shown {
+            item.isCollapsed = !pane.shown
+        }
+        for (index, pane) in panes.enumerated() where pane.maxFraction != nil {
+            cap(index)
+        }
+    }
+
+    /// A pane at most its share of the split: a constraint that gives way
+    /// only to the split's own.
+    private func cap(_ index: Int) {
+        guard let fraction = panes[index].maxFraction, caps[index] == nil,
+              !splitViewItems[index].isCollapsed else { return }
+        let view = splitViewItems[index].viewController.view
+        let constraint = vertical
+            ? view.widthAnchor.constraint(lessThanOrEqualTo: splitView.widthAnchor, multiplier: fraction)
+            : view.heightAnchor.constraint(lessThanOrEqualTo: splitView.heightAnchor, multiplier: fraction)
+        constraint.priority = .defaultHigh
+        constraint.isActive = true
+        caps[index] = constraint
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        placeOpeningPanes()
+    }
+
+    /// The shares the panes first open at, once the split has its size.
+    func placeOpeningPanes() {
+        let opening = panes.indices.filter { !sized.contains($0) && !splitViewItems[$0].isCollapsed }
+        guard !opening.isEmpty, splitView.length > 0 else { return }
+        for index in opening { hold(index, at: panes[index].fraction.map { $0 * splitView.length }) }
+        splitView.layoutSubtreeIfNeeded()
+        // The dividers where the held sizes put them, as a drag leaves
+        // them: the split holds the sizes from there.
+        for index in opening where index > 0 {
+            let before = splitView.arrangedSubviews[index - 1].frame
+            splitView.setPosition(splitView.isVertical ? before.maxX : before.maxY, ofDividerAt: index - 1)
+        }
+        for index in opening { free(index) }
+    }
+
+    /// Shows and hides panes, sliding as the system slides an inspector.
+    func update(_ new: [SplitPane]) {
+        panes = new
+        guard isViewLoaded else { return }
+        for (index, (item, pane)) in zip(splitViewItems, new).enumerated() where item.isCollapsed == pane.shown {
+            // Opened for the first time: at its share, not its minimum.
+            let opening = pane.shown && !sized.contains(index)
+            if opening { hold(index, at: pane.fraction.map { $0 * splitView.length }) }
+            NSAnimationContext.runAnimationGroup { _ in
+                item.animator().isCollapsed = !pane.shown
+            } completionHandler: { [weak self] in
+                MainActor.assumeIsolated { if opening { self?.free(index) } }
+            }
+            if pane.shown { cap(index) }
+        }
+    }
+
+    /// Holds a pane at a size (a slide to it, or a first layout), which
+    /// `free` lets go of: from then it keeps within its own sizes.
+    private func hold(_ index: Int, at size: CGFloat?) {
+        // In whole points, so the panes after it start on whole points: a
+        // pane half a point taller centred its content half a point low.
+        guard let size = size?.rounded() else { return }
+        splitViewItems[index].minimumThickness = size
+        splitViewItems[index].maximumThickness = size
+    }
+
+    private func free(_ index: Int) {
+        sized.insert(index)
+        splitViewItems[index].minimumThickness = limits[index].minimum
+        splitViewItems[index].maximumThickness = limits[index].maximum
+    }
+}
+
+extension NSSplitView {
+    /// The split's length along its axis, and a pane's.
+    var length: CGFloat { isVertical ? bounds.width : bounds.height }
+    func length(of view: NSView) -> CGFloat { isVertical ? view.frame.width : view.frame.height }
+}
+
+/// The sidebar's split, Files over the File Outline: a plain NSSplitView,
+/// its dividers and resize pointers, a pane that hides collapsing with its
+/// divider, a pane that folds to its header, and divider positions
+/// remembered under `autosave`.
+///
+/// Not a `SplitController`: in an NSSplitViewController's items SwiftUI's
+/// sidebar lists start their rows 10 pt lower, and the folded outline's
+/// header no longer fits its dock.
+struct SidebarSplit: NSViewRepresentable {
     let app: AppModel
     let axis: Axis
     let autosave: String
@@ -245,7 +418,7 @@ struct SplitController: NSViewRepresentable {
             } else {
                 let kept = UserDefaults.standard.double(forKey: unfoldedKey(index))
                 let pane = panes[index]
-                target = kept > pane.minimum ? kept : (pane.fraction ?? 0.5) * split.length
+                target = kept > minimum(pane) ? kept : (pane.fraction ?? 0.5) * split.length
             }
             slide(split, divider: place - 1, to: end - target - split.dividerThickness) { [weak split] in
                 split?.adjustSubviews()
@@ -258,17 +431,11 @@ struct SplitController: NSViewRepresentable {
             panes[views.firstIndex(of: split.arrangedSubviews[place]) ?? place]
         }
 
-        /// The most a pane may take of the split as it is now: its maximum,
-        /// or its largest share, whichever is less, and never under its
-        /// minimum.
-        private func maximum(_ split: NSSplitView, _ pane: SplitPane) -> CGFloat {
-            if let folded = pane.collapsed { return folded }
-            let share = pane.maxFraction.map { $0 * split.length } ?? .infinity
-            return max(min(pane.maximum ?? .infinity, share), pane.minimum)
-        }
+        /// The most a pane may take: its folded size while folded.
+        private func maximum(_ split: NSSplitView, _ pane: SplitPane) -> CGFloat { pane.collapsed ?? .infinity }
 
         /// The least a pane may take: its folded size while folded.
-        private func minimum(_ pane: SplitPane) -> CGFloat { pane.collapsed ?? pane.minimum }
+        private func minimum(_ pane: SplitPane) -> CGFloat { pane.collapsed ?? pane.minimum ?? 0 }
 
         private func span(_ split: NSSplitView, _ place: Int) -> (CGFloat, CGFloat) {
             let frame = split.arrangedSubviews[place].frame
@@ -412,10 +579,4 @@ final class PaneClip: NSView {
             ? NSRect(x: 0, y: 0, width: max(bounds.width, pinned), height: bounds.height)
             : NSRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, pinned))
     }
-}
-
-private extension NSSplitView {
-    /// The split's length along its axis, and a pane's.
-    var length: CGFloat { isVertical ? bounds.width : bounds.height }
-    func length(of view: NSView) -> CGFloat { isVertical ? view.frame.width : view.frame.height }
 }

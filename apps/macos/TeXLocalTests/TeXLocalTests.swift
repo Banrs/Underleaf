@@ -199,7 +199,108 @@ final class FileWatcherTests: XCTestCase {
 }
 
 @MainActor
-final class SplitLayoutTests: XCTestCase {
+final class SplitControllerTests: XCTestCase {
+    /// The window holding the test's split, and the autosave to forget.
+    private var window: NSWindow?
+    private var autosave = ""
+
+    override func tearDown() {
+        window?.close()
+        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
+        super.tearDown()
+    }
+
+    /// A split of `size` as a window's content, laid out and its panes
+    /// opened at their shares, as when it appears.
+    private func split(_ size: NSSize, vertical: Bool, _ panes: [SplitPane]) -> PaneSplitViewController {
+        autosave = "SplitControllerTests \(UUID())"
+        let controller = PaneSplitViewController(app: AppModel(), vertical: vertical, autosave: autosave, panes: panes)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .resizable],
+                              backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        // At its size before it's the window's content, which would
+        // otherwise take the view's.
+        controller.view.setFrameSize(size)
+        window.contentViewController = controller
+        self.window = window
+        resize(to: size)
+        // On screen, unseen, as the app shows it: it appears, and its panes
+        // open at their shares.
+        window.alphaValue = 0
+        window.orderFront(nil)
+        return controller
+    }
+
+    private func resize(to size: NSSize) {
+        window?.setContentSize(size)
+        window?.layoutIfNeeded()
+    }
+
+    private func heights(_ controller: PaneSplitViewController) -> [CGFloat] {
+        controller.splitViewItems.map(\.viewController.view.frame.height)
+    }
+
+    /// The build panel opens at its share, keeps its size as the window
+    /// grows, gives way beyond two fifths in a small window, and has its
+    /// size back as the window grows again.
+    func testThePanelKeepsItsSizeWithinItsLargestShare() {
+        let controller = split(NSSize(width: 400, height: 601), vertical: false, [
+            SplitPane(minimum: 120) { EmptyView() },
+            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.3, keepsSize: true) { EmptyView() },
+        ])
+        XCTAssertEqual(heights(controller), [420, 180])
+        resize(to: NSSize(width: 400, height: 801))
+        XCTAssertEqual(heights(controller), [620, 180])
+        resize(to: NSSize(width: 400, height: 401))
+        XCTAssertEqual(heights(controller)[1], 160, accuracy: 0.5)
+        resize(to: NSSize(width: 400, height: 601))
+        XCTAssertEqual(heights(controller), [420, 180])
+    }
+
+    /// The inspector is the system's: its behaviour and its standard
+    /// width, not one of ours.
+    func testTheInspectorIsTheSystemsAtItsStandardWidth() {
+        let controller = split(NSSize(width: 1000, height: 600), vertical: true, [
+            SplitPane { EmptyView() },
+            SplitPane(inspector: true) { EmptyView() },
+        ])
+        let inspector = controller.splitViewItems[1]
+        XCTAssertEqual(inspector.behavior, .inspector)
+        // NSSplitViewItem.h's standard inspector width, not resizable.
+        XCTAssertEqual(inspector.viewController.view.frame.width, 270)
+        XCTAssertEqual(inspector.minimumThickness, 270)
+        XCTAssertEqual(inspector.maximumThickness, 270)
+        // Shown and hidden by the app, not by a drag on its divider.
+        XCTAssertFalse(inspector.canCollapse)
+    }
+
+    /// A pane hidden at first opens at its share the first time it shows,
+    /// not at its minimum, sliding in; hidden again it collapses.
+    func testAHiddenPaneOpensAtItsShare() async throws {
+        func panes(shown: Bool) -> [SplitPane] {
+            [SplitPane(minimum: 120) { EmptyView() },
+             SplitPane(minimum: 80, fraction: 0.3, keepsSize: true, shown: shown) { EmptyView() }]
+        }
+        let controller = split(NSSize(width: 400, height: 601), vertical: false, panes(shown: false))
+        XCTAssertTrue(controller.splitViewItems[1].isCollapsed)
+        controller.update(panes(shown: true))
+        try await waitUntil { !controller.splitViewItems[1].isCollapsed }
+        try await waitUntil { self.heights(controller) == [420, 180] }
+        controller.update(panes(shown: false))
+        try await waitUntil { controller.splitViewItems[1].isCollapsed }
+    }
+
+    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+        for _ in 0..<40 where !condition() {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(condition())
+    }
+}
+
+/// The sidebar's split (Files over the File Outline), a plain NSSplitView.
+@MainActor
+final class SidebarSplitTests: XCTestCase {
     /// The window holding the test's split (a view doesn't keep its window).
     private var window: NSWindow?
 
@@ -211,7 +312,7 @@ final class SplitLayoutTests: XCTestCase {
     /// doesn't lay out panes added since the last layout (27's does), so a
     /// split never sized constrained the drag against empty frames there.
     private func split(_ size: NSSize, vertical: Bool = true, _ panes: [SplitPane],
-                       last: CGFloat) -> (NSSplitView, SplitController.Coordinator) {
+                       last: CGFloat) -> (NSSplitView, SidebarSplit.Coordinator) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 1200),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
@@ -219,7 +320,7 @@ final class SplitLayoutTests: XCTestCase {
         let split = NSSplitView()
         split.isVertical = vertical
         split.dividerStyle = .thin
-        let coordinator = SplitController.Coordinator(autosave: "SplitLayoutTests \(UUID())")
+        let coordinator = SidebarSplit.Coordinator(autosave: "SidebarSplitTests \(UUID())")
         coordinator.panes = panes
         coordinator.clips = [PaneClip(content: NSView(), vertical: vertical), PaneClip(content: NSView(), vertical: vertical)]
         coordinator.views.forEach(split.addArrangedSubview)
@@ -254,7 +355,7 @@ final class SplitLayoutTests: XCTestCase {
     /// A pane squeezed to its minimum by a small window gets its share back
     /// as the window grows, rather than staying at the minimum.
     func testAPaneGetsItsShareBackAfterASmallWindow() throws {
-        // Source | PDF with the PDF dragged narrow.
+        // Two panes side by side, the second dragged narrow.
         let (split, coordinator) = split(NSSize(width: 936, height: 400),
                                          [SplitPane(minimum: 140) { EmptyView() }, SplitPane(minimum: 140) { EmptyView() }],
                                          last: 200)
@@ -265,20 +366,6 @@ final class SplitLayoutTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(coordinator.share(split, of: 1)), 200 / 935, accuracy: 0.001)
         resize(split, to: NSSize(width: 936, height: 400))
         XCTAssertEqual(widths(split), [735, 200])
-    }
-
-    /// A pane that keeps its size gives way beyond its largest share: the
-    /// build panel in a small window leaves the editors the room.
-    func testAPaneKeepsWithinItsLargestShare() {
-        let (split, _) = split(NSSize(width: 400, height: 1000), vertical: false, [
-            SplitPane(minimum: 120) { EmptyView() },
-            SplitPane(minimum: 80, maxFraction: 0.4, keepsSize: true) { EmptyView() },
-        ], last: 300)
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
-        resize(split, to: NSSize(width: 400, height: 500))
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 200)
-        resize(split, to: NSSize(width: 400, height: 1000))
-        XCTAssertEqual(split.arrangedSubviews[1].frame.height, 300)
     }
 
     /// The sidebar's outline folded to its header: the files take the

@@ -107,10 +107,6 @@ private struct SourcePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        // Pinned to the top: the web view takes a whole number of points, so
-        // in a pane half a point taller the stack was centred and its bars
-        // sat half a point below the PDF's.
-        .frame(maxHeight: .infinity, alignment: .top)
         .animation(.snappy(duration: 0.25), value: project.findShown)
     }
 }

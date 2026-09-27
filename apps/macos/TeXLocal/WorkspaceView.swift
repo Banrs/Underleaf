@@ -13,36 +13,24 @@ struct WorkspaceView: View {
             get: { app.sidebarVisible ? .all : .detailOnly },
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
+            // The sidebar's widths, the UI kit's window sidebar its ideal: the
+            // system's own default opened it at 144 pt (15% of the window)
+            // with no maximum.
             NavigatorView(project: project)
                 .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
                                                 max: Metrics.sidebarWidth.upperBound)
         } detail: {
             SplitController(app: app, axis: .horizontal, autosave: "InspectorSplit", panes: [
-                SplitPane(minimum: Metrics.editorsMinWidth) { EditorArea(project: project) },
-                SplitPane(minimum: Metrics.inspectorWidth.lowerBound, maximum: Metrics.inspectorWidth.upperBound,
-                          fraction: 0.28, keepsSize: true, shown: app.showInspector) {
-                    // On edge-to-edge system glass, as an inspector sits
-                    // beside the content, running up under the toolbar as
-                    // Pages' does: stopped under it, its edge read as a line.
-                    // Only the glass: the controls keep below the toolbar.
-                    InspectorView(project: project)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background {
-                            Color.clear
-                                .glassEffect(.regular, in: .rect)
-                                .ignoresSafeArea(.container, edges: .top)
-                        }
-                },
+                SplitPane { EditorArea(project: project) },
+                // The system's inspector: its width, and its glass up under
+                // the toolbar to the window's top, as Pages' inspector.
+                SplitPane(inspector: true, shown: app.showInspector) { InspectorView(project: project) },
             ])
-            // Up to the window's top, so the inspector's glass can reach it;
-            // each pane's content keeps below the toolbar, in its safe area.
+            // Up to the window's top, so the inspector reaches it; the
+            // editors keep below the toolbar, in their safe area.
             .ignoresSafeArea(.container, edges: .top)
             // Built once per project: its panes keep the views they were made with.
             .id(ObjectIdentifier(project))
-            // Room for the inspector too, whether or not it shows: a minimum
-            // that changed mid-layout crashed AppKit before. The height is the
-            // window's minimum's (`WindowMetrics`).
-            .frame(minWidth: Metrics.detailMinWidth)
             .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: {
                 app.windowCorners = $0
             }
@@ -117,17 +105,11 @@ struct WorkspaceView: View {
         }
     }
 
-    /// The columns' widths. The sidebar's ideal is the UI kit's window
-    /// sidebar; the window's own minimum (960 × 600) is set once, in the app.
+    /// The sidebar's widths; the window's own minimum (960 × 600) is set
+    /// once, in the app.
     private enum Metrics {
         static let sidebarWidth: ClosedRange<CGFloat> = 200...320
         static let sidebarIdeal: CGFloat = 256
-        /// The source and the PDF, side by side at their smallest.
-        static let editorsMinWidth: CGFloat = 441
-        static let inspectorWidth: ClosedRange<CGFloat> = 220...320
-        /// The editors and the inspector at their smallest, and the
-        /// divider between them.
-        static let detailMinWidth = editorsMinWidth + 1 + inspectorWidth.lowerBound
     }
 
     // ---------- toolbar ----------
