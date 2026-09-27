@@ -155,33 +155,43 @@ private struct StatusBar: View {
 
     var body: some View {
         @Bindable var project = project
-        // Clear of the window's rounded corners where it meets them (the
-        // leading one with the sidebar hidden, the trailing one with the
-        // inspector hidden), by the system's own corner insets.
+        // Each end as Xcode's editor status bar has it (see BarMetrics'
+        // status metrics): a borderless toggle past a line, clear of the
+        // window's rounded corner where the bar meets one (the sidebar or
+        // the inspector hidden), 8 pt from a pane beside it otherwise.
         let corners = app.windowCorners
-        // The items, the line and the toggle a group's 8 pt apart: the
-        // line has the same room either side.
-        SecondaryBar(spacing: BarMetrics.groupSpacing,
-                     leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
-                     trailingInset: app.showInspector ? BarMetrics.inset
-                         : max(BarMetrics.inset, corners.bottomTrailing.width)) {
+        SecondaryBar(spacing: 0,
+                     leadingInset: corners.bottomLeading.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset,
+                     trailingInset: corners.bottomTrailing.width > 0 ? BarMetrics.statusEndInset : BarMetrics.inset) {
+            // On while the panel shows the issues, as Xcode's leading
+            // breakpoints toggle is on while breakpoints are active.
+            Toggle(isOn: Binding(get: { project.showLogs && project.panelTab == .issues },
+                                 set: { $0 ? project.showBuildPanel() : (project.showLogs = false) })) {
+                buildStatus
+            }
+            .help(project.showLogs && project.panelTab == .issues ? "Hide Issues" : "Show Issues")
+            ToolSeparator()
+                .padding(.leading, BarMetrics.statusControlGap)
+                .padding(.trailing, BarMetrics.statusTextGap)
             ViewThatFits(in: .horizontal) {
                 items(save: true, counts: true, engine: true)
                 items(save: true, counts: true, engine: false)
                 items(save: true, counts: false, engine: false)
                 items(save: false, counts: false, engine: false)
             }
-            // The text only: the toggle keeps its style's own on state.
             .foregroundStyle(.secondary)
             ToolSeparator()
+                .padding(.leading, BarMetrics.statusTextGap)
+                .padding(.trailing, BarMetrics.statusControlGap)
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
             }
-            .toggleStyle(.button)
             .labelStyle(.iconOnly)
             .help(app.title(.viewToggleLogs))
         }
-        .buttonStyle(.accessoryBar)
+        // Borderless and tinted while on, as Xcode's bottom-bar toggles.
+        .toggleStyle(.button)
+        .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows, as Pages' word count
         // is (View › Show Word Count too), not in Settings.
         .contextMenu {
@@ -191,16 +201,12 @@ private struct StatusBar: View {
 
     private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            Button { project.showBuildPanel() } label: {
-                buildStatus
-            }
-            .help("Show Issues")
             // While a build runs the build status says so; the save state
             // would repeat it. A preview has none, as the web's.
             if save, !project.compiling, project.editsText {
                 Text(project.status)
             }
-            Spacer(minLength: BarMetrics.itemSpacing)
+            Spacer(minLength: 0)
             if project.editsText {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showCounts, app.showWordCount, let counts = project.counts {
