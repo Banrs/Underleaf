@@ -46,9 +46,15 @@ final class AppModel {
     /// The new-project sheet, on the template it starts with.
     var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
-    /// File › Open…'s panel (RootView), Add Files…' (WorkspaceView).
+    /// File › Open…'s panel (the gallery's), Add Files…' (WorkspaceView).
     var openingProject = false
     var addingFiles = false
+    /// The app is quitting: the project window's close is no reason to
+    /// leave the project.
+    @ObservationIgnored var quitting = false
+    /// Something Finder's Open With or the Dock icon handed the app, while
+    /// the gallery asks before copying it in.
+    var pendingImport: URL?
     /// Save PDF As… or Export Project as ZIP…, while its panel shows.
     var exporting: ExportFile?
     var searchFocusToken = 0
@@ -80,7 +86,7 @@ final class AppModel {
     /// panes, which SwiftUI gives none: each pane is hosted on its own.
     var windowCorners = RectangleCornerInsets()
 
-    /// ⌘N on the home screen, or a template's card.
+    /// ⌘N in the gallery, or a template's card.
     func newProject(_ template: String = "article") {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
@@ -182,9 +188,34 @@ final class AppModel {
         }
     }
 
-    /// Open a project; reopening at launch, where it was left.
+    /// Bumped by each `open` and `close`, so only the latest carries on: at
+    /// launch the restored project and an Open With import can overlap, as
+    /// can quick successive opens.
+    @ObservationIgnored private var openGeneration = 0
+    @ObservationIgnored private var opensUnderWay = 0
+    /// A project is on its way in, though `project` may not name it yet.
+    var isOpening: Bool { opensUnderWay > 0 }
+
+    /// `open TeXLocal.app --args -openProject <id>` opens a project at
+    /// launch; launch arguments land in UserDefaults' argument domain for
+    /// this run only. Taken once, by whichever window asks first.
+    @ObservationIgnored private var launchProject = UserDefaults.standard.string(forKey: "openProject")
+
+    func takeLaunchProject() -> String? {
+        defer { launchProject = nil }
+        return launchProject
+    }
+
+    /// Open a project; reopening at launch, where it was left. The open
+    /// project is saved and left first; `project` goes straight from one to
+    /// the other, never nil between, so its window stays.
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
-        guard project?.id != id, await close() else { return }
+        openGeneration += 1
+        let generation = openGeneration
+        guard project?.id != id else { return }
+        opensUnderWay += 1
+        defer { opensUnderWay -= 1 }
+        guard await leave(generation) else { return }
         recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
         let model = ProjectModel(id: id, editor: editor, app: self)
         project = model
@@ -195,12 +226,22 @@ final class AppModel {
     /// fails, rather than dropping the only copy of the edits.
     @discardableResult
     func close() async -> Bool {
-        guard let project else { return true }
-        guard await project.flush() else { return false }
-        project.close()
-        self.project = nil
+        openGeneration += 1
+        guard project != nil else { return true }
+        // False too when an open took over while this saved: its project stays.
+        guard await leave(openGeneration) else { return false }
+        project = nil
         pdfRequest = nil
         await refresh()
+        return true
+    }
+
+    /// Save the open project and stop it, unless a later open or close has
+    /// taken over while it saved: that one leaves it instead.
+    private func leave(_ generation: Int) async -> Bool {
+        guard let project else { return true }
+        guard await project.flush(), generation == openGeneration else { return false }
+        project.close()
         return true
     }
 }

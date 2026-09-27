@@ -143,7 +143,7 @@ final class ProjectModel {
     /// A project path's last component, for alert titles.
     private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
-    /// What reopening at launch puts back (`RootView`).
+    /// What reopening at launch puts back (`ProjectWindow`).
     var saved: SavedWorkspace {
         SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdfPage)
     }
@@ -151,7 +151,9 @@ final class ProjectModel {
     // ---------- loading ----------
 
     /// Load the project: its main file, or, reopening, the file, line,
-    /// build panel and PDF page it was left at.
+    /// build panel and PDF page it was left at. A project left while it
+    /// loads (another opened over it) stops where it is, so it never puts
+    /// its text in the editor after the next project's.
     func load(restoring saved: SavedWorkspace? = nil) async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
@@ -184,6 +186,7 @@ final class ProjectModel {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
             await refreshSymbols()
+            guard !closed else { return }
             if let saved {
                 showLogs = saved.buildPanel
                 restorePDFPage = saved.pdfPage
@@ -191,9 +194,10 @@ final class ProjectModel {
             let restored = saved?.file.flatMap { file in tree.flattened.contains { $0.path == file } ? file : nil }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
         } catch {
-            report(error, "Couldn’t Open “\(id)”")
+            if !closed { report(error, "Couldn’t Open “\(id)”") }
         }
         pdfURL = try? await pdfPath()
+        guard !closed else { return }
         if let pdfURL, FileManager.default.fileExists(atPath: pdfURL.path) {
             pdfVersion += 1
         } else if autoCompile {
@@ -210,7 +214,7 @@ final class ProjectModel {
     }
 
     private func refreshSymbols() async {
-        if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self) {
+        if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self), !closed {
             await editor.setSymbols(symbols)
         }
     }
@@ -234,12 +238,16 @@ final class ProjectModel {
         // Clicking one file and then another before the first has opened:
         // only the latest carries on, so the editor can't end up showing one
         // file while `openPath` — where autosave writes — names the other.
+        // Checked after the last wait, with nothing awaited from there to
+        // the editor; a project that has been left opens nothing.
         openGeneration += 1
         let generation = openGeneration
         if path != openPath, !isTextFile(path) {
             guard await saveEdits(), generation == openGeneration else { return }
+            let url = await fileURL(path)
+            guard generation == openGeneration, !closed else { return }
             openPath = path
-            openURL = await fileURL(path)
+            openURL = url
             diskText = nil
             watchOpenFile()
             analyze("")
@@ -247,20 +255,21 @@ final class ProjectModel {
             guard await saveEdits(), generation == openGeneration else { return }
             do {
                 let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
-                guard generation == openGeneration else { return }
+                let url = await fileURL(path)
+                guard generation == openGeneration, !closed else { return }
                 openPath = path
-                openURL = await fileURL(path)
+                openURL = url
                 diskText = file.text
                 watchOpenFile()
                 analyze(file.text)
                 await editor.open(path: "\(id)/\(path)", text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
             } catch {
-                report(error, "Couldn’t Open “\(name(path))”")
+                if !closed { report(error, "Couldn’t Open “\(name(path))”") }
                 return
             }
         }
-        if let line, editsText, generation == openGeneration { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+        if let line, editsText, generation == openGeneration, !closed { await editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
     func showInFinder(_ path: String) {
@@ -422,7 +431,7 @@ final class ProjectModel {
     private func checkDisk() async {
         guard let path = openPath, !closed,
               let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
-              path == openPath, file.text != diskText
+              path == openPath, !closed, file.text != diskText
         else { return }
         diskText = file.text
         // The PDF no longer matches what is on disk.

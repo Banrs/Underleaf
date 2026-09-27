@@ -1,4 +1,5 @@
 import SwiftUI
+import Testing
 import XCTest
 @testable import TeXLocal
 
@@ -590,5 +591,43 @@ final class CoreTests: XCTestCase {
         // that path; here the scratch project is simply removed.
         let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         try FileManager.default.removeItem(at: URL(fileURLWithPath: data).appendingPathComponent(info.id))
+    }
+}
+
+/// Two opens that overlap — the project restored at launch and an Open With
+/// import, or quick successive opens — leave the editor on the one opened
+/// last, never on the other's text.
+@MainActor
+struct OpenRaceTests {
+    @Test(.timeLimit(.minutes(1)))
+    func theLastOpenHasTheEditor() async throws {
+        // What `AppModel` writes to the app's defaults, put back after.
+        let defaults = UserDefaults.standard
+        let keys = ["autoCompile", "recentProjects"]
+        let kept = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
+
+        let core = Core.shared
+        func project(_ text: String) async throws -> ProjectInfo {
+            let name = "Race \(UUID().uuidString.prefix(8))"
+            let info = try await core.call("create_project", ["name": name, "template": "blank"], as: ProjectInfo.self)
+            try await core.perform("write_file", ["id": info.id, "path": info.mainFile, "text": text])
+            return info
+        }
+        let first = try await project("first"), second = try await project("second")
+        // Removed rather than trashed, as `CoreTests` explains.
+        let data = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"]))
+        defer { for info in [first, second] { try? FileManager.default.removeItem(at: data.appendingPathComponent(info.id)) } }
+
+        let app = AppModel()
+        app.autoCompile = false
+        // Started in this order on the main actor, each waiting on the core
+        // and the editor's page in turn.
+        let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
+        for open in opens { await open.value }
+
+        #expect(app.project?.id == second.id)
+        #expect(await app.editor.text() == "second")
+        await app.close()
     }
 }
