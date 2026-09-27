@@ -43,6 +43,9 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
+        // No line under the toolbar, as the workspace has none: the window
+        // reads the same whichever it shows.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
