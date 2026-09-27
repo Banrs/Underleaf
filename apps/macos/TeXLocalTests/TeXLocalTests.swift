@@ -205,6 +205,8 @@ final class SplitControllerTests: XCTestCase {
     private var autosave = ""
 
     override func tearDown() {
+        // Not saved again as it closes, into the app's own preferences.
+        (window?.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
         window?.close()
         UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
         super.tearDown()
