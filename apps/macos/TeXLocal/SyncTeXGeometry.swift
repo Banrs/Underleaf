@@ -4,14 +4,21 @@ import CoreGraphics
 /// space starts at the bottom-left of the page's box. These are the only two
 /// places the axes meet.
 enum SyncTeXGeometry {
+    /// The browser version's flash (web/src/pdfview.js `highlight`): a
+    /// line's height where SyncTeX gives none, a word's width at the least,
+    /// and a margin all round.
+    private static let lineHeight: CGFloat = 12
+    private static let minimumWidth: CGFloat = 24
+    private static let margin: CGFloat = 2
+
     /// The page rectangle to flash for a forward-search result, padded like the
     /// browser version's highlight and never narrower than a word.
     static func highlightRect(_ loc: ForwardLoc, pageBounds: CGRect) -> CGRect {
-        let height = loc.height ?? 12
-        let width = max(24, loc.width ?? 0)
+        let height = loc.height ?? lineHeight
+        let width = max(minimumWidth, loc.width ?? 0)
         let x = pageBounds.minX + (loc.h ?? 0)
         let baseline = pageBounds.maxY - (loc.v ?? 0)
-        return CGRect(x: x - 2, y: baseline - 2, width: width + 4, height: height + 4)
+        return CGRect(x: x, y: baseline, width: width, height: height).insetBy(dx: -margin, dy: -margin)
     }
 
     /// A point in PDFKit page space as SyncTeX's (x, y) for an inverse search.

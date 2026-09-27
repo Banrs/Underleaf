@@ -13,9 +13,8 @@ struct WorkspaceView: View {
             get: { app.sidebarVisible ? .all : .detailOnly },
             set: { app.sidebarVisible = $0 != .detailOnly }
         )) {
-            // The sidebar's widths, the UI kit's window sidebar its ideal: the
-            // system's own default opened it at 144 pt (15% of the window)
-            // with no maximum.
+            // Widths of its own: the system's default opened it at 144 pt
+            // (15% of the window) with no maximum.
             NavigatorView(project: project)
                 .navigationSplitViewColumnWidth(min: Metrics.sidebarWidth.lowerBound, ideal: Metrics.sidebarIdeal,
                                                 max: Metrics.sidebarWidth.upperBound)
@@ -100,8 +99,8 @@ struct WorkspaceView: View {
         }
     }
 
-    /// The sidebar's widths; the window's own minimum (960 × 600) is set
-    /// once, in the app.
+    /// The sidebar's widths, its ideal the UI kit's window sidebar (256 pt);
+    /// the window's own minimum (960 × 600) is set once, in the app.
     private enum Metrics {
         static let sidebarWidth: ClosedRange<CGFloat> = 200...320
         static let sidebarIdeal: CGFloat = 256
@@ -113,7 +112,7 @@ struct WorkspaceView: View {
     /// toggles at the trailing. What acts on a pane sits over it instead:
     /// editing over the source (EditorView's `SourceBar`), compiling and
     /// sharing over the PDF (PDFPane's bar). Every item is in the menu bar
-    /// too. Closing the window goes back to the projects.
+    /// too. Closing the window goes back to the gallery.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         // The panes' toggles, sharing one piece of glass as related buttons
@@ -164,6 +163,7 @@ private struct NewEntrySheet: View {
 private struct GoToLineSheet: View {
     let project: ProjectModel
     @State private var text = ""
+    @FocusState private var focused: Bool
 
     private var lines: Int? { project.counts?.lines }
 
@@ -177,7 +177,9 @@ private struct GoToLineSheet: View {
             if let line { project.reveal(line: line) }
         } fields: {
             TextField("Line", text: $text, prompt: Text(lines.map { "1–\($0)" } ?? "Line number"))
+                .focused($focused)
         }
+        .onAppear { focused = true }
     }
 }
 
@@ -278,21 +280,31 @@ struct InspectorView: View {
             }
             .disabled(project.settings == nil)
             .monospacedDigit()
-            .padding(BarMetrics.inset * 2)
+            // The window's end margin, as the status bar keeps from the
+            // edges: the kit's toolbar sets its symbols 16 pt in.
+            .padding(BarMetrics.statusEndInset)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private func header(_ title: String) -> some View {
-        Text(title).font(Typography.groupTitle).gridCellColumns(2)
+        Text(title)
+            .font(Typography.groupTitle)
+            .accessibilityAddTraits(.isHeader)
+            .gridCellColumns(2)
     }
 
     private var separator: some View {
         Divider().gridCellColumns(2).padding(.vertical, BarMetrics.spacing)
     }
 
+    /// A row's label, read out with its value or control rather than as
+    /// an element of its own.
     private func label(_ text: String) -> some View {
-        Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+        Text(text)
+            .foregroundStyle(.secondary)
+            .gridColumnAlignment(.trailing)
+            .accessibilityHidden(true)
     }
 
     /// A setting's pop-up at its own width, as Xcode's inspectors have them.
@@ -323,7 +335,10 @@ struct InspectorView: View {
     private func row(_ name: String, _ value: String) -> some View {
         GridRow {
             label(name)
-            Text(value).textSelection(.enabled)
+            Text(value)
+                .textSelection(.enabled)
+                .accessibilityLabel(name)
+                .accessibilityValue(value)
         }
     }
 

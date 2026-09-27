@@ -1,8 +1,8 @@
 import Foundation
 
-// The LaTeX the source bar and the Format menu write, in one place. Titles
-// are menu items here, so title case without the web's parentheticals:
-// "Aligned Equations" is the web's "Align (multi-line math)".
+// The LaTeX the source bar and the Insert and Format menus write, in one
+// place. Titles are menu items here, so title case without the web's
+// parentheticals: "Aligned Equations" is the web's "Align (multi-line math)".
 
 /// A snippet to write at the cursor: a block, whose `body` is its id in
 /// the editor page's one table of them (web/src/latex-data.js
@@ -56,8 +56,8 @@ let headingLevels: [(String, String)] = [
     ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
 ]
 
-/// The engines a project can compile with, for the Compile menu and the
-/// inspector.
+/// The engines a project can compile with, for the Compile menu, the
+/// inspector and the status bar.
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
 /// Symbols by kind, each inserted as its command: the palette LaTeX editors
