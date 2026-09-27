@@ -39,6 +39,9 @@ struct TeXLocalApp: App {
         }
         .defaultSize(WindowMetrics.projectDefault)
         .defaultLaunchBehavior(.suppressed)
+        // The app's main window, though not its first scene: without it, a
+        // second Window only zooms, with no full screen (macOS 27.2).
+        .windowManagerRole(.principal)
         .commandsRemoved()
 
         Settings {
@@ -111,6 +114,7 @@ struct GalleryWindow: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         @Bindable var app = app
@@ -159,8 +163,15 @@ struct GalleryWindow: View {
                     .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
             }
             .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
-            // With no project open, this is the app's window.
-            .appAlert(shown: app.project == nil)
+            // With no project open, this is the app's window; with one, it
+            // shows what failed here.
+            .appAlert(shown: app.project == nil || app.alertInGallery)
+            .onChange(of: appearsActive, initial: true) { _, active in app.galleryInFront = active }
+            // Gone, so the project's window shows what it had.
+            .onDisappear {
+                app.galleryInFront = false
+                app.alertInGallery = false
+            }
             // The library folder can't be made or opened: say so and quit, rather
             // than leave a crash report that explains nothing.
             .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
@@ -208,7 +219,12 @@ struct ProjectWindow: View {
             // Nothing to show: the gallery instead.
             if app.project == nil, !app.isOpening { dismissWindow(id: AppScene.project) }
         }
-        .onChange(of: app.project?.saved) { _, saved in savedWorkspace = saved.flatMap { try? JSONEncoder().encode($0) } }
+        // From the start too: a window reopened after a failed close, or
+        // opened once the project had loaded, has nothing saved yet. Never
+        // nil over it: at launch that is the state still to restore.
+        .onChange(of: app.project?.saved, initial: true) { _, saved in
+            if let saved, let data = try? JSONEncoder().encode(saved) { savedWorkspace = data }
+        }
         // Asked for in the menus while the gallery was closed.
         .onChange(of: app.newProjectTemplate != nil || app.openingProject || app.pendingImport != nil) { _, asked in
             if asked { openWindow(id: AppScene.gallery) }
@@ -226,13 +242,13 @@ struct ProjectWindow: View {
             }
         }
         .task(id: app.tex?.available) { await app.watchForTeX() }
-        .appAlert(shown: app.project != nil)
+        .appAlert(shown: app.project != nil && !app.alertInGallery)
     }
 }
 
 extension View {
-    /// What went wrong (`AppModel.alert`), in the window that is the app's
-    /// for now.
+    /// What went wrong (`AppModel.alert`), in the window it belongs to
+    /// (`AppModel.alertInGallery`).
     func appAlert(shown: Bool) -> some View {
         modifier(AppAlertPresenter(shown: shown))
     }
