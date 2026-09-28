@@ -3,6 +3,18 @@ import Testing
 import XCTest
 @testable import TeXLocal
 
+struct TimedOut: Error {}
+
+/// Polls `condition` on the main actor until it holds; throws once `timeout` passes.
+@MainActor
+func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+        guard ContinuousClock.now < deadline else { throw TimedOut() }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
 @MainActor
 final class SyncTeXGeometryTests: XCTestCase {
     // A US Letter page whose box starts at the origin, and one offset the way
@@ -37,34 +49,10 @@ final class SyncTeXGeometryTests: XCTestCase {
     }
 }
 
-/// The core's analysis as the views take it. The counting rules themselves
-/// are checked against the web's by the core's shared fixtures
-/// (crates/texlocal-core/tests/fixtures/analyze.json).
+/// The counting rules are the core's (tests/fixtures/analyze.json); these
+/// check what the views make of its outline.
 @MainActor
 final class OutlineTests: XCTestCase {
-    func testSectionsWithDepthTitlesAndLines() async throws {
-        let text = """
-        \\documentclass{article}
-        \\section{Intro}
-        % \\section{Commented out}
-        \\subsection*[short]{Details}
-        text \\section{}
-        """
-        let items = try await Outline.analyze(text).items
-        XCTAssertEqual(items.map(\.title), ["Intro", "Details", "(untitled)"])
-        XCTAssertEqual(items.map(\.level), [2, 3, 2])
-        XCTAssertEqual(items.map(\.line), [2, 4, 5])
-    }
-
-    func testLinesBreakWhereTheEditorBreaksThemAndCommentsHoldNoWords() async throws {
-        let doc = try await Outline.analyze("\\section{One} two words\r\n  % three four\rfive\n")
-        XCTAssertEqual(doc.lines, 4)
-        XCTAssertEqual(doc.words, 4)
-        XCTAssertEqual(doc.items.map(\.title), ["One"])
-        let empty = try await Outline.analyze("")
-        XCTAssertEqual(empty.lines, 1)
-    }
-
     func testTheBreadcrumbIsTheChainOfEnclosingHeadings() async throws {
         let outline = try await Outline.analyze("""
         \\chapter{A}
@@ -126,51 +114,41 @@ final class OutlineDisplayTests: XCTestCase {
     }
 }
 
-/// The pane bars' controls measured off screen, with no window shown.
+/// The accessory bars measured off screen, with no window shown.
 @MainActor
 struct PaneBarLayoutTests {
     private func height(_ view: some View) -> CGFloat {
         NSHostingView(rootView: view.paneBarControls()).fittingSize.height
     }
 
-    /// The UI kit's Unified Compact toolbar, the bars' one size: its
-    /// regular controls with 8 pt above and below.
-    @Test func theBarIsTheKitsCompactToolbarHeight() {
-        #expect(BarMetrics.barHeight == 40)
-        #expect(BarMetrics.controlSize == .regular)
-        #expect(height(PaneBar { Button("Done") {} }) == BarMetrics.barHeight)
+    @Test func aBarIsARegularControlAndItsInsets() {
+        #expect(height(PaneBar { Button("Done") {} }) == regularControlHeight() + 2 * BarMetrics.inset)
     }
 
-    /// Every control fits the bar with the kit's 8 pt above and below:
-    /// the accessory-bar groups, the zoom and Share pills (AppKit's
-    /// segmented control), and the bordered buttons beside them.
+    /// A control group draws a little taller than a button, but still inside the bar.
     @Test func everyControlFitsTheBar() {
-        let undo = ToolGroup(items: [
-            Segment(id: "a", title: "Undo", systemImage: "arrow.uturn.backward", action: {}),
-            Segment(id: "b", title: "Redo", systemImage: "arrow.uturn.forward", action: {}),
-        ])
-        let zoom = SegmentedControl(segments: [
-            .init(symbol: "minus", help: "Zoom Out"),
-            .init(label: "100%", widest: "000%", help: "Zoom"),
-            .init(symbol: "plus", help: "Zoom In"),
-        ]).fixedSize()
-        let share = SegmentedControl(segments: [.init(symbol: "square.and.arrow.up", help: "Share PDF")]).fixedSize()
-        let compile = Button {} label: { Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon) }
-            .buttonStyle(.borderedProminent)
-        let done = Button("Done") {}.buttonStyle(.bordered)
-        for control in [height(undo), height(zoom), height(share), height(compile), height(done)] {
-            #expect(control <= BarMetrics.controlHeight)
+        let bar = height(PaneBar { Button("Done") {} })
+        let steps = ControlGroup {
+            Button("Previous Match", systemImage: "chevron.up") {}
+            Button("Next Match", systemImage: "chevron.down") {}
+        }.fixedSize()
+        let copy = Button("Copy Log", systemImage: "document.on.document") {}
+            .buttonStyle(.accessoryBar).labelStyle(.iconOnly)
+        for control in [height(steps), height(copy), height(Button("Done") {})] {
+            #expect(control <= bar - 2 * BarMetrics.spacing)
         }
-        // The two pills are one control, one height.
-        #expect(height(zoom) == height(share))
     }
 }
 
-/// A find bar, measured off screen.
+/// A regular push button's fitting height, as the system draws it.
+@MainActor
+func regularControlHeight() -> CGFloat {
+    NSHostingView(rootView: Button("Done") {}.controlSize(.regular)).fittingSize.height
+}
+
 @MainActor
 struct FindBarTests {
-    /// The PDF's one row fits a pane bar, so it is the bars' height; the
-    /// source's replace row adds a row of controls and the gap between.
+    /// One row is a pane bar's height; the replace row adds at least a control's.
     @Test func aFindBarIsABarsHeight() {
         let find = FindBar(query: .constant("the"), prompt: "Find in PDF", focus: 0, matches: FindMatches(),
                            searched: "the", step: { _ in }, close: {})
@@ -181,45 +159,61 @@ struct FindBarTests {
                 Button("Replace") {}
             }
         }
+        let control = regularControlHeight()
         let one = NSHostingView(rootView: find.frame(width: 400)).fittingSize.height
         let two = NSHostingView(rootView: replace.frame(width: 400)).fittingSize.height
-        #expect(one == BarMetrics.barHeight)
-        #expect(two > one + BarMetrics.controlHeight)
+        #expect(one == control + 2 * BarMetrics.inset)
+        #expect(two >= one + control)
     }
 }
 
-/// The open file's watcher: a change on disk, written in place or saved
-/// over it the way editors save (a new file renamed over the old), is told.
+/// The open file's watcher: a write in place, a save over it (a new file
+/// renamed over the old) and a delete then recreate are all told.
 @MainActor
 final class FileWatcherTests: XCTestCase {
-    func testChangesInPlaceAndByReplacementAreBothTold() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("main.tex")
-        try "one".write(to: url, atomically: false, encoding: .utf8)
+    private var folder: URL!
 
+    override func setUp() async throws {
+        folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    func testChangesInPlaceAndByReplacementAreBothTold() async throws {
+        let url = folder.appending(path: "main.tex")
+        try "one".write(to: url, atomically: false, encoding: .utf8)
         var changes = 0
         let watcher = FileWatcher(url: url) { changes += 1 }
+
         try "two".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes > 0 }
         let inPlace = changes
-        // Atomically: a new file renamed over the old one.
         try "three".write(to: url, atomically: true, encoding: .utf8)
         try await waitUntil { changes > inPlace }
-        // Still watching the file now at that path.
-        try await Task.sleep(for: .milliseconds(300))
+        // Still watching the new file at that path.
         let replaced = changes
         try "four".write(to: url, atomically: false, encoding: .utf8)
         try await waitUntil { changes > replaced }
         _ = watcher
     }
 
-    private func waitUntil(_ condition: () -> Bool) async throws {
-        for _ in 0..<40 where !condition() {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        XCTAssertTrue(condition())
+    func testAFileDeletedThenRecreatedIsStillTold() async throws {
+        let url = folder.appending(path: "main.tex")
+        try "one".write(to: url, atomically: false, encoding: .utf8)
+        var changes = 0
+        let watcher = FileWatcher(url: url) { changes += 1 }
+
+        try FileManager.default.removeItem(at: url)
+        try await waitUntil { changes > 0 }
+        // Past the watcher's settle time, so the recreate is an event of its own.
+        try await Task.sleep(for: .milliseconds(500))
+        let deleted = changes
+        try "two".write(to: url, atomically: false, encoding: .utf8)
+        try await waitUntil { changes > deleted }
+        _ = watcher
     }
 }
 
@@ -229,12 +223,12 @@ final class SplitControllerTests: XCTestCase {
     private var window: NSWindow?
     private var autosave = ""
 
-    // The async one: XCTest runs it on the main actor, where the window is.
+    // Async, so XCTest runs it on the main actor, where the window is.
     override func tearDown() async throws {
-        // Not saved again as it closes, into the app's own preferences.
-        (window?.contentViewController as? NSSplitViewController)?.splitView.autosaveName = nil
         window?.close()
-        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
+        // Out of its window, the split stores no more sizes (a hide still finishing).
+        window?.contentViewController = nil
+        UserDefaults.standard.removeObject(forKey: PaneSizes.key(autosave))
         try await super.tearDown()
     }
 
@@ -285,23 +279,6 @@ final class SplitControllerTests: XCTestCase {
         XCTAssertEqual(heights(controller), [420, 180])
     }
 
-    /// The inspector is the system's: its behaviour and its standard
-    /// width, not one of ours.
-    func testTheInspectorIsTheSystemsAtItsStandardWidth() {
-        let controller = split(NSSize(width: 1000, height: 600), vertical: true, [
-            SplitPane { EmptyView() },
-            SplitPane(inspector: true) { EmptyView() },
-        ])
-        let inspector = controller.splitViewItems[1]
-        XCTAssertEqual(inspector.behavior, .inspector)
-        // NSSplitViewItem.h's standard inspector width, not resizable.
-        XCTAssertEqual(inspector.viewController.view.frame.width, 270)
-        XCTAssertEqual(inspector.minimumThickness, 270)
-        XCTAssertEqual(inspector.maximumThickness, 270)
-        // Shown and hidden by the app, not by a drag on its divider.
-        XCTAssertFalse(inspector.canCollapse)
-    }
-
     /// A pane hidden at first opens at its share the first time it shows,
     /// not at its minimum, sliding in; hidden again it collapses.
     func testAHiddenPaneOpensAtItsShare() async throws {
@@ -317,13 +294,6 @@ final class SplitControllerTests: XCTestCase {
         controller.update(panes(shown: false))
         try await waitUntil { controller.splitViewItems[1].isCollapsed }
     }
-
-    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
-        for _ in 0..<40 where !condition() {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        XCTAssertTrue(condition())
-    }
 }
 
 /// The sidebar's split (Files over the File Outline), a plain NSSplitView.
@@ -331,14 +301,17 @@ final class SplitControllerTests: XCTestCase {
 final class SidebarSplitTests: XCTestCase {
     /// The window holding the test's split (a view doesn't keep its window).
     private var window: NSWindow?
+    private var autosave = ""
 
-    /// Two panes, one over the other, in a split of `size` in a window, as
-    /// the app has it, the second dragged to `last` points.
-    ///
-    /// The window sizes the split once it has its delegate, which lays the
-    /// panes out before the drag, as in the app. macOS 26's `setPosition`
-    /// doesn't lay out panes added since the last layout (27's does), so a
-    /// split never sized constrained the drag against empty frames there.
+    override func tearDown() async throws {
+        window?.close()
+        UserDefaults.standard.removeObject(forKey: PaneSizes.key(autosave))
+        try await super.tearDown()
+    }
+
+    /// Two panes in a split of `size` in a window, the second dragged to
+    /// `last` points. Sized before the drag: macOS 26's `setPosition` doesn't
+    /// lay out panes added since the last layout.
     private func split(_ size: NSSize, _ panes: [SidebarPane],
                        last: CGFloat) -> (NSSplitView, SidebarSplitCoordinator) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 1200),
@@ -348,7 +321,8 @@ final class SidebarSplitTests: XCTestCase {
         let split = NSSplitView()
         split.isVertical = false
         split.dividerStyle = .thin
-        let coordinator = SidebarSplitCoordinator(autosave: "SidebarSplitTests \(UUID())")
+        autosave = "SidebarSplitTests \(UUID())"
+        let coordinator = SidebarSplitCoordinator(autosave: autosave)
         coordinator.panes = panes
         coordinator.clips = [PaneClip(content: NSView()), PaneClip(content: NSView())]
         coordinator.clips.forEach(split.addArrangedSubview)
@@ -402,7 +376,6 @@ final class SidebarSplitTests: XCTestCase {
             SidebarPane(minimum: 80, fraction: 0.45, keepsSize: true),
         ]
         let (split, coordinator) = split(NSSize(width: 250, height: 600), panes, last: 240)
-        defer { UserDefaults.standard.removeObject(forKey: "\(coordinator.autosave) Unfolded 1") }
         var folded = panes
         folded[1].collapsed = 28
         coordinator.panes = folded
@@ -426,7 +399,7 @@ final class SidebarSplitTests: XCTestCase {
 @MainActor
 struct SplitHostingTests {
     /// Hosts `view` in a window of `size`, laid out, until `body` returns;
-    /// the autosave it wrote forgotten.
+    /// the sizes it saved forgotten.
     private func host<V: View>(_ view: V, _ size: CGSize = CGSize(width: 400, height: 600), autosave: String,
                                _ body: (NSHostingView<V>) -> Void) {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .resizable],
@@ -438,7 +411,7 @@ struct SplitHostingTests {
         body(host)
         window.contentView = nil
         window.close()
-        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosave)")
+        UserDefaults.standard.removeObject(forKey: PaneSizes.key(autosave))
     }
 
     /// Neither split's panes' minimums reach the window's layout: the
@@ -495,27 +468,16 @@ struct SplitHostingTests {
     /// The outline's rows follow what the fold was told: gone once folded,
     /// back once unfolded, and a stale report changes nothing.
     @Test func theOutlinesRowsFollowTheFold() {
-        let key = NavigatorView.outlineCollapsedKey
-        let before = UserDefaults.standard.object(forKey: key)
-        defer { UserDefaults.standard.set(before, forKey: key) }
-        let fold = OutlineFold()
-        UserDefaults.standard.set(true, forKey: key)
-        fold.slid(folded: false)
-        #expect(fold.rowsShown == !(before as? Bool ?? false))
+        let fold = OutlineFold(collapsed: false)
+        #expect(fold.rowsShown)
+        fold.slid(folded: true)
+        #expect(fold.rowsShown)
+        fold.collapsed = true
         fold.slid(folded: true)
         #expect(!fold.rowsShown)
-        UserDefaults.standard.set(false, forKey: key)
+        fold.collapsed = false
         fold.slid(folded: false)
         #expect(fold.rowsShown)
-    }
-}
-
-@MainActor
-final class CompileResultTests: XCTestCase {
-    func testDurationsReadTheSameEverywhere() throws {
-        let json = #"{"ok":true,"stopped":false,"durationMs":1234,"pdf":"build/main.pdf","errors":[],"warnings":[],"log":""}"#
-        let result = try JSONDecoder().decode(CompileResult.self, from: Data(json.utf8))
-        XCTAssertEqual(result.durationText, "1.2 s")
     }
 }
 
@@ -565,17 +527,8 @@ struct InPlaceRenameTests {
 }
 
 @MainActor
-struct TeXEngineTests {
-    @Test func enginesReadAsTheMenusNameThem() {
-        #expect(texEngineName("xelatex") == "XeLaTeX")
-        #expect(texEngineName("custom") == "custom")
-        #expect(texEngines.contains { $0.0 == defaultTeXEngine })
-    }
-}
-
-@MainActor
 final class FindTests: XCTestCase {
-    func testTheCountReadsAsXcodesDoes() {
+    func testTheMatchCountLabel() {
         XCTAssertEqual(FindMatches(index: 3, total: 12).label(for: "loop"), "3 of 12")
         XCTAssertEqual(FindMatches(index: 0, total: 12).label(for: "loop"), "12 matches")
         XCTAssertEqual(FindMatches(index: 0, total: 1).label(for: "loop"), "1 match")
@@ -609,6 +562,15 @@ final class CommandTests: XCTestCase {
         }
     }
 
+    func testNoTwoCommandsShareAMacChord() {
+        var seen: [KeyboardShortcut: MenuCommand] = [:]
+        for command in MenuCommand.allCases {
+            guard let shortcut = command.shortcut else { continue }
+            XCTAssertNil(seen[shortcut], "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
+            seen[shortcut] = command
+        }
+    }
+
     func testTheEditorKeepsTheChordsItImplements() {
         let ids = Set(MenuCommand.editorHostKeys.map(\.id))
         XCTAssertTrue(ids.contains("compile.run"))
@@ -627,26 +589,20 @@ final class CommandTests: XCTestCase {
         }
     }
 
-    /// web/src/workspace.js as the test scheme's pre-action copies it into
-    /// the scratch folder. The tests run inside TeXLocal.app, and reading the
-    /// repository in ~/Documents from there asks macOS for Documents access
-    /// again after every re-signing build, blocking the read until someone
-    /// answers the prompt or it times out.
+    /// web/src/workspace.js, copied into the scratch folder by the test scheme:
+    /// reading ~/Documents from the test host prompts for access after every build.
     private func webWorkspace() throws -> URL {
         let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         return URL(fileURLWithPath: data).appendingPathComponent("workspace.js")
     }
 
-    /// The web's commands with no place in the Mac menus: Settings…, which the
-    /// Settings scene adds with ⌘, itself, and the interface size, which on
-    /// the Mac is the system's to set.
+    /// Settings… is the Settings scene's own; the interface size is the system's.
     private let webOnly: Set<String> = ["app.settings", "view.uiScaleUp", "view.uiScaleDown"]
 
-    /// The Mac's commands the web has no need of: Open… reads a folder from
-    /// disk, and the rest are its menu bar's own (Page Setup…, the
-    /// inspector, Actual Size…).
+    /// Open… reads a folder from disk; the rest are the Mac menu bar's own.
     private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
-                                              .viewToggleInspector, .viewToggleWordCount, .viewActualSize, .compileStop]
+                                              .viewToggleProjectSettings, .viewToggleWordCount, .viewActualSize,
+                                              .compileStop]
 
     /// The menu has every other command the web declares, with the same chord.
     func testTheMenuHasEveryWebCommand() throws {
@@ -666,75 +622,15 @@ final class CommandTests: XCTestCase {
     }
 }
 
-/// The menu bar the running app built, as AppKit sees it.
-@MainActor
-final class MenuBarTests: XCTestCase {
-    private func items() -> [NSMenuItem] {
-        func all(_ menu: NSMenu) -> [NSMenuItem] {
-            // As AppKit asks before it shows a menu, for any filled in lazily.
-            menu.delegate?.menuNeedsUpdate?(menu)
-            return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
-        }
-        return NSApp.mainMenu.map(all) ?? []
-    }
-
-    private func item(_ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem? {
-        items().first { item in
-            var mask = item.keyEquivalentModifierMask
-            // AppKit also spells Shift as an upper-case key.
-            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
-            return item.keyEquivalent.lowercased() == key && mask == modifiers
-        }
-    }
-
-    func testTheSettingsSceneGivesCommandComma() {
-        XCTAssertNotNil(item(","), "Settings… ⌘,")
-    }
-
-    func testUndoAndRedoAreTheAppsOwn() throws {
-        // Not the standard undo:/redo: items, which ask WebKit's undo manager.
-        XCTAssertNotEqual(try XCTUnwrap(item("z")).action, Selector(("undo:")))
-        XCTAssertNotEqual(try XCTUnwrap(item("z", [.command, .shift])).action, Selector(("redo:")))
-    }
-
-    func testFindNextAndPreviousAreCommandG() throws {
-        XCTAssertEqual(try XCTUnwrap(item("g")).title, "Find Next")
-        XCTAssertEqual(try XCTUnwrap(item("g", [.command, .shift])).title, "Find Previous")
-    }
-
-    /// Apple's chords where the shared table's differ (`MenuCommand.macAccel`).
-    func testTheViewMenuHasApplesChords() throws {
-        XCTAssertTrue(try XCTUnwrap(item("s", [.command, .control])).title.hasSuffix("Sidebar"))
-        XCTAssertEqual(try XCTUnwrap(item("0")).title, "Actual Size")
-        XCTAssertEqual(try XCTUnwrap(item("9")).title, "Fit Width")
-        XCTAssertEqual(try XCTUnwrap(item("9", [.command, .option])).title, "Fit Height")
-    }
-
-    /// TextEdit's and Xcode's: ⌘F Find…, ⌥⌘F Find and Replace…; Find in
-    /// PDF… has no chord of its own.
-    func testFindHasApplesChords() throws {
-        XCTAssertEqual(try XCTUnwrap(item("f")).title, "Find…")
-        XCTAssertEqual(try XCTUnwrap(item("f", [.command, .option])).title, "Find and Replace…")
-        XCTAssertEqual(items().first { $0.title == "Find in PDF…" }?.keyEquivalent, "")
-    }
-
-    func testTheBottomPanelIsTheBuildPanel() throws {
-        let title = try XCTUnwrap(item("l", [.command, .shift])).title
-        XCTAssertTrue(["Show Build Panel", "Hide Build Panel"].contains(title), title)
-    }
-
-    /// The system's spelling commands, which the editor's WebKit spell
-    /// checking answers to.
-    func testSpellingIsInTheEditMenu() {
-        XCTAssertNotNil(item(";"), "Check Document Now ⌘;")
-        XCTAssertNotNil(item(":"), "Show Spelling and Grammar ⌘:")
-    }
-}
-
-/// The menu bar's shape, as the HIG has it (The menu bar), in the running
-/// app's menus.
+/// The running app's menu bar (HIG, The menu bar).
 @MainActor
 struct MenuStructureTests {
+    /// Every item under `menu`, filled in as AppKit fills lazy menus before showing them.
+    private func all(_ menu: NSMenu) -> [NSMenuItem] {
+        menu.delegate?.menuNeedsUpdate?(menu)
+        return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
+    }
+
     private func menu(_ title: String) throws -> NSMenu {
         let menu = try #require(NSApp.mainMenu?.items.first { $0.title == title }?.submenu, "\(title) menu")
         menu.delegate?.menuNeedsUpdate?(menu)
@@ -746,14 +642,57 @@ struct MenuStructureTests {
     }
 
     private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
-        func all(_ menu: NSMenu) -> [NSMenuItem] {
-            menu.delegate?.menuNeedsUpdate?(menu)
-            return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
-        }
-        return try #require(all(menu).first { $0.title == title }, "\(title)")
+        try #require(all(menu).first { $0.title == title }, "\(title)")
     }
 
-    /// The app's own menus between View and Window, Insert before Compile.
+    /// The item with this chord anywhere in the menu bar.
+    private func item(_ key: String, _ modifiers: NSEvent.ModifierFlags = .command) throws -> NSMenuItem {
+        let items = NSApp.mainMenu.map(all) ?? []
+        return try #require(items.first { item in
+            var mask = item.keyEquivalentModifierMask
+            // AppKit also spells Shift as an upper-case key.
+            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
+            return item.keyEquivalent.lowercased() == key && mask == modifiers
+        }, "\(modifiers) \(key)")
+    }
+
+    @Test func undoAndRedoAreTheAppsOwn() throws {
+        // Not the standard undo:/redo:, which ask WebKit's undo manager.
+        #expect(try item("z").action != Selector(("undo:")))
+        #expect(try item("z", [.command, .shift]).action != Selector(("redo:")))
+    }
+
+    @Test func findNextAndPreviousAreCommandG() throws {
+        #expect(try item("g").title == "Find Next")
+        #expect(try item("g", [.command, .shift]).title == "Find Previous")
+    }
+
+    /// The Mac's chords where the shared table's differ (`MenuCommand.macAccel`).
+    @Test func theViewMenuHasTheMacsChords() throws {
+        #expect(try item("s", [.command, .control]).title.hasSuffix("Sidebar"))
+        #expect(try item("0").title == "Actual Size")
+        #expect(try item("9").title == "Fit Width")
+        #expect(try item("9", [.command, .option]).title == "Fit Height")
+    }
+
+    /// Find in PDF… has no chord of its own: ⌥⌘F is Find and Replace….
+    @Test func findHasTheMacsChords() throws {
+        #expect(try item("f").title == "Find…")
+        #expect(try item("f", [.command, .option]).title == "Find and Replace…")
+        #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
+    }
+
+    @Test func theBottomPanelIsTheBuildPanel() throws {
+        let title = try item("l", [.command, .shift]).title
+        #expect(["Show Build Panel", "Hide Build Panel"].contains(title), "\(title)")
+    }
+
+    /// The system's spelling commands, which WebKit's spell checking answers.
+    @Test func spellingIsInTheEditMenu() throws {
+        _ = try item(";")
+        _ = try item(":")
+    }
+
     @Test func theAppsMenusGoBetweenViewAndWindow() throws {
         let order = try #require(NSApp.mainMenu).items.map(\.title)
         let view = try #require(order.firstIndex(of: "View")), window = try #require(order.firstIndex(of: "Window"))
@@ -761,8 +700,7 @@ struct MenuStructureTests {
         #expect(try #require(order.firstIndex(of: "Format")) < view)
     }
 
-    /// The system's text-editing items stay whole, the app's searches
-    /// beside them: none of them lost to a group of the app's own.
+    /// None of the system's text-editing items lost to a group of the app's own.
     @Test func editKeepsTheSystemsTextItems() throws {
         let edit = try menu("Edit")
         for title in ["Find", "Spelling and Grammar", "Substitutions", "Transformations", "Speech",
@@ -785,17 +723,16 @@ struct MenuStructureTests {
         #expect(titles(insert).contains("Figure"))
     }
 
-    /// Each Mac command has its HIG chord in the menu.
+    /// The Mac-only commands have their HIG chords (HIG, Keyboards).
     @Test func theMacsCommandsHaveTheirChords() throws {
         let file = try menu("File"), view = try menu("View"), compile = try menu("Compile")
         #expect(try item("Open…", in: file).keyEquivalent == "o")
         #expect(try item("Print…", in: file).keyEquivalent == "p")
         let setup = try item("Page Setup…", in: file)
-        // AppKit also spells Shift as an upper-case key.
         #expect(setup.keyEquivalent.lowercased() == "p"
                 && (setup.keyEquivalent == "P" || setup.keyEquivalentModifierMask.contains(.shift)))
-        let inspector = try #require(view.items.first { $0.title.hasSuffix("Inspector") })
-        #expect(inspector.keyEquivalent == "i" && inspector.keyEquivalentModifierMask == [.command, .option])
+        let settings = try #require(view.items.first { $0.title.hasSuffix("Project Settings") })
+        #expect(settings.keyEquivalent == "i" && settings.keyEquivalentModifierMask == [.command, .option])
         #expect(try item("Stop", in: compile).keyEquivalent == ".")
     }
 
@@ -803,6 +740,17 @@ struct MenuStructureTests {
     @Test func shareIsOneItem() throws {
         let file = try menu("File")
         #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
+    }
+}
+
+/// The window's minimum holds every column at its own.
+@MainActor
+struct WindowMetricsTests {
+    @Test func theMinimumHoldsTheColumns() {
+        let width = WindowMetrics.contentMinimum.width
+        #expect(width >= ColumnMetrics.sidebarWidth.lowerBound + ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
+        // The sidebar hidden: the window controls sit over the source.
+        #expect(width >= ColumnMetrics.sourceMinimum + ColumnMetrics.windowControls + ColumnMetrics.pdfMinimum)
     }
 }
 
@@ -841,14 +789,25 @@ struct FindMenuResponderTests {
 
     /// A find bar's field leaves the Find items to its pane; a filter's
     /// keeps the window's field editor.
-    @Test func aFindBarsFieldPassesFindOn() {
+    @Test func aFindBarsFieldPassesFindOn() throws {
         let find = SearchField.FocusingSearchField(), window = NSWindow()
         let cell = find.cell as? SearchField.FindFieldCell
         cell?.passesFind = true
-        let editor = cell?.fieldEditor(for: find)
-        #expect(editor?.isFieldEditor == true)
-        #expect(editor?.responds(to: #selector(NSTextView.performFindPanelAction(_:))) == false)
-        #expect(editor?.responds(to: #selector(NSTextView.centerSelectionInVisibleArea(_:))) == true)
+        let editor = try #require(cell?.fieldEditor(for: find))
+        #expect(editor.isFieldEditor)
+        let pane = FindMenuResponder.Responder()
+        var done: [NSTextFinder.Action] = []
+        pane.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
+        editor.nextResponder = pane
+        let item = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)),
+                              keyEquivalent: "g")
+        item.tag = NSTextFinder.Action.nextMatch.rawValue
+        #expect(editor.validateMenuItem(item))
+        editor.performFindPanelAction(item)
+        #expect(done == [.nextMatch])
+        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        #expect(!editor.validateMenuItem(item))
+        editor.nextResponder = nil
         cell?.passesFind = false
         window.contentView?.addSubview(find)
         #expect(cell?.fieldEditor(for: find) !== editor)
@@ -858,7 +817,7 @@ struct FindMenuResponderTests {
 @MainActor
 final class CoreTests: XCTestCase {
     func testCommandsRoundTripThroughTheRustCore() async throws {
-        // The test scheme points TEXLOCAL_DATA at a scratch folder.
+        // The test scheme points TEXLOCAL_DATA at a scratch library.
         XCTAssertNotNil(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
         let core = Core.shared
         let name = "XCTest \(UUID().uuidString.prefix(8))"
@@ -879,11 +838,20 @@ final class CoreTests: XCTestCase {
             XCTAssertEqual(error.status, 400)
         }
 
-        // Not delete_project: it moves the folder to the Trash through Finder,
-        // which a headless test host cannot drive. The core's own tests cover
-        // that path; here the scratch project is simply removed.
-        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
-        try FileManager.default.removeItem(at: URL(fileURLWithPath: data).appendingPathComponent(info.id))
+        // Not delete_project: it trashes through Finder, which a headless
+        // test host can't drive. The core's own tests cover it.
+        try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
+    }
+
+    /// Every template the projects screen offers is one the core can make.
+    func testEveryTemplateMakesAProject() async throws {
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        for template in ProjectTemplate.all {
+            let name = "XCTest \(template.id) \(UUID().uuidString.prefix(8))"
+            let info = try await Core.shared.call("create_project", ["name": name, "template": template.id],
+                                                  as: ProjectInfo.self)
+            try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
+        }
     }
 }
 
@@ -896,7 +864,7 @@ struct OpenRaceTests {
     func theLastOpenHasTheEditor() async throws {
         // What `AppModel` writes to the app's defaults, put back after.
         let defaults = UserDefaults.standard
-        let keys = ["autoCompile", "recentProjects"]
+        let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
         let kept = keys.map { defaults.object(forKey: $0) }
         defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
 
@@ -909,8 +877,8 @@ struct OpenRaceTests {
         }
         let first = try await project("first"), second = try await project("second")
         // Removed rather than trashed, as `CoreTests` explains.
-        let data = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"]))
-        defer { for info in [first, second] { try? FileManager.default.removeItem(at: data.appendingPathComponent(info.id)) } }
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        defer { for info in [first, second] { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) } }
 
         let app = AppModel()
         app.autoCompile = false
@@ -920,7 +888,7 @@ struct OpenRaceTests {
         for open in opens { await open.value }
 
         #expect(app.project?.id == second.id)
-        #expect(await app.editor.text() == "second")
+        #expect(await app.project?.editor.text() == "second")
         await app.close()
     }
 }

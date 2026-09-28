@@ -1,18 +1,13 @@
 import SwiftUI
 
-/// The start window, as Word's and Overleaf's open: new documents from
-/// templates across the top, each with a preview of its page, then recent
-/// projects as a list — name, main file, when last changed — to search
-/// and open.
+/// The projects: new ones from templates, then recent ones to search and open.
 struct HomeView: View {
     @Environment(AppModel.self) private var app
-    /// One project at a time, as Xcode's welcome list: every action here
-    /// acts on one.
+    /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @State private var deleting: ProjectInfo?
     @State private var query = ""
-    /// Something is being dragged over the window.
     @State private var dropTargeted = false
 
     var body: some View {
@@ -21,14 +16,9 @@ struct HomeView: View {
                 texMissing
                 Divider()
             }
-            templates
-            Divider()
-            recents
+            list
         }
-        // A folder, .tex file or .zip dropped on the window opens as Open…
-        // opens it, as Apple's start windows take a dropped document. It is
-        // copied in, as the Open panel says: the pointer carries the copy
-        // badge, and a note says where it goes. Anything else is refused.
+        // Copied in, as the Open panel says; anything else is refused.
         .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
             guard let url = urls.first else { return }
             Task { await app.importProject(from: url) }
@@ -36,9 +26,9 @@ struct HomeView: View {
         .overlay(alignment: .bottom) {
             if dropTargeted {
                 Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
-                    .padding(GalleryMetrics.noteInsets)
-                    .background(.regularMaterial, in: .capsule)
-                    .padding(GalleryMetrics.margin)
+                    .padding()
+                    .glassEffect(.regular, in: .capsule)
+                    .padding()
                     .allowsHitTesting(false)
             }
         }
@@ -53,74 +43,69 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        // No line under the toolbar, as the workspace has none: the window
-        // reads the same whichever it shows.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
-    // ---------- new ----------
-
-    private var templates: some View {
-        VStack(alignment: .leading) {
-            Text("New")
-                .font(Typography.sectionTitle)
-                .accessibilityAddTraits(.isHeader)
-            ScrollView(.horizontal) {
-                HStack(alignment: .top) {
-                    ForEach(ProjectTemplate.all) { template in
-                        Button { app.newProject(template.id) } label: {
-                            TemplateCard(template: template)
-                        }
-                        .buttonStyle(.plain)
-                        .help("New \(template.title) Project")
-                    }
-                }
+    private var list: some View {
+        List(selection: $selection) {
+            Section {
+                templates
+                    .selectionDisabled()
+            } header: {
+                Text("New")
             }
-            .scrollIndicators(.never)
+            Section {
+                ForEach(shown) { project in
+                    // Its own view, so a row redraws only when its rename starts or ends.
+                    ProjectRow(project: project, rename: rename) { commitRename(project) }
+                }
+                if shown.isEmpty { empty.selectionDisabled() }
+            } header: {
+                Text("Recent")
+            }
         }
-        .padding(GalleryMetrics.margin)
+        .headerProminence(.increased)
+        .listStyle(.inset)
+        .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
+            if let project = app.projects.first(where: { ids.contains($0.id) }) {
+                Button("Open") { Task { await app.open(project.id) } }
+                Divider()
+                ItemMenuItems(rename: { rename.begin(project.id, name: project.name) },
+                              showInFinder: { app.revealProject(project) },
+                              moveToTrash: { deleting = project })
+            }
+        } primaryAction: { ids in
+            if let id = ids.first { Task { await app.open(id) } }
+        }
+        .onDeleteCommand {
+            if let project = app.projects.first(where: { $0.id == selection }) { deleting = project }
+        }
     }
 
-    // ---------- recent ----------
+    private var templates: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top) {
+                ForEach(ProjectTemplate.all) { template in
+                    Button { app.newProject(template.id) } label: {
+                        TemplateCard(template: template)
+                    }
+                    .buttonStyle(.plain)
+                    .help("New \(template.title) Project")
+                }
+            }
+        }
+        .scrollIndicators(.never)
+    }
 
-    private var recents: some View {
-        VStack(alignment: .leading) {
-            Text("Recent")
-                .font(Typography.sectionTitle)
-                .accessibilityAddTraits(.isHeader)
-                .padding([.horizontal, .top], GalleryMetrics.margin)
-            List(shown, selection: $selection) { project in
-                // A view of its own, so the list redraws a row only when its
-                // rename starts or ends.
-                ProjectRow(project: project, rename: rename) { commitRename(project) }
-            }
-            .listStyle(.inset)
-            .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
-                if let project = app.projects.first(where: { ids.contains($0.id) }) {
-                    Button("Open") { Task { await app.open(project.id) } }
-                    Divider()
-                    ItemMenuItems(rename: { rename.begin(project.id, name: project.name) },
-                                  showInFinder: { app.revealProject(project) },
-                                  moveToTrash: { deleting = project })
-                }
-            } primaryAction: { ids in
-                if let id = ids.first { Task { await app.open(id) } }
-            }
-            // Delete, as Finder's ⌘⌫ and every list's Delete key do.
-            .onDeleteCommand {
-                if let project = app.projects.first(where: { $0.id == selection }) { deleting = project }
-            }
-            .overlay {
-                if !query.isEmpty, shown.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                } else if app.projects.isEmpty {
-                    ContentUnavailableView(
-                        "No Projects Yet", systemImage: "doc.text",
-                        description: Text("Choose a template above to start writing. Your files never leave this Mac.")
-                    )
-                }
-            }
+    /// In the Recent section, not over the list, so the templates stay in view.
+    @ViewBuilder private var empty: some View {
+        if !query.isEmpty {
+            ContentUnavailableView.search(text: query)
+        } else {
+            ContentUnavailableView(
+                "No Projects Yet", systemImage: "doc.text",
+                description: Text("Choose a template above to start writing. Your files never leave this Mac.")
+            )
         }
     }
 
@@ -144,14 +129,12 @@ struct HomeView: View {
             Spacer()
             GetMacTeXButton()
         }
-        .padding(GalleryMetrics.margin)
+        .padding()
     }
 }
 
-/// A recent project as Xcode's and Keynote's welcome windows list them: its
-/// name over its main file and when it last changed. While it is renamed,
-/// a field takes the name's place: Return or clicking away renames, Escape
-/// leaves it as it was.
+/// A recent project: its name over its main file and when it last changed.
+/// While renamed, a field takes the name's place.
 private struct ProjectRow: View {
     let project: ProjectInfo
     let rename: InPlaceRename<ProjectInfo.ID>
@@ -165,7 +148,7 @@ private struct ProjectRow: View {
                 } else {
                     Text(project.name).font(Typography.itemTitle)
                 }
-                Text("\(project.mainFile) · \(project.modified.formatted(.relative(presentation: .named)))")
+                Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
                     .font(Typography.secondary)
                     .foregroundStyle(.secondary)
             }
@@ -177,26 +160,18 @@ private struct ProjectRow: View {
     }
 }
 
-/// Where to get TeX: the start window's notice, the PDF pane and Settings
-/// link here.
 let macTeXURL = URL(string: "https://tug.org/mactex/")!
 
-/// Opens MacTeX's page: a button, as the actions beside it are, not a link.
+/// A button, not a link, to match the actions beside it.
 struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
-    var prominent = false
 
     var body: some View {
-        if prominent {
-            Button("Get MacTeX") { openURL(macTeXURL) }.buttonStyle(.borderedProminent)
-        } else {
-            Button("Get MacTeX") { openURL(macTeXURL) }
-        }
+        Button("Get MacTeX") { openURL(macTeXURL) }
     }
 }
 
-/// A template the core can make a project from (crates/texlocal-core
-/// templates.rs), with how its first page looks.
+/// A template the core makes projects from (crates/texlocal-core templates.rs).
 struct ProjectTemplate: Identifiable {
     enum Page { case blank, article, report, slides }
 
@@ -213,28 +188,16 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
-/// The gallery's measures.
 private enum GalleryMetrics {
-    /// The window's margin: where the inset table starts its column titles
-    /// and row content (its 10 pt inset, then the cell's 8 pt), measured on
-    /// macOS 27. The section titles and template cards take the same edge,
-    /// so New, Recent, Name and the rows start on one line.
-    static let margin: CGFloat = 18
-    /// The kit's group box corners, 12 pt.
+    /// UI kit: Group Boxes, 12.
     static let groupBoxCorner: CGFloat = 12
-    /// The drop note's capsule around its words, as the kit's large
-    /// bordered button (a 28 pt capsule) sets its label: 16 pt in from its
-    /// ends, 6 pt from its top and bottom.
-    static let noteInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 }
 
-/// A template's card, in the system's group box: a drawing of its first
-/// page, then its name.
+/// A template's card: a drawing of its first page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A drawing of a Letter page, 8.5 × 11 in at 120 pt wide, and its
-    /// corners: a picture, so drawn to look like paper, not to the kit.
-    private static let page = CGSize(width: 120, height: 156)
+    /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
+    private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
     private static let corner: CGFloat = 6
     @Environment(\.colorScheme) private var colorScheme
 
@@ -253,8 +216,7 @@ private struct TemplateCard: View {
             }
         }
         .contentShape(.rect)
-        // Its focus ring on the group box's corners, not a square around
-        // them.
+        // The focus ring on the group box's corners, not a square.
         .contentShape(.focusEffect, .rect(cornerRadius: GalleryMetrics.groupBoxCorner, style: .continuous))
         .accessibilityElement(children: .combine)
     }
@@ -262,9 +224,8 @@ private struct TemplateCard: View {
     private var page: some View {
         PagePreview(page: template.page)
             .frame(width: Self.page.width, height: Self.page.height)
-            // Paper is white in either appearance, dimmed a little in
-            // dark mode as the HIG dims a white PDF page; its drawing in
-            // the light appearance's colours, which are drawn for paper.
+            // White paper in either appearance, dimmed a little in dark mode;
+            // the drawing in light colours, which are made for paper.
             .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
                         in: .rect(cornerRadius: Self.corner, style: .continuous))
             .overlay {
@@ -272,15 +233,13 @@ private struct TemplateCard: View {
                     .strokeBorder(.separator)
             }
             .environment(\.colorScheme, .light)
-            // A drawing: the card is read by its name ("Blank", not
-            // "Add, Blank").
+            // The card reads as its name ("Blank", not "Add, Blank").
             .accessibilityHidden(true)
     }
 }
 
-/// Grey bars where the text would be, laid out like the template's first
-/// page (or first slide), in semantic fills and the accent. Its numbers are
-/// the drawing's, in points of the 120 × 156 page, not layout.
+/// Bars where the text would be, laid out like the template's first page.
+/// Its numbers are the drawing's, in points of the 120 pt page, not layout.
 private struct PagePreview: View {
     let page: ProjectTemplate.Page
 
@@ -338,8 +297,7 @@ private struct PagePreview: View {
     }
 }
 
-/// A new project: its name (Untitled to begin with, so Create is ready)
-/// and template (the card chosen, or Article for ⌘N).
+/// Starts as Untitled, so Create is ready at once.
 struct NewProjectSheet: View {
     @Environment(AppModel.self) private var app
     @State private var name = "Untitled"
@@ -364,16 +322,15 @@ struct NewProjectSheet: View {
                 ForEach(ProjectTemplate.all) { Text($0.title).tag($0.id) }
             }
         }
-        .onAppear { nameFocused = true }
+        .defaultFocus($nameFocused, true)
     }
 }
-
 
 #Preview("Template cards") {
     HStack(alignment: .top) {
         ForEach(ProjectTemplate.all) { TemplateCard(template: $0) }
     }
-    .padding(GalleryMetrics.margin)
+    .padding()
 }
 
 #Preview("Recent project") {
@@ -388,7 +345,7 @@ struct NewProjectSheet: View {
 #Preview("Get MacTeX") {
     VStack {
         GetMacTeXButton()
-        GetMacTeXButton(prominent: true)
+        GetMacTeXButton().buttonStyle(.borderedProminent)
     }
     .padding()
 }

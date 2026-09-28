@@ -4,6 +4,7 @@
 
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
 - `claude/macos-polish` (not pushed) is the Mac polish pass: one window with a back button, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
+- **Uncommitted on `claude/macos-polish`: a clean-up pass over the whole Mac app** (short WHY comments, magic numbers named or taken from the system, fragile tricks replaced). The toolbar folds from its measured layout (`ToolbarFit`), not hand-measured widths; defaults keys live in `DefaultsKey`; split sizes in `PaneSizes`; the file watcher is FSEvents; the sidebar slide is an `NSAnimation`. Debug and Release build with no Swift warnings and the tests pass; the fold was checked on screen (see Known issues).
 - PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
@@ -54,23 +55,28 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 **Files:**
 - `TeXLocalApp`: one window. It shows the projects (templates and recents) until one opens, then the project, with a back button (back only: one level, no history) and File › Close Project to return. Closing the window quits, and the quit saves. The window is `.windowManagerRole(.principal)`, for full screen rather than only zoom. `alert(_:)` shows any `AppAlert`.
-- `AppModel`: library, recents, imports, alerts.
+- `AppModel`: library, recents, imports, alerts; `DefaultsKey` (every defaults key, registered defaults).
 - `ProjectModel`: the open project, saves, builds, file watching.
 - `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`). Insert sits between View and Window; Format keeps Bold, Italic, the section level and Comment.
-- `WorkspaceView`: columns, toolbar, inspector.
-- `EditorView`: panes, previews, status bar.
-- `EditorBridge`: the `WebPage`.
-- `SourceBars`, `PDFPane`, `LogsView`: the build panel.
+- `WorkspaceView`: a three-column `NavigationSplitView` (sidebar | source | PDF), the PDF toggle, the Project Settings popover (`ProjectSettingsView`), `ColumnMetrics` (the column minimums, the only toolbar constants) and `ToolbarFit`, which folds each column's optional tools.
+- `EditorView`: the source column (source, build panel, status bar) and its part of the toolbar.
+- `EditorBridge`: a project's editor `WebPage`.
+- `SourceBars`: the source's toolbar items (`SourceToolbar`), the section level, symbols, and the source's find bar.
+- `PDFPane`: the PDF column, its toolbar items (`PDFToolbar`), Compile, and `PDFColumn`, which collapses the column.
+- `LogsView`: the build panel.
 - `SidebarView`, `Outline`, `HomeView`, `SettingsView`.
-- `PaneBars`: bar metrics (the UI kit's), `Typography`, and pieces: every bar control is a bordered control or `ControlGroup` at 24 pt; `PaneStack` and `FindBar` serve both panes; `DialogSheet` is every small sheet; `InPlaceRename`, `RenameField` and `ItemMenuItems` are the gallery's and the sidebar's rename and item menu.
-- `EditorPrefs` and `PDFPrefs` hold the keys and defaults Settings shares with the editor and the PDF pane.
+- `PaneBars`: bar metrics (the UI kit's), `Typography`, and pieces: the accessory bars (find bars, the build panel's header) at the regular control size; `PaneStack` and `FindBar` serve both panes; `TabsControl` is the build panel's tab switcher; `DialogSheet` is every small sheet; `InPlaceRename`, `RenameField` and `ItemMenuItems` are the gallery's and the sidebar's rename and item menu.
+- `EditorPrefs` and `PDFPrefs` hold the typed keys and defaults (`EditorPalette`, `EditorFont`, `PDFPaper`) Settings shares with the editor and the PDF pane.
 - Leaf views have `#Preview`s that need no Rust core.
-- `SplitController`: `NSSplitViewController` panes, plus the sidebar's `SidebarSplit`.
+- `SplitController`: `NSSplitViewController` panes, plus the sidebar's `SidebarSplit`; both keep pane sizes in `PaneSizes` (app-owned keys `"<autosave> Pane Sizes"`, not AppKit's autosave, which drops a hidden pane's size).
 - `SyncTeXGeometry`.
 
 **AppKit that remains, and why:**
-- `SplitController`: SwiftUI's `.inspector` crashes on resize on macOS 27, and `HSplitView`/`VSplitView` mislay panes.
-- `SidebarSplit` is a plain `NSSplitView`: inside `NSSplitViewController` items, SwiftUI sidebar lists start 10 pt lower.
+- `SplitController` (the build panel under the source): `VSplitView` mislays panes and pins the window's width on macOS 27.2.
+- `PDFColumn`: `NavigationSplitView` can't hide its last column, so the PDF's `NSSplitViewItem` is collapsed directly, and the source's holding priority matched to the PDF's so the two share the room.
+- `TabsControl` (`NSSegmentedControl`, tabs role): SwiftUI's tabs picker style moved its thumb on hover.
+- `SidebarSplit` is a plain `NSSplitView`: inside `NSSplitViewController` items, SwiftUI sidebar lists start 10 pt lower. Its divider slides on an `NSAnimation` (the split's displayLink stops while the screen is locked).
+- `ToolbarProbe` and `ColumnReader` (WorkspaceView): read toolbar item and column frames in screen space; SwiftUI coordinate spaces stop at each toolbar item's hosting view, and its column geometry passes through widths the column never has.
 - `NSSearchField` in the find bars and the log filter: SwiftUI's search field is toolbar or sidebar only.
 - `PDFView`: SwiftUI has no PDF view.
 - An `NSTextView` for the build log: a SwiftUI `Text` lays out LaTeX's megabyte logs whole on every change.
@@ -103,13 +109,15 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## Known issues
 
 - A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen. Its prime suspect is the Home→Workspace toolbar swap, which is back with the single window; the repro (the window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen) needs checking again.
-- The sidebar outline's fold slides on a Timer: `displayLink` stops while the screen is locked.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
 - Not yet seen on screen: drag and drop (the projects screen's and the sidebar's, including a refused drag), and focus rings with Keyboard navigation on.
-- The PDF bar's Share is a lone bordered button, 38 × 24 pt, wider than the source bar's More, a symbol grouped alone: a `ShareLink` in a `ControlGroup` loses its action on 27.2.
+- **Toolbar fold, checked on screen 2026-09-28** (Debug, 1200 pt window): the divider dragged in 15–25 pt steps across every fold point both ways, sidebar shown and hidden; the PDF hidden and shown; during a build (Stop); launched into a narrow source. The toolbar's section line matched the column divider at every step, and the tools fold and come back in order. Not yet checked: full screen, and items added with Customize Toolbar (they make the default optional tools fold first but never fold themselves, so enough of them can still push past a divider; the system's overflow is whole-window). With the PDF hidden the toolbar keeps a short section line where the PDF's items begin; the system draws it (seen before this pass too).
+- Not yet checked on screen from the clean-up pass: `defaultFocus` in the rename fields (context menu), New File / Go to Line and New Project sheets; the projects screen as one `List` with the system toolbar background; `.controlGroupStyle(.automatic)` (kept `.navigation`); the status bar's ends in full screen (`containerCornerInsets` looked right windowed).
+- Split sizes moved to `PaneSizes` keys, so the first launch after this pass opens the build panel and the outline at their default shares. The old `NSSplitView Subview Frames …`, `OutlineSplit Unfolded 1`, `showInspector`, `outlineOpen`, `pdfSplit` and `uiScale` defaults are orphaned.
+- The sidebar's collapsed "File Outline" footer reads as a disabled label; not looked into.
 
 ## Next
 
@@ -125,19 +133,24 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - version history;
   - duplicate project;
   - image drop to insert a figure;
-  - import UI on Windows and the web;
-  - a customizable toolbar.
+  - import UI on Windows and the web.
 - Web follow-ups are in `docs/web.md`.
 - Retire Tauri once both apps are verified: delete `src-tauri`, the Tauri path in `bridge.js`, `@tauri-apps/cli`, and the Tauri entries in `check-version.mjs`, `ci.yml` and `release.yml`.
 
 ## Gotchas
 
 - **`-ApplePersistenceIgnoreState YES` writes the new state to a temporary folder** and leaves the old one, so the next launch without it restores the state from before. Restoration repros need both launches without it.
-
-
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
+- **A collapsed `NavigationSplitView` column's toolbar items move to the previous column's part of the toolbar by themselves.** Declare them unconditionally; removing them or adding copies elsewhere made Compile and Show PDF vanish mid-animation.
+- **Column frames come from AppKit, not SwiftUI** (`ColumnReader`): SwiftUI's geometry passes through widths the column never has as the window lays out, and can end on one. The content column's view runs on under the sidebar, so its visible part is `safeAreaRect`.
+- **The column line and the toolbar's section line are one line only while they track.** An animated collapse or a section wider than its column parts them, and the toolbar draws its own short line off the divider. So the PDF column opens and shuts without animating, and `PDFColumn` tells `ToolbarFit.pdfColumnChanging` first, so the source folds to its coming edge before the PDF opens.
+- **`ToolbarFit` reads only measured geometry.** Things it relies on (27.2): a divider move reaches the toolbar in a later layout pass and a moved probe reports nothing, so `measure()` calls `layoutIfNeeded()` first; the source's tools hug their section's trailing edge, so their room shows only in the gap after the (fixed-width) title, whose least is learned when the source first runs over; each item's glass pads its content differently, so section insets are kept per item; in full screen the toolbar is a window of its own, so frames are compared in screen space. A step's freed width is learned when the toolbar shows it; a wrong one makes a fold and unfold alternate.
+- **A `WebPage` shows in one `WebView`, once.** Each `ProjectModel` makes its own `EditorBridge`, and `SourcePane` keeps the `EditorView` mounted under a preview or the placeholder; rebuilding it on the same page traps in `_WebKit_SwiftUI makeViewProvider`. `EditorBridge.close()` removes the message handler (else the page leaks) and releases calls waiting on the page.
+- **Don't collapse a split item inside a SwiftUI update.** It lays the window out there and then, re-enters the update and spins in an AttributeGraph cycle; `PaneSplitViewController.update` defers it a turn.
+- **Don't feed toolbar item geometry back into `navigationSplitViewColumnWidth(min:)`**: it loops layout and AppKit throws (`_crashOnException`). The navigation title is always 160 pt wide; `toolbarTitleDisplayMode` doesn't change it on macOS.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
-- **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its autosaved size, or its share, and then lets it go.
+- **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its stored size (`PaneSizes`), or its share, and then lets it go.
 - **PDFKit** re-anchors page one on every resize while fitting the width. `SyncPDFView` keeps the reading position through resizes and rebuilds, and `hideLinkBorders` hides hyperref's boxes.
 - **Core Image filters work in linear light:** dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16.
-- **macOS 26's `setPosition`** doesn't lay out panes that were just added, as 27's does. The split tests size a window explicitly, and they clear `autosaveName` before closing so no sizes leak into the app's defaults.
+- **macOS 26's `setPosition`** doesn't lay out panes that were just added, as 27's does. The split tests size a window explicitly.
+- **The tests' host is the app, with the app's defaults** (`com.texlocal.mac`) and the scheme's scratch `TEXLOCAL_DATA`. Split tests remove their `PaneSizes` key in `tearDown` (after taking the controller out of its window); recents aren't pruned when the library lists without them (`AppModel.recents` filters instead), since a scratch library would wipe them.

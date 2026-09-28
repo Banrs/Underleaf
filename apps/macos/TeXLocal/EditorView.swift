@@ -1,21 +1,21 @@
 import SwiftUI
 import WebKit
 
-/// The app's one editor page, in SwiftUI's web view, its appearance kept
-/// in step with the system and Settings.
+/// A project's editor page, its appearance kept in step with the system and Settings.
 struct EditorView: View {
     let bridge: EditorBridge
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
-    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @Environment(\.colorSchemeContrast) private var contrast
+    @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font: EditorFont = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @FocusState private var focused: Bool
 
     var body: some View {
-        let appearance = EditorAppearance(theme: colorScheme == .dark ? "dark" : "light",
+        let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
         WebView(bridge.page)
-            // The page draws the text's surface itself.
+            // The page draws the text's surface.
             .webViewContentBackground(.hidden)
             // A text editor: no page zoom, history swipes or link previews.
             .webViewMagnificationGestures(.disabled)
@@ -27,137 +27,150 @@ struct EditorView: View {
     }
 }
 
-/// The editors: the source beside the PDF, a panel for the build that
-/// shows and hides below them (as VS Code's does), and a status bar along
-/// the foot.
+/// The source column: the source, the build panel below it, and the status bar.
 struct EditorArea: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
+    let fit: ToolbarFit
 
     var body: some View {
         VStack(spacing: 0) {
             editors
-            // Stacked, not overlaid: an opaque bar over the editors only hid
-            // their last lines.
+            // Stacked, not overlaid: an overlaid bar hid the editors' last lines.
             Divider()
             StatusBar(project: project)
         }
+        .background { ColumnReader(column: .source, fit: fit) }
+        .toolbar(id: "source") { toolbar }
     }
 
     private var editors: some View {
         SplitController(app: app, axis: .vertical, autosave: "PanelSplit", panes: [
-            SplitPane(minimum: 120) { SourceAndPDF(project: project) },
-            // At most two fifths of the height, so in a small window the
-            // source and the PDF keep the room, not the panel.
+            SplitPane(minimum: 120) { SourcePane(project: project) },
+            // At most two fifths: in a small window the source keeps the room.
             SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.25, keepsSize: true, shown: project.showLogs) {
                 PanelView(project: project)
             },
         ])
     }
-}
 
-/// The source beside the PDF. A view of its own, as a split's pane is
-/// made once and must observe the project itself.
-private struct SourceAndPDF: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
-
-    var body: some View {
-        SplitController(app: app, axis: .horizontal, autosave: "PDFSplit", panes: [
-            SplitPane(minimum: 140) { SourcePane(project: project) },
-            SplitPane(minimum: 140, fraction: 0.5, shown: project.showPDF) { PDFPane(project: project) },
-        ])
+    /// Back and the title lead (HIG, Toolbars); while the PDF is hidden the system
+    /// moves its column's items here.
+    @ToolbarContentBuilder
+    private var toolbar: some CustomizableToolbarContent {
+        // Back only: one level, no history to go forward through (HIG, Toolbars).
+        ToolbarItem(id: "back", placement: .navigation) {
+            Button { app.perform(.projectClose, on: project) } label: {
+                Label("Projects", systemImage: "chevron.backward")
+            }
+            .help("Back to Projects")
+            .background { ToolbarProbe(item: .back, fit: fit) }
+        }
+        .customizationBehavior(.disabled)
+        SourceToolbar(app: app, project: project, fit: fit)
     }
 }
 
-/// The source's bars stacked over it, as the PDF's are over the pages. A
-/// file that isn't text keeps the bar, empty, so the source's rows and
-/// lines stay level with the PDF's.
+/// The source, under its find bar while that shows.
 private struct SourcePane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
         PaneStack(finding: project.findShown) {
-            if project.openPath == nil || project.editsText {
-                SourceBar(project: project)
-            } else {
-                PaneBar {}
-            }
-        } location: {
-            SourceLocation(project: project)
-        } find: {
             SourceFindBar(project: project)
         } content: {
-            if project.openPath != nil, !project.editsText, let url = project.openURL {
-                FilePreview(url: url)
-            } else if project.openPath != nil {
-                EditorView(bridge: app.editor)
-            } else {
-                // No file open, or it was deleted: nothing to type into
-                // (workspace.js `showEditorPlaceholder`).
-                ContentUnavailableView("No File Open", systemImage: "doc.text",
-                                       description: Text("Choose a file in the sidebar."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The editor stays mounted under a preview or the placeholder: a
+            // WebPage attaches to one WebView, once (27.2).
+            let editing = project.openPath != nil && project.editsText
+            ZStack {
+                EditorView(bridge: project.editor)
+                    .opacity(editing ? 1 : 0)
+                    .allowsHitTesting(editing)
+                    .accessibilityHidden(!editing)
+                if project.openPath != nil, !project.editsText, let url = project.openURL {
+                    FilePreview(url: url)
+                        .background(.background)
+                } else if project.openPath == nil {
+                    ContentUnavailableView("No File Open", systemImage: "doc.text",
+                                           description: Text("Choose a file in the sidebar."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.background)
+                }
             }
         }
     }
 }
 
-/// An image or a PDF figure in place of the editor, as the web previews
-/// one: fitted to the pane but never enlarged past its own size, as Xcode
-/// shows an image. A PDF is a page, so on white paper as the PDF pane's.
-/// Any other file, or one that can't be read as an image, is No Preview,
-/// with the way to open it in its own app.
+/// An image or a PDF figure in place of the editor, fitted but never enlarged;
+/// anything else is No Preview, with the way to open it in its own app.
 private struct FilePreview: View {
     let url: URL
     @Environment(\.openURL) private var openURL
+    /// The image read for `url`, nil when it isn't one.
+    @State private var loaded: (url: URL, image: NSImage?)?
 
     var body: some View {
-        if isPreviewFile(url.path), let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
-                .frame(maxWidth: image.size.width, maxHeight: image.size.height)
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel(url.lastPathComponent)
-        } else {
-            ContentUnavailableView {
-                Label("No Preview", systemImage: fileSymbol(url.path))
-            } description: {
-                Text(url.lastPathComponent)
-            } actions: {
-                Button("Open in Default App") { openURL(url) }
+        Group {
+            if !isPreviewFile(url.path) {
+                noPreview
+            } else if let loaded, loaded.url == url {
+                if let image = loaded.image { preview(image) } else { noPreview }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .task(id: url) {
+            guard isPreviewFile(url.path) else { return }
+            let data = await Self.read(url)
+            loaded = (url, data.flatMap(NSImage.init(data:)))
+        }
+    }
+
+    private func preview(_ image: NSImage) -> some View {
+        Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+            // A PDF is a page: on white paper, as in the PDF column.
+            .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
+            .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel(url.lastPathComponent)
+    }
+
+    private var noPreview: some View {
+        ContentUnavailableView {
+            Label("No Preview", systemImage: fileSymbol(url.path))
+        } description: {
+            Text(url.lastPathComponent)
+        } actions: {
+            Button("Open in Default App") { openURL(url) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @concurrent nonisolated private static func read(_ url: URL) async -> Data? {
+        try? Data(contentsOf: url)
     }
 }
 
-/// The status bar, as Finder's is: a little text about the window's
-/// contents (HIG, Windows). How the build went (choose it for the panel's
-/// issues); past a line, the save state and where the cursor is; past
-/// another, the build panel's toggle. Both controls are borderless, as
-/// Xcode's bottom-bar controls are, the toggle tinted while the panel
-/// shows. The one place the build's summary shows. A narrow window drops
-/// whole items, never cutting one short: the engine first (the inspector
-/// and the Compile menu show it too), then the counts, then the save state.
+/// The build's summary, the save state and the caret, and the build panel's
+/// toggle (HIG, Windows: a status bar). Items drop whole, least important first
+/// (ViewThatFits).
 private struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
+    /// Where the window's rounded corners are beside the bar's ends.
+    @State private var corners = RectangleCornerInsets()
 
     var body: some View {
         @Bindable var project = project
-        // A borderless toggle past a line at the trailing end. Each end in
-        // line with the bars above it where a pane is beside it, clear of
-        // the window's rounded corner where the corner is.
         SecondaryBar(spacing: 0,
-                     leadingInset: app.sidebarVisible ? BarMetrics.inset : BarMetrics.edgeInset,
-                     trailingInset: app.showInspector ? BarMetrics.inset : BarMetrics.edgeInset) {
-            // Shows or hides the issues. A button, not a toggle: the panel's
-            // own toggle is the one place its open state shows.
+                     leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
+                     trailingInset: max(BarMetrics.inset, corners.bottomTrailing.width)) {
+            // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
                 if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
@@ -180,11 +193,10 @@ private struct StatusBar: View {
             .labelStyle(.iconOnly)
             .help(app.title(.viewToggleLogs, on: project))
         }
-        // Borderless and tinted while on, as Xcode's bottom-bar toggles.
         .toggleStyle(.button)
         .buttonStyle(.borderless)
-        // What the bar shows is chosen where it shows, as Pages' word count
-        // is (View › Show Word Count too), not in Settings.
+        .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: { corners = $0 }
+        // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
@@ -192,8 +204,7 @@ private struct StatusBar: View {
 
     private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            // While a build runs the build status says so; the save state
-            // would repeat it. A preview has none, as the web's.
+            // While a build runs the build status says so. A preview has no save state.
             if save, !project.compiling, project.editsText {
                 Text(project.status)
             }
@@ -201,7 +212,6 @@ private struct StatusBar: View {
             if project.editsText {
                 Text("Line \(project.cursorLine)").monospacedDigit()
                 if showCounts, app.showWordCount, let counts = project.counts {
-                    // Singular for one, by Foundation's grammar agreement.
                     Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
                         .monospacedDigit()
                 }
@@ -217,7 +227,6 @@ private struct StatusBar: View {
     private var buildStatus: some View {
         HStack(spacing: BarMetrics.groupSpacing) {
             if project.compiling {
-                // At the row's small control size.
                 ProgressView()
                 Text("Compiling…")
             } else if let result = project.result {
@@ -226,8 +235,7 @@ private struct StatusBar: View {
                 } else if result.ok {
                     badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
-                    // The error count folds into the failure, so its symbol
-                    // shows once.
+                    // The error count folds into the failure, so its symbol shows once.
                     badge(failedTitle, "xmark.octagon.fill", .red)
                 }
             } else {
@@ -235,7 +243,6 @@ private struct StatusBar: View {
             }
             if project.errorCount > 0, project.result?.failed != true {
                 badge("\(project.errorCount)", "xmark.octagon.fill", .red)
-                    // Singular for one, as the word count is.
                     .accessibilityLabel(Text("^[\(project.errorCount) error](inflect: true)"))
             }
             if project.warningCount > 0 {

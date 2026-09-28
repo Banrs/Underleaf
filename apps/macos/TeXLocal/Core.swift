@@ -1,37 +1,42 @@
 import Foundation
 import TeXLocalCore
 
-/// A command the Rust core refused, with the status it gave (400 for a bad
-/// request, 404 for something missing, 500 for an I/O failure).
-struct CoreError: LocalizedError {
+/// A command the Rust core refused, with its HTTP-style status (400, 404, 500).
+nonisolated struct CoreError: LocalizedError {
     let message: String
     let status: Int
     var errorDescription: String? { message }
 }
 
-/// The Rust core through its C ABI (crates/texlocal-ffi): JSON in, JSON out,
-/// the same command names the browser version uses. `tl_call` blocks for as
-/// long as the command runs — minutes, for a compile — so every call runs on
-/// a GCD thread, never Swift's cooperative pool, which must not block (WWDC21,
-/// Swift concurrency: Behind the scenes), and the main actor only encodes and
-/// decodes.
+/// The Rust core through its C ABI (crates/texlocal-ffi), JSON in and out.
+/// `tl_call` blocks for as long as the command runs (minutes, for a compile),
+/// so calls run on a GCD thread: the cooperative pool must never block.
 final class Core {
     static let shared = Core()
 
-    /// The Rust side accepts concurrent calls from any thread, so the
-    /// handle belongs to no actor: the GCD thread reads it.
+    /// Where projects live: crates/texlocal-core `default_data_dir`'s rule,
+    /// `TEXLOCAL_DATA` when set and non-empty, else ~/TeXLocal.
+    static let libraryFolder: URL = {
+        let environment = ProcessInfo.processInfo.environment
+        if let dir = environment["TEXLOCAL_DATA"], !dir.isEmpty {
+            return URL(filePath: dir, directoryHint: .isDirectory)
+        }
+        let home = environment["HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) } ?? .homeDirectory
+        return home.appending(path: "TeXLocal", directoryHint: .isDirectory)
+    }()
+
+    /// The core takes concurrent calls from any thread, so the GCD thread reads it.
     private nonisolated final class Handle: @unchecked Sendable {
         let raw: OpaquePointer
         init(_ raw: OpaquePointer) { self.raw = raw }
     }
 
-    /// None when the library folder can't be opened; the window then says
-    /// so, and the app quits.
+    /// Nil when the library folder can't be opened; the window says so.
     private let handle: Handle?
     var isOpen: Bool { handle != nil }
 
     private init() {
-        handle = tl_open(nil).map(Handle.init)
+        handle = Self.libraryFolder.withUnsafeFileSystemRepresentation { tl_open($0) }.map(Handle.init)
     }
 
     private nonisolated static func run(_ handle: Handle, _ command: String, _ json: String) -> Data {
@@ -41,37 +46,40 @@ final class Core {
         return Data(bytes: out, count: strlen(out))
     }
 
-    private struct Envelope<T: Decodable>: Decodable {
+    private nonisolated struct Envelope<T: Decodable>: Decodable {
         let ok: T?
         let error: String?
         let status: Int?
     }
 
     /// Accepts any JSON, for commands whose result is not needed.
-    private struct Ignored: Decodable {
+    private nonisolated struct Ignored: Decodable, Sendable {
         init(from decoder: Decoder) throws {}
     }
 
-    private func send(_ command: String, _ args: [String: Any]) async throws -> Data {
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
-        guard let handle else {
-            throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
-        }
-        return await withCheckedContinuation { done in
-            DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: Core.run(handle, command, json)) }
-        }
-    }
-
     /// The command's result, nil when it gave none; its error thrown.
-    private func result<T: Decodable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
-        let envelope = try JSONDecoder().decode(Envelope<T>.self, from: try await send(command, args))
+    nonisolated static func decode<T: Decodable & Sendable>(_ data: Data, as: T.Type) throws -> T? {
+        let envelope = try JSONDecoder().decode(Envelope<T>.self, from: data)
         if let error = envelope.error {
             throw CoreError(message: error, status: envelope.status ?? 500)
         }
         return envelope.ok
     }
 
-    func call<T: Decodable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
+    private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+        guard let handle else {
+            throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
+        }
+        let result = await withCheckedContinuation { (done: CheckedContinuation<Result<T?, Error>, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                done.resume(returning: Result { try Core.decode(Core.run(handle, command, json), as: T.self) })
+            }
+        }
+        return try result.get()
+    }
+
+    func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
         guard let ok = try await result(command, args, as: T.self) else {
             throw CoreError(message: "The core returned nothing for \(command)", status: 500)
         }
@@ -82,7 +90,7 @@ final class Core {
         _ = try await result(command, args, as: Ignored.self)
     }
 
-    /// Stop running compiles. Synchronous on purpose: it runs as the app quits.
+    /// Stops running compiles. Synchronous: it runs as the app quits.
     func killAll() {
         guard let handle else { return }
         _ = Core.run(handle, "kill_all", "{}")

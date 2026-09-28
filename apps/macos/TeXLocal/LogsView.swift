@@ -5,9 +5,8 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log"
 }
 
-/// The build panel below the editors: the build's issues, or its whole log
-/// (web/src/logs.js `renderLogs`). The status bar's toggle and View › Hide
-/// Build Panel close it, as Xcode's debug area has no close button of its own.
+/// The build panel below the editors: the build's issues, or its whole log.
+/// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct PanelView: View {
     @Bindable var project: ProjectModel
     @State private var filter = ""
@@ -16,7 +15,8 @@ struct PanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneBar { header }
-            Divider()
+                .buttonStyle(.accessoryBar)
+                .labelStyle(.iconOnly)
             Group {
                 switch project.panelTab {
                 case .issues: issues
@@ -24,42 +24,27 @@ struct PanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Content, on the text's surface as the source is.
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
 
-    /// The tabs, then what acts on the one showing. The build's summary is
-    /// the status bar's, directly below, so it isn't repeated here.
+    /// The tabs, then what acts on the one showing; the build's summary is the
+    /// status bar's.
     @ViewBuilder
     private var header: some View {
-        Picker("Build Panel", selection: $project.panelTab) {
-            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-        }
-        // A segmented control, which the HIG gives switching between a
-        // view's parts: its current part clearly marked. macOS 27's tabs
-        // style drew a near-invisible current tab in light mode (242 on 236).
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .layoutPriority(1)
+        TabsControl(title: "Build Panel", selection: $project.panelTab,
+                    options: PanelTab.allCases.map { ($0, $0.rawValue) })
+            .fixedSize()
+            .layoutPriority(1)
         Spacer(minLength: 0)
         if project.panelTab == .issues {
-            // Only when there are warnings to hide.
             if project.warningCount > 0 {
-                // The filter's state in its symbol, filled while warnings
-                // show, as Xcode's filter buttons have it: a toggle fills
-                // with the accent while on, the loudest thing in the panel
-                // for a setting that is usually on.
-                Button(showWarnings ? "Hide Warnings" : "Show Warnings",
-                       systemImage: showWarnings ? "exclamationmark.triangle.fill" : "exclamationmark.triangle") {
-                    showWarnings.toggle()
+                Toggle(isOn: $showWarnings) {
+                    Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
+                .toggleStyle(.button)
+                .symbolVariant(showWarnings ? .fill : .none)
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-                .accessibilityLabel("Warnings")
-                .accessibilityAddTraits(showWarnings ? .isSelected : [])
-                .labelStyle(.iconOnly)
-
             }
         } else {
             Button("Copy Log", systemImage: "document.on.document") {
@@ -67,9 +52,7 @@ struct PanelView: View {
                 NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
             }
             .help("Copy Log")
-            .labelStyle(.iconOnly)
             .disabled(project.result?.log.isEmpty ?? true)
-
         }
         SearchField(text: $filter, prompt: "Filter")
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
@@ -84,8 +67,7 @@ struct PanelView: View {
         }
     }
 
-    /// Before any build, as after a clean one, just "No Issues": the status
-    /// bar below says whether a build has run, and Compile is the PDF bar's.
+    /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         if !items.isEmpty {
@@ -113,17 +95,14 @@ struct PanelView: View {
     }
 }
 
-/// The errors and warnings as a list with the system's selection: a click
-/// selects, a double-click or Return opens the line. The core names the file
-/// TeX had open; an issue it can't place has no location.
+/// The errors and warnings; a double-click or Return opens the line.
 private struct IssueList: View {
     let items: [LogItem]
     let project: ProjectModel
     @State private var selection: Int?
 
     var body: some View {
-        // By position: LaTeX repeats identical warnings, which would share
-        // an id built from their contents.
+        // By position: LaTeX repeats identical warnings.
         List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
             IssueRow(item: item)
         }
@@ -142,10 +121,9 @@ private struct IssueList: View {
         } primaryAction: { rows in
             if let row = rows.first { open(items[row]) }
         }
-        // Edit › Copy (⌘C) copies the selected issue, as Xcode's issue
-        // navigator does.
+        // Edit › Copy copies the selected issue.
         .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
-        .onChange(of: items.count) { _, _ in selection = nil }
+        .onChange(of: items) { selection = nil }
     }
 
     private func open(_ item: LogItem) {
@@ -153,8 +131,7 @@ private struct IssueList: View {
     }
 }
 
-/// An error or warning: its message, and where it is when the log says,
-/// so every row that goes somewhere says where.
+/// An error or warning: its message, and its location when the log names one.
 private struct IssueRow: View {
     let item: LogItem
 
@@ -184,9 +161,8 @@ private struct IssueRow: View {
     }
 }
 
-/// The build log in AppKit's text view: native scrolling and selection, the
-/// system find bar (⌘F), and fast with the megabyte logs LaTeX writes, which
-/// a SwiftUI Text laid out whole on every change.
+/// The build log in NSTextView: a SwiftUI Text laid out LaTeX's megabyte logs
+/// whole on every change.
 private struct LogTextView: NSViewRepresentable {
     let text: String
     /// Unfiltered, the log opens at its end, where the error usually is.
@@ -201,13 +177,13 @@ private struct LogTextView: NSViewRepresentable {
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        // The bars' inset, so the log's text lines up with the header's controls.
-        // No line fragment padding either: its 5 pt put the text past them.
+        // Lines the text up with the header's controls; the fragment padding
+        // would put it past them.
         view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
         view.textContainer?.lineFragmentPadding = 0
         view.font = Typography.secondaryMono
         view.textColor = .labelColor
-        // Named, as a text view has no title of its own for VoiceOver.
+        // A text view has no title of its own for VoiceOver.
         view.setAccessibilityLabel("Build Log")
         return scroll
     }

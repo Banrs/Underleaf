@@ -6,6 +6,7 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
+    let fit: ToolbarFit
     @State private var findQuery = ""
     @State private var finding = false
     /// Bumped to put the cursor in the find field, its text selected.
@@ -13,45 +14,70 @@ struct PDFPane: View {
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @Environment(\.colorScheme) private var colorScheme
     @State private var controller = PDFController()
+    /// The document read for a `pdfVersion`.
+    @State private var loaded: (version: Int, document: PDFDocument)?
 
     var body: some View {
-        // The pane's actions (Compile, zoom, Share), then the page and
-        // whether the preview is current in a secondary row, as the source
-        // has its bar and location row: the two panes' rows and hairlines
-        // line up. The find bar, while it shows, goes under them.
         PaneStack(finding: finding && project.pdfVersion > 0) {
-            bar
-        } location: {
-            PageRow(project: project, controller: controller)
-        } find: {
             findBar
         } content: {
             pages
         }
-        // Edit › Find's items while the pages or the find bar have the
-        // keyboard: the PDF's find, not the source's.
+        .background { ColumnReader(column: .pdf, fit: fit) }
+        .toolbar(id: "pdf") { PDFToolbar(app: app, project: project, controller: controller, fit: fit) }
+        .background { PDFColumn(collapsed: !project.showPDF, project: project, fit: fit) }
+        // Edit › Find's items while the pages or the find bar have the keyboard.
         .focusedValue(\.find, findAction)
         .onChange(of: controller.page) { _, page in project.pdfPage = page }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
         }
-        // A request made while the pane was off screen waits for it to appear,
-        // and each is taken once.
+        // Keyed on hasPDF too: the URL can arrive after the version.
+        .task(id: project.hasPDF ? project.pdfVersion : 0) {
+            let version = project.pdfVersion
+            guard project.hasPDF, let url = project.pdfURL else { return }
+            if let document = await Self.loadDocument(url) { loaded = (version, document) }
+        }
+        // A request made while the pane was off screen waits for it to appear; each is taken once.
         .onChange(of: app.pdfRequest?.token, initial: true) { _, _ in
             guard let action = app.pdfRequest?.action else { return }
             app.pdfRequest = nil
-            // After this update, so a PDF view that has just appeared has its document.
+            // After this update, so a PDF view that has just appeared is in place.
             Task { perform(action) }
         }
     }
 
-    private var darkPaper: Bool { pdfPaper == "dark" || (pdfPaper == "auto" && colorScheme == .dark) }
+    /// Read whole: the next build rewrites the file in place.
+    @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
+        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return nil }
+        hideLinkBorders(document)
+        return document
+    }
+
+    /// pdf.js (browser, Windows) leaves out hyperref's link boxes; the links still work.
+    nonisolated private static func hideLinkBorders(_ document: PDFDocument) {
+        for index in 0..<document.pageCount {
+            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == PDFMetrics.linkType {
+                let border = PDFBorder()
+                border.lineWidth = 0
+                annotation.border = border
+            }
+        }
+    }
+
+    private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     @ViewBuilder
     private var pages: some View {
         if project.pdfVersion > 0 {
-            PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper)
+            PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
+                             document: loaded?.document, current: loaded?.version == project.pdfVersion)
+                .overlay(alignment: .bottomTrailing) {
+                    if controller.pageCount > 0 {
+                        PageTile(controller: controller).padding()
+                    }
+                }
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -67,7 +93,7 @@ struct PDFPane: View {
             } description: {
                 Text("Install MacTeX to compile. TeXLocal notices it once it’s there.")
             } actions: {
-                GetMacTeXButton(prominent: true)
+                GetMacTeXButton().buttonStyle(.borderedProminent)
             }
         } else if project.result?.failed == true {
             ContentUnavailableView {
@@ -75,7 +101,6 @@ struct PDFPane: View {
             } description: {
                 Text("The build made no PDF. The build panel shows what went wrong.")
             } actions: {
-                // Nothing to offer while the panel already shows.
                 if !project.showLogs {
                     Button("Show Build Panel") { project.showBuildPanel() }
                         .buttonStyle(.borderedProminent)
@@ -87,8 +112,7 @@ struct PDFPane: View {
             } description: {
                 Text("Compile to preview your document.")
             } actions: {
-                // The empty state's one action, prominent. Content, not a
-                // floating control, so not glass.
+                // Content, not a floating control: not glass.
                 Button("Compile") { app.perform(.compileRun, on: project) }
                     .buttonStyle(.borderedProminent)
                     .disabled(!app.isEnabled(.compileRun, on: project))
@@ -112,119 +136,21 @@ struct PDFPane: View {
         }
     }
 
-    /// Compile, zoom and Share, the PDF's actions, lined up with the
-    /// source's bar beside it. Compile keeps its word at every width: it is
-    /// the pane's one prominent action, and a lone play symbol reads as
-    /// media. Narrow panes leave Share to File › Share… first, then zoom to
-    /// the View menu.
-    private var bar: some View {
-        PaneBar {
-            ViewThatFits(in: .horizontal) {
-                actions(share: true, zoom: true)
-                actions(share: false, zoom: true)
-                actions(share: false, zoom: false)
-            }
-        }
-    }
-
-    /// Compile at the leading edge; Share, then zoom, at the trailing.
-    private func actions(share: Bool, zoom: Bool) -> some View {
-        HStack(spacing: BarMetrics.itemSpacing) {
-            compileControls
-            Spacer(minLength: 0)
-            // Share before zoom, not at the bar's edge, where its picker
-            // had no room in a full-screen window.
-            if share { shareControl }
-            if zoom { zoomControls }
-        }
-    }
-
-    /// Overleaf's Recompile, the pane's one prominent control; while a build
-    /// runs, Stop in its place, the system's spinner as its icon. Nothing
-    /// follows it on its side of the bar, so the swap moves nothing.
-    @ViewBuilder
-    private var compileControls: some View {
-        if project.compiling {
-            Button { project.stopCompile() } label: {
-                Label { Text("Stop") } icon: { ProgressView().controlSize(.small) }
-                    .labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.bordered)
-            .fixedSize()
-            .help("Stop")
-        } else {
-            Button { app.perform(.compileRun, on: project) } label: {
-                Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.borderedProminent)
-            .fixedSize()
-            .disabled(!app.isEnabled(.compileRun, on: project))
-            .help("Compile")
-            .accessibilityLabel("Compile")
-        }
-    }
-
-    /// Zoom out | the scale | zoom in, AppKit's segmented control: one pill,
-    /// the scale kept at its widest label's width ("000%"), centred, so −
-    /// and + stay put as it changes; a click on the scale opens its menu of
-    /// ways to fit and preset scales, the one in use checked (while fitting,
-    /// no preset is, even at a preset's scale). SwiftUI's control group
-    /// drew three separate pieces here.
-    private var zoomControls: some View {
-        let presets: [SegmentedControl.MenuEntry] = Self.zoomPresets.map { percent in
-            .item("\(percent)%", checked: controller.fit == nil && "\(percent)%" == controller.zoomLabel) {
-                controller.setScale(CGFloat(percent) / 100)
-            }
-        }
-        return SegmentedControl(segments: [
-            .init(symbol: "minus", help: "Zoom Out") { _, _ in controller.zoom(in: false) },
-            .init(label: controller.zoomLabel, widest: "000%", help: "Zoom", menu: [
-                .item("Fit Width", checked: controller.fit == .width) { controller.fitWidth() },
-                .item("Fit Height", checked: controller.fit == .height) { controller.fitHeight() },
-                .separator,
-            ] + presets),
-            .init(symbol: "plus", help: "Zoom In") { _, _ in controller.zoom(in: true) },
-        ])
-        .fixedSize()
-        .disabled(project.pdfVersion == 0)
-        .accessibilityLabel("Zoom")
-        .accessibilityValue(controller.zoomLabel)
-    }
-
-    /// Share, a one-segment control of the same kind as zoom's, so the two
-    /// pills are one height. It opens the system's share picker at itself,
-    /// as File › Share… does (`ProjectModel.sharePDF`).
-    private var shareControl: some View {
-        SegmentedControl(segments: [
-            .init(symbol: "square.and.arrow.up", help: "Share PDF", enabled: project.pdfVersion > 0 && project.pdfURL != nil) { _, _ in
-                project.sharePDF()
-            },
-        ])
-        .fixedSize()
-        .accessibilityLabel("Share PDF")
-        .background { ShareAnchor(project: project) }
-    }
-
-    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
-
-    /// Find in PDF, as the source's find bar is, without its replace row.
+    /// Find in PDF: the source's find bar without its replace row.
     private var findBar: some View {
         FindBar(query: $findQuery, prompt: "Find in PDF", focus: findFocus,
                 matches: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
                                      limited: controller.limited),
                 searched: controller.query, step: controller.step, close: closeFind)
             .task(id: findQuery) {
-                // Debounced like the web's, so typing doesn't search every prefix.
-                try? await Task.sleep(for: .milliseconds(200))
+                try? await Task.sleep(for: PDFFind.debounce)
                 if !Task.isCancelled, PDFFind.normalize(findQuery) != controller.query {
                     controller.find(findQuery)
                 }
             }
     }
 
-    /// What Edit › Find's items do in the PDF (`FindActions`). It has no
-    /// Replace; Use Selection for Find searches for the selected text, as
-    /// Preview's does.
+    /// What Edit › Find's items do in the PDF: no Replace.
     private func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
         guard project.pdfVersion > 0 else { return nil }
         switch action {
@@ -251,67 +177,334 @@ struct PDFPane: View {
     }
 }
 
-/// Whether the preview is current, and the page at the trailing end, as
-/// quiet text in the row under the PDF's bar, as Preview shows the page:
-/// paging is the keyboard's and the scroll's. The PDF's page, not the one
-/// LaTeX prints: front matter and roman numbers make those differ.
-private struct PageRow: View {
-    @Environment(AppModel.self) private var app
+/// The PDF's tools in the toolbar over it: viewing (zoom, Share), then the build
+/// (the preview's state, settings, Compile), then Hide PDF at the trailing edge
+/// (HIG, Toolbars).
+struct PDFToolbar: CustomizableToolbarContent {
+    let app: AppModel
     let project: ProjectModel
     let controller: PDFController
+    let fit: ToolbarFit
 
-    var body: some View {
-        SecondaryBar {
-            if project.pdfVersion > 0, let freshness = project.pdfFreshness {
-                Button {
-                    if freshness == .edited { app.perform(.compileRun, on: project) } else { project.showBuildPanel() }
-                } label: {
-                    Label {
-                        Text(freshness.title)
-                    } icon: {
-                        // A failed build's warning is the one colour here.
-                        Image(systemName: freshness.systemImage)
-                            .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+    // Declared whether the PDF shows or not: the system moves a collapsed column's
+    // items to the source's section. Conditional items are safe only because the
+    // PDF column never animates; a removed column item vanished mid-animation.
+    var body: some CustomizableToolbarContent {
+        if project.showPDF, fit.showsZoom {
+            ToolbarItem(id: "zoom") { zoomControls.background { ToolbarProbe(item: .zoom, fit: fit) } }
+                .visibilityPriority(.low)
+        }
+        if fit.showsShare {
+            ToolbarItem(id: "share") { shareControl.background { ToolbarProbe(item: .share, fit: fit) } }
+                .visibilityPriority(.low)
+        }
+        ToolbarSpacer(.flexible)
+        if project.hasPDF, project.pdfFreshness != nil {
+            ToolbarItem(id: "freshness") {
+                FreshnessButton(project: project).background { ToolbarProbe(item: .freshness, fit: fit) }
+            }
+            .customizationBehavior(.disabled)
+        }
+        ToolbarItem(id: "settings") {
+            ProjectSettingsButton(project: project).background { ToolbarProbe(item: .settings, fit: fit) }
+        }
+        .customizationBehavior(.disabled)
+        // Compile on glass of its own, not joined to its neighbours.
+        ToolbarSpacer(.fixed)
+        ToolbarItem(id: "compile") {
+            CompileButton(project: project).background { ToolbarProbe(item: .compile, fit: fit) }
+        }
+        .customizationBehavior(.disabled)
+        ToolbarSpacer(.fixed)
+        ToolbarItem(id: "togglePDF") {
+            PDFToggle(project: project).background { ToolbarProbe(item: .togglePDF, fit: fit) }
+        }
+        .customizationBehavior(.disabled)
+    }
+
+    /// Zoom out | the scale's menu | zoom in. While fitting, no preset is checked,
+    /// even at a preset's scale.
+    private var zoomControls: some View {
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
+                .help("Zoom Out")
+            Menu {
+                CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
+                CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
+                Divider()
+                ForEach(Self.zoomPresets, id: \.self) { percent in
+                    CheckedItem((Double(percent) / 100).formatted(.percent),
+                                checked: controller.fit == nil && Int((controller.scale * 100).rounded()) == percent) {
+                        controller.setScale(CGFloat(percent) / 100)
                     }
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help(freshness == .lastSuccessful
-                      ? "The latest build failed; this is the last one that succeeded. Show Issues"
-                      : "The preview doesn’t reflect the current source. Compile")
-                .transition(.opacity)
-            }
-            Spacer(minLength: 0)
-            if project.pdfVersion > 0, controller.pageCount > 0 {
-                Text("Page \(controller.page) of \(controller.pageCount)")
+            } label: {
+                Text(controller.zoomLabel)
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .animation(.default, value: controller.page)
+            }
+            .help("Zoom")
+            .accessibilityLabel("Zoom")
+            .accessibilityValue(controller.zoomLabel)
+            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
+                .help("Zoom In")
+        }
+        // Unverified that .automatic draws this the same in the toolbar on 27.2.
+        .controlGroupStyle(.navigation)
+        .disabled(project.pdfVersion == 0)
+    }
+
+    /// File › Share… opens its picker here too (`ProjectModel.sharePDF`).
+    @ViewBuilder
+    private var shareControl: some View {
+        Group {
+            if project.pdfVersion > 0, let url = project.pdfURL {
+                ShareLink(item: url) { shareLabel }
+            } else {
+                Button {} label: { shareLabel }
+                    .disabled(true)
             }
         }
-        .animation(.default, value: project.pdfFreshness)
+        .help("Share PDF")
+        .background { ShareAnchor(project: project) }
+    }
+
+    private var shareLabel: some View {
+        Label("Share PDF", systemImage: "square.and.arrow.up")
+    }
+
+    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
+}
+
+/// The toolbar's one prominent control; Stop in its place while a build runs.
+/// Compile keeps its word: a lone play symbol reads as media.
+struct CompileButton: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+
+    var body: some View {
+        if project.compiling {
+            Button { project.stopCompile() } label: {
+                // At least Compile's width, so the swap moves its neighbours less.
+                ZStack {
+                    label.hidden()
+                    Label { Text("Stop") } icon: { ProgressView().controlSize(.small) }
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            // Glass, for Compile's padding.
+            .buttonStyle(.glass)
+            .fixedSize()
+            .help("Stop")
+        } else {
+            Button { app.perform(.compileRun, on: project) } label: { label }
+                .buttonStyle(.glassProminent)
+                .fixedSize()
+                .disabled(!app.isEnabled(.compileRun, on: project))
+                .help("Compile")
+        }
+    }
+
+    private var label: some View {
+        Label("Compile", systemImage: "play.fill").labelStyle(.titleAndIcon)
     }
 }
 
-/// The find bar's rules, from the web's (web/src/findsession.js and
-/// workspace.js `showCount`).
+/// Collapses and opens the PDF column through its `NSSplitViewItem`: SwiftUI's split
+/// can hide only its first column. The source's holding priority matches the PDF's so
+/// the two share room the window gains or loses.
+private struct PDFColumn: NSViewRepresentable {
+    let collapsed: Bool
+    let project: ProjectModel
+    let fit: ToolbarFit
+
+    final class Coordinator {
+        var lastCollapsed: Bool?
+    }
+
+    final class ColumnView: NSView {
+        weak var project: ProjectModel?
+        weak var fit: ToolbarFit?
+        var collapsed = false
+        private(set) var item: NSSplitViewItem?
+        /// The source's share of its and the PDF's room as the PDF collapsed, given back
+        /// in that proportion whatever the window's width by then.
+        private var sourceShare: CGFloat?
+        private var scheduled = false
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            project?.window = window
+            if window != nil { schedule() }
+        }
+
+        /// Whether the system's split has reset the source's holding priority.
+        var priorityDrifted: Bool {
+            guard let (split, index) = position else { return false }
+            return split.splitViewItems[index - 1].holdingPriority != split.splitViewItems[index].holdingPriority
+        }
+
+        private var position: (NSSplitViewController, Int)? {
+            guard let item, let split = item.viewController.parent as? NSSplitViewController,
+                  let index = split.splitViewItems.firstIndex(of: item), index > 0 else { return nil }
+            return (split, index)
+        }
+
+        /// Later: collapsing a split item inside a SwiftUI update hangs (27.2).
+        func schedule() {
+            guard !scheduled else { return }
+            scheduled = true
+            RunLoop.main.perform(inModes: [.common]) { [weak self] in
+                MainActor.assumeIsolated { self?.apply() }
+            }
+        }
+
+        private func apply() {
+            scheduled = false
+            guard window != nil else { return }
+            if item == nil {
+                item = splitViewItem
+                guard let item else { return assertionFailure("PDF column's NSSplitViewItem not found") }
+                item.canCollapse = true
+            }
+            guard let item, let (split, index) = position else { return }
+            let sourceItem = split.splitViewItems[index - 1]
+            sourceItem.holdingPriority = item.holdingPriority
+            guard item.isCollapsed != collapsed else { return }
+            let splitView = split.splitView
+            let source = splitView.arrangedSubviews[index - 1]
+            // At once, never animated: the toolbar's section line parts from a moving divider.
+            if collapsed {
+                let room = source.frame.width + item.viewController.view.frame.width
+                if room > 0 { sourceShare = source.frame.width / room }
+                fit?.pdfColumnChanging(shown: false, sourceMaxX: nil)
+                item.isCollapsed = true
+                return
+            }
+            let divider = sourceShare.map { share in
+                source.frame.minX + ((source.frame.width - splitView.dividerThickness) * share).rounded()
+            }
+            fit?.pdfColumnChanging(shown: true,
+                                   sourceMaxX: divider.flatMap { x in
+                                       splitView.window?.convertPoint(toScreen: splitView.convert(NSPoint(x: x, y: 0), to: nil)).x
+                                   })
+            item.isCollapsed = false
+            guard let divider else { return }
+            splitView.layoutSubtreeIfNeeded()
+            splitView.setPosition(divider, ofDividerAt: index - 1)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> ColumnView {
+        let view = ColumnView()
+        view.project = project
+        view.fit = fit
+        return view
+    }
+
+    func updateNSView(_ view: ColumnView, context: Context) {
+        view.project = project
+        view.fit = fit
+        view.collapsed = collapsed
+        let coordinator = context.coordinator
+        guard collapsed != coordinator.lastCollapsed || view.item == nil || view.priorityDrifted else { return }
+        coordinator.lastCollapsed = collapsed
+        view.schedule()
+    }
+}
+
+/// Whether the preview is current: a failed build's warning, or the source edited
+/// since. Choosing it shows the issues, or compiles.
+private struct FreshnessButton: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+
+    var body: some View {
+        if let freshness = project.pdfFreshness {
+            Button {
+                if freshness == .edited { app.perform(.compileRun, on: project) } else { project.showBuildPanel() }
+            } label: {
+                Label {
+                    Text(freshness.title)
+                } icon: {
+                    Image(systemName: freshness.systemImage)
+                        .foregroundStyle(freshness == .lastSuccessful ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                }
+            }
+            .help(freshness == .lastSuccessful
+                  ? "The latest build failed; this is the last one that succeeded. Show Issues"
+                  : "The preview doesn’t reflect the current source. Compile")
+        }
+    }
+}
+
+/// The PDF's own page numbers, not LaTeX's (front matter and roman numbers differ),
+/// floating on glass over the pages.
+private struct PageTile: View {
+    let controller: PDFController
+
+    var body: some View {
+        Text("Page \(controller.page) of \(controller.pageCount)")
+            .monospacedDigit()
+            .padding(.horizontal)
+            .frame(height: BarMetrics.largeControlHeight)
+            .glassEffect(.regular, in: .capsule)
+    }
+}
+
+/// The find bar's rules, shared with the web's (web/src/findsession.js and
+/// workspace.js `showCount`, `pdfFindTimer`).
 enum PDFFind {
     static let maxQuery = 256
     static let maxMatches = 5000
+    /// So typing doesn't search every prefix.
+    static let debounce: Duration = .milliseconds(200)
 
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
 }
 
-/// The PDF's setting, shared by Settings and the pane so its key and
-/// default can't drift apart, as `EditorPrefs` are.
+/// The PDF's paper; raw values shared with web/src/prefs.js.
+enum PDFPaper: String, CaseIterable, Identifiable {
+    case white, dark, auto
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .white: "White"
+        case .dark: "Dark"
+        case .auto: "Match Appearance"
+        }
+    }
+}
+
+/// The PDF's setting, shared by Settings and the pane.
 enum PDFPrefs {
     static let paperKey = "pdfPaper"
-    /// "white", "dark", or "auto", which follows the app's appearance
-    /// (web/src/prefs.js).
-    static let paper = "white"
+    static let paper = PDFPaper.white
+}
+
+/// Named PDF view values.
+private nonisolated enum PDFMetrics {
+    /// "The text you are looking at": the first line at or below this fraction of the view.
+    static let sourcePointFraction: CGFloat = 0.2
+    /// How far down the page each look for that line steps.
+    static let sourcePointStep: CGFloat = 6
+    /// A neutral near-white that dark paper's inversion turns into dark mode's
+    /// under-page grey: Core Image inverts in linear light.
+    static let darkPaperBackground = NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1)
+    /// Matches .sync-flash in web/styles.css.
+    static let flashDuration: Duration = .seconds(2.2)
+    static let flashAlpha: CGFloat = 0.4
+    /// PDFKit's `PDFAnnotation.type` is the subtype without its slash.
+    static let linkType = String(PDFAnnotationSubtype.link.rawValue.dropFirst())
+    /// Resizes from a SwiftUI column animation send no end signal; let go once they stop.
+    static let resizeSettle: Duration = .milliseconds(300)
 }
 
 /// What the pane's controls and the menus ask of the PDF view.
@@ -326,8 +519,9 @@ final class PDFController {
     var matchIndex = 0
     /// More matches exist than are kept.
     var limited = false
-    /// The scale, as a percentage, whether fitting or set.
-    var zoomLabel = "100%"
+    /// Whether fitting or set.
+    private(set) var scale: CGFloat = 1
+    var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
@@ -340,7 +534,7 @@ final class PDFController {
 
     func scaleChanged() {
         guard let view else { return }
-        zoomLabel = "\(Int((view.scaleFactor * 100).rounded()))%"
+        scale = view.scaleFactor
         // Any other change of scale (a pinch, a zoom command) ends fitting.
         if view.autoScales {
             fit = .width
@@ -407,17 +601,15 @@ final class PDFController {
         view.scrollSelectionToVisible(nil)
     }
 
-    /// A SyncTeX point for "the text you are looking at": the first line of
-    /// text at or below a fifth of the way down the view. SyncTeX only
-    /// resolves points that land on a glyph box, so a bare geometric guess —
-    /// the page centre — would usually hit whitespace.
+    /// A SyncTeX point on a line of text: SyncTeX resolves only points on a glyph
+    /// box, and the page centre is usually whitespace.
     func sourcePoint() -> (Int, CGPoint)? {
         guard let view, let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.bounds.height * 0.2)
+        let probe = CGPoint(x: view.bounds.midX,
+                            y: view.bounds.maxY - view.bounds.height * PDFMetrics.sourcePointFraction)
         guard let page = view.page(for: probe, nearest: true) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
         var point = view.convert(probe, to: page)
-        // Walk down the page in small steps until a line of text is found.
         while point.y > bounds.minY {
             if let line = page.selectionForLine(at: point), let text = line.string,
                !text.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -425,7 +617,7 @@ final class PDFController {
                 point = CGPoint(x: box.midX, y: box.minY)
                 break
             }
-            point.y -= 6
+            point.y -= PDFMetrics.sourcePointStep
         }
         return (document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
     }
@@ -435,9 +627,8 @@ final class PDFController {
 final class SyncPDFView: PDFView {
     var onInverse: (Int, CGPoint) -> Void = { _, _ in }
 
-    /// Dark paper, drawn as the web draws it (`.pdf-dark`): the rendered PDF
-    /// inverted, then turned half way round the colour wheel so figures keep
-    /// their hues. Under the filter the view keeps the light appearance,
+    /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
+    /// colour wheel so figures keep their hues. The view keeps the light appearance,
     /// whose background and scrollers the inversion turns dark.
     var darkPaper = false {
         didSet {
@@ -445,11 +636,8 @@ final class SyncPDFView: PDFView {
             wantsLayer = true
             layerUsesCoreImageFilters = true
             appearance = darkPaper ? NSAppearance(named: .aqua) : nil
-            // A neutral near-white, which the inversion turns into dark
-            // mode's under-page grey (40 of 255): Core Image inverts in
-            // linear light, where 0.84 came out a mid grey. The tinted
-            // under-page colour would come out olive.
-            backgroundColor = darkPaper ? NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1) : .underPageBackgroundColor
+            // The tinted under-page colour would invert to olive.
+            backgroundColor = darkPaper ? PDFMetrics.darkPaperBackground : .underPageBackgroundColor
             pageShadowsEnabled = !darkPaper
             let hue = CIFilter.hueAdjust()
             hue.angle = .pi
@@ -457,14 +645,16 @@ final class SyncPDFView: PDFView {
         }
     }
 
-    /// The spot of the page at the top of what shows as a resize begins,
-    /// put back at the top once laid out. PDFKit keeps its place against the
-    /// scroll view's edge, not under its top inset, and loses a little with
-    /// every step of a sliding pane: hiding the sidebar scrolled the pages
-    /// 70 pt and the gap above page one away.
-    private var anchor: (page: PDFPage, point: CGPoint)?
+    /// The gap above page one, as a scroll inset rather than a page margin: fitting
+    /// the width, PDFKit re-anchors page one to the view's top on every resize.
+    var topInset: CGFloat = 0
+    private var topInsetApplied = false
 
-    /// Where the pages start showing, in the view: under the top inset.
+    /// PDFKit re-anchors page one on resize while fitting width; keep the top spot.
+    private var anchor: (page: PDFPage, point: CGPoint)?
+    private var anchorRelease: Task<Void, Never>?
+
+    /// Where the pages start showing: under the top inset.
     private var topEdge: CGFloat {
         let inset = scrollView?.contentInsets.top ?? 0
         return isFlipped ? bounds.minY + inset : bounds.maxY - inset
@@ -472,47 +662,60 @@ final class SyncPDFView: PDFView {
 
     private var scrollView: NSScrollView? { documentView?.enclosingScrollView }
 
+    /// The scroll view exists once there's a document.
+    func applyTopInset() {
+        guard !topInsetApplied, let scrollView else { return }
+        topInsetApplied = true
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
+    }
+
     override func setFrameSize(_ size: NSSize) {
         if anchor == nil, size != frame.size, frame.size != .zero,
            let page = page(for: CGPoint(x: bounds.midX, y: topEdge), nearest: true) {
             anchor = (page, convert(CGPoint(x: bounds.midX, y: topEdge), to: page))
         }
-        if size != frame.size { resizes += 1 }
         super.setFrameSize(size)
     }
-
-    /// Resizes so far, so the anchor is let go once they stop.
-    private var resizes = 0
 
     override func layout() {
         super.layout()
         guard anchor != nil else { return }
+        // PDFKit sets its fitted scale after the layout that resized it.
         restoreAnchor()
-        // PDFKit sets a fitted scale after the layout that resized it, and a
-        // sliding pane resizes it many times: the one anchor, put back each
-        // time, until the resizing has stopped.
-        let resize = resizes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self, self.resizes == resize else { return }
-            self.restoreAnchor()
-            self.anchor = nil
+        anchorRelease?.cancel()
+        anchorRelease = Task { [weak self] in
+            try? await Task.sleep(for: PDFMetrics.resizeSettle)
+            guard !Task.isCancelled else { return }
+            self?.releaseAnchor()
         }
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        if anchor != nil { releaseAnchor() }
+    }
+
+    private func releaseAnchor() {
+        anchorRelease?.cancel()
+        anchorRelease = nil
+        restoreAnchor()
+        anchor = nil
     }
 
     private func restoreAnchor() {
         guard let (page, point) = anchor, let clip = scrollView?.contentView else { return }
         layoutDocumentView()
         let drift = convert(point, from: page).y - topEdge
-        // Drift is measured in this view; the clip view scrolls the other
-        // way when one of them is flipped.
+        // The clip view scrolls the other way when one of the two is flipped.
         var origin = clip.bounds.origin
         origin.y += isFlipped == clip.isFlipped ? drift : -drift
         clip.scroll(to: origin)
         scrollView?.reflectScrolledClipView(clip)
     }
 
-    /// The first page's top at the top of what shows, the gap above it, at
-    /// the next layout: a new document is shown at the scroll view's edge.
+    /// Page one's top at the top of what shows, at the next layout: a new document
+    /// is shown at the scroll view's edge, over the inset.
     func scrollToTop() {
         guard let page = document?.page(at: 0) else { return }
         anchor = (page, CGPoint(x: 0, y: page.bounds(for: displayBox).maxY))
@@ -536,9 +739,11 @@ private struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
     let controller: PDFController
     let darkPaper: Bool
+    let document: PDFDocument?
+    /// Whether `document` is the current build's.
+    let current: Bool
 
     final class Coordinator {
-        var version = 0
         var highlightToken = 0
         /// Following the view's page and scale, until the view goes.
         var watches: [Task<Void, Never>] = []
@@ -550,19 +755,10 @@ private struct PDFRepresentable: NSViewRepresentable {
         let view = SyncPDFView()
         view.displayMode = .singlePageContinuous
         view.displaysPageBreaks = true
-        // An even margin of backdrop around every page, as Preview shows
-        // one: the bars' 8 pt inset, so a page's edge lines up with the
-        // controls over it. PDFKit's default left a sliver on one side only,
-        // which beside the pane divider read as a thick, broken line.
+        // An even margin round every page, lined up with the bars' controls.
         let inset = BarMetrics.inset
         view.pageBreakMargins = NSEdgeInsets(top: 0, left: inset, bottom: inset, right: inset)
-        // The gap above page one is the scroll view's, not a page margin:
-        // fitting the width, PDFKit re-anchors page one's top edge to the top
-        // of the view on every resize, scrolling a page margin out of sight.
-        if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
-            scroll.automaticallyAdjustsContentInsets = false
-            scroll.contentInsets = NSEdgeInsets(top: inset, left: 0, bottom: 0, right: 0)
-        }
+        view.topInset = inset
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
         view.onInverse = { [project] page, point in
@@ -570,8 +766,7 @@ private struct PDFRepresentable: NSViewRepresentable {
         }
         controller.view = view
         let center = NotificationCenter.default
-        // Each read once as it starts watching too: the first PDF's fitted
-        // scale was set before the watch began, and the zoom showed 100%.
+        // Each read once as it starts watching too: the first fitted scale is set before.
         context.coordinator.watches = [
             Task { [controller] in
                 let changes = center.notifications(named: .PDFViewPageChanged, object: view)
@@ -589,13 +784,10 @@ private struct PDFRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: SyncPDFView, context: Context) {
         view.darkPaper = darkPaper
-        let coordinator = context.coordinator
-        // Taken as loaded only once it is: a new view tries again until then.
-        if project.pdfVersion != coordinator.version, let url = project.pdfURL, reload(view, from: url) {
-            coordinator.version = project.pdfVersion
-        }
-        if let highlight = project.highlight, highlight.token != coordinator.highlightToken {
-            coordinator.highlightToken = highlight.token
+        if let document, view.document !== document { show(document, in: view) }
+        // Only on the current build's pages: the jump would be lost to the swap.
+        if current, let highlight = project.highlight, highlight.token != context.coordinator.highlightToken {
+            context.coordinator.highlightToken = highlight.token
             flash(highlight.loc, in: view)
         }
     }
@@ -604,23 +796,17 @@ private struct PDFRepresentable: NSViewRepresentable {
         coordinator.watches.forEach { $0.cancel() }
     }
 
-    /// Load a rebuilt PDF where the reader was: the same scroll offset at the
-    /// same zoom, which, a document's pages keeping their size, is the same
-    /// spot on the same page. Not `currentDestination`: it reads the top of
-    /// the view, under the scroll view's top inset, and `go(to:)` puts it
-    /// below that inset, so the pages crept down with every build. It is
-    /// read whole: PDFKit reads a document from its file as it goes, and the
-    /// next compile rewrites that file in place.
-    private func reload(_ view: SyncPDFView, from url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return false }
-        hideLinkBorders(document)
+    /// A rebuilt PDF at the same scroll offset and zoom: the same spot, pages keeping
+    /// their size. Not `currentDestination`: it ignores the top inset.
+    private func show(_ document: PDFDocument, in view: SyncPDFView) {
         let clip = view.documentView?.enclosingScrollView?.contentView
         let offset = view.document == nil ? nil : clip?.bounds.origin
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
+        view.applyTopInset()
         if !autoScales { view.scaleFactor = scale }
-        // The first PDF of a reopened project opens at the page it was left at.
+        // A reopened project's first PDF opens at the page it was left at.
         let restore = project.restorePDFPage.map { min(max($0, 1), document.pageCount) - 1 }
         project.restorePDFPage = nil
         if let clip, let offset {
@@ -635,19 +821,6 @@ private struct PDFRepresentable: NSViewRepresentable {
         controller.pageCount = document.pageCount
         controller.pageChanged()
         controller.scaleChanged()
-        return true
-    }
-
-    /// hyperref boxes every \ref and \cite in colour; pdf.js (browser,
-    /// Windows) leaves the boxes out, so PDFKit does too. The links still work.
-    private func hideLinkBorders(_ document: PDFDocument) {
-        for index in 0..<document.pageCount {
-            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                annotation.border = border
-            }
-        }
     }
 
     /// Scroll to a forward-search result and flash it.
@@ -655,21 +828,18 @@ private struct PDFRepresentable: NSViewRepresentable {
         guard let page = view.document?.page(at: Int(loc.page) - 1) else { return }
         let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         let mark = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
-        mark.color = NSColor.systemYellow.withAlphaComponent(0.45)
+        mark.color = NSColor.systemYellow.withAlphaComponent(PDFMetrics.flashAlpha)
         page.addAnnotation(mark)
         view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3), on: page)
-        // As long as the web's flash fades (web/styles.css `.sync-flash`).
         Task {
-            try? await Task.sleep(for: .seconds(2.2))
+            try? await Task.sleep(for: PDFMetrics.flashDuration)
             page.removeAnnotation(mark)
         }
     }
 }
 
-/// Reports the bar's Share button to its project, so File › Share… opens
-/// the picker there, as Share in a Mac app's menu opens at the toolbar's
-/// Share button. AppKit, as SwiftUI can open a share picker only from a
-/// `ShareLink` itself, never from a menu item at another control.
+/// Where File › Share… opens its picker. AppKit: SwiftUI opens a share picker only
+/// from a `ShareLink` itself, never from a menu item.
 private struct ShareAnchor: NSViewRepresentable {
     let project: ProjectModel
 
@@ -685,15 +855,15 @@ private struct ShareAnchor: NSViewRepresentable {
 }
 
 extension ProjectModel {
-    /// File › Share…: the system's share picker for the PDF, under the
-    /// bar's Share button while it shows, else under the toolbar, centred.
+    /// File › Share…: the share picker under the toolbar's Share button while it
+    /// shows, else under the toolbar, centred.
     func sharePDF() {
         guard pdfVersion > 0, let url = pdfURL else { return }
         let picker = NSSharingServicePicker(items: [url])
         if let anchor = shareAnchor, anchor.window?.isVisible == true, !anchor.isHiddenOrHasHiddenAncestor,
            !anchor.visibleRect.isEmpty {
             picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
-        } else if let content = NSApp.keyWindow?.contentView {
+        } else if let content = window?.contentView {
             let area = content.safeAreaRect
             let top = NSRect(x: area.midX, y: content.isFlipped ? area.minY : area.maxY - 1, width: 1, height: 1)
             picker.show(relativeTo: top, of: content, preferredEdge: content.isFlipped ? .maxY : .minY)

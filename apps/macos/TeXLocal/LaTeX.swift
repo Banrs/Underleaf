@@ -1,14 +1,12 @@
 import Foundation
 
-// The LaTeX the source bar and the Insert and Format menus write, in one
-// place. Titles are menu items here, so title case without the web's
-// parentheticals: "Aligned Equations" is the web's "Align (multi-line math)".
+// The LaTeX the source bar and the Insert and Format menus write. Titles are
+// menu items, so title case without the web's parentheticals.
 
-/// A snippet to write at the cursor: a block, whose `body` is its id in
-/// the editor page's one table of them (web/src/latex-data.js
-/// `BLOCK_TEMPLATES`), or (`inline`) a command around the selection, "$0"
-/// marking where the selection goes. `symbol`: the source bar has a button
-/// for it, with that symbol; the rest are in its ⋯ menu.
+/// A snippet at the cursor: a block named by its id in the editor page's
+/// table (web/src/latex-data.js `BLOCK_TEMPLATES`), or an inline command
+/// with "$0" where the selection goes. With a `symbol`, the source bar shows
+/// it as a button; the rest are in its menu.
 struct Template {
     let title: String
     let body: String
@@ -18,7 +16,7 @@ struct Template {
 
 extension ProjectModel {
     func insert(_ template: Template) {
-        format(template.inline ? "inline" : "block", template.body)
+        format(template.inline ? .inline : .block, template.body)
     }
 }
 
@@ -38,8 +36,7 @@ let listTemplates = [
     Template(title: "Description List", body: "description"),
 ]
 
-/// Cross-references, citations and links; each opens completion inside
-/// its braces.
+/// Cross-references, citations and links; each opens completion in its braces.
 let referenceTemplates = [
     Template(title: "Reference", body: "\\ref{$0}", symbol: "number", inline: true),
     Template(title: "Equation Reference", body: "\\eqref{$0}", inline: true),
@@ -49,29 +46,40 @@ let referenceTemplates = [
     Template(title: "URL", body: "\\url{$0}", inline: true),
 ]
 
-/// The section levels, as the line's style: plain text, then the
-/// sectioning commands in the order the web's outline ranks them.
-let headingLevels: [(String, String)] = [
-    ("Normal Text", ""), ("Part", "part"), ("Chapter", "chapter"), ("Section", "section"),
-    ("Subsection", "subsection"), ("Subsubsection", "subsubsection"), ("Paragraph", "paragraph"),
-]
+/// A line's style: plain text or a sectioning command (`command` without
+/// the backslash; empty for plain text).
+nonisolated struct HeadingLevel: Hashable {
+    let title: String
+    let command: String
 
-/// The engines a project can compile with, for the Compile menu, the
-/// inspector and the status bar.
+    static let normalText = HeadingLevel(title: "Normal Text", command: "")
+
+    /// Indexed by the core's outline depth (analyze.rs), so the order is fixed.
+    static let sections = [
+        HeadingLevel(title: "Part", command: "part"),
+        HeadingLevel(title: "Chapter", command: "chapter"),
+        HeadingLevel(title: "Section", command: "section"),
+        HeadingLevel(title: "Subsection", command: "subsection"),
+        HeadingLevel(title: "Subsubsection", command: "subsubsection"),
+        HeadingLevel(title: "Paragraph", command: "paragraph"),
+    ]
+
+    static var all: [HeadingLevel] { [normalText] + sections }
+
+    static func atDepth(_ depth: Int) -> HeadingLevel? {
+        sections.indices.contains(depth) ? sections[depth] : nil
+    }
+}
+
+/// The engines a project can compile with: (the core's id, the menu title).
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
-/// The engine a project compiles with until it picks one: the core's
-/// (crates/texlocal-core settings.rs).
-let defaultTeXEngine = "pdflatex"
-
-/// An engine's name as the menus show it ("pdfLaTeX"), or its id if it
-/// isn't one of `texEngines`.
+/// An engine's menu title, or its id when it isn't one of `texEngines`.
 func texEngineName(_ engine: String) -> String {
     texEngines.first { $0.0 == engine }?.1 ?? engine
 }
 
-/// Symbols by kind, each inserted as its command: the palette LaTeX editors
-/// keep beside the source (TeXstudio, TeXShop, Overleaf).
+/// Symbols by kind, each inserted as its command.
 let symbolGroups: [(String, [(String, String)])] = [
     ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
                ("ζ", "\\zeta"), ("η", "\\eta"), ("θ", "\\theta"), ("κ", "\\kappa"), ("λ", "\\lambda"),
