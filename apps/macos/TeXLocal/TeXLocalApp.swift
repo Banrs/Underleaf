@@ -1,17 +1,16 @@
 import SwiftUI
 
+/// SwiftUI's app: the menus and Settings. The one window is AppKit's
+/// (`MainWindowController`), made by the delegate at launch.
 @main
 struct TeXLocalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("TeXLocal", id: "main") {
-            RootView()
+        Settings {
+            SettingsView()
                 .environment(delegate.app)
         }
-        .defaultSize(WindowMetrics.projectDefault)
-        // Without it a `Window` scene only zooms, never goes full screen (27.2).
-        .windowManagerRole(.principal)
         .commands {
             AppCommands(app: delegate.app)
             ToolbarCommands()
@@ -20,22 +19,44 @@ struct TeXLocalApp: App {
                 Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
             }
         }
-
-        Settings {
-            SettingsView()
-                .environment(delegate.app)
-        }
     }
 }
 
-/// Owns the app model so Quit can wait for the open document's save, and
-/// refuse when it fails rather than drop the only copy of the edits.
+/// Owns the app model and the window; Quit waits for the open document's save,
+/// and refuses when it fails rather than drop the only copy of the edits.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// For window restoration, which asks a class for the window.
+    private(set) static weak var shared: AppDelegate?
     let app = AppModel()
+    private(set) lazy var mainWindow = MainWindowController(app: app)
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
 
     /// Before the first window, so it never shows in the other appearance.
     func applicationWillFinishLaunching(_ notification: Notification) {
         AppAppearance.saved.apply()
+    }
+
+    /// After state restoration, which may have made the window already.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        mainWindow.start()
+    }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        true
+    }
+
+    /// Open With and Dock drops: imported only once the copy is agreed to.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let url = urls.first(where: AppModel.canOpen) { app.pendingImport = url }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { mainWindow.showWindow(nil) }
+        return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -48,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        mainWindow.workspace?.saveSizes()
         // Compiles run in their own process groups; nothing else stops them.
         Core.shared.killAll()
     }
@@ -78,74 +100,50 @@ extension View {
     }
 }
 
-/// The window: the projects, or the open project.
-struct RootView: View {
-    @Environment(AppModel.self) private var app
-    /// Restored with the window.
-    @SceneStorage("workspace") private var savedWorkspace: Data?
+extension View {
+    /// The window's own sheets, alerts and dialogs, whichever screen shows:
+    /// File › Open…, New Project…, an item handed to the app, and `AppModel.alert`.
+    func windowModals() -> some View {
+        modifier(WindowModals())
+    }
+}
 
-    var body: some View {
+private struct WindowModals: ViewModifier {
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
         @Bindable var app = app
-        // A ZStack, not a Group, so the modifiers below apply once, not per branch.
-        ZStack {
-            if let project = app.project {
-                WorkspaceView(project: project)
-            } else {
-                HomeView()
+        content
+            .alert(app.pendingImport.map { "Copy “\($0.lastPathComponent)” into Your Projects?" } ?? "",
+                   item: $app.pendingImport) { url in
+                Button("Copy and Open") { Task { await app.importProject(from: url) } }
+                    .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("TeXLocal opens the copy as a new project. The original stays where it is.")
             }
-        }
-        // Constant: a minimum that changes mid-layout loops the split (27.2).
-        .frame(minWidth: WindowMetrics.contentMinimum.width, minHeight: WindowMetrics.contentMinimum.height)
-        .task {
-            // Only the alert below has anything to show.
-            guard Core.shared.isOpen else { return }
-            await app.refresh()
-            let saved = savedWorkspace.flatMap { try? JSONDecoder().decode(SavedWorkspace.self, from: $0) }
-                .flatMap { saved in app.projects.contains { $0.id == saved.project } ? saved : nil }
-            if let id = app.takeLaunchProject() ?? saved?.project, app.project == nil, !app.isOpening {
-                await app.open(id, restoring: saved)
-            }
-        }
-        // Nil once the project closes, so the next launch shows the projects.
-        .onChange(of: app.project?.saved) { _, saved in
-            savedWorkspace = saved.flatMap { try? JSONEncoder().encode($0) }
-        }
-        // Open With and Dock drops: imported only once the copy is agreed to.
-        .onOpenURL { url in
-            if AppModel.canOpen(url) { app.pendingImport = url }
-        }
-        .alert(app.pendingImport.map { "Copy “\($0.lastPathComponent)” into Your Projects?" } ?? "",
-               item: $app.pendingImport) { url in
-            Button("Copy and Open") { Task { await app.importProject(from: url) } }
-                .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("TeXLocal opens the copy as a new project. The original stays where it is.")
-        }
-        // Installing TeX takes effect without a restart, whichever screen shows.
-        .task(id: app.tex?.available) { await app.watchForTeX() }
-        // On a view of its own: a file dialog's labels reach every dialog
-        // presented from the view they're set on.
-        .background {
-            Color.clear
-                .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
-                    switch result {
-                    case .success(let url): Task { await app.importProject(from: url) }
-                    case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+            // On a view of its own: a file dialog's labels reach every dialog
+            // presented from the view they're set on.
+            .background {
+                Color.clear
+                    .fileImporter(isPresented: $app.openingProject, allowedContentTypes: AppModel.openableTypes) { result in
+                        switch result {
+                        case .success(let url): Task { await app.importProject(from: url) }
+                        case .failure(let error): app.alert = AppAlert("Couldn’t Open the Project", error)
+                        }
                     }
-                }
-                .fileDialogConfirmationLabel("Open")
-                .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
-        }
-        .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
-        .alert($app.alert)
-        // Say why and quit, rather than crash with a report that explains nothing.
-        .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
-            Button("Quit") { NSApp.terminate(nil) }
-        } message: {
-            let folder = (Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-            Text("Make sure you can create and write to \(folder), then open TeXLocal again.")
-        }
+                    .fileDialogConfirmationLabel("Open")
+                    .fileDialogMessage("Choose a project folder, a .tex file or a .zip. TeXLocal copies it into your projects.")
+            }
+            .sheet(item: $app.newProjectTemplate) { NewProjectSheet(template: $0.id) }
+            .alert($app.alert)
+            // Say why and quit, rather than crash with a report that explains nothing.
+            .alert("Couldn’t Open the Library Folder", isPresented: .constant(!Core.shared.isOpen)) {
+                Button("Quit") { NSApp.terminate(nil) }
+            } message: {
+                let folder = (Core.libraryFolder.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+                Text("Make sure you can create and write to \(folder), then open TeXLocal again.")
+            }
     }
 }
 
@@ -158,13 +156,4 @@ extension View {
             Text(alert.message)
         }
     }
-}
-
-enum WindowMetrics {
-    /// The content's minimum, below the toolbar: every column at its own. Fixed,
-    /// not per state: a minimum that changes mid-layout loops the split (27.2).
-    static let contentMinimum = CGSize(width: ColumnMetrics.contentMinimumWidth, height: 548)
-    /// Fits the smallest current Mac display's default resolution (1470 × 956)
-    /// with the menu bar and Dock.
-    static let projectDefault = CGSize(width: 1200, height: 760)
 }

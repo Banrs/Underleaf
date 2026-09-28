@@ -1,42 +1,48 @@
 import SwiftUI
 
-/// The sidebar: project search over the files, over the open document's outline.
-struct NavigatorView: View {
-    /// The folded outline's height, the status bar's, so the divider over it
-    /// continues the status bar's hairline.
-    static var outlineHeaderHeight: CGFloat { BarMetrics.secondaryBarHeight }
-    @Environment(AppModel.self) private var app
+/// The sidebar's search field, over the files: Find in Project….
+struct SidebarSearch: View {
     @Bindable var project: ProjectModel
-    @FocusState private var searchFocused: Bool
-    @AppStorage(DefaultsKey.outlineCollapsed) private var outlineCollapsed = false
-    @State private var fold = OutlineFold(collapsed: UserDefaults.standard.bool(forKey: DefaultsKey.outlineCollapsed))
+    let field: FieldHandle
 
     var body: some View {
-        SidebarSplit(app: app, autosave: "OutlineSplit",
-                     top: SidebarPane(minimum: 100),
-                     bottom: SidebarPane(minimum: 80, fraction: 0.45, keepsSize: true, shown: showsOutline,
-                                         collapsed: outlineCollapsed ? Self.outlineHeaderHeight : nil,
-                                         didFold: { [fold] folded in fold.slid(folded: folded) })) {
-            FilesList(project: project)
-        } bottomContent: {
-            // Takes no drops: files go into the list above.
-            OutlineList(project: project, fold: fold, collapsed: $outlineCollapsed)
-        }
-        .onChange(of: outlineCollapsed) { _, collapsed in fold.collapsed = collapsed }
-        .searchable(text: $project.searchQuery, placement: .sidebar, prompt: "Search Project")
-        .searchFocused($searchFocused)
-        .onChange(of: app.searchFocusToken) { _, _ in searchFocused = true }
+        SearchField(text: $project.searchQuery, prompt: "Search Project", handle: field)
+            .padding(.horizontal, BarMetrics.inset)
+            .padding(.bottom, BarMetrics.inset)
+            .controlSize(BarMetrics.controlSize)
     }
+}
 
-    /// Search results take the whole sidebar.
-    private var showsOutline: Bool {
-        project.searchQuery.isEmpty && project.isLaTeX
+/// The File Outline folded to its header, at the Files pane's foot, the status
+/// bar's height so the two read as one bar. Choosing it unfolds the outline.
+struct OutlineFoldedBar: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Button {
+            app.outlineCollapsed = false
+        } label: {
+            HStack {
+                Text("File Outline")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, SidebarSelection.inset + SidebarSelection.leading)
+            .frame(height: BarMetrics.secondaryBarHeight)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show File Outline")
     }
 }
 
 /// The project's files, or the project search's results while there is a
 /// query.
-private struct FilesList: View {
+struct FilesList: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
     @State private var selection: String?
@@ -312,12 +318,11 @@ private func draggedFiles(_ accepts: (URL) -> Bool) -> Bool {
     return urls?.contains(where: accepts) ?? false
 }
 
-/// The open document's sections; the header's chevron folds the pane to its header.
-/// Rows stay while the pane slides shut and fill before it opens (OutlineFold), so they ride with it.
-private struct OutlineList: View {
+/// The open document's sections; the header's chevron folds the pane to its
+/// header (`OutlineFoldedBar`). Takes no drops: files go into the list above.
+struct OutlineList: View {
+    @Environment(AppModel.self) private var app
     let project: ProjectModel
-    let fold: OutlineFold
-    @Binding var collapsed: Bool
     @Environment(\.sidebarRowSize) private var rowSize
     /// Folded headings, by file and `Outline.foldKeys`.
     @State private var folded = Set(UserDefaults.standard.stringArray(forKey: DefaultsKey.outlineFolded) ?? [])
@@ -341,7 +346,8 @@ private struct OutlineList: View {
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
         ScrollViewReader { proxy in
             List {
-                Section("File Outline", isExpanded: Binding(get: { fold.rowsShown }, set: { collapsed = !$0 })) {
+                Section("File Outline", isExpanded: Binding(get: { !app.outlineCollapsed },
+                                                            set: { app.outlineCollapsed = !$0 })) {
                     if outline.isEmpty {
                         Text("No Sections").foregroundStyle(.secondary)
                     } else {
@@ -352,8 +358,6 @@ private struct OutlineList: View {
             }
             .listStyle(.sidebar)
             .environment(\.sidebarRowSize, outlineRowSize)
-            // Centres the header in the docked bar when folded.
-            .padding(.top, BarMetrics.spacing)
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
             .onChange(of: project.topLine) { _, top in line = top }
             // The current heading always shows: its sections open, then the
@@ -372,32 +376,6 @@ private struct OutlineList: View {
                 UserDefaults.standard.set(Array(folded.subtracting(stale)).sorted(), forKey: DefaultsKey.outlineFolded)
             }
         }
-    }
-}
-
-/// Whether the outline's section shows its rows: until a fold has slid the pane
-/// to its header, so the rows ride down with it.
-@Observable
-final class OutlineFold {
-    /// Kept in step by the owning view. Filling the rows is unanimated, before
-    /// the pane slides open.
-    @ObservationIgnored var collapsed: Bool {
-        didSet {
-            if oldValue, !collapsed { withTransaction(Transaction(animation: nil)) { rowsShown = true } }
-        }
-    }
-    private(set) var rowsShown: Bool
-
-    init(collapsed: Bool) {
-        self.collapsed = collapsed
-        rowsShown = !collapsed
-    }
-
-    /// A fold or unfold has finished sliding, or happened at once while the
-    /// pane was out of the sidebar.
-    func slid(folded: Bool) {
-        guard folded == collapsed else { return }
-        withTransaction(Transaction(animation: nil)) { rowsShown = !folded }
     }
 }
 

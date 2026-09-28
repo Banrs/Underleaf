@@ -204,62 +204,38 @@ struct MenuStructureTests {
     }
 }
 
-/// Edit › Find's items reach the pane with the keyboard through
-/// `FindMenuResponder`, by the item's tag.
+/// Edit › Find's items go down the responder chain to the window, which routes
+/// them to the pane with the keyboard (`MainWindowController`).
 @MainActor
-struct FindMenuResponderTests {
-    @Test func theItemsTagPicksTheAction() {
-        let responder = FindMenuResponder.Responder()
-        var done: [NSTextFinder.Action] = []
-        responder.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
-        let item = NSMenuItem(title: "Find Next", action: #selector(FindMenuResponder.Responder.performFindPanelAction(_:)),
-                              keyEquivalent: "g")
-        item.tag = NSTextFinder.Action.nextMatch.rawValue
-        #expect(responder.validateMenuItem(item))
-        responder.performFindPanelAction(item)
-        #expect(done == [.nextMatch])
-        // A Find the pane can't do is off.
-        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
-        #expect(!responder.validateMenuItem(item))
-    }
-
-    /// It joins its window's responder chain, after the window, and leaves
-    /// it as it was.
-    @Test func itJoinsAndLeavesTheResponderChain() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: true)
-        let next = NSResponder()
-        window.nextResponder = next
-        let anchor = FindMenuResponder.Anchor()
-        window.contentView?.addSubview(anchor)
-        #expect(window.nextResponder === anchor.responder)
-        #expect(anchor.responder.nextResponder === next)
-        anchor.removeFromSuperview()
-        #expect(window.nextResponder === next)
-    }
-
-    /// A find bar's field leaves the Find items to its pane; a filter's
-    /// keeps the window's field editor.
-    @Test func aFindBarsFieldPassesFindOn() throws {
-        let find = SearchField.FocusingSearchField(), window = NSWindow()
-        let cell = find.cell as? SearchField.FindFieldCell
-        cell?.passesFind = true
-        let editor = try #require(cell?.fieldEditor(for: find))
-        #expect(editor.isFieldEditor)
-        let pane = FindMenuResponder.Responder()
-        var done: [NSTextFinder.Action] = []
-        pane.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
-        editor.nextResponder = pane
+struct FindRoutingTests {
+    /// A find bar's field editor passes the items on, where the shared one
+    /// would take them and turn them off.
+    @Test func aFindFieldsEditorPassesFindOn() {
+        let editor = FindFieldEditor()
+        editor.isFieldEditor = true
+        let window = Responder()
+        editor.nextResponder = window
         let item = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)),
                               keyEquivalent: "g")
         item.tag = NSTextFinder.Action.nextMatch.rawValue
         #expect(editor.validateMenuItem(item))
         editor.performFindPanelAction(item)
-        #expect(done == [.nextMatch])
+        #expect(window.done == [.nextMatch])
+        // A Find the pane can't do is off.
         item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
         #expect(!editor.validateMenuItem(item))
-        editor.nextResponder = nil
-        cell?.passesFind = false
-        window.contentView?.addSubview(find)
-        #expect(cell?.fieldEditor(for: find) !== editor)
+    }
+
+    /// Stands in for the window: answers every Find item but Replace.
+    private final class Responder: NSResponder, NSMenuItemValidation {
+        var done: [NSTextFinder.Action] = []
+
+        @objc func performFindPanelAction(_ sender: Any?) {
+            if let tag = (sender as? NSMenuItem)?.tag, let action = NSTextFinder.Action(rawValue: tag) { done.append(action) }
+        }
+
+        func validateMenuItem(_ item: NSMenuItem) -> Bool {
+            item.tag != NSTextFinder.Action.showReplaceInterface.rawValue
+        }
     }
 }

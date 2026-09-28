@@ -187,14 +187,12 @@ enum Prompt: String, Identifiable {
 
 /// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
-}
+    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print, share
 
-/// Edit › Find's items for the pane with the keyboard; nil disables an item.
-typealias FindActions = (NSTextFinder.Action) -> (() -> Void)?
-
-extension FocusedValues {
-    @Entry var find: FindActions?
+    /// Share… works on the file, whether or not the PDF shows.
+    var showsPDF: Bool {
+        if case .share = self { false } else { true }
+    }
 }
 
 extension AppModel {
@@ -264,7 +262,7 @@ extension AppModel {
         case .editUndo: undo(redo: false, project)
         case .editRedo: undo(redo: true, project)
         // Chords from the editor page; the menu's own Find items are the
-        // system's (`FindMenuResponder`).
+        // system's, which reach the window (`MainWindowController.performFindPanelAction`).
         case .editFind: project?.findAction(.showFindInterface)?()
         case .editFindAndReplace: project?.findAction(.showReplaceInterface)?()
         case .editFindNext: project?.findAction(.nextMatch)?()
@@ -319,9 +317,9 @@ extension AppModel {
 
 struct AppCommands: Commands {
     let app: AppModel
-    /// Nil on the projects screen and in Settings, which turns the project items off.
-    @FocusedValue(ProjectModel.self) private var project
-    @AppStorage(DefaultsKey.outlineCollapsed) private var outlineCollapsed = false
+    /// Nil on the projects screen, and while Settings or a sheet is key, which
+    /// turns the project items off.
+    private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
         Button(app.title(command, on: project)) { app.perform(command, on: project) }
@@ -368,7 +366,7 @@ struct AppCommands: Commands {
             item(.projectExport)
             Divider()
             // Not a MenuCommand: the web has no command id for it.
-            Button("Share…") { project?.sharePDF() }
+            Button("Share…") { app.requestPDF(.share) }
                 .disabled(!(project?.hasPDF ?? false))
         }
         CommandGroup(replacing: .printItem) {
@@ -399,7 +397,7 @@ struct AppCommands: Commands {
             item(.viewToggleSidebar)
             // Not a MenuCommand: the web has no command id for it. The keyboard's
             // and VoiceOver's way to the sidebar header's fold.
-            Button(outlineCollapsed ? "Show File Outline" : "Hide File Outline") { outlineCollapsed.toggle() }
+            Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || !app.sidebarVisible)
             item(.viewTogglePdf)
             item(.viewToggleProjectSettings)
@@ -434,79 +432,6 @@ struct AppCommands: Commands {
             Divider()
             item(.syncForward)
             item(.syncInverse)
-        }
-    }
-}
-
-/// Routes Edit › Find's `performFindPanelAction:` (whose tag SwiftUI drops) to
-/// the pane with the keyboard. AppKit: a responder after the window catches
-/// what PDFView ignores, and one before the web view stops WebKit's find bar,
-/// which `findDisabled` doesn't (27.2) and which sees only drawn lines.
-struct FindMenuResponder: NSViewRepresentable {
-    let find: FindActions
-
-    func makeNSView(context: Context) -> Anchor { Anchor() }
-
-    func updateNSView(_ anchor: Anchor, context: Context) {
-        anchor.responder.find = find
-        anchor.webResponder.find = find
-    }
-
-    final class Anchor: NSView {
-        let responder = Responder()
-        let webResponder = Responder()
-        private weak var chained: NSWindow?
-        private weak var web: WKWebView?
-        private var focus: NSKeyValueObservation?
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard window !== chained else { return }
-            if let chained {
-                // Found by walking: something may have joined the chain after it.
-                var link: NSResponder = chained
-                while let next = link.nextResponder, next !== responder { link = next }
-                if link.nextResponder === responder { link.nextResponder = responder.nextResponder }
-            }
-            if let web, web.nextResponder === webResponder { web.nextResponder = webResponder.nextResponder }
-            chained = window
-            focus = nil
-            if let window {
-                responder.nextResponder = window.nextResponder
-                window.nextResponder = responder
-                focus = window.observe(\.firstResponder, options: .initial) { [weak self] window, _ in
-                    MainActor.assumeIsolated { self?.front(window.firstResponder) }
-                }
-            }
-        }
-
-        /// Again each time the web view is rehosted, which resets its next responder.
-        private func front(_ first: NSResponder?) {
-            guard let web = first as? WKWebView, web.nextResponder !== webResponder else { return }
-            webResponder.nextResponder = web.nextResponder
-            web.nextResponder = webResponder
-            self.web = web
-        }
-    }
-
-    final class Responder: NSResponder, NSMenuItemValidation {
-        var find: FindActions?
-
-        @objc func performFindPanelAction(_ sender: Any?) {
-            action(for: sender)?()
-        }
-
-        func validateMenuItem(_ item: NSMenuItem) -> Bool {
-            item.action != #selector(performFindPanelAction(_:)) || action(for: item) != nil
-        }
-
-        /// The item's tag is the `NSTextFinder.Action` it asks for.
-        private func action(for sender: Any?) -> (() -> Void)? {
-            guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag,
-                  let action = NSTextFinder.Action(rawValue: tag) else { return nil }
-            return find?(action)
         }
     }
 }

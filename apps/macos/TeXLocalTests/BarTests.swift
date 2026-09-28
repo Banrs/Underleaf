@@ -33,9 +33,9 @@ struct PaneBarLayoutTests {
 struct FindBarTests {
     /// One row is a pane bar's height; the replace row adds at least a control's.
     @Test func aFindBarIsABarsHeight() {
-        let find = FindBar(query: .constant("the"), prompt: "Find in PDF", focus: 0, matches: FindMatches(),
+        let find = FindBar(query: .constant("the"), prompt: "Find in PDF", field: FieldHandle(), matches: FindMatches(),
                            searched: "the", step: { _ in }, close: {})
-        let replace = FindBar(query: .constant("the"), prompt: "Find", focus: 0, matches: FindMatches(),
+        let replace = FindBar(query: .constant("the"), prompt: "Find", field: FieldHandle(), matches: FindMatches(),
                               searched: "the", step: { _ in }, close: {}) {
             GridRow {
                 TextField("Replace", text: .constant("")).textFieldStyle(.bordered)

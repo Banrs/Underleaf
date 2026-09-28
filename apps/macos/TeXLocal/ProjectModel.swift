@@ -32,11 +32,6 @@ final class ProjectModel {
     /// For Go to Page's range.
     var pdfPageCount = 0
     @ObservationIgnored var restorePDFPage: Int?
-    /// The PDF toolbar's Share button, where File › Share… anchors its picker.
-    @ObservationIgnored weak var shareAnchor: NSView?
-    /// File › Share…'s fallback anchor when the Share button isn't on screen;
-    /// set by the PDF column.
-    @ObservationIgnored weak var window: NSWindow?
     var panelTab: PanelTab = .issues
 
     /// A failed build always names an issue (the core falls back to
@@ -858,7 +853,7 @@ final class ProjectModel {
 
 /// Where a project was left, in the window's scene storage. Pane visibility
 /// and sizes are in the defaults instead.
-struct SavedWorkspace: Codable, Equatable {
+nonisolated struct SavedWorkspace: Codable, Equatable {
     var project: String
     var file: String?
     var line: Int
@@ -893,7 +888,7 @@ struct ImportClash {
 }
 
 /// How the PDF on screen differs from the source.
-enum PDFFreshness {
+nonisolated enum PDFFreshness {
     case edited
     /// The latest build failed; this is the one before it.
     case lastSuccessful

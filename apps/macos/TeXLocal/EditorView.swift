@@ -1,101 +1,50 @@
 import SwiftUI
 import WebKit
 
-/// A project's editor page, its appearance kept in step with the system and Settings.
-struct EditorView: View {
+/// The project's editor page, one web view the bridge keeps; SwiftUI may rebuild
+/// this wrapper, which only hosts it.
+struct EditorView: NSViewRepresentable {
     let bridge: EditorBridge
+
+    func makeNSView(context: Context) -> WKWebView { bridge.webView }
+
+    func updateNSView(_ view: WKWebView, context: Context) {}
+}
+
+/// The source column: the editor, or a preview or placeholder over it. It
+/// carries the workspace's sheets and alerts, being the one pane always shown.
+struct SourceColumn: View {
+    let project: ProjectModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font: EditorFont = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-    @FocusState private var focused: Bool
 
     var body: some View {
+        // The editor stays mounted under a preview or the placeholder, so its
+        // page keeps the text and its place.
+        let editing = project.openPath != nil && project.editsText
         let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
-        WebView(bridge.page)
-            // The page draws the text's surface.
-            .webViewContentBackground(.hidden)
-            // A text editor: no page zoom, history swipes or link previews.
-            .webViewMagnificationGestures(.disabled)
-            .webViewBackForwardNavigationGestures(.disabled)
-            .webViewLinkPreviews(.disabled)
-            .focused($focused)
-            .onChange(of: bridge.focusRequest) { focused = true }
-            .task(id: appearance) { await bridge.setAppearance(appearance) }
-    }
-}
-
-/// The source column: the source, the build panel below it, and the status bar.
-struct EditorArea: View {
-    @Environment(AppModel.self) private var app
-    @Bindable var project: ProjectModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            editors
-            // Stacked, not overlaid: an overlaid bar hid the editors' last lines.
-            Divider()
-            StatusBar(project: project)
-        }
-        .toolbar(id: "source") { toolbar }
-    }
-
-    private var editors: some View {
-        SplitController(app: app, axis: .vertical, autosave: "PanelSplit", panes: [
-            SplitPane(minimum: 120) { SourcePane(project: project) },
-            // At most two fifths: in a small window the source keeps the room.
-            SplitPane(minimum: 80, maxFraction: 0.4, fraction: 0.25, keepsSize: true, shown: project.showLogs) {
-                PanelView(project: project)
-            },
-        ])
-    }
-
-    /// Back and the title lead (HIG, Toolbars); while the PDF is hidden the system
-    /// moves its column's items here.
-    @ToolbarContentBuilder
-    private var toolbar: some CustomizableToolbarContent {
-        // Back only: one level, no history to go forward through (HIG, Toolbars).
-        ToolbarItem(id: "back", placement: .navigation) {
-            Button { app.perform(.projectClose, on: project) } label: {
-                Label("Projects", systemImage: "chevron.backward")
-            }
-            .help("Back to Projects")
-        }
-        .customizationBehavior(.disabled)
-        SourceToolbar(app: app, project: project)
-    }
-}
-
-/// The source, under its find bar while that shows.
-private struct SourcePane: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
-
-    var body: some View {
-        PaneStack(finding: project.findShown) {
-            SourceFindBar(project: project)
-        } content: {
-            // The editor stays mounted under a preview or the placeholder: a
-            // WebPage attaches to one WebView, once (27.2).
-            let editing = project.openPath != nil && project.editsText
-            ZStack {
-                EditorView(bridge: project.editor)
-                    .opacity(editing ? 1 : 0)
-                    .allowsHitTesting(editing)
-                    .accessibilityHidden(!editing)
-                if project.openPath != nil, !project.editsText, let url = project.openURL {
-                    FilePreview(url: url)
-                        .background(.background)
-                } else if project.openPath == nil {
-                    ContentUnavailableView("No File Open", systemImage: "doc.text",
-                                           description: Text("Choose a file in the sidebar."))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.background)
-                }
+        ZStack {
+            EditorView(bridge: project.editor)
+                .opacity(editing ? 1 : 0)
+                .allowsHitTesting(editing)
+                .accessibilityHidden(!editing)
+            if project.openPath != nil, !project.editsText, let url = project.openURL {
+                FilePreview(url: url)
+                    .background(.background)
+            } else if project.openPath == nil {
+                ContentUnavailableView("No File Open", systemImage: "doc.text",
+                                       description: Text("Choose a file in the sidebar."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.background)
             }
         }
+        .task(id: appearance) { await project.editor.setAppearance(appearance) }
+        .workspaceModals(project)
+        .windowModals()
     }
 }
 
@@ -153,9 +102,9 @@ private struct FilePreview: View {
     }
 }
 
-/// Shows and hides the build panel, at the bottom bar's far end, as panel toggles sit
-/// at their window's edge: the PDF's part's end, or the source's while the PDF is hidden.
-struct BuildPanelToggle: View {
+/// Shows and hides the build panel, at the status bar's far end, as a panel's
+/// toggle sits at its window's edge.
+private struct BuildPanelToggle: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
@@ -169,12 +118,15 @@ struct BuildPanelToggle: View {
     }
 }
 
-/// The source's part of the bottom bar (HIG, Windows: a status bar), level with the
-/// PDF's (`PDFStatusBar`): the build's summary, the save state and the caret. Items
-/// drop whole, least important first (ViewThatFits); none moves while a build runs.
-private struct StatusBar: View {
+/// The status bar under the source and the PDF (HIG, Windows): the build's summary
+/// and the save state; the caret; the engine and the PDF's page, which opens Go to
+/// Page; and the build panel's toggle at the far end. The PDF's own page numbers,
+/// not LaTeX's (front matter and roman numbers differ). When the bar is narrow the
+/// counts give way first.
+struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
+    let pdf: PDFController
 
     var body: some View {
         SecondaryBar(spacing: 0) {
@@ -186,42 +138,44 @@ private struct StatusBar: View {
                 buildStatus
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
-            ToolSeparator()
-            ViewThatFits(in: .horizontal) {
-                items(save: true, counts: true)
-                items(save: true, counts: false)
-                items(save: false, counts: false)
-            }
-            .foregroundStyle(.secondary)
-            // The bar's far end is here while the PDF is hidden.
-            if !project.showPDF {
+            // A preview has no save state or caret.
+            if project.editsText {
                 ToolSeparator()
-                BuildPanelToggle(project: project)
+                Text(project.status)
+                    .foregroundStyle(.secondary)
+                    .layoutPriority(-1)
             }
+            Spacer(minLength: BarMetrics.itemSpacing)
+            if project.editsText {
+                HStack(spacing: BarMetrics.itemSpacing) {
+                    Text("Line \(project.cursorLine)")
+                    if app.showWordCount, let counts = project.counts {
+                        Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
+                            .layoutPriority(-2)
+                    }
+                }
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            }
+            if let engine = project.settings?.engine {
+                ToolSeparator()
+                Text(texEngineName(engine))
+                    .foregroundStyle(.secondary)
+            }
+            if project.showPDF, project.pdfVersion > 0, pdf.pageCount > 0 {
+                ToolSeparator()
+                Button("Page \(pdf.page) of \(pdf.pageCount)") { app.perform(.pdfGotoPage, on: project) }
+                    .monospacedDigit()
+                    .help("Go to Page")
+            }
+            ToolSeparator()
+            BuildPanelToggle(project: project)
         }
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
-    }
-
-    private func items(save: Bool, counts showCounts: Bool) -> some View {
-        HStack(spacing: BarMetrics.itemSpacing) {
-            // A preview has no save state.
-            if save, project.editsText {
-                Text(project.status)
-            }
-            Spacer(minLength: 0)
-            if project.editsText {
-                Text("Line \(project.cursorLine)").monospacedDigit()
-                if showCounts, app.showWordCount, let counts = project.counts {
-                    Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
-                        .monospacedDigit()
-                }
-            }
-        }
-        .lineLimit(1)
     }
 
     /// Only the symbols carry colour; the words stay secondary.

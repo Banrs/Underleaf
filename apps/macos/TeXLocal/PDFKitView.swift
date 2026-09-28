@@ -18,12 +18,17 @@ nonisolated enum PDFMetrics {
     static let linkType = String(PDFAnnotationSubtype.link.rawValue.dropFirst())
 }
 
-/// What the pane's controls and the menus ask of the PDF view.
+/// What the toolbar, the find bar and the menus ask of the PDF view.
 @Observable
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView?
     var page = 0
     var pageCount = 0
+    /// Find in PDF: whether its bar shows, and what's typed in it (searched
+    /// once typing pauses).
+    var finding = false
+    var findText = ""
+    @ObservationIgnored let findField = FieldHandle()
     /// The query the matches are for, normalised.
     private(set) var query = ""
     var matches: [PDFSelection] = []
@@ -110,6 +115,15 @@ final class PDFController {
         view.highlightedSelections = matches.isEmpty ? nil : matches
         view.clearSelection()
         show()
+    }
+
+    /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
+    /// highlights with it; the keyboard goes back to the pages.
+    func closeFind() {
+        finding = false
+        findText = ""
+        find("")
+        if let view { view.window?.makeFirstResponder(view) }
     }
 
     func step(_ delta: Int) {

@@ -84,26 +84,6 @@ struct SecondaryBar<Content: View>: View {
     }
 }
 
-/// A pane's find bar stacked over its content; overlaid, it hid the text under it.
-struct PaneStack<Find: View, Content: View>: View {
-    let finding: Bool
-    @ViewBuilder var find: Find
-    @ViewBuilder var content: Content
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if finding {
-                find
-                    // A dissolve with Reduce Motion (HIG, Motion).
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-            }
-            content
-        }
-        .animation(.snappy(duration: NSAnimationContext.current.duration), value: finding)
-    }
-}
-
 /// NSSegmentedControl (.tabs role): SwiftUI's tabs picker moved its thumb on hover (27.2).
 struct TabsControl<Value: Hashable>: NSViewRepresentable {
     let title: String
@@ -147,11 +127,13 @@ struct ToolSeparator: View {
 }
 
 /// The source's and the PDF's find bar, with the source's replace row under it.
-/// Return and Shift-Return step, Escape closes.
+/// Return and Shift-Return step, Escape closes. It lives in its pane's top
+/// accessory, which keeps it in the window while hidden, so `field` can take the
+/// keyboard at once.
 struct FindBar<Replace: View>: View {
     @Binding var query: String
     let prompt: String
-    let focus: Int
+    let field: FieldHandle
     var options: [SearchOption] = []
     let matches: FindMatches
     /// The query the matches are for, which the count reads.
@@ -164,7 +146,7 @@ struct FindBar<Replace: View>: View {
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
             GridRow {
-                SearchField(text: $query, prompt: prompt, focus: focus, options: options, step: step, close: close)
+                SearchField(text: $query, prompt: prompt, handle: field, options: options, step: step, close: close)
                     .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
                 HStack(spacing: BarMetrics.groupSpacing) {
                     ControlGroup {
@@ -175,7 +157,11 @@ struct FindBar<Replace: View>: View {
                     }
                     .disabled(matches.total == 0)
                     .fixedSize()
-                    FindCount(label: matches.label(for: searched))
+                    // The first to give way in a narrow pane.
+                    Text(matches.label(for: searched))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .layoutPriority(-1)
                     Button("Done") { close() }
                 }
                 .gridColumnAlignment(.trailing)
@@ -188,9 +174,9 @@ struct FindBar<Replace: View>: View {
 }
 
 extension FindBar where Replace == EmptyView {
-    init(query: Binding<String>, prompt: String, focus: Int, matches: FindMatches, searched: String,
+    init(query: Binding<String>, prompt: String, field: FieldHandle, matches: FindMatches, searched: String,
          step: @escaping @MainActor (Int) -> Void, close: @escaping @MainActor () -> Void) {
-        self.init(query: query, prompt: prompt, focus: focus, matches: matches, searched: searched,
+        self.init(query: query, prompt: prompt, field: field, matches: matches, searched: searched,
                   step: step, close: close) { EmptyView() }
     }
 }
@@ -212,25 +198,29 @@ extension CheckedItem where Label == Text {
     }
 }
 
-/// A find bar's match count, left out when the bar hasn't the room.
-struct FindCount: View {
-    let label: String
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .fixedSize()
-            EmptyView()
-        }
-    }
-}
-
 /// A choice in a search field's own menu (Match Case, Whole Words…).
 struct SearchOption {
     let title: String
     let isOn: Binding<Bool>
+}
+
+/// A search field the window can give the keyboard to: the field registers
+/// itself here as it's made.
+final class FieldHandle {
+    fileprivate(set) weak var field: NSSearchField?
+
+    /// Takes the keyboard, its text selected, so typing replaces the query.
+    func focus() {
+        guard let field, let window = field.window else { return }
+        if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    /// Whether it, or its field editor, has the keyboard.
+    var hasFocus: Bool {
+        guard let field, let first = field.window?.firstResponder else { return false }
+        return first === field || first === field.currentEditor()
+    }
 }
 
 /// NSSearchField in a bar: SwiftUI has search fields only as `.searchable`.
@@ -238,14 +228,13 @@ struct SearchOption {
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
-    var focus = 0
+    var handle: FieldHandle?
     var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
-        var focus = 0
         /// The options' states the field's menu was last made with.
         var optionStates: [Bool]?
 
@@ -279,77 +268,16 @@ struct SearchField: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    /// Takes focus once in a window: ⌘F makes the find bar in the same update
-    /// that asks for focus.
-    final class FocusingSearchField: NSSearchField {
-        var wantsFocus = false
-
-        override class var cellClass: AnyClass? {
-            get { FindFieldCell.self }
-            set { super.cellClass = newValue }
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if wantsFocus { takeFocus() }
-        }
-
-        /// After this turn: the key press or menu item that asked is still being
-        /// handled, and the editor it came from would keep first responder.
-        func takeFocus() {
-            wantsFocus = true
-            guard window != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.wantsFocus, let window = self.window else { return }
-                self.wantsFocus = false
-                if window.firstResponder !== self.currentEditor() { window.makeFirstResponder(self) }
-                self.currentEditor()?.selectAll(nil)
-            }
-        }
-    }
-
-    /// A find bar's own field editor, which passes Edit › Find's items to the
-    /// pane (`FindMenuResponder`); the shared field editor answers and disables them.
-    final class FindFieldCell: NSSearchFieldCell {
-        var passesFind = false
-        private lazy var findEditor: NSTextView = {
-            let editor = FindFieldEditor()
-            editor.isFieldEditor = true
-            return editor
-        }()
-
-        override func fieldEditor(for controlView: NSView) -> NSTextView? {
-            passesFind ? findEditor : super.fieldEditor(for: controlView)
-        }
-    }
-
-    final class FindFieldEditor: NSTextView {
-        override func performFindPanelAction(_ sender: Any?) {
-            nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
-        }
-
-        override func validateMenuItem(_ item: NSMenuItem) -> Bool {
-            guard let action = item.action, action == #selector(NSTextView.performFindPanelAction(_:)) else {
-                return super.validateMenuItem(item)
-            }
-            // The chain from the next responder; NSApp.target(forAction:) starts
-            // at the first responder, which is this editor.
-            let target = nextResponder.flatMap { first in
-                sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
-            }
-            guard let target else { return false }
-            return (target as? NSMenuItemValidation)?.validateMenuItem(item) ?? true
-        }
-    }
-
     func makeNSView(context: Context) -> NSSearchField {
-        let view = FocusingSearchField()
-        // Only a find bar's: a filter has no matches to step.
-        (view.cell as? FindFieldCell)?.passesFind = step != nil
+        let view = NSSearchField()
+        // A find bar's: its field editor passes Edit › Find's items on
+        // (`FindFieldEditor`); a filter has no matches to step.
+        if step != nil { view.identifier = FindFieldEditor.fieldIdentifier }
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.search(_:))
+        handle?.field = view
         return view
     }
 
@@ -361,6 +289,7 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ view: NSSearchField, context: Context) {
         let coordinator = context.coordinator
         coordinator.field = self
+        handle?.field = view
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
@@ -381,10 +310,30 @@ struct SearchField: NSViewRepresentable {
             }
             view.searchMenuTemplate = menu
         }
-        if coordinator.focus != focus {
-            coordinator.focus = focus
-            (view as? FocusingSearchField)?.takeFocus()
+    }
+}
+
+/// A find bar's field editor, which the window hands its find fields: it passes
+/// Edit › Find's items on to the window (`MainWindowController`), where the shared
+/// field editor would answer them itself and turn them off.
+final class FindFieldEditor: NSTextView {
+    static let fieldIdentifier = NSUserInterfaceItemIdentifier("findField")
+
+    override func performFindPanelAction(_ sender: Any?) {
+        nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
+    }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let action = item.action, action == #selector(NSTextView.performFindPanelAction(_:)) else {
+            return super.validateMenuItem(item)
         }
+        // The chain from the next responder; NSApp.target(forAction:) starts
+        // at the first responder, which is this editor.
+        let target = nextResponder.flatMap { first in
+            sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
+        }
+        guard let target else { return false }
+        return (target as? NSMenuItemValidation)?.validateMenuItem(item) ?? true
     }
 }
 
@@ -514,7 +463,7 @@ extension TextSelection {
 
 #Preview("Find bar") {
     @Previewable @State var query = "theorem"
-    FindBar(query: $query, prompt: "Find", focus: 0, matches: FindMatches(index: 3, total: 12),
+    FindBar(query: $query, prompt: "Find", field: FieldHandle(), matches: FindMatches(index: 3, total: 12),
             searched: query, step: { _ in }, close: {})
         .frame(width: 480)
 }

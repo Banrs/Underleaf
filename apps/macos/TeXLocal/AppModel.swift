@@ -15,6 +15,8 @@ enum DefaultsKey {
     static let outlineFolded = "OutlineFolded"
     static let settingsTab = "settingsTab"
     static let appearance = "appearance"
+    /// Pane sizes set by dragging a divider (`PaneSize`).
+    static let paneSizes = "PaneSizes"
 
     /// Registered defaults aren't persisted, so this runs at every launch.
     static func register() {
@@ -91,6 +93,15 @@ final class AppModel {
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
+    /// The sidebar's File Outline folded to its header.
+    var outlineCollapsed: Bool {
+        didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
+    }
+    /// Set by the window: the menus act on the project only while its window
+    /// is key, not behind Settings or a sheet.
+    var mainWindowIsKey = false
+    /// The project the menus act on.
+    var commandProject: ProjectModel? { mainWindowIsKey ? project : nil }
     /// Not remembered: a popover doesn't outlive the app.
     var showProjectSettings = false
     /// Newest first, by id.
@@ -109,6 +120,7 @@ final class AppModel {
         sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
@@ -118,9 +130,9 @@ final class AppModel {
     }
 
     /// Shows the PDF column too, so the action happens now rather than when
-    /// the column next appears.
+    /// the column next appears. The workspace takes each request once.
     func requestPDF(_ action: PDFAction) {
-        project?.showPDF = true
+        if action.showsPDF { project?.showPDF = true }
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }

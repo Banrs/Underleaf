@@ -6,13 +6,15 @@ import UniformTypeIdentifiers
 import WebKit
 
 /// A project's CodeMirror editor page; the protocol is web/src/embed/editor.js.
+/// A plain `WKWebView`, not SwiftUI's `WebView`: that one's adapter answers Edit ›
+/// Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn,
+/// where a plain web view passes the menu's find items on to the window.
 @Observable
-final class EditorBridge: NSObject, WKScriptMessageHandler {
+final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let scheme = "texlocal-app"
 
-    let page: WebPage
-    /// Bumped to ask the editor's view to take keyboard focus.
-    private(set) var focusRequest = 0
+    /// Made once per project and moved between hosts as SwiftUI rebuilds them.
+    @ObservationIgnored let webView: WKWebView
     @ObservationIgnored var onChanged: () -> Void = {}
     @ObservationIgnored var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
@@ -40,63 +42,69 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     /// The file the page shows: messages about another are stale.
     @ObservationIgnored private var openPath: String?
     @ObservationIgnored private let controller = WKUserContentController()
-    @ObservationIgnored private var crashWatch: Task<Void, Never>?
     @ObservationIgnored private var colorToken: NotificationCenter.ObservationToken?
     @ObservationIgnored private var closed = false
 
     private static let log = Logger(subsystem: "com.texlocal.mac", category: "editor")
 
     override init() {
-        var config = WebPage.Configuration()
-        config.urlSchemeHandlers[URLScheme(Self.scheme)!] = WebFiles()
+        let config = WKWebViewConfiguration()
+        config.setURLSchemeHandler(WebFiles(), forURLScheme: Self.scheme)
         config.userContentController = controller
-        page = WebPage(configuration: config, navigationDecider: Links())
+        webView = WKWebView(frame: .zero, configuration: config)
         super.init()
         controller.add(self, name: "texlocal")
+        webView.navigationDelegate = self
+        // A text editor: no page zoom, history swipes or link previews.
+        webView.allowsMagnification = false
+        webView.allowsBackForwardNavigationGestures = false
+        webView.allowsLinkPreview = false
+        webView.setAccessibilityLabel("Source")
+        // Until the page draws its own surface: a web view paints white before then.
+        webView.isHidden = true
         #if DEBUG
-        page.isInspectable = true
+        webView.isInspectable = true
         #endif
         colorToken = NotificationCenter.default.addObserver(of: NSColor.self, for: .systemColorsDidChange) { [weak self] _ in
             guard let self, let appearance = self.appearance else { return }
             Task { await self.setAppearance(appearance) }
         }
-        page.load(URL(string: "\(Self.scheme)://app/embed/editor.html")!)
-        crashWatch = Task { await watchForCrashes() }
+        webView.load(URLRequest(url: URL(string: "\(Self.scheme)://app/embed/editor.html")!))
     }
 
     /// Lets the page and its web process go: the content controller holds
     /// its message handler (this) strongly.
     func close() {
         closed = true
-        crashWatch?.cancel()
         if let colorToken { NotificationCenter.default.removeObserver(colorToken) }
         controller.removeScriptMessageHandler(forName: "texlocal")
+        webView.navigationDelegate = nil
         // The page won't say it's ready now; release what waits on it.
         becomeReady()
     }
 
-    private func watchForCrashes() async {
-        while true {
-            do {
-                for try await _ in page.navigations {}
-                return
-            } catch WebPage.NavigationError.webContentProcessTerminated {
-                ready = false
-                restarting = true
-                crashes += 1
-                onCrash()
-                page.reload()
-            } catch WebPage.NavigationError.failedProvisionalNavigation(let error) {
-                fail(error)
-                return
-            } catch WebPage.NavigationError.invalidURL {
-                fail(URLError(.badURL))
-                return
-            } catch {
-                // `.pageClosed`, or the task was cancelled.
-                return
-            }
+    // ---------- navigation ----------
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !closed else { return }
+        ready = false
+        restarting = true
+        crashes += 1
+        onCrash()
+        webView.reload()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        fail(error)
+    }
+
+    /// Links never navigate the editor page; web and mail links open in their apps.
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        if action.request.url?.scheme == Self.scheme { return .allow }
+        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme) {
+            NSWorkspace.shared.open(url)
         }
+        return .cancel
     }
 
     private func fail(_ error: any Error) {
@@ -136,7 +144,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     private func run(_ method: PageMethod, _ args: KeyValuePairs<String, Any>) async -> Any? {
         let (body, arguments) = Self.script(method, args)
         do {
-            return try await page.callJavaScript(body, arguments: arguments, contentWorld: .page)
+            return try await webView.callAsyncJavaScript(body, arguments: arguments, contentWorld: .page)
         } catch {
             #if DEBUG
             Self.log.debug("texlocal.\(method.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -250,8 +258,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         return "rgb(\(rgb.joined(separator: " ")) / \(c.alphaComponent))"
     }
 
+    /// Keyboard focus to the text, once the web view is in a window.
     func focus() {
-        focusRequest += 1
+        webView.window?.makeFirstResponder(webView)
     }
 
     // ---------- page → host ----------
@@ -304,6 +313,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
 
     private func becomeReady() {
         ready = true
+        webView.isHidden = false
         whenReady.forEach { $0.resume() }
         whenReady.removeAll()
     }
@@ -366,18 +376,6 @@ enum EditorPrefs {
     static let fontSize = Int(NSFont.systemFontSize)
 }
 
-/// Links never navigate the editor page; web and mail links open in their apps.
-private struct Links: WebPage.NavigationDeciding {
-    func decidePolicy(for action: WebPage.NavigationAction,
-                      preferences: inout WebPage.NavigationPreferences) async -> WKNavigationActionPolicy {
-        if action.request.url?.scheme == EditorBridge.scheme { return .allow }
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme) {
-            NSWorkspace.shared.open(url)
-        }
-        return .cancel
-    }
-}
-
 /// The source's search, as CodeMirror's `SearchQuery` takes it.
 struct FindQuery: Equatable {
     var search = ""
@@ -420,25 +418,23 @@ struct FindMatches: Equatable {
 }
 
 /// The texlocal-app: scheme, serving the bundled web/.
-private struct WebFiles: URLSchemeHandler {
-    func reply(for request: URLRequest) -> AsyncThrowingStream<URLSchemeTaskResult, any Error> {
-        AsyncThrowingStream { continuation in
-            guard let resources = Bundle.main.resourceURL else {
-                continuation.finish(throwing: URLError(.fileDoesNotExist))
-                return
-            }
-            let root = resources.appending(path: "web", directoryHint: .isDirectory)
-            let file = root.appending(path: request.url?.path ?? "").standardizedFileURL
-            // Only files inside web/: the request path is untrusted.
-            guard let url = request.url, file.path.hasPrefix(root.standardizedFileURL.path + "/"),
-                  let data = try? Data(contentsOf: file) else {
-                continuation.finish(throwing: URLError(.fileDoesNotExist))
-                return
-            }
-            let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-            continuation.yield(.response(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)))
-            continuation.yield(.data(data))
-            continuation.finish()
+private final class WebFiles: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let resources = Bundle.main.resourceURL, let url = task.request.url else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
         }
+        let root = resources.appending(path: "web", directoryHint: .isDirectory)
+        let file = root.appending(path: url.path).standardizedFileURL
+        // Only files inside web/: the request path is untrusted.
+        guard file.path.hasPrefix(root.standardizedFileURL.path + "/"), let data = try? Data(contentsOf: file) else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
+        }
+        let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
+        task.didReceive(data)
+        task.didFinish()
     }
+
+    /// Each reply is whole and at once: nothing is left to stop.
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 }
