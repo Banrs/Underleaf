@@ -173,8 +173,8 @@ struct InspectorView: View {
         Form {
             Section("Project") {
                 let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
-                picker("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
-                picker("Engine", project.settings?.engine ?? "", texEngines, set: project.setEngine)
+                picker("Main File", project.settings?.mainFile, texFiles.map { ($0, $0) }, set: project.setMainFile)
+                picker("Engine", project.settings?.engine, texEngines, set: project.setEngine)
                 toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
                        project.settings?.shellEscape ?? false, set: project.setShellEscape)
                 toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
@@ -214,10 +214,13 @@ struct InspectorView: View {
         .monospacedDigit()
     }
 
-    private func picker(_ title: String, _ value: String, _ options: [(String, String)],
+    /// The current value is always a choice, before the settings come (nil) or the
+    /// main file is in the file list: a selection with no tag is a SwiftUI fault.
+    private func picker(_ title: String, _ value: String?, _ options: [(String, String)],
                         set: @escaping (String) async -> Void) -> some View {
-        Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
-            ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+        Picker(title, selection: Binding(get: { value }, set: { new in if let new { Task { await set(new) } } })) {
+            ForEach(options, id: \.0) { Text($0.1).tag(Optional($0.0)) }
+            if !options.contains(where: { $0.0 == value }) { Text(value ?? "").tag(value) }
         }
     }
 
