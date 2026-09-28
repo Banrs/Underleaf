@@ -98,7 +98,8 @@ final class WorkspaceController: NSSplitViewController {
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? sidebar.view.frame.width : 0
         let room = max(size.width - sidebarWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
-        let pdfWidth = (room * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
+        let share = (room * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
+        let pdfWidth = min(max(share, ColumnMetrics.pdfMinimum), room - ColumnMetrics.sourceMinimum)
         let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: room - pdfWidth))
@@ -452,7 +453,8 @@ private nonisolated struct OutlineState: Equatable {
 }
 
 /// Column and pane limits. Each minimum is its content's: the toolbar is the
-/// system's to fit, its tools crossing a divider or going into its overflow menu.
+/// system's to fit, its tools crossing a divider or going into its overflow menu
+/// near the window's minimum.
 enum ColumnMetrics {
     static let sidebarWidth: ClosedRange<CGFloat> = 200...320
     /// UI kit: the window sidebar is 256 pt.
