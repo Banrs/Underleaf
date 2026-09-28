@@ -1,20 +1,19 @@
+import Foundation
 import Testing
-import XCTest
 @testable import TeXLocal
 
 /// The project folder's watcher: a write in place, a save over a file (a new
 /// one renamed over it) and a delete then recreate are all told, by path;
 /// items coming and going in a subfolder are told as structural.
 @MainActor
-final class FolderWatcherTests: XCTestCase {
-    private var folder: URL!
+final class FolderWatcherTests {
+    private let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
 
-    override func setUp() async throws {
-        folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    init() throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
-    override func tearDown() async throws {
+    isolated deinit {
         try? FileManager.default.removeItem(at: folder)
     }
 
@@ -25,7 +24,7 @@ final class FolderWatcherTests: XCTestCase {
         return (watcher, { told.filter { watcher.relativePath($0.path) == path } })
     }
 
-    func testChangesInPlaceAndByReplacementAreBothTold() async throws {
+    @Test func changesInPlaceAndByReplacementAreBothTold() async throws {
         let url = folder.appending(path: "main.tex")
         try "one".write(to: url, atomically: false, encoding: .utf8)
         let (watcher, changes) = watch("main.tex")
@@ -42,7 +41,7 @@ final class FolderWatcherTests: XCTestCase {
         _ = watcher
     }
 
-    func testAFileDeletedThenRecreatedIsStillTold() async throws {
+    @Test func aFileDeletedThenRecreatedIsStillTold() async throws {
         let url = folder.appending(path: "main.tex")
         try "one".write(to: url, atomically: false, encoding: .utf8)
         let (watcher, changes) = watch("main.tex")
@@ -57,7 +56,7 @@ final class FolderWatcherTests: XCTestCase {
         _ = watcher
     }
 
-    func testAnItemAddedInASubfolderIsStructural() async throws {
+    @Test func anItemAddedInASubfolderIsStructural() async throws {
         try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
         let (watcher, changes) = watch("chapters/one.tex")
 
@@ -67,40 +66,41 @@ final class FolderWatcherTests: XCTestCase {
     }
 }
 
+/// The Rust core through its C ABI, in the scheme's scratch library
+/// (`TEXLOCAL_DATA`). Projects are removed, not trashed: `delete_project`
+/// trashes through Finder, which a headless test host can't drive, and the
+/// core's own tests cover it.
 @MainActor
-final class CoreTests: XCTestCase {
-    func testCommandsRoundTripThroughTheRustCore() async throws {
-        // The test scheme points TEXLOCAL_DATA at a scratch library.
-        XCTAssertNotNil(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+struct CoreTests {
+    init() throws {
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+    }
+
+    @Test func commandsRoundTripThroughTheRustCore() async throws {
         let core = Core.shared
-        let name = "XCTest \(UUID().uuidString.prefix(8))"
+        let name = "Test \(UUID().uuidString.prefix(8))"
         let info = try await core.call("create_project", ["name": name, "template": "blank"], as: ProjectInfo.self)
-        XCTAssertEqual(info.mainFile, "main.tex")
+        defer { try? FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id)) }
+        #expect(info.mainFile == "main.tex")
 
         try await core.perform("write_file", ["id": info.id, "path": "a.tex", "text": "hé"])
         let file = try await core.call("read_file", ["id": info.id, "path": "a.tex"], as: FileText.self)
-        XCTAssertEqual(file.text, "hé")
+        #expect(file.text == "hé")
 
         let tree = try await core.call("file_tree", ["id": info.id], as: [TreeNode].self)
-        XCTAssertTrue(tree.contains { $0.path == "a.tex" })
+        #expect(tree.contains { $0.path == "a.tex" })
 
-        do {
+        // A path outside the project is refused.
+        let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
-            XCTFail("a path outside the project must be refused")
-        } catch let error as CoreError {
-            XCTAssertEqual(error.status, 400)
         }
-
-        // Not delete_project: it trashes through Finder, which a headless
-        // test host can't drive. The core's own tests cover it.
-        try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))
+        #expect(error?.status == 400)
     }
 
     /// Every template the projects screen offers is one the core can make.
-    func testEveryTemplateMakesAProject() async throws {
-        XCTAssertNotNil(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+    @Test func everyTemplateMakesAProject() async throws {
         for template in ProjectTemplate.all {
-            let name = "XCTest \(template.id) \(UUID().uuidString.prefix(8))"
+            let name = "Test \(template.id) \(UUID().uuidString.prefix(8))"
             let info = try await Core.shared.call("create_project", ["name": name, "template": template.id],
                                                   as: ProjectInfo.self)
             try FileManager.default.removeItem(at: Core.libraryFolder.appending(path: info.id))

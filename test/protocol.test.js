@@ -51,6 +51,20 @@ test('the palettes, fonts and appearances the native apps offer are the web\'s',
   assert.deepEqual(list('Fonts'), prefChoices('editorFont'));
 });
 
+// The Mac's menu has every command the web declares, by the web's id, but
+// the web's own (Settings… is the Settings scene's; the interface size is the
+// system's). Its extras are the Mac menu bar's own. The chords are the table
+// both read (shortcuts.json).
+test('the Mac menu has every web command', () => {
+  const web = new Set(all(source('web/src/workspace.js'), /\{ id: '([^']+)'/g));
+  const webOnly = ['app.settings', 'view.uiScaleUp', 'view.uiScaleDown'];
+  const macOnly = ['project.open', 'file.pageSetup', 'file.print', 'edit.findAndReplace', 'view.toggleInspector',
+    'view.toggleWordCount', 'view.actualSize', 'compile.stop', 'pdf.gotoPage'];
+  const mac = swiftRawValues(source('apps/macos/TeXLocal/Commands.swift'), 'MenuCommand');
+  assert.deepEqual(new Set(mac.filter((id) => !macOnly.includes(id))), new Set([...web].filter((id) => !webOnly.includes(id))));
+  for (const id of macOnly) assert.ok(!web.has(id), id);
+});
+
 // The Mac reads shortcuts.json itself; Windows keeps a copy in its command
 // table, `[MenuCommand.X] = ("id", "Title", "accel")`, beside chords of its own.
 test('Windows keeps the shared accelerators', () => {

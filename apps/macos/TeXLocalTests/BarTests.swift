@@ -1,6 +1,5 @@
 import SwiftUI
 import Testing
-import XCTest
 @testable import TeXLocal
 
 /// The accessory bars measured off screen, with no window shown.
@@ -50,15 +49,16 @@ struct FindBarTests {
     }
 }
 
+/// Where a path is after its entry or a folder above it is renamed.
 @MainActor
-final class RenameTests: XCTestCase {
-    func testTheOpenFileMovesWithItsFolder() {
-        XCTAssertEqual(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex"), "ch/start.tex")
-        XCTAssertEqual(remapPath("ch/intro.tex", from: "ch", to: "chapters"), "chapters/intro.tex")
-        XCTAssertEqual(remapPath("ch/a/b.tex", from: "ch/a", to: "x"), "x/b.tex")
+struct RemapPathTests {
+    @Test func theOpenFileMovesWithItsFolder() {
+        #expect(remapPath("ch/intro.tex", from: "ch/intro.tex", to: "ch/start.tex") == "ch/start.tex")
+        #expect(remapPath("ch/intro.tex", from: "ch", to: "chapters") == "chapters/intro.tex")
+        #expect(remapPath("ch/a/b.tex", from: "ch/a", to: "x") == "x/b.tex")
         // A sibling that shares the prefix is not inside the folder.
-        XCTAssertEqual(remapPath("chapter.tex", from: "ch", to: "chapters"), "chapter.tex")
-        XCTAssertEqual(remapPath("main.tex", from: "ch", to: "chapters"), "main.tex")
+        #expect(remapPath("chapter.tex", from: "ch", to: "chapters") == "chapter.tex")
+        #expect(remapPath("main.tex", from: "ch", to: "chapters") == "main.tex")
     }
 }
 

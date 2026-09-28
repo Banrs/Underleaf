@@ -13,6 +13,11 @@ func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async t
     }
 }
 
+/// Two lengths equal to within half a point, as layout rounds them.
+func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool {
+    abs(a - b) <= tolerance
+}
+
 /// A regular push button's fitting height, as the system draws it.
 @MainActor
 func regularControlHeight() -> CGFloat {

@@ -1,85 +1,55 @@
 import SwiftUI
 import Testing
-import XCTest
 @testable import TeXLocal
 
+/// The commands' chords: the shared table's (web/src/shortcuts.json) and the
+/// Mac's own. `test/protocol.test.js` holds the command ids to the web's.
 @MainActor
-final class CommandTests: XCTestCase {
-    func testAcceleratorsBecomeMenuShortcuts() {
-        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Return"), KeyboardShortcut(.return, modifiers: .command))
-        XCTAssertEqual(MenuCommand.shortcut(for: "Ctrl+Shift+Return"), KeyboardShortcut(.return, modifiers: [.control, .shift]))
-        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Plus"), KeyboardShortcut("=", modifiers: .command))
-        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Shift+\\"), KeyboardShortcut("\\", modifiers: [.command, .shift]))
-        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F"), KeyboardShortcut("f", modifiers: [.command, .option]))
+struct MenuCommandTests {
+    @Test func acceleratorsBecomeMenuShortcuts() {
+        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Return") == KeyboardShortcut(.return, modifiers: .command))
+        #expect(MenuCommand.shortcut(for: "Ctrl+Shift+Return") == KeyboardShortcut(.return, modifiers: [.control, .shift]))
+        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Plus") == KeyboardShortcut("=", modifiers: .command))
+        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Shift+\\") == KeyboardShortcut("\\", modifiers: [.command, .shift]))
+        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F") == KeyboardShortcut("f", modifiers: [.command, .option]))
     }
 
     /// The build copies the shared table in; without it every shared chord is gone.
-    func testTheSharedTableIsInTheApp() {
-        XCTAssertEqual(MenuCommand.compileRun.accel, "CmdOrCtrl+Return")
-        XCTAssertEqual(MenuCommand.editBold.shortcut, KeyboardShortcut("b", modifiers: .command))
+    @Test func theSharedTableIsInTheApp() {
+        #expect(MenuCommand.compileRun.accel == "CmdOrCtrl+Return")
+        #expect(MenuCommand.editBold.shortcut == KeyboardShortcut("b", modifiers: .command))
     }
 
-    func testEveryAcceleratorParses() {
+    @Test func everyAcceleratorParses() {
         for command in MenuCommand.allCases {
             for accel in [command.accel, command.macAccel].compactMap(\.self) {
-                XCTAssertNotNil(MenuCommand.shortcut(for: accel), command.rawValue)
+                #expect(MenuCommand.shortcut(for: accel) != nil, "\(command.rawValue)")
             }
         }
     }
 
-    func testNoTwoCommandsShareAMacChord() {
+    @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
             guard let shortcut = command.shortcut else { continue }
-            XCTAssertNil(seen[shortcut], "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
+            #expect(seen[shortcut] == nil, "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
             seen[shortcut] = command
         }
     }
 
-    func testTheEditorKeepsTheChordsItImplements() {
+    @Test func theEditorKeepsTheChordsItImplements() {
         let ids = Set(MenuCommand.editorHostKeys.map(\.id))
-        XCTAssertTrue(ids.contains("compile.run"))
-        XCTAssertTrue(ids.contains("edit.gotoLine"))
-        XCTAssertTrue(ids.contains("view.zoomIn"))
-        XCTAssertFalse(ids.contains("edit.find"))
-        XCTAssertFalse(ids.contains("edit.findNext"))
-        XCTAssertFalse(ids.contains("edit.findPrevious"))
-        XCTAssertFalse(ids.contains("edit.comment"))
-        XCTAssertFalse(ids.contains("edit.undo"))
-        XCTAssertFalse(ids.contains("edit.redo"))
+        for id in ["compile.run", "edit.gotoLine", "view.zoomIn"] {
+            #expect(ids.contains(id), "\(id)")
+        }
+        for id in ["edit.find", "edit.findNext", "edit.findPrevious", "edit.comment", "edit.undo", "edit.redo"] {
+            #expect(!ids.contains(id), "\(id)")
+        }
         // The Mac's own chords, which the page would otherwise see first.
         for id in ["project.open", "edit.findAndReplace", "view.toggleInspector", "view.actualSize", "compile.stop",
                    "file.pageSetup", "file.print"] {
-            XCTAssertTrue(ids.contains(id), id)
+            #expect(ids.contains(id), "\(id)")
         }
-    }
-
-    /// web/src/workspace.js, copied into the scratch folder by the test scheme:
-    /// reading ~/Documents from the test host prompts for access after every build.
-    private func webWorkspace() throws -> URL {
-        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
-        return URL(fileURLWithPath: data).appendingPathComponent("workspace.js")
-    }
-
-    /// Settings… is the Settings scene's own; the interface size is the system's.
-    private let webOnly: Set<String> = ["app.settings", "view.uiScaleUp", "view.uiScaleDown"]
-
-    /// Open… reads a folder from disk; the rest are the Mac menu bar's own.
-    private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
-                                              .viewToggleInspector, .viewToggleWordCount, .viewActualSize,
-                                              .compileStop, .pdfGotoPage]
-
-    /// The menu has every other command the web declares. Their chords are
-    /// the one table both read (web/src/shortcuts.json).
-    func testTheMenuHasEveryWebCommand() throws {
-        let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
-        var ids: Set<String> = []
-        for line in source.split(separator: "\n") {
-            guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
-            ids.insert(String(match.1))
-        }
-        XCTAssertEqual(Set(MenuCommand.allCases.filter { !macOnly.contains($0) }.map(\.rawValue)), ids.subtracting(webOnly))
-        XCTAssertTrue(macOnly.allSatisfy { !ids.contains($0.rawValue) })
     }
 }
 
