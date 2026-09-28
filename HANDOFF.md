@@ -1,17 +1,27 @@
 # Handoff: TeXLocal
 
-## Status (2026-09-28)
+## Status (2026-09-29)
 
-- `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
-- `claude/macos-polish` (not pushed) is the Mac polish pass: one window with a back button, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
-- **`claude/macos-polish` (not pushed): a clean-up pass over the whole Mac app** (short WHY comments, magic numbers named or taken from the system, fragile tricks replaced). `c700d05` is a snapshot with a measured toolbar fold (`ToolbarFit`); later commits drop the fold: each column's minimum is its content's and the toolbar is the system's to fit (below). Defaults keys live in `DefaultsKey`; split sizes in `PaneSizes`; the file watcher is FSEvents. Later still, the Mac UI layer was rewritten (AppKit window, split and toolbar; SwiftUI panes; below), then given an inspector, a Stop with a spinner, and toolbar menus hosted from the menu bar's SwiftUI items. The window's minimums are now the panes' own (the sidebar folds first), and both side columns open at AppKit's 270 pt inspector width. Debug and Release build with no Swift warnings and the tests pass.
-- PR #11 (`claude/windows-parity`: the Fluent redesign, WebView2 recovery, a trimmed SDK, an Inno Setup installer) is merged into `main`, and `main` into `claude/macos-polish`.
-- Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
+- **`main`** has PR #11 (`claude/windows-parity`: the Fluent redesign, WebView2 recovery, a trimmed SDK, an Inno Setup installer). Its macOS CI run fails in the old SwiftUI split's panel test, which the Mac rewrite below replaces.
+- **`claude/macos-polish`** (pushed, `main` merged in) is the Mac app's rewrite and polish:
+  - AppKit owns the window, split and toolbar; SwiftUI draws the panes.
+  - One window, with a back button to the projects screen, and an inspector.
+  - Compile turns to Stop with a spinner.
+  - The toolbar's menus are the menu bar's own SwiftUI items.
+  - Divider detents with the alignment haptic.
+  - Tests in Swift Testing.
+  - Files are named for what they hold.
+- **Mac CI passes** (`b5f4a69`, the runner's macOS 27.0), for the first time since the rewrite. The first run showed the layout tests had never run on the runner's small screen, or on 27.0. Two fixes came of it: `UnclampedWindow`, and Show PDF holding its kept width, which also fixed a real 27.0 bug.
+- **Last full check (2026-09-29):** `npm test` (87); the Mac's 51 tests; Debug and Release builds with no Swift warnings. `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace` pass, and the core hasn't changed since.
+- **Windows is a work in progress** (the owner, 2026-09-29): leave `apps/windows` alone, including changes the core or the web would need there.
 
 ## Layout
 
 One Rust core (`crates/`) under three clients:
-- **macOS** (`apps/macos`): SwiftUI, deployment target macOS 27.0, Swift 6 with Approachable Concurrency and main-actor default isolation, as Xcode 27's App template sets them. CI builds with Xcode 27 on the `xcode-27` runner image.
+- **macOS** (`apps/macos`):
+  - AppKit and SwiftUI, deployment target macOS 27.0.
+  - Swift 6 with Approachable Concurrency and main-actor default isolation, as Xcode 27's App template sets them.
+  - CI builds with Xcode 27 on the `xcode-27` runner image (macOS 27.0).
 - **Windows** (`apps/windows`): WinUI 3, C#.
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
@@ -20,69 +30,109 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Architecture
 
-- **`Service::call(cmd, json)`** (`crates/texlocal-core/src/service.rs`) is the one JSON command table every host forwards to. Nothing that takes raw bytes or a host-chosen absolute path belongs in it, because the browser server exposes it. `set_tex_dir` and `list_dirs` are the exception.
+- **`Service::call(cmd, json)`** (`crates/texlocal-core/src/service.rs`) is the one JSON command table every host forwards to.
+  - Nothing that takes raw bytes or a host-chosen absolute path belongs in it, because the browser server exposes it.
+  - `set_tex_dir` and `list_dirs` are the exception.
 - **FFI** (`crates/texlocal-ffi`, header in `include/`): `tl_open`, `tl_call` (blocking, so call it off the main thread), `tl_free`, `tl_close`. Native-only commands: `pdf_path`, `raw_path`, `project_root`, `export_zip`, `import_files`, `import_project`, `kill_all`.
 - **Hosts:**
   - the Mac (`Core.swift`) and Windows (`Core.cs`) link the FFI;
   - the browser server calls `Service` directly, and `web/src/bridge.js` is its client;
   - Tauri forwards to one `call` command;
   - `serve.rs` serves `__pdf` / `__raw`.
-- **`analyze`** (`analyze.rs`): outline, words and lines, ported from the web's `analyzeDoc` (`web/src/state.js`), which stays the source of truth. `crates/texlocal-core/tests/fixtures/analyze.json` is checked by both `cargo test` and `test/analyze.test.js`.
+- **`analyze`** (`analyze.rs`): outline, words and lines.
+  - Ported from the web's `analyzeDoc` (`web/src/state.js`), which stays the source of truth.
+  - `crates/texlocal-core/tests/fixtures/analyze.json` is checked by both `cargo test` and `test/analyze.test.js`.
 - **Atomic saves** (`atomic.rs`): write a temporary file beside the target, sync it, then rename it over the target.
-- **Embed protocol:** the host calls `window.texlocal`. The page posts `ready`, `changed`, `cursor`, `scroll` and `command` (plus find messages on the Mac). Insert blocks are named by id; their LaTeX is in `BLOCK_TEMPLATES` (`web/src/latex-data.js`), which `test/blocks.test.js` checks.
+- **Embed protocol:** the host calls `window.texlocal`.
+  - The page posts `ready`, `changed`, `cursor`, `scroll` and `command` (plus find messages on the Mac).
+  - `getDocument()` answers `{ path, text }`; a Mac save writes only the text of the file it read.
+  - Insert blocks are named by id; their LaTeX is in `BLOCK_TEMPLATES` (`web/src/latex-data.js`), which `test/blocks.test.js` checks.
+- **Commands and chords:** accelerators live in `web/src/shortcuts.json`, which the web and the Mac read.
+  - `test/protocol.test.js` holds the Mac's and Windows' copies (commands, palettes, fonts, accelerators) to the web's.
+  - It also checks that the Mac menu has every web command, less the web-only ones it lists.
 
 ## Build, test, run
 
-- **Web and core:** `npm install`, `npm test`, `npm run build`, `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`. `npm run serve` runs the browser version; `npm run app` runs Tauri.
+- **Web and core:**
+  - `npm install`, `npm test`, `npm run build`.
+  - `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+  - `npm run serve` runs the browser version; `npm run app` runs Tauri.
 - **macOS:** `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -derivedDataPath <dd> build` (or `test`).
   - Pre-build runs `cargo build -p texlocal-ffi`. Post-compile runs `npm run build` and copies the embed into `Resources/web`.
   - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
-  - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed.
+  - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed. `apps/macos/scripts/add-source.py app|tests Name.swift` registers a new file with both.
+- **Mac tests** are Swift Testing (`TeXLocalTests/`), one file per area:
+  - `WorkspaceLayoutTests`: the split, on screen and unseen;
+  - `CommandTests`: chords, the menu bar, Find routing;
+  - `ProjectTests`: the file watcher, the core, project flows;
+  - `DocumentTests`: SyncTeX, the outline, find;
+  - `BarTests`;
+  - `SettingsTests`.
+
+  The scheme runs them one suite at a time (`parallelizable = NO`) in the scratch library `TEXLOCAL_DATA=/tmp/texlocal-xctest`. Run them under `caffeinate -d -i -u`: the split tests need an awake, unlocked display.
 - **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -default-isolation MainActor -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: the `xcode-27` runner (macOS 27, in preview; there is no `macos-27` label) and the XCTests;
+  - `macos-app.yml`: the `xcode-27` runner (macOS 27.0, in preview; there is no `macos-27` label) and the Mac tests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
-- **Mac Debug build on screen:** run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>`.
-  - It shares the `com.texlocal.mac` defaults and window state with the installed app, so export them first and import them after.
-  - Unregister scratch builds afterwards (`lsregister -u <app>`), or the Dock and Spotlight can open a stale copy.
+- **A Mac Debug build on screen, beside the installed app:**
+  - Build it with `PRODUCT_BUNDLE_IDENTIFIER=com.texlocal.mac.check`, so its defaults and window state are its own.
+  - Run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>` (add `-ApplePersistenceIgnoreState YES` for a clean window).
+  - Afterwards run `lsregister -u <app>` (or the Dock and Spotlight can open a stale copy) and `defaults delete com.texlocal.mac.check`.
+  - Capture it by window id (`screencapture -l`), choosing the process's largest window: it also owns a blank helper window.
   - Pressing Accessibility elements by substring can hit menu-bar items (it once opened System Settings); match exact titles within the window.
+- **The test host is the app, with the app's defaults** (`com.texlocal.mac`). Export them before a run and compare them after; the suites put back what they change.
 
 ## macOS app (`apps/macos/TeXLocal`)
 
 **Design:** AppKit owns the window, its split and its toolbar; SwiftUI draws every pane and bar inside them. The models (`AppModel`, `ProjectModel`, `PDFController`) drive the AppKit side through `track(_:initial:_:)` (`MainWindow.swift`), which uses Swift Observation's `Observations`.
 
 **Files:**
-- `TeXLocalApp`: the `@main` App, whose only scene is Settings, and its commands. The `AppDelegate` owns the main window (`MainWindowController`), quits after it closes, and holds Quit until the open file is saved. `windowModals()` hosts the window's sheets and alerts, and `alert(_:)` shows any `AppAlert`.
-- `MainWindow`: `MainWindowController`, the one window. It shows the projects screen (`HomeView` in an `NSHostingController`, whose SwiftUI toolbar, title and search are bridged in) until a project opens, then that project's `WorkspaceController` and toolbar. It also handles restoration (the `SavedWorkspace` JSON in the window's restorable state, frame autosave "Main Window") and Edit › Find routing. `WindowMetrics` holds the window's sizes; `track` is here.
-- `WorkspaceController`: nested `NSSplitViewController`s. The sidebar item holds files over the File Outline; the middle item holds source | PDF over the build panel, and the panel spans both; the inspector (`NSSplitViewItem(inspectorWithViewController:)`, AppKit's fixed 270 pt, its divider taking no drag) is the trailing column. The sidebar opens at the same width and drags from 200 to 400 pt. Bars are split-item accessories:
-  - the sidebar's search field;
-  - the find bars;
-  - the folded outline's bar;
-  - the status bar, at the foot of source + PDF.
-
-  It also has `ColumnMetrics` (column and pane limits) and `PaneSize` (sizes in the `PaneSizes` defaults dictionary).
-- `WorkspaceToolbar`: the `NSToolbar`. The sidebar section holds the toggle. The source section holds back, the title, B I and Insert. The PDF section, from an `NSTrackingSeparatorToolbarItem` on the source/PDF divider, holds zoom, Share, Compile (`.prominent`; Stop with a spinner while a build runs, at the same width, on clear glass) and the PDF toggle. The inspector section, from the system's `.inspectorTrackingSeparator`, holds the system's `.toggleInspector`. Customize Toolbar adds Undo, Redo, Section Level, Math and the templates. Its menus are `NSHostingMenu`s over the menu bar's SwiftUI items (`InsertMenuItems`, `SymbolItems`, `SectionLevelItems`, `ScaleMenuItems`).
-- `WorkspaceView`: `workspaceModals` (the project's sheets and alerts), the sheets, and `InspectorView` (a grouped `Form`: the project's settings, the open file's facts, the build's).
-- `EditorView`: the source column (the editor, a file preview or no file) and the `StatusBar`.
-- `EditorBridge`: a project's editor, a plain `WKWebView`.
-- `SourceBars`: the source's find bar and the Format and Insert menus' pieces.
-- `PDFPane`: the PDF column and its find bar.
-- `PDFKitView`: `PDFController` and the `PDFView` wrapper.
-- `LogsView`: the build panel.
+- `TeXLocalApp`: the `@main` App, whose only scene is Settings.
+  - The `AppDelegate` owns the main window, quits after it closes, and holds Quit until the open file is saved.
+  - `windowModals()` hosts the window's sheets and alerts, and `alert(_:)` shows any `AppAlert`.
+- `MainWindow`: `MainWindowController`, the one window.
+  - It shows the projects screen (`HomeView` in an `NSHostingController`, whose SwiftUI toolbar, title and search are bridged in) until a project opens, then that project's `WorkspaceController` and toolbar.
+  - It handles restoration (the `SavedWorkspace` JSON in the window's restorable state, frame autosave "Main Window") and Edit › Find routing.
+  - Also here: `WindowMetrics` (the window's sizes) and `track`.
+- `WorkspaceController`: nested split view controllers.
+  - The sidebar item holds files over the File Outline.
+  - The middle item holds source | PDF (`columns`) over the build panel, which spans both.
+  - The inspector is the trailing column: `NSSplitViewItem(inspectorWithViewController:)`, AppKit's fixed 270 pt, whose divider takes no drag.
+  - The sidebar opens at the same 270 pt and drags from 200 to 400 pt.
+  - Bars are split-item accessories: the sidebar's search field, the find bars, the folded outline's bar, and the status bar at the foot of source + PDF.
+  - Also here: `DetentSplitViewController` (the dividers' detents), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
+- `WorkspaceToolbar`: the `NSToolbar`.
+  - The sidebar section holds the toggle.
+  - The source section holds back, the title, B I and Insert.
+  - The PDF section, from an `NSTrackingSeparatorToolbarItem` on the source/PDF divider, holds zoom, Share and Compile. Compile is `.prominent`; while a build runs it's Stop with a spinner, at the same width, on clear glass (`CompileButton`).
+  - The inspector section, from the system's `.inspectorTrackingSeparator`, holds the PDF toggle and the system's `.toggleInspector`. They sit over the inspector, or at the trailing edge while it's shut, so the columns' toggles keep to the window's edges.
+  - Customize Toolbar adds Undo, Redo, Section Level, Math and the templates.
+  - Its menus are `NSHostingMenu`s over the menu bar's SwiftUI items.
+- `MenuItems`: `SectionLevelItems`, `SymbolItems` and `InsertMenuItems`, shared by the menu bar and the toolbar. `ScaleMenuItems` is in `PDFPane`.
+- `WorkspaceModals`: the project's sheets and alerts (`workspaceModals`), New File or Folder, Go to Line and Go to Page.
+- `InspectorView`: a grouped `Form` with the project's settings, the open file's facts and the build's.
+- `SourceColumn`: the source column (the editor, a file preview or no file), `EditorView` (the editor's web view in SwiftUI) and `SourceFindBar`.
+- `StatusBar`: the status bar and its build-panel toggle.
+- `EditorBridge`: a project's editor, a plain `WKWebView`; the editor's commands, appearance and prefs; `FindQuery` and `FindMatches`.
+- `BuildPanel`: the build panel (issues and the log).
+- `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`.
+- `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper.
 - `SidebarView`: the sidebar's search, the folded outline bar, the files and the outline.
 - `Outline`, `HomeView`, `SettingsView`.
 - `AppModel`: library, recents, imports, alerts; `DefaultsKey` (every defaults key, registered defaults).
-- `ProjectModel`: the open project, saves, builds, file watching.
-- `Core`, `Models`, `Commands`: menus and shortcuts.
+- `ProjectModel`: the open project, saves, builds, file watching; `SavedWorkspace`. `FolderWatcher` is the FSEvents watch.
+- `Core`, `Models` (the core's JSON types), `LaTeX` (the snippets the toolbar and menus write).
+- `Commands`: menus and shortcuts.
   - Every item is a `MenuCommand`, which also lists the chords the editor page hands back.
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
   - Insert sits between View and Window. Format keeps Bold, Italic, the section level and Comment.
 - `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `SecondaryBar`, `TabsControl`, `DialogSheet`, and the rename pieces.
-- `EditorPrefs` and `PDFPrefs`; `SyncTeXGeometry`. Leaf views have `#Preview`s that need no Rust core.
+- `SyncTeXGeometry`.
+- Leaf views have `#Preview`s that need no Rust core.
 
 **AppKit that remains, and why:**
 - **The window, split and toolbar.**
@@ -91,16 +141,21 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A SwiftUI scene's window owns its toolbar, so the window is AppKit's too.
 - **The status bar's ends** use `layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))`. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the folded outline's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
-- **A plain `WKWebView` for the editor.** SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn. A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`). The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
-- **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on: the modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
-- **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner. The view fills the item's glass (36 pt, measured), which passes no clicks to it; the title is medium weight, 12 pt from the ends, as AppKit draws an item's.
-- **The segmented zoom and Math controls open their menu segment's menu from their action** (`openMenu(of:)`): AppKit opens a segment's menu on a click only in a control with no action, and these have one for their other segments.
+- **A plain `WKWebView` for the editor.**
+  - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
+  - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
+  - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
+- **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
+- **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
+  - The view fills the item's glass (36 pt, measured), which passes no clicks to it.
+  - The title is medium weight, 12 pt from the ends, matching an item's title.
+- **The segmented zoom and Math controls open their menu segment's menu from their action** (`openMenu(of:)`). AppKit opens a segment's menu on a click only in a control with no action, and these have one for their other segments.
 - **`NSSharingServicePicker`**: SwiftUI opens one only from a `ShareLink`.
 - **`TabsControl`** (`NSSegmentedControl`, tabs role): SwiftUI's tabs picker moved its thumb on hover.
 - **`NSSearchField`** in the find bars, the sidebar and the log filter: SwiftUI's search field is toolbar or sidebar only.
 - **`PDFView`**: SwiftUI has no PDF view.
 - **An `NSTextView` for the build log**: a SwiftUI `Text` lays out LaTeX's megabyte logs whole on every change.
-- **The drag pasteboard** (`NSPasteboard(name: .drag)`): a SwiftUI drop session names none of its items before the drop, so the file drops read it to refuse what they can't take while it's dragged.
+- **The drag pasteboard** (`NSPasteboard(name: .drag)`): a SwiftUI drop session names none of its items before the drop. The file drops read it to refuse what they can't take while it's dragged.
 
 ## Core behaviour (every host)
 
@@ -135,39 +190,53 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Known issues
 
-- A full-screen assertion (`_relinquishTitlebar`) was seen once, when leaving full screen. Its prime suspect is the Home→Workspace toolbar swap, which is back with the single window; the repro (the window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen) needs checking again.
+- **Full screen:** an assertion (`_relinquishTitlebar`) was seen once, when leaving full screen.
+  - The prime suspect is the Home→Workspace toolbar swap, which is back with the single window.
+  - Repro to check again: the window in full screen, Quit and Keep Windows, relaunch, Exit Full Screen.
+  - Also not checked in full screen: the toolbar and the status bar's ends.
 - In the browser client, Stop pressed after the save but before `compile` reaches the core stops nothing.
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
-- Not yet seen on screen: drag and drop (the projects screen's and the sidebar's, including a refused drag), and focus rings with Keyboard navigation on.
-- **Toolbar, checked on screen 2026-09-28, after the AppKit rewrite** (Debug, active window, dark and light):
-  - At 1200 pt the PDF section starts at the source/PDF divider, and the line runs through the toolbar. (The sidebar opened at the kit's 256 pt then; it opens at 270 now.)
+- **Not yet seen on screen:**
+  - drag and drop (the projects screen's and the sidebar's, including a refused drag);
+  - focus rings with Keyboard navigation on;
+  - `defaultFocus` in the rename fields (context menu), and in the New File, Go to Line and New Project sheets.
+- **The toolbar, checked on screen (Debug, active window, dark and light):**
+  - At 1200 pt the PDF section starts at the source/PDF divider, and the line runs through the toolbar.
   - Items are 8 pt apart and 8 pt from section edges; B I is one 73 pt capsule; Compile is 75 pt.
-  - When a column is narrower than its section's tools, the section line leaves the divider; this is the system's layout, left to it. The source section needs about 350 pt with the sidebar shown. Without it, about 480 pt: the traffic lights, the toggle, back, the title (which keeps about 160 pt), B I and Insert.
-  - Short of room window-wide, zoom goes to `>>` first, then Share; Compile and the PDF toggle last. (At the same priority, AppKit hid Share with zoom where Share still fitted.)
-  - A drag stops at the PDF's minimum; only Hide PDF collapses it, and Show PDF brings it back at its width.
-  - Not checked in full screen.
-- Not yet checked on screen from the clean-up pass: `defaultFocus` in the rename fields (context menu), New File / Go to Line and New Project sheets; the projects screen as one `List` with the system toolbar background; `.controlGroupStyle(.automatic)` (kept `.navigation`); the status bar's ends in full screen (the corner-adapted safe area; right windowed).
-- Split sizes moved to `PaneSizes` keys, so the first launch after this pass opens the build panel and the outline at their default shares. The old `NSSplitView Subview Frames …`, `OutlineSplit Unfolded 1`, `showInspector`, `outlineOpen`, `pdfSplit`, `uiScale` and per-split `"<autosave> Pane Sizes"` defaults are orphaned; the one `PaneSizes` dictionary replaced them. On the owner's Mac they were deleted on 2026-09-28 (69 keys, with the old `NSToolbar Configuration project/source/workspace` and old window frames); other Macs keep them, unread.
-- The folded "File Outline" bar has the divider's line over it now, level with the status bar's, but its secondary label still reads a little like a disabled one.
-- **Window minimums, checked on screen 2026-09-28:** the content goes down to 601 × 309 pt (source and PDF at their minimums; the columns, build panel and status bar). Narrowing folds the sidebar once the source and PDF reach their minimums and brings it back when there's room; Window › Move & Resize › Left folds it to fit half the display. The projects screen stops at 601 × 309 below its toolbar.
-- **The launch log, 2026-09-28:** the app's own faults are fixed (the toolbar title's conflicting constraints, the inspector pickers' untagged selection). What's left is the system's: App Intents rejects the ad-hoc signature ("Unable to get teamId", `linkd.autoShortcut`; a team-signed build shouldn't log it, and this Mac has no signing identity), PDFKit's text recognition logs `e5rt` errors when pages show, and the editor's WebContent process logs sandbox and preferences errors.
-- `testTheSideColumnsOpenAtTheirWidths` passes with or without the fix it covers: before it, a project opened with the inspector shown squeezed the sidebar to 200 pt only in the real window (probably its toolbar). The fix was checked on screen.
-- The inspector's toolbar items are immovable defaults. A toolbar configuration saved before them (after a Customize Toolbar change) could lack them with no way to add them back. The toolbar saves as "Workspace", and none was saved on the owner's Mac (the old lowercase ones were deleted); the owner accepted the risk.
+  - A column narrower than its section's tools parts the section line from the divider; that's the system's layout. The source section needs about 350 pt with the sidebar shown, and about 480 pt without it (the traffic lights, the toggle, back, the title, which keeps about 160 pt, B I and Insert).
+  - Short of room window-wide, zoom goes to `>>` first, then Share; Compile and the toggles last.
+- **Window minimums:** the content goes down to 641 × 309 pt. That's source and PDF at 320 pt each, and the columns, build panel and status bar.
+  - Narrowing folds the sidebar once source and PDF reach their minimums, and brings it back when there's room.
+  - Window › Move & Resize › Left folds it to fit half the display.
+  - The projects screen stops at the same size below its toolbar.
+- **The launch log:** the app's own faults are fixed. What's left is the system's:
+  - App Intents rejects the ad-hoc signature ("Unable to get teamId", `linkd.autoShortcut`). A team-signed build shouldn't log it; this Mac has no signing identity.
+  - PDFKit's text recognition logs `e5rt` errors when pages show.
+  - The editor's WebContent process logs sandbox and preferences errors.
+- `theSideColumnsOpenAtTheirWidths` passes with or without the fix it covers. Before that fix, a project opened with the inspector shown squeezed the sidebar to 200 pt, but only in the real window (probably its toolbar). The fix was checked on screen.
+- **Toolbar configurations:** the inspector section's items are immovable defaults.
+  - A toolbar configuration saved before them (after a Customize Toolbar change) could lack them, with no way to add them back.
+  - The toolbar saves as "Workspace", and none was saved on the owner's Mac; the owner accepted the risk.
+- **Orphaned defaults:** split sizes are `PaneSizes` keys, and the old per-split keys are orphaned. On the owner's Mac they were deleted on 2026-09-28; other Macs keep them, unread.
+- The folded "File Outline" bar's secondary label reads a little like a disabled one.
 
-## Deferred (outside the Mac app; not dropped)
+## Deferred (not dropped)
 
-Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
-- **`web/` (done 2026-09-28):** the page answers `getDocument() → { path, text }` and a Mac save writes only the text of the file it read; accelerators live in `web/src/shortcuts.json`, which the web and the Mac read; `test/protocol.test.js` checks the Mac's and Windows' command, palette, font and accelerator copies against the web's; the SyncTeX flash values are `SYNC_FLASH` in `pdfview.js`, with comments both ways; a block inserted at the start of a line no longer adds a blank line.
-- **Rust core:** the core marks an untitled heading `"(untitled)"` (`analyze.rs`), which the app string-matches (`Analysis.untitledTitle`); send an empty title instead. Check the core stays the only source of the default engine and library folder.
-- **Tooling:** XcodeGen isn't installed, so `apps/macos/scripts/add-source.py app|tests Name.swift` registers a new file with the committed project. `TeXLocalTests.swift` could now be split, and moved to Swift Testing.
-- **Windows:** save with `getDocument` and check its path, as the Mac does (`EditorBridge.cs` still reads `getText`); read `web/src/shortcuts.json` rather than keeping `MenuCommand.Accel`'s copy (the protocol test holds the copy to it meanwhile). Also check for the bugs this pass fixed on the Mac (the non-text `flush()` loop, stale state after deleting the open file, the fixed-delay watcher re-arm, a closed project's popovers and sheets carrying over), and mirror the visible Mac changes if the platforms should match.
+- **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Analysis.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
+  - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
+  - Waits for Windows: its side must change in the same commit.
+- **Core:** check it stays the only source of the default engine and library folder.
+- **Windows (a work in progress; the owner's):**
+  - Save with `getDocument` and check its path, as the Mac does (`EditorBridge.cs` still reads `getText`).
+  - Read `web/src/shortcuts.json` rather than keeping `MenuCommand.Accel`'s copy (the protocol test holds the copy to it meanwhile).
+  - Check for the bugs the Mac pass fixed: the non-text `flush()` loop, stale state after deleting the open file, the fixed-delay watcher re-arm, and a closed project's popovers and sheets carrying over.
+  - Mirror the visible Mac changes if the platforms should match.
 
 ## Next
 
-- **The Rust core, then the web**: the owner's next steps after the Mac UI rewrite (2026-09-28).
-- Confirm CI on `main`; the Windows hand checks above.
+- Confirm the Mac CI run on the branch (above), then a PR from `claude/macos-polish` to `main`.
 - Deferred features:
   - error hints and gutter markers;
   - `.blg` parsing;
@@ -184,41 +253,73 @@ Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
 
 ## Gotchas
 
+**Window and restoration**
 - **`-ApplePersistenceIgnoreState YES` writes the new state to a temporary folder** and leaves the old one, so the next launch without it restores the state from before. Restoration repros need both launches without it.
-- **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
-- **The column line and the toolbar's section line are one line only while they track.** A section wider than its column parts them, and the toolbar draws its own short line off the divider, as Mail does. The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
-- **The PDF column doesn't collapse on a drag** (`canCollapse = false`). Collapsed at the window's trailing edge, its divider sits under the window's resize edge, so a drag back resizes the window instead of opening the PDF.
-- **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
-- **One FSEvents stream watches the project folder** (`FolderWatcher`): the open file is checked when it or a folder above it changes, and the tree is read again when something comes, goes or moves in a folder it shows (the core decides what it shows). The open file moved or deleted elsewhere closes, or with unsaved edits asks Save Again or Close. Paths are compared with `realpath`: `resolvingSymlinksInPath` drops /private, which FSEvents keeps.
-- **Spawn TeX tools by their full path.** With PATH set for the child, std forks for a bare program name instead of using posix_spawn, and a forked child of the multithreaded app can crash before exec (six reports while TeX was missing and `status` polled every 10 s). `compile.rs` `program_path` finds the program on the child's PATH; `tools_start_by_posix_spawn_never_a_fork` guards it.
-- **Closing a toolbar popover logs "Invalid attempt to open a new transaction during CA commit"** on macOS 27.2, from AppKit: a bare SwiftUI app with one toolbar popover logs it too. It is not the app's.
-- **The split-view tests need an awake, unlocked display.** Asleep or locked, `WorkspaceLayoutTests` times out (split animations don't run); run the suite under `caffeinate -u -d`.
-- **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
-- **Setting a window's `contentViewController` sizes the window to the new view and sets its `contentMinSize` to zero.** `MainWindowController.setContent` gives the view the window's size first (an unsized one shrank the window for a moment, and the projects' bridged toolbar laid its title out 9 pt wide: three conflicting-constraint faults per launch), then sets the minimum again. The projects screen's `NSHostingController` (with scene bridging) then sets it from its SwiftUI content's minimum, zero for a list, so `HomeRoot` carries the app's minimum as a frame.
-- **`contentMinSize` counts the area under the toolbar** (full-size content view), but the panes' limits hold below it: with the build panel open, a project's window stops a toolbar's height taller than the minimum.
-- **A sidebar squeezes before it folds**, down to its minimum, and grows back as the window widens: AppKit's default, checked against a bare `NSSplitViewController` (its sidebar went 299 → 238 → 178 pt, folded, and came back). Scripted resizes (AppleScript, Return to Previous Size) don't grow it back; a drag does.
-- **Customize Toolbar compresses the default set's views.** The zoom control's palette copy resists compression, or its scale reads "…"; the toolbar's own copy must not, or it holds the window 50 pt wider even from the overflow menu.
-- **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
-- **Sidebars fold on a window resize, inspectors don't** (`canCollapseFromWindowResize`: YES for sidebars, NO for inspectors). The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 200 pt, folds it, and brings it back when there's room. Tiling folds it too; `setContentSize` doesn't, so the minimum test hides the sidebar first.
+- **Setting a window's `contentViewController` sizes the window to the new view and sets its `contentMinSize` to zero.**
+  - `MainWindowController.setContent` gives the view the window's size first, then sets the minimum again. An unsized view shrank the window for a moment, and the projects' bridged toolbar laid its title out 9 pt wide: three conflicting-constraint faults per launch.
+  - The projects screen's `NSHostingController` (with scene bridging) then sets it from its SwiftUI content's minimum, zero for a list, so `HomeRoot` carries the app's minimum as a frame.
+- **`contentMinSize` counts the area under the toolbar** (full-size content view), but the panes' limits hold below it. With the build panel open, a project's window stops a toolbar's height taller than the minimum.
+- **Ordered front, a titled window shrinks to the screen's visible frame.** The CI runner's screen is about 1024 pt wide, so `WorkspaceLayoutTests` use an `UnclampedWindow` (`constrainFrameRect` returns the frame).
+
+**Split view**
+- **A pane opens at its view's frame as it's added**, and on macOS 27.2 a collapsed one uncollapses to it. `WorkspaceController` sets each frame from `PaneSize`, or from its share of the window.
+- **macOS 27.0 uncollapses a pane to its minimum**, not its frame. Show PDF (`setPDFShown`) sets both the PDF's frame and its minimum to its kept share until it's back. The frame alone left it at 320 pt on the runner.
+- **Divider detents:** `NSSplitViewController` doesn't implement `splitView(_:constrainSplitPosition:ofSubviewAt:)` (`instancesRespond` is false), so there's no super to call. Swift still needs `override`.
+  - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.
+  - `DetentSplitViewController` snaps within 8 pt and taps `NSHapticFeedbackManager`'s `.alignment` once, as the divider arrives.
+- **The column line and the toolbar's section line are one line only while they track.**
+  - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
+  - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
+- **The PDF column doesn't collapse on a drag** (`canCollapse = false`). Collapsed at the window's trailing edge, its divider would sit under the window's resize edge, so a drag back would resize the window instead of opening the PDF.
+- **Sidebars fold on a window resize, inspectors don't** (`canCollapseFromWindowResize`: YES for sidebars, NO for inspectors).
+  - The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 200 pt, folds it, and brings it back when there's room.
+  - Tiling folds it too. `setContentSize` doesn't, so the minimum test hides the sidebar first.
+- **A sidebar squeezes before it folds**, down to its minimum, and grows back as the window widens. That's AppKit's default: checked against a bare `NSSplitViewController`, whose sidebar went 299 → 238 → 178 pt, folded, and came back. Scripted resizes (AppleScript, Return to Previous Size) don't grow it back; a drag does.
 - **Pane sizes are saved from drags only.** In a live resize the window squeezes the panes, and a squeezed sidebar used to be kept at 200 pt; `saveSizes` skips `inLiveResize`.
-- **AppKit's inspector is fixed (270 pt minimum and maximum) yet its divider shows a resize cursor.** `WorkspaceController` overrides `splitView(_:effectiveRect:forDrawnRect:ofDividerAt:)` to give that divider no hit area.
-- **The inspector item is made before the area**, which opens in the room both side columns leave; sized past the sidebar alone, the area pushed the sidebar to its minimum.
+- **AppKit's inspector is fixed (270 pt minimum and maximum), yet its divider shows a resize cursor.** `WorkspaceController` overrides `splitView(_:effectiveRect:forDrawnRect:ofDividerAt:)` to give that divider no hit area.
+- **The inspector item is made before the area**, which opens in the room both side columns leave. Sized past the sidebar alone, the area pushed the sidebar to its minimum.
 - **The nested split view controllers answer `toggleSidebar:` and `toggleInspector:` before the window's split**, and they have neither. `WorkspaceToolbar.toolbarWillAddItem` points the system's toggles at the `WorkspaceController`.
-- **A pane opens at its view's frame as it's added**, and a collapsed one uncollapses to it. `WorkspaceController` sets each frame from `PaneSize`, or from its share of the window.
+- **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
+
+**Toolbar**
 - **Toolbar groups on macOS 27:**
   - Adjacent plain items share one glass capsule with no line between (73 pt for two, the kit's button group).
   - An `NSMenuToolbarItem` breaks that grouping.
-  - An `NSToolbarItemGroup` with subitems draws a wider capsule (82 pt) and sits 3.5 pt from a tracking separator.
+  - An `NSToolbarItemGroup` with subitems draws a wider capsule (82 pt), with a line between its parts, and sits 3.5 pt from a tracking separator.
   - The segmented constructor (`images:selectionMode:`) draws lines between parts.
   - Zoom and Math stay segmented around their pull-downs, as the owner asked for zoom.
   - A `.prominent` item gets glass of its own; a `.plain` one joins its plain neighbours'. Stop stays `.prominent` with `backgroundTintColor = .clear`, which looks plain but keeps its own glass.
+  - The system's `.toggleInspector` keeps glass of its own, so the PDF toggle beside it is a separate circle (the owner's choice: native, with the divide).
 - **A toolbar item's own view** keeps the item's `.prominent` or `.plain` glass, 36 pt high, which wraps the view and passes it no clicks: the view must fill it. Customize Toolbar draws the view without the style, so its copy (`willBeInsertedIntoToolbar` false) is a title item.
-- **A segmented control's segment menu** opens on a click only in a control with no action; with one, only on a press and hold, and the click sends the action. Momentary tracking resets `selectedSegment` before `mouseDown` returns, and segment frames aren't public, so the action opens the menu under the click.
+- **Customize Toolbar compresses the default set's views.** The zoom control's palette copy resists compression, or its scale reads "…". The toolbar's own copy must not, or it holds the window 50 pt wider even from the overflow menu.
+- **A segmented control's segment menu** opens on a click only in a control with no action. With one, it opens only on a press and hold, and the click sends the action. Momentary tracking resets `selectedSegment` before `mouseDown` returns, and segment frames aren't public, so the action opens the menu under the click.
 - **Toolbar items at the same visibility priority overflow together**: Share went to `>>` with zoom where it still fitted. Rank the widest lowest.
+- **Closing a toolbar popover logs "Invalid attempt to open a new transaction during CA commit"** on macOS 27.2, from AppKit: a bare SwiftUI app with one toolbar popover logs it too. It is not the app's.
+
+**Swift and SwiftUI**
+- **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **`track` needs `nonisolated` Equatable values** (`OutlineState`, the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
 - **An `NSMenuItem` subclass can't override its initialisers under default main-actor isolation.** The toolbar's menus are `NSHostingMenu`s over SwiftUI items instead, which also keeps them the menu bar's.
+- **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
+- **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
 - **`NSBox`'s separator is 1 px, the thin split divider 1 pt.** The bars' lines are a small view (`Hairline`) in the split's `dividerColor`.
-- **PDFKit is left to itself.** A scroll-view inset for the gap above page one, and the resize pinning it needed, fought PDFKit's own fit-width layout (a re-layout on every resize step: the scaling stuttered); the gap is a page-break margin now, and a rebuild goes back to `currentDestination`. `hideLinkBorders` hides hyperref's boxes.
+
+**PDF**
+- **PDFKit is left to itself.** A scroll-view inset for the gap above page one, and the resize pinning it needed, fought PDFKit's own fit-width layout: a re-layout on every resize step, so the scaling stuttered. The gap is a page-break margin now, and a rebuild goes back to `currentDestination`. `hideLinkBorders` hides hyperref's boxes.
 - **Core Image filters work in linear light:** dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16.
-- **macOS 26's `setPosition`** doesn't lay out panes that were just added, as 27's does. The split tests size a window explicitly.
-- **The tests' host is the app, with the app's defaults** (`com.texlocal.mac`) and the scheme's scratch `TEXLOCAL_DATA`. `WorkspaceLayoutTests` save and restore the five defaults keys they change; recents aren't pruned when the library lists without them (`AppModel.recents` filters instead), since a scratch library would wipe them.
+
+**Files and TeX**
+- **One FSEvents stream watches the project folder** (`FolderWatcher`).
+  - The open file is checked when it or a folder above it changes.
+  - The tree is read again when something comes, goes or moves in a folder it shows (the core decides what it shows).
+  - The open file moved or deleted elsewhere closes, or, with unsaved edits, asks Save Again or Close.
+  - Paths are compared with `realpath`: `resolvingSymlinksInPath` drops /private, which FSEvents keeps.
+- **Spawn TeX tools by their full path.**
+  - With PATH set for the child, std forks for a bare program name instead of using posix_spawn. A forked child of the multithreaded app can crash before exec (six reports while TeX was missing and `status` polled every 10 s).
+  - `compile.rs` `program_path` finds the program on the child's PATH; `tools_start_by_posix_spawn_never_a_fork` guards it.
+
+**Tests**
+- **Swift Testing suites** set up in `init` and tear down in an `isolated deinit`. Suites that call the app's main-actor code are `@MainActor`.
+- **`WorkspaceLayoutTests` save and restore the five defaults keys they change.** Recents aren't pruned when the library lists without them (`AppModel.recents` filters instead), since a scratch library would wipe them.
+- **A timed-out `waitUntil` throws `TimedOut(state:)`** with what the test passes as `state`, so a failure on CI says what it saw.
+- **Swift Testing's expansion of a failed `#expect` can mislabel nested calls' values.** `isClose(width(item), sidebarIdeal)` printed the width against `sidebarIdeal`. Put the values in the comment when they matter.
