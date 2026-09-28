@@ -1,9 +1,10 @@
 import AppKit
+import os
 import SwiftUI
 import WebKit
 
-/// The app's commands, with the web's ids and accelerators (web/src/workspace.js
-/// `commandDefs`). One accelerator string drives both the menu's key
+/// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
+/// and its accelerators. One accelerator string drives both the menu's key
 /// equivalent and the chords the editor page hands back.
 enum MenuCommand: String, CaseIterable {
     case projectNew = "project.new"
@@ -91,38 +92,19 @@ enum MenuCommand: String, CaseIterable {
         }
     }
 
-    var accel: String? {
-        switch self {
-        case .projectNew: "CmdOrCtrl+Shift+N"
-        case .projectSearch: "CmdOrCtrl+Shift+F"
-        case .fileNew: "CmdOrCtrl+N"
-        case .fileNewFolder: "CmdOrCtrl+Shift+Alt+N"
-        case .fileSave: "CmdOrCtrl+S"
-        case .pdfSave: "CmdOrCtrl+Shift+S"
-        case .editUndo: "CmdOrCtrl+Z"
-        case .editRedo: "CmdOrCtrl+Shift+Z"
-        case .editFind: "CmdOrCtrl+F"
-        case .editFindNext: "CmdOrCtrl+G"
-        case .editFindPrevious: "CmdOrCtrl+Shift+G"
-        case .editBold: "CmdOrCtrl+B"
-        case .editItalic: "CmdOrCtrl+I"
-        case .editMath: "CmdOrCtrl+Shift+M"
-        case .editComment: "CmdOrCtrl+/"
-        case .editGotoLine: "CmdOrCtrl+L"
-        case .pdfFind: "CmdOrCtrl+Alt+F"
-        case .viewToggleSidebar: "CmdOrCtrl+\\"
-        case .viewTogglePdf: "CmdOrCtrl+Shift+\\"
-        case .viewToggleLogs: "CmdOrCtrl+Shift+L"
-        case .viewZoomIn: "CmdOrCtrl+Plus"
-        case .viewZoomOut: "CmdOrCtrl+Minus"
-        case .viewFitWidth: "CmdOrCtrl+0"
-        case .viewFitHeight: "CmdOrCtrl+Alt+0"
-        case .compileRun: "CmdOrCtrl+Return"
-        case .syncForward: "Ctrl+Return"
-        case .syncInverse: "Ctrl+Shift+Return"
-        default: nil
+    /// The shared accelerator (web/src/shortcuts.json, which the build copies
+    /// into the app); `macAccel` departs from it where the HIG reserves a key.
+    var accel: String? { Self.sharedAccels[rawValue] }
+
+    private static let sharedAccels: [String: String] = {
+        guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json", subdirectory: "web"),
+              let data = try? Data(contentsOf: url),
+              let table = try? JSONDecoder().decode([String: String].self, from: data) else {
+            Logger(subsystem: "com.texlocal.mac", category: "commands").fault("web/shortcuts.json is missing from the app")
+            return [:]
         }
-    }
+        return table
+    }()
 
     /// Mac chords where HIG-reserved keys differ from the shared table (HIG,
     /// Keyboards): ⌃⌘S sidebar, ⌘0 actual size, ⌥⌘F find and replace, ⌘. stop.

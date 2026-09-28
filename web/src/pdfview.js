@@ -21,6 +21,11 @@ const PINCH_SETTLE_MS = 220;
 const PINCH_MIN = 0.4;
 const PINCH_MAX = 2.5;
 
+// A forward search's flash, in PDF points: a line's height when SyncTeX
+// gives none, the narrowest box, and the margin around it. The Mac draws the
+// same box (apps/macos/TeXLocal/SyncTeXGeometry.swift); change both.
+const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // The interface-scale preference is applied as `zoom` on the body, and
@@ -926,14 +931,15 @@ export class PdfViewer {
     const p = this.pages[loc.page - 1];
     if (!p) return;
     const s = p.scale;
-    const height = loc.height ?? 12;
-    const top = Math.max(0, ((loc.v ?? 0) - height) * s - 2);
+    const { lineHeight, minimumWidth, margin } = SYNC_FLASH;
+    const height = loc.height ?? lineHeight;
+    const top = Math.max(0, ((loc.v ?? 0) - height) * s - margin);
     const flash = document.createElement('div');
     flash.className = 'sync-flash';
-    flash.style.left = `${Math.max(0, (loc.h ?? 0) * s - 2)}px`;
+    flash.style.left = `${Math.max(0, (loc.h ?? 0) * s - margin)}px`;
     flash.style.top = `${top}px`;
-    flash.style.width = `${Math.max(24, (loc.width ?? 0) * s) + 4}px`;
-    flash.style.height = `${height * s + 4}px`;
+    flash.style.width = `${Math.max(minimumWidth, (loc.width ?? 0) * s) + 2 * margin}px`;
+    flash.style.height = `${height * s + 2 * margin}px`;
     p.wrap.appendChild(flash);
     const targetTop = this._padT + p.top + top - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });

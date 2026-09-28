@@ -7,7 +7,7 @@ import { platform, trashName, deleteLabel } from './bridge.js';
 import { $, el, toast, withTimeout, showModal, dialogShell, promptModal, confirmModal, menuUnder, contextMenu } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
-import { registerCommands, tooltip, menuBar } from './commands.js';
+import { registerCommands, tooltip, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
 import { chooseTexFolder } from './texfolder.js';
 
@@ -119,8 +119,9 @@ export async function renderHome() {
   const settings = () => openSettings({ onTexChange: renderHome });
   // registerCommands publishes the menu state itself.
   dispose = registerCommands([
-    { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+N', run: newProjectFlow },
-    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: settings },
+    // No project, so no file to make: New File's chord makes a project.
+    { id: 'project.new', title: 'New Project…', accel: SHORTCUTS['file.new'], run: newProjectFlow },
+    { id: 'app.settings', title: 'Settings…', accel: SHORTCUTS['app.settings'], run: settings },
   ]);
 
   const app = $('#app');

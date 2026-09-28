@@ -121,16 +121,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 ## Deferred (outside the Mac app; not dropped)
 
 Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
-- **`web/`:**
-  - **Editor save identity (data safety).** The page tags `changed`/`cursor`/`scroll` with their path, but `getText()` returns text only, so a save racing a file switch can't prove which file the text belongs to. Add `getDocument() → { path, text }` to `web/src/embed/editor.js` and check the path in `ProjectModel.write`. The Mac side drops stale path-tagged messages meanwhile.
-  - **Shortcut table copied by hand.** `Commands.swift` keeps a copy of the web's `commandDefs` shortcuts; give both one shared source (e.g. a JSON file the build copies into the app).
-  - **Editor values copied by hand.** Palette and font values (`EditorPalette`, `EditorFont`) and editor command names (`EditorCommand`) must match `web/src/prefs.js` and the page: share a definition, or add a test that both sides agree.
-  - **Insert › a block at the start of a line adds a blank line above it.** `insertBlock` (`web/src/editor.js`) prefixes a newline whenever the caret's line has text; it should test only the text before the caret.
-  - **SyncTeX highlight values copied by hand.** `SyncTeXGeometry` padding mirrors `web/src/pdfview.js`, and the flash mirrors `web/styles.css`: at least a comment in the web files pointing back.
+- **`web/` (done 2026-09-28):** the page answers `getDocument() → { path, text }` and a Mac save writes only the text of the file it read; accelerators live in `web/src/shortcuts.json`, which the web and the Mac read; `test/protocol.test.js` checks the Mac's and Windows' command, palette, font and accelerator copies against the web's; the SyncTeX flash values are `SYNC_FLASH` in `pdfview.js`, with comments both ways; a block inserted at the start of a line no longer adds a blank line.
 - **Rust core:** the core marks an untitled heading `"(untitled)"` (`analyze.rs`), which the app string-matches (`Analysis.untitledTitle`); send an empty title instead. Check the core stays the only source of the default engine and library folder.
 - **Feature:** reload the file tree when files change on disk (the FSEvents watcher could drive it).
 - **Tooling:** new source files mean editing the `.xcodeproj` by hand (XcodeGen isn't installed); install it or use folder-synced groups. That blocked splitting `TeXLocalTests.swift` and moving it to Swift Testing.
-- **Windows:** check for the bugs this pass fixed on the Mac (the non-text `flush()` loop, stale state after deleting the open file, the fixed-delay watcher re-arm, a closed project's popovers and sheets carrying over), and mirror the visible Mac changes if the platforms should match.
+- **Windows:** save with `getDocument` and check its path, as the Mac does (`EditorBridge.cs` still reads `getText`); read `web/src/shortcuts.json` rather than keeping `MenuCommand.Accel`'s copy (the protocol test holds the copy to it meanwhile). Also check for the bugs this pass fixed on the Mac (the non-text `flush()` loop, stale state after deleting the open file, the fixed-delay watcher re-arm, a closed project's popovers and sheets carrying over), and mirror the visible Mac changes if the platforms should match.
 
 ## Next
 
@@ -159,6 +154,7 @@ Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
 - **A `WebPage` shows in one `WebView`, once.** Each `ProjectModel` makes its own `EditorBridge`, and `SourcePane` keeps the `EditorView` mounted under a preview or the placeholder; rebuilding it on the same page traps in `_WebKit_SwiftUI makeViewProvider`. `EditorBridge.close()` removes the message handler (else the page leaks) and releases calls waiting on the page.
 - **Don't collapse a split item inside a SwiftUI update.** It lays the window out there and then, re-enters the update and spins in an AttributeGraph cycle; `PaneSplitViewController.update` defers it a turn.
 - **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
+- **The split-view tests need an awake, unlocked display.** Asleep or locked, `SplitControllerTests` times out on the previous commit too; run the suite under `caffeinate -u -d`.
 - **Don't feed toolbar item geometry back into `navigationSplitViewColumnWidth(min:)`**: it loops layout and AppKit throws (`_crashOnException`). The navigation title is always 160 pt wide; `toolbarTitleDisplayMode` doesn't change it on macOS.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 - **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its stored size (`PaneSizes`), or its share, and then lets it go.

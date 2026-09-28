@@ -441,6 +441,16 @@ export function latexCompletions(getSymbols) {
   };
 }
 
+// A block template as inserted after `before`, the line's text ahead of the
+// caret, and where the caret goes in it ("$0", else the end). A block starts
+// a line of its own; the template ends with its own newline.
+export function blockInsertion(before, template) {
+  const newline = /\S/.test(before) ? '\n' : '';
+  const at = template.indexOf('$0');
+  const text = newline + template.replace('$0', '');
+  return { text, cursor: at === -1 ? text.length : newline.length + at };
+}
+
 // A line as a heading of `command` (`section` etc.), or as plain text given
 // none, and where the caret goes: after the title. A heading is found where
 // the outline finds one (state.js SECTION_RE): anywhere on the line, with
@@ -598,11 +608,8 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       if (!template) return false;
       const { from, to } = view.state.selection.main;
       const line = view.state.doc.lineAt(from);
-      const needsNewline = /\S/.test(line.text) ? '\n' : '';
-      const cursorAt = template.indexOf('$0');
-      const text = needsNewline + template.replace('$0', '');
-      const anchor = from + (cursorAt === -1 ? text.length : needsNewline.length + cursorAt);
-      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor } });
+      const { text, cursor } = blockInsertion(line.text.slice(0, from - line.from), template);
+      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + cursor } });
       view.focus();
       return true;
     },

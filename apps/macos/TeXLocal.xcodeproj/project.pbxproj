@@ -229,7 +229,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/sh\n# Xcode build step: the embedded editor page and what it loads, into the app's\n# Resources/web — only the embed files, not the browser UI.\nset -e\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nnpm run build --silent\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/web\"\nrm -rf \"$DEST\"\nmkdir -p \"$DEST/dist\" \"$DEST/embed\"\ncp web/styles.css \"$DEST/\"\ncp web/embed/editor.html \"$DEST/embed/\"\ncp web/dist/embed-editor.js web/dist/katex.min.css \"$DEST/dist/\"\ncp -R web/dist/fonts web/dist/fonts-jbm \"$DEST/dist/\"\n";
+			shellScript = "#!/bin/sh\n# Xcode build step: the embedded editor page and what it loads, into the app's\n# Resources/web — only the embed files, not the browser UI.\nset -e\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nnpm run build --silent\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/web\"\nrm -rf \"$DEST\"\nmkdir -p \"$DEST/dist\" \"$DEST/embed\"\ncp web/styles.css web/src/shortcuts.json \"$DEST/\"\ncp web/embed/editor.html \"$DEST/embed/\"\ncp web/dist/embed-editor.js web/dist/katex.min.css \"$DEST/dist/\"\ncp -R web/dist/fonts web/dist/fonts-jbm \"$DEST/dist/\"\n";
 		};
 		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
 			isa = PBXShellScriptBuildPhase;

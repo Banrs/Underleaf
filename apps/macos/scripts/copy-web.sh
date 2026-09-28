@@ -8,7 +8,7 @@ npm run build --silent
 DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/web"
 rm -rf "$DEST"
 mkdir -p "$DEST/dist" "$DEST/embed"
-cp web/styles.css "$DEST/"
+cp web/styles.css web/src/shortcuts.json "$DEST/"
 cp web/embed/editor.html "$DEST/embed/"
 cp web/dist/embed-editor.js web/dist/katex.min.css "$DEST/dist/"
 cp -R web/dist/fonts web/dist/fonts-jbm "$DEST/dist/"

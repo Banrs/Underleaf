@@ -108,7 +108,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
     // ---------- host → page ----------
 
     private enum PageMethod: String {
-        case open, getText, currentLine, reveal, command, forget, rename
+        case open, getDocument, currentLine, reveal, command, forget, rename
         case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance
     }
 
@@ -151,8 +151,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         await call(.open, ["path": path, "text": text, "scrollTop": 0, "focus": focus])
     }
 
-    func text() async -> String? {
-        await call(.getText) as? String
+    /// The page's text and the file it belongs to: by the time the page
+    /// answers, it may show another.
+    func document() async -> (path: String, text: String)? {
+        guard let document = await call(.getDocument) as? [String: Any],
+              let path = document["path"] as? String, let text = document["text"] as? String else { return nil }
+        return (path, text)
     }
 
     func currentLine() async -> Int {

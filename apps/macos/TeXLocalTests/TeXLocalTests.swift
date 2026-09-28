@@ -554,6 +554,12 @@ final class CommandTests: XCTestCase {
         XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F"), KeyboardShortcut("f", modifiers: [.command, .option]))
     }
 
+    /// The build copies the shared table in; without it every shared chord is gone.
+    func testTheSharedTableIsInTheApp() {
+        XCTAssertEqual(MenuCommand.compileRun.accel, "CmdOrCtrl+Return")
+        XCTAssertEqual(MenuCommand.editBold.shortcut, KeyboardShortcut("b", modifiers: .command))
+    }
+
     func testEveryAcceleratorParses() {
         for command in MenuCommand.allCases {
             for accel in [command.accel, command.macAccel].compactMap(\.self) {
@@ -604,18 +610,14 @@ final class CommandTests: XCTestCase {
                                               .viewToggleProjectSettings, .viewToggleWordCount, .viewActualSize,
                                               .compileStop]
 
-    /// The menu has every other command the web declares, with the same chord.
+    /// The menu has every other command the web declares. Their chords are
+    /// the one table both read (web/src/shortcuts.json).
     func testTheMenuHasEveryWebCommand() throws {
         let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
         var ids: Set<String> = []
         for line in source.split(separator: "\n") {
             guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
-            let id = String(match.1)
-            ids.insert(id)
-            guard !webOnly.contains(id) else { continue }
-            let accel = line.firstMatch(of: /accel: '([^']+)'/)
-                .map { String($0.1).replacingOccurrences(of: "\\\\", with: "\\") }
-            XCTAssertEqual(MenuCommand(rawValue: id)?.accel, accel, id)
+            ids.insert(String(match.1))
         }
         XCTAssertEqual(Set(MenuCommand.allCases.filter { !macOnly.contains($0) }.map(\.rawValue)), ids.subtracting(webOnly))
         XCTAssertTrue(macOnly.allSatisfy { !ids.contains($0.rawValue) })
@@ -877,7 +879,40 @@ struct OpenRaceTests {
         for open in opens { await open.value }
 
         #expect(app.project?.id == second.id)
-        #expect(await app.project?.editor.text() == "second")
+        let document = await app.project?.editor.document()
+        #expect(document?.path == second.mainFile)
+        #expect(document?.text == "second")
+        await app.close()
+    }
+}
+
+/// A save writes the page's text to the file the page says it belongs to.
+@MainActor
+struct SaveTests {
+    @Test(.timeLimit(.minutes(1)))
+    func anEditReachesTheDisk() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+        let kept = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
+
+        let core = Core.shared
+        let info = try await core.call("create_project", ["name": "Save \(UUID().uuidString.prefix(8))", "template": "blank"],
+                                       as: ProjectInfo.self)
+        try await core.perform("write_file", ["id": info.id, "path": info.mainFile, "text": "text"])
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let folder = Core.libraryFolder.appending(path: info.id)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let app = AppModel()
+        app.autoCompile = false
+        await app.open(info.id)
+        let project = try #require(app.project)
+        #expect(await project.editor.command(.bold))
+        try await waitUntil { project.hasUnsavedText }
+        #expect(await project.save())
+        let saved = try String(contentsOf: folder.appending(path: info.mainFile), encoding: .utf8)
+        #expect(saved.contains("\\textbf{}"))
         await app.close()
     }
 }

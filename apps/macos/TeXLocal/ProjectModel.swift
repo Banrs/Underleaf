@@ -256,7 +256,7 @@ final class ProjectModel {
                 diskText = file.text
                 watchOpenFile()
                 analyze(file.text)
-                await editor.open(path: "\(id)/\(path)", text: file.text, focus: focus)
+                await editor.open(path: path, text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
             } catch {
                 if !closed { report(error, "Couldn’t Open “\(name(path))”") }
@@ -307,9 +307,9 @@ final class ProjectModel {
         dirty = false
         let crashes = editor.crashes
         readingText = true
-        let text = await editor.text()
+        let document = await editor.document()
         readingText = false
-        guard let text else {
+        guard let document else {
             // The web process died with the edits; the restart reports it.
             if lostEdits || editor.crashes != crashes { return true }
             dirty = true
@@ -317,6 +317,13 @@ final class ProjectModel {
                                   "The editor’s text couldn’t be read. Your changes are still in the editor, and TeXLocal saves them again after your next edit.")
             return false
         }
+        // Another file opened meanwhile: the text is that file's, never to be written to this one.
+        guard document.path == path else {
+            app?.alert = AppAlert("“\(name(path))” Wasn’t Saved",
+                                  "Another file opened in the editor before its text could be read.")
+            return false
+        }
+        let text = document.text
         do {
             // Before the write, so its own change event matches.
             diskText = text
@@ -429,7 +436,7 @@ final class ProjectModel {
     /// Keeps the scroll position.
     private func showDiskText(_ text: String, of path: String) async {
         let top = topLine
-        await editor.open(path: "\(id)/\(path)", text: text, focus: false)
+        await editor.open(path: path, text: text, focus: false)
         analyze(text)
         await editor.reveal(line: top, atTop: true, focus: false)
         cursorLine = await editor.currentLine()
@@ -613,7 +620,7 @@ final class ProjectModel {
         guard await saveEdits() else { return }
         do {
             let result = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResult.self)
-            await editor.rename(from: "\(id)/\(result.from)", to: "\(id)/\(result.to)")
+            await editor.rename(from: result.from, to: result.to)
             // The open file may move with its folder. The editor keeps its
             // text; only the save path changes, so the old path can't return.
             let wasOpen = openPath
@@ -637,7 +644,7 @@ final class ProjectModel {
         guard await saveEdits() else { return }
         do {
             try await core.perform("delete_entry", ["id": id, "path": path])
-            await editor.forget(path: "\(id)/\(path)")
+            await editor.forget(path: path)
             if let open = openPath, open == path || open.hasPrefix(path + "/") { clearOpenFile() }
             await reloadTree()
         } catch {

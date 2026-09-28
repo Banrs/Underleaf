@@ -167,12 +167,39 @@ function step(run) {
   return true;
 }
 
-const WRAPS = {
-  bold: ['\\textbf{', '}'],
-  italic: ['\\textit{', '}'],
-  math: ['$', '$'],
-  displayMath: ['\\[', '\\]'],
+// texlocal.command's names, each given the command's argument. Only undo,
+// redo and block say whether they ran: false hands the key back to the host.
+// The native apps' copies of these names are checked against this table
+// (test/protocol.test.js).
+const COMMANDS = {
+  bold: () => { editor.wrapSelection('\\textbf{', '}'); },
+  italic: () => { editor.wrapSelection('\\textit{', '}'); },
+  math: () => { editor.wrapSelection('$', '$'); },
+  displayMath: () => { editor.wrapSelection('\\[', '\\]'); },
+  // The document's history only while the document has focus. In the find
+  // panel's fields the host undoes there instead.
+  undo: () => historyStep('undo'),
+  redo: () => historyStep('redo'),
+  comment: () => { editor.toggleComment(); },
+  find: () => { if (hostFind) openFind(currentView()); else editor.openSearch(); },
+  findNext: () => { if (hostFind) step(findNext); else editor.findNext(); },
+  findPrevious: () => { if (hostFind) step(findPrevious); else editor.findPrevious(); },
+  replaceNext: () => { step(replaceNext); },
+  replaceAll: () => { step(replaceAll); },
+  block: (id) => editor.insertBlock(id),
+  heading: (command) => { editor.setHeading(command ?? ''); },
+  text: (text) => { editor.insertText(text ?? ''); },
+  symbol: (symbol) => { editor.insertSymbol(symbol ?? ''); },
+  // A template such as \ref{$0} around the selection, in the line: "$0" is
+  // where the selection (or the cursor) goes.
+  inline: (template) => { editor.wrapSelection(...(`${template}$0`).split('$0', 2)); },
 };
+
+function historyStep(name) {
+  if (!document.activeElement?.closest('.cm-content')) return false;
+  editor[name]();
+  return true;
+}
 
 window.texlocal = {
   // Show a file. Its earlier state (undo history, selection) comes back only
@@ -216,6 +243,9 @@ window.texlocal = {
     if (path) path = moved(path);
   },
   getText: () => editor?.getContent() ?? null,
+  // The text with the file it belongs to, so a save can't write one file's
+  // text to another that opened meanwhile.
+  getDocument: () => (editor ? { path, text: editor.getContent() } : null),
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
@@ -255,29 +285,9 @@ window.texlocal = {
     editor?.setTheme(dark);
   },
   command(name, arg) {
-    if (!editor) return false;
-    if (WRAPS[name]) editor.wrapSelection(...WRAPS[name]);
-    else if (name === 'undo' || name === 'redo') {
-      // The document's history only while the document has focus. In the
-      // find panel's fields this returns false, and the host undoes there.
-      if (!document.activeElement?.closest('.cm-content')) return false;
-      editor[name]();
-    }
-    else if (name === 'comment') editor.toggleComment();
-    else if (name === 'find') { if (hostFind) openFind(currentView()); else editor.openSearch(); }
-    else if (name === 'findNext') { if (hostFind) step(findNext); else editor.findNext(); }
-    else if (name === 'findPrevious') { if (hostFind) step(findPrevious); else editor.findPrevious(); }
-    else if (name === 'replaceNext') step(replaceNext);
-    else if (name === 'replaceAll') step(replaceAll);
-    else if (name === 'block') return editor.insertBlock(arg);
-    else if (name === 'heading') editor.setHeading(arg ?? '');
-    else if (name === 'text') editor.insertText(arg ?? '');
-    else if (name === 'symbol') editor.insertSymbol(arg ?? '');
-    // A template such as \ref{$0} around the selection, in the line: "$0"
-    // is where the selection (or the cursor) goes.
-    else if (name === 'inline') editor.wrapSelection(...(`${arg}$0`).split('$0', 2));
-    else return false;
-    return true;
+    const run = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : null;
+    if (!editor || !run) return false;
+    return run(arg) !== false;
   },
 };
 

@@ -4,7 +4,7 @@ import CoreGraphics
 /// space starts at the bottom-left of the page's box. These are the only two
 /// places the axes meet.
 enum SyncTeXGeometry {
-    /// Match the web's highlight (web/src/pdfview.js).
+    /// The web draws the same box (web/src/pdfview.js `SYNC_FLASH`); change both.
     private static let lineHeight: CGFloat = 12
     private static let minimumWidth: CGFloat = 24
     private static let margin: CGFloat = 2
