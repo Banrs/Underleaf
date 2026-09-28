@@ -141,6 +141,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A SwiftUI scene's window owns its toolbar, so the window is AppKit's too.
 - **The status bar's ends** (`CornerBar`): where the corner-adapted safe area (`edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))`) reports a window corner, the content sits 16 pt from the window's edge, as Xcode's bottom bars have it; the safe area's own 18 pt would hold it further in. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
+- **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one.
 - **A plain `WKWebView` for the editor.**
   - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
@@ -207,7 +208,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - Items are 8 pt apart and 8 pt from section edges; B I is one 73 pt capsule; Compile is 75 pt.
   - A column narrower than its section's tools parts the section line from the divider; that's the system's layout. The source section needs about 350 pt with the sidebar shown, and about 480 pt without it (the traffic lights, the toggle, back, the title, which keeps about 160 pt, B I and Insert).
   - Short of room window-wide, zoom goes to `>>` first, then Share; Compile and the toggles last.
-- **Window minimums:** the content goes down to 641 × 309 pt. That's source and PDF at 320 pt each, and the columns, build panel and status bar.
+- **Window minimums:** the content goes down to 641 × 317 pt. That's source and PDF at 320 pt each, and the columns, build panel and status bar.
   - Narrowing folds the sidebar once source and PDF reach their minimums, and brings it back when there's room.
   - Window › Move & Resize › Left folds it to fit half the display.
   - The projects screen stops at the same size below its toolbar.
@@ -269,6 +270,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **Divider detents:** `NSSplitViewController` doesn't implement `splitView(_:constrainSplitPosition:ofSubviewAt:)` (`instancesRespond` is false), so there's no super to call. Swift still needs `override`.
   - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.
   - `DetentSplitViewController` snaps within 8 pt and taps `NSHapticFeedbackManager`'s `.alignment` once, as the divider arrives.
+  - Only the sidebar (at its opening 270 pt) and the source/PDF divider (at half) have detents. The File Outline's and the build panel's dividers have no size worth stopping at, and a snap there would fight fine adjustment, so they have neither snap nor haptic.
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
@@ -283,8 +285,10 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The nested split view controllers answer `toggleSidebar:` and `toggleInspector:` before the window's split**, and they have neither. `WorkspaceToolbar.toolbarWillAddItem` points the system's toggles at the `WorkspaceController`.
 - **The File Outline's header is the files pane's foot accessory, folded or not,** so it never swaps views and its title keeps its distance from the line.
   - The sidebar split's divider runs under it. That divider draws nothing (`QuietSplitView`) and takes no drags; the header's line takes them (`splitView(_:additionalEffectiveRectOfDividerAt:)`).
-  - Open, the header is 6 pt shorter at its foot, so the first heading sits under it as a section's first row would.
-  - A sidebar `List`'s 10 pt over its first row is inside its table (`NSTableView` `.sourceList`), so `contentMargins` doesn't reach it. The outline pulls its list up by 10 pt and clips it.
+  - Open, the header is 10 pt shorter at its foot (26 pt), so the first heading's text sits 7 pt under the title, as a section's first row would.
+  - A sidebar `List`'s 10 pt over its first row is inside its table (`NSTableView` `.sourceList`), so `contentMargins(.scrollContent)` and `safeAreaPadding` don't reach it. The outline pulls its list up by 10 pt and clips it.
+  - Clipped, the scroller's top went with it; `contentMargins(.top, 10, for: .scrollIndicators)` brings it back to the pane's top.
+  - `scrollEdgeEffectStyle(.soft, for: .top)` shows nothing there: the effect draws in the clipped 10 pt, so rows cut hard under the header.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 
 **Toolbar**

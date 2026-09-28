@@ -24,9 +24,9 @@ struct OutlineHeader: View {
     @State private var hovering = false
     @FocusState private var chevronFocused: Bool
 
-    /// Open, the header ends this much sooner, so the first heading sits under its
-    /// title as a section's first row sits under the section's (measured, 27.2).
-    private static let openTrim: CGFloat = 6
+    /// Open, the header ends just under its title, so the first heading sits under
+    /// it as a section's first row sits under the section's (measured, 27.2).
+    private static let openTrim: CGFloat = 10
 
     var body: some View {
         let collapsed = app.outlineCollapsed
@@ -383,7 +383,9 @@ struct OutlineList: View {
             }
             .listStyle(.sidebar)
             // The header over it stands where a section's would, so the room a
-            // sidebar list leaves over its first row goes.
+            // sidebar list leaves over its first row goes; the scroller keeps to
+            // what shows.
+            .contentMargins(.top, Self.listTopRoom, for: .scrollIndicators)
             .padding(.top, -Self.listTopRoom)
             .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)

@@ -3,15 +3,13 @@ import SwiftUI
 /// The in-window bars' metrics, from the macOS 27 UI kit.
 enum BarMetrics {
     static let controlSize: ControlSize = .regular
-    /// UI kit: small controls (buttons, pop-ups, fields) are 20 pt high.
-    static let secondaryControlHeight: CGFloat = 20
     /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The status bar and the folded outline share this height, so the hairlines
-    /// over them run on as one.
-    static var secondaryBarHeight: CGFloat { secondaryControlHeight + 2 * spacing }
+    /// The status bar and the folded File Outline header share this height, so the
+    /// hairlines over them run on as one (Xcode's status bar, measured on 27.2).
+    static let secondaryBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
     /// UI kit, Unified toolbar: items 8 pt apart.
