@@ -147,8 +147,8 @@ final class WorkspaceController: NSSplitViewController {
         addSplitViewItem(areaItem)
     }
 
-    /// The project's settings and facts, at AppKit's fixed inspector width, as the
-    /// Format inspector in Pages and Keynote.
+    /// The project's settings and facts, at AppKit's fixed inspector width: a column
+    /// of settings needs no more.
     private func buildInspector() {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
         inspectorItem.viewController.view.frame.size.width = inspectorItem.minimumThickness
@@ -508,8 +508,8 @@ enum ColumnMetrics {
     static let outlineMinimum: CGFloat = 80
     static let outlineShare: CGFloat = 0.45
     /// The window's content at its narrowest: the source and the PDF, a divider
-    /// between. The sidebar folds first, as a narrowing window folds Mail's, so two
-    /// windows tile side by side on the smallest Mac display (1470 pt wide).
+    /// between. A narrowing window folds the sidebar first (AppKit's way with
+    /// sidebars), so two windows tile side by side on the smallest Mac display.
     static let contentMinimumWidth = sourceMinimum + 1 + pdfMinimum
     /// And at its shortest: the columns over the build panel, then the status bar.
     static let contentMinimumHeight = columnsMinimum + 1 + panelMinimum + BarMetrics.secondaryBarHeight
