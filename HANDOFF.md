@@ -221,7 +221,6 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A toolbar configuration saved before them (after a Customize Toolbar change) could lack them, with no way to add them back.
   - The toolbar saves as "Workspace", and none was saved on the owner's Mac; the owner accepted the risk.
 - **Orphaned defaults:** split sizes are `PaneSizes` keys, and the old per-split keys are orphaned. On the owner's Mac they were deleted on 2026-09-28; other Macs keep them, unread.
-- The File Outline header's secondary label reads a little like a disabled one.
 - **The header's drag, not yet done by hand:** `theOutlineHeadersLineTakesTheDividersDrags` checks the wiring (the line's rect, none under the header), not a real drag.
 - **Biber on macOS 27:** TeX Live 2026's `biber` 2.21 unpacks its arm64 half with `lipo -extract_family`, which Xcode 27's `lipo` no longer has ("extracting arm64 binary with lipo failed"), so biblatex with biber gets no bibliography. Replacing it with its arm64 half (`lipo -thin arm64`) works. The build panel shows it only as undefined citations.
 
@@ -286,7 +285,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The nested split view controllers answer `toggleSidebar:` and `toggleInspector:` before the window's split**, and they have neither. `WorkspaceToolbar.toolbarWillAddItem` points the system's toggles at the `WorkspaceController`.
 - **The File Outline's header is the files pane's foot accessory, folded or not,** so it never swaps views and its title keeps its distance from the line.
   - The sidebar split's divider runs under it. That divider draws nothing (`QuietSplitView`) and takes no drags; the header's line takes them (`splitView(_:additionalEffectiveRectOfDividerAt:)`).
-  - Open, the header is 10 pt shorter at its foot (26 pt), so the first heading's text sits 7 pt under the title, as a section's first row would.
+  - The header is the system's own collapsible sidebar section (`Section(isExpanded:)` in a one-section `.sidebar` list, no rows of its own). Checked on 27.2: a click anywhere on a collapsible section's header folds it, not only on its chevron, and the chevron shows on hover. The custom header it replaced showed its chevron only while hovered and took clicks only on it, so a click on the title did nothing.
+  - Its list's own 10 pt over the header row keeps the title's distance from the line. Folded, it's 36 pt, level with the status bar; open, it ends with the header's 19 pt row (29 pt), where a section's first row would start. `scrollContentBackground(.hidden)` lets the sidebar's material through.
   - A sidebar `List`'s 10 pt over its first row is inside its table (`NSTableView` `.sourceList`), so `contentMargins(.scrollContent)` and `safeAreaPadding` don't reach it. The outline pulls its list up by 10 pt and clips it.
   - Clipped, the scroller's top went with it; `contentMargins(.top, 10, for: .scrollIndicators)` brings it back to the pane's top.
   - `scrollEdgeEffectStyle(.soft, for: .top)` shows nothing there: the effect draws in the clipped 10 pt, so rows cut hard under the header.
@@ -312,7 +312,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **`track` needs `nonisolated` Equatable values** (`OutlineState`, the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
 - **An `NSMenuItem` subclass can't override its initialisers under default main-actor isolation.** The toolbar's menus are `NSHostingMenu`s over SwiftUI items instead, which also keeps them the menu bar's.
-- **A SwiftUI view at zero opacity leaves the accessibility tree.** The File Outline's chevron shows only on hover, as a sidebar section's does, so the header is one accessibility element with the fold as its action.
+- **A SwiftUI view at zero opacity leaves the accessibility tree.**
 - **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
 - **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
 - **`NSBox`'s separator is 1 px, the thin split divider 1 pt.** The bars' lines are a small view (`Hairline`) in the split's `dividerColor`.
