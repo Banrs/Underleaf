@@ -197,6 +197,8 @@ struct HomeRoot: View {
 
     var body: some View {
         HomeView()
+            // SwiftUI sets the window's minimum from its content's: the app's own.
+            .frame(minWidth: WindowMetrics.contentMinimum.width, minHeight: WindowMetrics.contentMinimum.height)
             .windowModals()
             .environment(app)
     }
