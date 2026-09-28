@@ -144,10 +144,12 @@ final class WorkspaceController: NSSplitViewController {
         addSplitViewItem(areaItem)
     }
 
-    /// The project's settings and facts, at AppKit's inspector width.
+    /// The project's settings and facts.
     private func buildInspector() {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
-        inspectorItem.viewController.view.frame.size.width = inspectorItem.minimumThickness
+        inspectorItem.minimumThickness = ColumnMetrics.inspectorWidth.lowerBound
+        inspectorItem.maximumThickness = ColumnMetrics.inspectorWidth.upperBound
+        inspectorItem.viewController.view.frame.size.width = PaneSize.inspector.value ?? ColumnMetrics.inspectorWidth.lowerBound
         inspectorItem.isCollapsed = !app.inspectorVisible
         addSplitViewItem(inspectorItem)
     }
@@ -342,12 +344,17 @@ final class WorkspaceController: NSSplitViewController {
 
     // ---------- sizes ----------
 
-    /// Keeps the shown panes' sizes, for this launch's collapses and the next launch.
+    /// Keeps the shown panes' sizes, for this launch's collapses and the next launch:
+    /// the sizes they're dragged to, not those a narrowing window squeezes them to.
     func saveSizes() {
-        guard view.window != nil else { return }
+        guard let window = view.window, !window.inLiveResize else { return }
         let sidebarWidth = sidebarItem.viewController.view.frame.width
         if !sidebarItem.isCollapsed, sidebarWidth >= sidebarItem.minimumThickness {
             PaneSize.sidebar.store(sidebarWidth)
+        }
+        let inspectorWidth = inspectorItem.viewController.view.frame.width
+        if !inspectorItem.isCollapsed, inspectorWidth >= inspectorItem.minimumThickness {
+            PaneSize.inspector.store(inspectorWidth)
         }
         if !outlineItem.isCollapsed { PaneSize.outline.store(outlineItem.viewController.view.frame.height) }
         if !panelItem.isCollapsed { PaneSize.panel.store(panelItem.viewController.view.frame.height) }
@@ -476,9 +483,12 @@ private nonisolated struct OutlineState: Equatable {
 /// system's to fit, its tools crossing a divider or going into its overflow menu
 /// near the window's minimum.
 enum ColumnMetrics {
-    static let sidebarWidth: ClosedRange<CGFloat> = 200...320
-    /// UI kit: the window sidebar is 256 pt.
-    static let sidebarIdeal: CGFloat = 256
+    static let sidebarWidth: ClosedRange<CGFloat> = 200...400
+    /// Xcode's navigator in a new window.
+    static let sidebarIdeal: CGFloat = 290
+    /// AppKit's inspector is 270 pt and fixed, its divider showing a resize cursor
+    /// all the same; here it resizes from there, as far as the sidebar.
+    static let inspectorWidth: ClosedRange<CGFloat> = 270...400
     /// About 40 columns of the editor's default font.
     static let sourceMinimum: CGFloat = 320
     /// A page still legible, fitted to the width.
@@ -504,7 +514,7 @@ enum ColumnMetrics {
 
 /// Pane sizes, kept across launches in one defaults dictionary.
 enum PaneSize: String {
-    case sidebar, pdfShare, panel, outline
+    case sidebar, inspector, pdfShare, panel, outline
 
     var value: CGFloat? {
         (UserDefaults.standard.dictionary(forKey: DefaultsKey.paneSizes)?[rawValue] as? Double).map { CGFloat($0) }
