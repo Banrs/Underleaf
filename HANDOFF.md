@@ -146,6 +146,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
   - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
+  - Its context menu is WebKit's text menu, as a text view's: none on the line numbers, where WebKit offered only Reload (which would reload the page and lose unsaved edits), and no Look Up “” in blank space, where WebKit selects the line break (`web/src/embed/editor.js`, with a host's chrome only). WebKit's Font, Paragraph Direction and Selection Direction stay: they have no public identifiers, and Safari's text areas show them too.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
   - The view fills the item's glass (36 pt, measured), which passes no clicks to it.

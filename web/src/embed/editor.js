@@ -47,6 +47,23 @@ new ResizeObserver(([entry]) => {
   resizeTimer = setTimeout(() => { delete root.dataset.resizing; }, RESIZE_SETTLE_MS);
 }).observe(parent);
 
+// ---------- the context menu ----------
+// In a host's own chrome (the Mac's), a text view's: none outside the text
+// (the line numbers), where the web view's offers to reload the page. A
+// right-click in blank space, where WebKit selects the line break as the
+// nearest word, leaves a caret there instead, so the menu doesn't offer to
+// look up or share nothing.
+
+document.addEventListener('contextmenu', (event) => {
+  if (!('host' in document.documentElement.dataset)) return;
+  if (!event.target.closest?.('.cm-content')) {
+    event.preventDefault();
+    return;
+  }
+  const selection = getSelection();
+  if (!selection.isCollapsed && !selection.toString().trim()) selection.collapseToEnd();
+});
+
 // ---------- the host's find bar ----------
 // A host that draws its own find bar (the Mac's) drives CodeMirror's search
 // from it: the page keeps the query, the matches and their highlighting;

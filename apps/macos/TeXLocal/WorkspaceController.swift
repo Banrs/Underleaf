@@ -516,8 +516,6 @@ class DetentSplitViewController: NSSplitViewController {
     }
 }
 
-/// A split view's thin divider, drawn along a bar's top: the same colour and
-/// thickness as the dividers it continues.
 /// Files over the File Outline, whose header sits at the files' foot, so the
 /// divider runs under the header. The header's line, over it, stands for the
 /// divider and takes its drags; the divider itself draws nothing and takes none.
@@ -579,6 +577,8 @@ private final class CornerBar: NSView {
     }
 }
 
+/// A split view's thin divider, drawn along a bar's top: the same colour and
+/// thickness as the dividers it continues.
 private final class Hairline: NSView {
     private weak var split: NSSplitView?
 
