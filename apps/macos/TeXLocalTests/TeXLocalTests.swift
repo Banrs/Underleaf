@@ -1,14 +1,18 @@
 import SwiftUI
 @testable import TeXLocal
 
-struct TimedOut: Error {}
+/// What a timed-out wait last saw, so a failure on a machine we can't watch says why.
+struct TimedOut: Error {
+    var state = ""
+}
 
 /// Polls `condition` on the main actor until it holds; throws once `timeout` passes.
 @MainActor
-func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {
+func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool,
+               state: () -> String = { "" }) async throws {
     let deadline = ContinuousClock.now + timeout
     while !condition() {
-        guard ContinuousClock.now < deadline else { throw TimedOut() }
+        guard ContinuousClock.now < deadline else { throw TimedOut(state: state()) }
         try await Task.sleep(for: .milliseconds(20))
     }
 }

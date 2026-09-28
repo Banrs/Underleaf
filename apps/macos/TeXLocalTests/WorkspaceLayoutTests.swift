@@ -12,7 +12,6 @@ final class WorkspaceLayoutTests {
     /// The app's defaults the tests change, put back after each.
     private static let keys = [DefaultsKey.paneSizes, DefaultsKey.sidebarVisible, DefaultsKey.inspectorVisible,
                                DefaultsKey.showPDF, DefaultsKey.outlineCollapsed]
-    /// No taller than 600 pt: a CI runner's screen holds a taller titled window short.
     private static let size = NSSize(width: 1200, height: 600)
     private let saved: [String: Any]
     private var window: NSWindow?
@@ -48,8 +47,8 @@ final class WorkspaceLayoutTests {
         project.showPDF = pdf
         project.showLogs = panel
         let workspace = WorkspaceController(app: app, project: project, size: size)
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
+        let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
+                                     styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.contentViewController = workspace
         window.setContentSize(size)
@@ -85,12 +84,18 @@ final class WorkspaceLayoutTests {
         let workspace = open()
         let pdfWidth = width(workspace.pdfItem)
         #expect(pdfWidth > ColumnMetrics.pdfMinimum)
+        let state = {
+            "collapsed \(workspace.pdfItem.isCollapsed), source \(self.width(workspace.sourceItem)), "
+                + "PDF \(self.width(workspace.pdfItem)) (was \(pdfWidth)), columns \(workspace.columns.view.frame.width)"
+        }
         workspace.project.showPDF = false
         try await waitUntil {
             workspace.pdfItem.isCollapsed && isClose(self.width(workspace.sourceItem), workspace.columns.view.frame.width)
-        }
+        } state: { "hiding: " + state() }
         workspace.project.showPDF = true
-        try await waitUntil { !workspace.pdfItem.isCollapsed && isClose(self.width(workspace.pdfItem), pdfWidth, within: 1) }
+        try await waitUntil {
+            !workspace.pdfItem.isCollapsed && isClose(self.width(workspace.pdfItem), pdfWidth, within: 1)
+        } state: { "showing: " + state() }
     }
 
     /// The build panel opens at the height kept for it, not at its minimum.
@@ -146,4 +151,11 @@ final class WorkspaceLayoutTests {
         // Below the titlebar: the panes stop at the safe area.
         #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, WindowMetrics.contentMinimum.height))
     }
+}
+
+/// A window kept at the size it's given. Ordered front, a titled window shrinks
+/// to the screen's visible frame, and a CI runner's screen is smaller than the
+/// tests' window: the workspace, made for the size asked, would be squeezed after.
+private final class UnclampedWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
