@@ -1,29 +1,26 @@
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using Windows.System;
 
 namespace TeXLocal.Tests;
 
-public sealed partial class MenuCommandTests
+public sealed class MenuCommandTests
 {
-    [GeneratedRegex(@"\{ id: '([^']+)'.*?accel: '((?:[^'\\]|\\.)+)'")]
-    private static partial Regex CommandDef();
-
     /// <summary>
-    /// Every (id, accel) pair in the browser version's commandDefs
-    /// (web/src/workspace.js), read from the source so the two cannot drift.
+    /// Every (id, accel) pair in the shared table (web/src/shortcuts.json),
+    /// which the browser version and the Mac read, so the two cannot drift.
     /// </summary>
     private static List<(string Id, string Accel)> CommandDefs()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "web", "src", "workspace.js")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "web", "src", "shortcuts.json")))
         {
             dir = dir.Parent;
         }
         Assert.NotNull(dir);
-        var source = File.ReadAllText(Path.Combine(dir.FullName, "web", "src", "workspace.js"));
-        return CommandDef().Matches(source)
-            .Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value)))
-            .ToList();
+        var table = JsonSerializer.Deserialize<Dictionary<string, string>>(
+            File.ReadAllText(Path.Combine(dir.FullName, "web", "src", "shortcuts.json")));
+        Assert.NotNull(table);
+        return table.Select(pair => (pair.Key, pair.Value)).ToList();
     }
 
     [Fact]

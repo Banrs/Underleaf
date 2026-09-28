@@ -478,3 +478,42 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     assert_eq!(loc.file, "chapter.tex");
     assert_eq!(loc.line, 7);
 }
+
+extern "C" {
+    fn pthread_atfork(
+        prepare: Option<extern "C" fn()>,
+        parent: Option<extern "C" fn()>,
+        child: Option<extern "C" fn()>,
+    ) -> i32;
+}
+
+static FORKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+extern "C" fn forked() {
+    FORKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tokio::test]
+async fn tools_start_by_posix_spawn_never_a_fork() {
+    // A forked child of a multithreaded process (the Mac app) can crash
+    // before its exec; std forks for a bare name when PATH is set.
+    assert_eq!(unsafe { pthread_atfork(None, Some(forked), None) }, 0);
+    let before = FORKS.load(std::sync::atomic::Ordering::SeqCst);
+    let (_tmp, root, mgr) =
+        setup("#!/bin/sh\necho 'Latexmk, John Collins, Version 4.85'\nexit 0\n");
+    assert!(
+        tex_available(mgr.path_env.as_deref().unwrap())
+            .await
+            .available
+    );
+    compile(&mgr, &root).await;
+    // Missing, it is reported without starting anything.
+    assert!(!tex_available("/nonexistent-dir-for-test").await.available);
+    let mut missing = CompileManager::default();
+    missing.path_env = Some("/nonexistent-dir-for-test".into());
+    let result = compile(&missing, &root).await;
+    assert!(result.errors[0]
+        .message
+        .starts_with("Couldn't start latexmk"));
+    assert_eq!(FORKS.load(std::sync::atomic::Ordering::SeqCst), before);
+}

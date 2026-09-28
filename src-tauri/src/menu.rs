@@ -412,38 +412,25 @@ mod tests {
         assert_eq!(muda_accelerator("CmdOrCtrl+Minus"), "CmdOrCtrl+Minus");
     }
 
-    /// Reads the accelerators the renderer actually declares, so adding one
-    /// with a key muda can't parse fails here rather than shipping a menu item
-    /// whose shortcut does nothing.
+    /// Reads the accelerators the renderer declares (web/src/shortcuts.json,
+    /// the one table), so adding one with a key muda can't parse fails here
+    /// rather than shipping a menu item whose shortcut does nothing.
     #[test]
     fn every_declared_accelerator_survives_translation() {
-        // The two modules that register commands; commands.js holds the menu
-        // shape, the accelerators are declared with the commands themselves.
-        const SOURCES: &[&str] = &[
-            include_str!("../../web/src/workspace.js"),
-            include_str!("../../web/src/home.js"),
-        ];
-        let mut checked = 0;
-        for source in SOURCES {
-            for (i, marker) in source.match_indices("accel: '") {
-                let rest = &source[i + marker.len()..];
-                let Some(accel) = rest.split('\'').next() else {
-                    continue;
-                };
-                // The JS source escapes a literal backslash key as "\\".
-                let accel = accel.replace("\\\\", "\\");
-                let translated = muda_accelerator(&accel);
-                assert!(
-                    muda_knows(key_of(&translated)),
-                    "accelerator {accel:?} translates to {translated:?}, whose key muda cannot \
-                     parse — add a mapping in muda_accelerator",
-                );
-                checked += 1;
-            }
+        let table: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(include_str!("../../web/src/shortcuts.json")).unwrap();
+        for accel in table.values() {
+            let translated = muda_accelerator(accel);
+            assert!(
+                muda_knows(key_of(&translated)),
+                "accelerator {accel:?} translates to {translated:?}, whose key muda cannot \
+                 parse — add a mapping in muda_accelerator",
+            );
         }
         assert!(
-            checked > 20,
-            "expected the command model's accelerators, found {checked}"
+            table.len() > 20,
+            "expected the command model's accelerators, found {}",
+            table.len()
         );
     }
 }
