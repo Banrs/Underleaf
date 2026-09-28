@@ -153,6 +153,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The view fills the item's glass (36 pt, measured), which passes no clicks to it.
   - The title is medium weight, 12 pt from the ends, matching an item's title.
 - **The segmented zoom and Math controls open their menu segment's menu from their action** (`openMenu(of:)`). AppKit opens a segment's menu on a click only in a control with no action, and these have one for their other segments.
+  - So a click opens it as the mouse goes up, and a press and hold opens AppKit's own after 0.26 s (real clicks on a prototype, 27.2).
+  - Without an action AppKit opens it on the press, but the control then doesn't say which other segment was clicked (`selectedSegment` is back to -1 when `mouseDown` returns), and keyboard and VoiceOver presses send nothing. Segment frames aren't public API.
 - **`NSSharingServicePicker`**: SwiftUI opens one only from a `ShareLink`.
 - **`TabsControl`** (`NSSegmentedControl`, tabs role): SwiftUI's tabs picker moved its thumb on hover.
 - **`NSSearchField`** in the find bars, the sidebar and the log filter: SwiftUI's search field is toolbar or sidebar only.
