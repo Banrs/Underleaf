@@ -78,6 +78,15 @@ struct WorkspaceView: View {
         } message: { path in
             Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
         }
+        .alert(project.missingFile.map { "“\(($0 as NSString).lastPathComponent)” Was Moved or Deleted" } ?? "",
+               item: $project.missingFile) { _ in
+            // The default button: Return keeps the edits.
+            Button("Save Again") { project.saveMissingFile() }
+            // It discards the edits: never the default button.
+            Button("Close", role: .destructive) { project.closeMissingFile() }
+        } message: { path in
+            Text("Another app moved or deleted \(path), which has unsaved changes here. Save them to make the file again, or close it and discard them.")
+        }
     }
 }
 

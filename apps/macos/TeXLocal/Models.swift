@@ -13,7 +13,7 @@ nonisolated struct ProjectInfo: Decodable, Identifiable {
     var modified: Date { Date(timeIntervalSince1970: mtime / 1000) }
 }
 
-nonisolated struct TreeNode: Decodable, Identifiable {
+nonisolated struct TreeNode: Decodable, Identifiable, Equatable {
     let type: String
     let name: String
     let path: String

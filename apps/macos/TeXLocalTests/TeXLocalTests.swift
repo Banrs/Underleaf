@@ -167,10 +167,11 @@ struct FindBarTests {
     }
 }
 
-/// The open file's watcher: a write in place, a save over it (a new file
-/// renamed over the old) and a delete then recreate are all told.
+/// The project folder's watcher: a write in place, a save over a file (a new
+/// one renamed over it) and a delete then recreate are all told, by path;
+/// items coming and going in a subfolder are told as structural.
 @MainActor
-final class FileWatcherTests: XCTestCase {
+final class FolderWatcherTests: XCTestCase {
     private var folder: URL!
 
     override func setUp() async throws {
@@ -182,37 +183,51 @@ final class FileWatcherTests: XCTestCase {
         try? FileManager.default.removeItem(at: folder)
     }
 
+    /// A watcher of the folder, and the changes it has told about `path`.
+    private func watch(_ path: String) -> (FolderWatcher, () -> [FolderWatcher.Change]) {
+        var told: [FolderWatcher.Change] = []
+        let watcher = FolderWatcher(folder: folder) { told += $0 }
+        return (watcher, { told.filter { watcher.relativePath($0.path) == path } })
+    }
+
     func testChangesInPlaceAndByReplacementAreBothTold() async throws {
         let url = folder.appending(path: "main.tex")
         try "one".write(to: url, atomically: false, encoding: .utf8)
-        var changes = 0
-        let watcher = FileWatcher(url: url) { changes += 1 }
+        let (watcher, changes) = watch("main.tex")
 
         try "two".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { changes > 0 }
-        let inPlace = changes
+        try await waitUntil { !changes().isEmpty }
+        let inPlace = changes().count
         try "three".write(to: url, atomically: true, encoding: .utf8)
-        try await waitUntil { changes > inPlace }
+        try await waitUntil { changes().count > inPlace }
         // Still watching the new file at that path.
-        let replaced = changes
+        let replaced = changes().count
         try "four".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { changes > replaced }
+        try await waitUntil { changes().count > replaced }
         _ = watcher
     }
 
     func testAFileDeletedThenRecreatedIsStillTold() async throws {
         let url = folder.appending(path: "main.tex")
         try "one".write(to: url, atomically: false, encoding: .utf8)
-        var changes = 0
-        let watcher = FileWatcher(url: url) { changes += 1 }
+        let (watcher, changes) = watch("main.tex")
 
         try FileManager.default.removeItem(at: url)
-        try await waitUntil { changes > 0 }
+        try await waitUntil { changes().contains(where: \.structural) }
         // Past the watcher's settle time, so the recreate is an event of its own.
         try await Task.sleep(for: .milliseconds(500))
-        let deleted = changes
+        let deleted = changes().count
         try "two".write(to: url, atomically: false, encoding: .utf8)
-        try await waitUntil { changes > deleted }
+        try await waitUntil { changes().count > deleted }
+        _ = watcher
+    }
+
+    func testAnItemAddedInASubfolderIsStructural() async throws {
+        try FileManager.default.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: true)
+        let (watcher, changes) = watch("chapters/one.tex")
+
+        try "text".write(to: folder.appending(path: "chapters/one.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil { changes().contains(where: \.structural) }
         _ = watcher
     }
 }
@@ -913,6 +928,83 @@ struct SaveTests {
         #expect(await project.save())
         let saved = try String(contentsOf: folder.appending(path: info.mainFile), encoding: .utf8)
         #expect(saved.contains("\\textbf{}"))
+        await app.close()
+    }
+}
+
+/// Files another app adds, renames or deletes show in the sidebar's tree.
+@MainActor
+struct TreeWatchTests {
+    @Test(.timeLimit(.minutes(1)))
+    func anotherAppsFilesComeAndGo() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+        let kept = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
+
+        let core = Core.shared
+        let info = try await core.call("create_project", ["name": "Tree \(UUID().uuidString.prefix(8))", "template": "blank"],
+                                       as: ProjectInfo.self)
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let folder = Core.libraryFolder.appending(path: info.id)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let app = AppModel()
+        app.autoCompile = false
+        await app.open(info.id)
+        let project = try #require(app.project)
+        let paths = { Set(project.tree.flattened.map(\.path)) }
+        let files = FileManager.default
+
+        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { paths().contains("notes.tex") }
+        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
+        try files.moveItem(at: folder.appending(path: "notes.tex"), to: folder.appending(path: "parts/notes.tex"))
+        try await waitUntil(timeout: .seconds(5)) { paths().contains("parts/notes.tex") && !paths().contains("notes.tex") }
+        try files.removeItem(at: folder.appending(path: "parts"))
+        try await waitUntil(timeout: .seconds(5)) { !paths().contains("parts") }
+        await app.close()
+    }
+
+    /// Deleted by another app, the open file closes; with unsaved edits it asks
+    /// first, saving nothing meanwhile, and Save Again makes it again.
+    @Test(.timeLimit(.minutes(1)))
+    func anOpenFileDeletedElsewhere() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+        let kept = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
+
+        let core = Core.shared
+        let info = try await core.call("create_project", ["name": "Gone \(UUID().uuidString.prefix(8))", "template": "blank"],
+                                       as: ProjectInfo.self)
+        _ = try #require(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        let folder = Core.libraryFolder.appending(path: info.id)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let notes = folder.appending(path: "notes.tex")
+        try "notes".write(to: notes, atomically: false, encoding: .utf8)
+
+        let app = AppModel()
+        app.autoCompile = false
+        await app.open(info.id)
+        let project = try #require(app.project)
+
+        await project.open("notes.tex")
+        try FileManager.default.removeItem(at: notes)
+        try await waitUntil(timeout: .seconds(5)) { project.openPath == nil }
+        #expect(project.missingFile == nil)
+
+        try "notes".write(to: notes, atomically: false, encoding: .utf8)
+        await project.open("notes.tex")
+        try FileManager.default.removeItem(at: notes)
+        #expect(await project.editor.command(.bold))
+        try await waitUntil(timeout: .seconds(5)) { project.missingFile == "notes.tex" }
+        // Past the autosave, which would have made the file again.
+        try await Task.sleep(for: .seconds(1))
+        #expect(!FileManager.default.fileExists(atPath: notes.path(percentEncoded: false)))
+        project.saveMissingFile()
+        try await waitUntil(timeout: .seconds(5)) { FileManager.default.fileExists(atPath: notes.path(percentEncoded: false)) }
+        #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{}"))
         await app.close()
     }
 }

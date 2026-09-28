@@ -54,9 +54,13 @@ final class ProjectModel {
     /// The open file's path, while the alert asks whether to keep the edits
     /// here or the change on disk.
     var diskConflict: String?
+    /// The open file's path, while the alert asks what becomes of its unsaved
+    /// edits now another app has moved or deleted it.
+    var missingFile: String?
     /// The text last read or written, to tell another app's change from our save.
     private var diskText: String?
-    private var watcher: FileWatcher?
+    private var folderWatcher: FolderWatcher?
+    private var treeReload: Task<Void, Never>?
     private var diskCheck: Task<Void, Never>?
 
     /// The source's find bar: CodeMirror's search behind native fields.
@@ -184,6 +188,7 @@ final class ProjectModel {
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
+            await watchFolder()
             await refreshSymbols()
             guard !closed else { return }
             if let saved {
@@ -204,11 +209,15 @@ final class ProjectModel {
         }
     }
 
-    func reloadTree() async {
+    /// `quietly` for a reload another app's change asked for: its failure
+    /// isn't the user's to act on, and the next change tries again.
+    func reloadTree(quietly: Bool = false) async {
         do {
-            tree = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
+            let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
+            // Only a change redraws the sidebar: a save's temporary file asks for a reload too.
+            if files != tree, !closed { tree = files }
         } catch {
-            report(error, "Couldn’t Read the Project’s Files")
+            if !quietly { report(error, "Couldn’t Read the Project’s Files") }
         }
     }
 
@@ -243,7 +252,6 @@ final class ProjectModel {
             openPath = path
             openURL = url
             diskText = nil
-            watchOpenFile()
             analyze("")
         } else if path != openPath {
             guard await saveEdits(), generation == openGeneration else { return }
@@ -254,7 +262,6 @@ final class ProjectModel {
                 openPath = path
                 openURL = url
                 diskText = file.text
-                watchOpenFile()
                 analyze(file.text)
                 await editor.open(path: path, text: file.text, focus: focus)
                 cursorLine = await editor.currentLine()
@@ -299,7 +306,7 @@ final class ProjectModel {
     private func write() async -> Bool {
         guard hasUnsavedText, let path = openPath else { return true }
         // Not over another app's change until asked which to keep.
-        guard diskConflict == nil else { return false }
+        guard diskConflict == nil, missingFile == nil else { return false }
         saving = true
         defer { saving = false }
         // Before the read: an edit during the read or write marks it dirty
@@ -396,17 +403,47 @@ final class ProjectModel {
 
     // ---------- changes on disk ----------
 
-    /// So another app's change (an editor, a sync, git) shows here rather
-    /// than being saved over.
-    private func watchOpenFile() {
-        guard let url = openURL, editsText else {
-            watcher = nil
-            return
-        }
-        watcher = FileWatcher(url: url) { [weak self] in self?.scheduleDiskCheck() }
+    /// So another app's change (an editor, a sync, git) shows here: the open
+    /// file's rather than being saved over, and files come, go and move in
+    /// the sidebar.
+    private func watchFolder() async {
+        guard let root = try? await core.call("project_root", ["id": id], as: String.self), !closed else { return }
+        folderWatcher = FolderWatcher(folder: URL(fileURLWithPath: root)) { [weak self] in self?.folderChanged($0) }
     }
 
-    /// FileWatcher coalesces a write's events; a newer check replaces this one.
+    /// The tree is read again when something comes, goes or moves in a folder
+    /// it shows; what it shows (not hidden files or the build's) is the core's.
+    private func folderChanged(_ changes: [FolderWatcher.Change]) {
+        guard let watcher = folderWatcher else { return }
+        let folders = Set(tree.flattened.filter(\.isDirectory).map(\.path))
+        var openFileChanged = false, treeChanged = false
+        for change in changes {
+            guard let path = watcher.relativePath(change.path) else {
+                // The folder itself: moved, or FSEvents lost count of it.
+                let folder = change.path == watcher.folder || change.path == watcher.folder + "/"
+                treeChanged = treeChanged || change.structural && folder
+                continue
+            }
+            // A folder moves as one change, not one for each file in it.
+            openFileChanged = openFileChanged || path == openPath
+                || change.structural && openPath?.hasPrefix(path + "/") == true
+            let parent = (path as NSString).deletingLastPathComponent
+            treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
+        }
+        if openFileChanged { scheduleDiskCheck() }
+        if treeChanged { scheduleTreeReload() }
+    }
+
+    /// FSEvents coalesces a burst of changes; a newer reload replaces this one.
+    private func scheduleTreeReload() {
+        treeReload?.cancel()
+        treeReload = Task { [weak self] in
+            guard !Task.isCancelled else { return }
+            await self?.reloadTree(quietly: true)
+        }
+    }
+
+    /// FolderWatcher coalesces a write's events; a newer check replaces this one.
     private func scheduleDiskCheck() {
         diskCheck?.cancel()
         diskCheck = Task { [weak self] in
@@ -417,7 +454,12 @@ final class ProjectModel {
 
     /// With no unsaved edits the editor takes the disk's text; otherwise ask.
     private func checkDisk() async {
-        guard let path = openPath, !closed,
+        guard let path = openPath, !closed else { return }
+        if let url = openURL, !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+            fileGone(path)
+            return
+        }
+        guard editsText,
               let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
               path == openPath, !closed, file.text != diskText
         else { return }
@@ -431,6 +473,30 @@ final class ProjectModel {
             await showDiskText(file.text, of: path)
             if autoCompile { await compile(auto: true) }
         }
+    }
+
+    /// Another app moved or deleted the open file. It closes, as the sidebar
+    /// drops it, unless it has unsaved edits: those are asked about, and not
+    /// saved meanwhile, which would put the file back unasked.
+    private func fileGone(_ path: String) {
+        saveTask?.cancel()
+        if hasUnsavedText || saving {
+            missingFile = path
+        } else {
+            clearOpenFile()
+        }
+    }
+
+    /// The edits saved where the file was, making it again.
+    func saveMissingFile() {
+        missingFile = nil
+        Task { await saveEdits() }
+    }
+
+    /// The edits go with the file.
+    func closeMissingFile() {
+        missingFile = nil
+        clearOpenFile()
     }
 
     /// Keeps the scroll position.
@@ -532,7 +598,8 @@ final class ProjectModel {
     func close() {
         closed = true
         compileQueued = false
-        watcher = nil
+        folderWatcher = nil
+        treeReload?.cancel()
         diskCheck?.cancel()
         editor.close()
     }
@@ -627,7 +694,6 @@ final class ProjectModel {
             openPath = openPath.map { remapPath($0, from: result.from, to: result.to) }
             if let openPath, openPath != wasOpen {
                 openURL = await fileURL(openPath)
-                watchOpenFile()
             }
             let main = settings?.mainFile
             settings = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self)
@@ -660,7 +726,6 @@ final class ProjectModel {
         openPath = nil
         openURL = nil
         diskText = nil
-        watcher = nil
         dirty = false
         outline = []
         counts = nil
@@ -781,21 +846,31 @@ final class ProjectModel {
     }
 }
 
-/// Reports changes to one file, including an atomic save that replaces it.
-/// Watches the parent folder with FSEvents: a descriptor on the file would
-/// follow the old inode once a save renames a new one over it.
-final class FileWatcher {
-    private let folder: URL
-    private let name: String
-    private let changed: @MainActor () -> Void
+/// Reports what changes under a folder, in its subfolders too, from FSEvents,
+/// which sees other apps' changes: each changed item's path and whether it
+/// came, went or moved rather than only changed. Watching the folder, not a
+/// file's descriptor, keeps up with a save that renames a new file over the old.
+final class FolderWatcher {
+    struct Change: Equatable {
+        /// Symlinks resolved, as FSEvents gives it.
+        let path: String
+        /// Added, removed or renamed; or FSEvents lost count, and anything may have.
+        let structural: Bool
+    }
+
+    /// Symlinks resolved, as the changes' paths are.
+    let folder: String
+    private let changed: @MainActor ([Change]) -> Void
     private var stream: FSEventStreamRef?
 
     /// A write arrives as several events.
     private static let settle: CFTimeInterval = 0.25
+    private static let structuralFlags = FSEventStreamEventFlags(
+        kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed
+            | kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagRootChanged)
 
-    init(url: URL, changed: @escaping @MainActor () -> Void) {
-        folder = Self.resolvedFolder(of: url)
-        name = url.lastPathComponent
+    init(folder: URL, changed: @escaping @MainActor ([Change]) -> Void) {
+        self.folder = Self.realPath(folder)
         self.changed = changed
         start()
     }
@@ -807,26 +882,38 @@ final class FileWatcher {
         FSEventStreamRelease(stream)
     }
 
-    /// The folder alone: resolving a path whose file is gone (mid-save) leaves
-    /// it unresolved, so /var and /private/var would differ.
-    private static func resolvedFolder(of url: URL) -> URL {
-        url.deletingLastPathComponent().resolvingSymlinksInPath()
+    /// `path` from the folder ("chapters/one.tex"); nil for the folder itself
+    /// or anything outside it.
+    func relativePath(_ path: String) -> String? {
+        let prefix = folder.hasSuffix("/") ? folder : folder + "/"
+        return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : nil
+    }
+
+    /// Resolved as FSEvents resolves it. `resolvingSymlinksInPath` would take
+    /// /private off /private/var and /private/tmp, which FSEvents keeps.
+    private static func realPath(_ url: URL) -> String {
+        let path = url.path(percentEncoded: false)
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     private func start() {
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         // Called on the main queue (below); `info` stays valid until deinit stops the stream.
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
-            let changedPaths = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
+            let paths = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
+            let changes = zip(paths.prefix(count), UnsafeBufferPointer(start: flags, count: count)).map {
+                Change(path: $0, structural: $1 & FolderWatcher.structuralFlags != 0)
+            }
             MainActor.assumeIsolated {
-                let watcher = Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue()
-                watcher.received(changedPaths.prefix(count))
+                Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue().changed(changes)
             }
         }
         guard let stream = FSEventStreamCreate(
-            nil, callback, &context, [folder.path(percentEncoded: false)] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            nil, callback, &context, [folder] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             Self.settle, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes))
         else { return }
         FSEventStreamSetDispatchQueue(stream, .main)
@@ -836,14 +923,6 @@ final class FileWatcher {
             return
         }
         self.stream = stream
-    }
-
-    private func received(_ paths: ArraySlice<String>) {
-        let hit = paths.contains {
-            let url = URL(filePath: $0)
-            return url.lastPathComponent == name && Self.resolvedFolder(of: url) == folder
-        }
-        if hit { changed() }
     }
 }
 
