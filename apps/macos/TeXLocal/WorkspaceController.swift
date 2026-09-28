@@ -507,12 +507,14 @@ enum ColumnMetrics {
     static let filesMinimum: CGFloat = 100
     static let outlineMinimum: CGFloat = 80
     static let outlineShare: CGFloat = 0.45
+    /// The splits' thin dividers (`NSSplitView.DividerStyle.thin`).
+    static let divider: CGFloat = 1
     /// The window's content at its narrowest: the source and the PDF, a divider
     /// between. A narrowing window folds the sidebar first (AppKit's way with
     /// sidebars), so two windows tile side by side on the smallest Mac display.
-    static let contentMinimumWidth = sourceMinimum + 1 + pdfMinimum
+    static let contentMinimumWidth = sourceMinimum + divider + pdfMinimum
     /// And at its shortest: the columns over the build panel, then the status bar.
-    static let contentMinimumHeight = columnsMinimum + 1 + panelMinimum + BarMetrics.secondaryBarHeight
+    static let contentMinimumHeight = columnsMinimum + divider + panelMinimum + BarMetrics.secondaryBarHeight
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.
