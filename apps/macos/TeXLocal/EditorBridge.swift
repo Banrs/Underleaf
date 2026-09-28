@@ -244,6 +244,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                 "selected-text": Self.css(.alternateSelectedControlTextColor),
                 "current-line": Self.css(.quaternarySystemFill),
                 "selection-match": Self.css(.unemphasizedSelectedTextBackgroundColor),
+                "insertion-point": Self.css(.textInsertionPointColor),
             ]
         }
         await keep(.setAppearance, ["a": settings])

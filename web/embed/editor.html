@@ -61,6 +61,14 @@
     :root[data-host] .cm-activeLineGutter { color: var(--host-text) !important; }
     :root[data-host] .cm-line { padding-left: 4px; }
 
+    /* WebKit's own caret, which blinks and fades as the system's does, in
+       the system's insertion point colour (auto would take the text's):
+       CodeMirror hides it to draw one of its own. Extra cursors of a
+       multiple selection stay CodeMirror's; a text view has none. */
+    :root[data-host] .cm-editor .cm-content,
+    :root[data-host] .cm-editor .cm-line { caret-color: var(--host-insertion-point) !important; }
+    :root[data-host] .cm-editor .cm-cursor-primary { display: none !important; }
+
     /* The current line and the other occurrences of the selection in the
        host's faint neutral fills, as Xcode draws them, whatever the syntax
        colours' theme tints them. Specificity rather than !important, which
