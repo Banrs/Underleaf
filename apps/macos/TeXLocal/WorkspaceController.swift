@@ -144,14 +144,22 @@ final class WorkspaceController: NSSplitViewController {
         addSplitViewItem(areaItem)
     }
 
-    /// The project's settings and facts.
+    /// The project's settings and facts, at AppKit's fixed inspector width, as the
+    /// Format inspector in Pages and Keynote.
     private func buildInspector() {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
-        inspectorItem.minimumThickness = ColumnMetrics.inspectorWidth.lowerBound
-        inspectorItem.maximumThickness = ColumnMetrics.inspectorWidth.upperBound
-        inspectorItem.viewController.view.frame.size.width = PaneSize.inspector.value ?? ColumnMetrics.inspectorWidth.lowerBound
+        inspectorItem.viewController.view.frame.size.width = inspectorItem.minimumThickness
         inspectorItem.isCollapsed = !app.inspectorVisible
         addSplitViewItem(inspectorItem)
+    }
+
+    /// The fixed inspector's divider takes no drag, so it shows no resize cursor.
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                                   ofDividerAt: dividerIndex)
+        let inspectorDivider = splitViewItems.firstIndex { $0 === inspectorItem }.map { $0 - 1 }
+        return splitView === self.splitView && dividerIndex == inspectorDivider ? .zero : rect
     }
 
     /// A pane: SwiftUI whose sizes stay out of Auto Layout, so the split item's
@@ -352,10 +360,6 @@ final class WorkspaceController: NSSplitViewController {
         if !sidebarItem.isCollapsed, sidebarWidth >= sidebarItem.minimumThickness {
             PaneSize.sidebar.store(sidebarWidth)
         }
-        let inspectorWidth = inspectorItem.viewController.view.frame.width
-        if !inspectorItem.isCollapsed, inspectorWidth >= inspectorItem.minimumThickness {
-            PaneSize.inspector.store(inspectorWidth)
-        }
         if !outlineItem.isCollapsed { PaneSize.outline.store(outlineItem.viewController.view.frame.height) }
         if !panelItem.isCollapsed { PaneSize.panel.store(panelItem.viewController.view.frame.height) }
         if !pdfItem.isCollapsed {
@@ -484,11 +488,8 @@ private nonisolated struct OutlineState: Equatable {
 /// near the window's minimum.
 enum ColumnMetrics {
     static let sidebarWidth: ClosedRange<CGFloat> = 200...400
-    /// Xcode's navigator in a new window.
-    static let sidebarIdeal: CGFloat = 290
-    /// AppKit's inspector is 270 pt and fixed, its divider showing a resize cursor
-    /// all the same; here it resizes from there, as far as the sidebar.
-    static let inspectorWidth: ClosedRange<CGFloat> = 270...400
+    /// AppKit's inspector width (NSSplitViewItem.h), so the side columns open alike.
+    static let sidebarIdeal: CGFloat = 270
     /// About 40 columns of the editor's default font.
     static let sourceMinimum: CGFloat = 320
     /// A page still legible, fitted to the width.
@@ -514,7 +515,7 @@ enum ColumnMetrics {
 
 /// Pane sizes, kept across launches in one defaults dictionary.
 enum PaneSize: String {
-    case sidebar, inspector, pdfShare, panel, outline
+    case sidebar, pdfShare, panel, outline
 
     var value: CGFloat? {
         (UserDefaults.standard.dictionary(forKey: DefaultsKey.paneSizes)?[rawValue] as? Double).map { CGFloat($0) }
