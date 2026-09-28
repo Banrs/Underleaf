@@ -153,16 +153,30 @@ private struct FilePreview: View {
     }
 }
 
+/// Shows and hides the build panel, at the bottom bar's far end, as panel toggles sit
+/// at their window's edge: the PDF's part's end, or the source's while the PDF is hidden.
+struct BuildPanelToggle: View {
+    @Environment(AppModel.self) private var app
+    @Bindable var project: ProjectModel
+
+    var body: some View {
+        Toggle(isOn: $project.showLogs) {
+            Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
+        }
+        .labelStyle(.iconOnly)
+        .toggleStyle(.button)
+        .help(app.title(.viewToggleLogs, on: project))
+    }
+}
+
 /// The source's part of the bottom bar (HIG, Windows: a status bar), level with the
-/// PDF's (`PDFStatusBar`): the build's summary, the save state and the caret, and
-/// the build panel's toggle. Items drop whole, least important first (ViewThatFits);
-/// none moves while a build runs.
+/// PDF's (`PDFStatusBar`): the build's summary, the save state and the caret. Items
+/// drop whole, least important first (ViewThatFits); none moves while a build runs.
 private struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
 
     var body: some View {
-        @Bindable var project = project
         SecondaryBar(spacing: 0) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -179,14 +193,12 @@ private struct StatusBar: View {
                 items(save: false, counts: false)
             }
             .foregroundStyle(.secondary)
-            ToolSeparator()
-            Toggle(isOn: $project.showLogs) {
-                Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
+            // The bar's far end is here while the PDF is hidden.
+            if !project.showPDF {
+                ToolSeparator()
+                BuildPanelToggle(project: project)
             }
-            .labelStyle(.iconOnly)
-            .help(app.title(.viewToggleLogs, on: project))
         }
-        .toggleStyle(.button)
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {

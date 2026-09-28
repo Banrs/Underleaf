@@ -437,29 +437,33 @@ private struct FreshnessButton: View {
     }
 }
 
-/// The PDF's part of the bottom bar: the engine that makes it, and the page, which
-/// opens Go to Page. The PDF's own page numbers, not LaTeX's (front matter and roman
-/// numbers differ).
+/// The PDF's part of the bottom bar: the engine that makes it, the page, which opens
+/// Go to Page, and at the bar's far end the build panel's toggle. The PDF's own page
+/// numbers, not LaTeX's (front matter and roman numbers differ).
 private struct PDFStatusBar: View {
     let app: AppModel
     let project: ProjectModel
     let controller: PDFController
 
     var body: some View {
-        SecondaryBar(spacing: BarMetrics.itemSpacing) {
-            if let engine = project.settings?.engine {
-                Text(texEngineName(engine))
-            }
-            Spacer(minLength: 0)
-            if project.pdfVersion > 0, controller.pageCount > 0 {
-                Button("Page \(controller.page) of \(controller.pageCount)") {
-                    app.perform(.pdfGotoPage, on: project)
+        SecondaryBar(spacing: 0) {
+            HStack(spacing: BarMetrics.itemSpacing) {
+                if let engine = project.settings?.engine {
+                    Text(texEngineName(engine))
                 }
-                .monospacedDigit()
-                .help("Go to Page")
+                Spacer(minLength: 0)
+                if project.pdfVersion > 0, controller.pageCount > 0 {
+                    Button("Page \(controller.page) of \(controller.pageCount)") {
+                        app.perform(.pdfGotoPage, on: project)
+                    }
+                    .monospacedDigit()
+                    .help("Go to Page")
+                }
             }
+            .foregroundStyle(.secondary)
+            ToolSeparator()
+            BuildPanelToggle(project: project)
         }
-        .foregroundStyle(.secondary)
         .buttonStyle(.borderless)
     }
 }
