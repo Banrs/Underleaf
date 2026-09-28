@@ -18,8 +18,16 @@
 		7D71DA4678CDD55C2526532E /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0F16D19E664BB5F8D928B2 /* ProjectModel.swift */; };
 		8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939F94A0F5465E021016E2B5 /* SidebarView.swift */; };
 		91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */; };
+		1658B283DECAFEBECD5197EB /* SidebarSplit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA29A21D825DC72738160C9 /* SidebarSplit.swift */; };
+		510D98319A675206368A8123 /* PDFKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26FB10CFB16722447155C1AE /* PDFKitView.swift */; };
+		7CBC5DAE1B5E4EE49FBA64BD /* FolderWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */; };
 		9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31AE196AE79CB996B7DD97A2 /* AppModel.swift */; };
 		A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */; };
+		1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */; };
+		9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC97CE33D77103C192FEB167 /* CommandTests.swift */; };
+		817D9BB52A230F994AF7C259 /* SplitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9870709B705F916733F3C7 /* SplitTests.swift */; };
+		4AEFAADCF7DCC9849107F727 /* BarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D3FA71B861A766E465CD8D /* BarTests.swift */; };
+		3273DE6B2DDF787BA770AA3C /* DocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A28A434C01D761E9F6EB2EAC /* DocumentTests.swift */; };
 		A79D4BB8D245D798C911B3FD /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1B774F61877030414C0844 /* LogsView.swift */; };
 		B9BF8EBB439CAEEFB9B1B028 /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 158D7A52185B6F0E80D9FCE5 /* EditorView.swift */; };
 		C0DE5A1E0000000000000A01 /* SplitController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5A1E0000000000000A02 /* SplitController.swift */; };
@@ -58,6 +66,9 @@
 		D39583A134CAD40376A4A3DB /* LaTeX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeX.swift; sourceTree = "<group>"; };
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXGeometry.swift; sourceTree = "<group>"; };
+		5BA29A21D825DC72738160C9 /* SidebarSplit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarSplit.swift; sourceTree = "<group>"; };
+		26FB10CFB16722447155C1AE /* PDFKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFKitView.swift; sourceTree = "<group>"; };
+		80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderWatcher.swift; sourceTree = "<group>"; };
 		898AA6334E9C879C8C0A855E /* EditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridge.swift; sourceTree = "<group>"; };
 		92DFFB06FAB61A26B9807116 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		939F94A0F5465E021016E2B5 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
@@ -66,6 +77,11 @@
 		BB64852D001BF573F24FB9C8 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CE1B774F61877030414C0844 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalTests.swift; sourceTree = "<group>"; };
+		C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectTests.swift; sourceTree = "<group>"; };
+		DC97CE33D77103C192FEB167 /* CommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTests.swift; sourceTree = "<group>"; };
+		1F9870709B705F916733F3C7 /* SplitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTests.swift; sourceTree = "<group>"; };
+		63D3FA71B861A766E465CD8D /* BarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarTests.swift; sourceTree = "<group>"; };
+		A28A434C01D761E9F6EB2EAC /* DocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentTests.swift; sourceTree = "<group>"; };
 		A1C0FFEE0A55E7500000B002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -92,6 +108,11 @@
 			isa = PBXGroup;
 			children = (
 				DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */,
+				C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */,
+				DC97CE33D77103C192FEB167 /* CommandTests.swift */,
+				1F9870709B705F916733F3C7 /* SplitTests.swift */,
+				63D3FA71B861A766E465CD8D /* BarTests.swift */,
+				A28A434C01D761E9F6EB2EAC /* DocumentTests.swift */,
 			);
 			path = TeXLocalTests;
 			sourceTree = "<group>";
@@ -119,6 +140,9 @@
 				4AA2F926379249A44F9F564D /* SettingsView.swift */,
 				939F94A0F5465E021016E2B5 /* SidebarView.swift */,
 				80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */,
+				5BA29A21D825DC72738160C9 /* SidebarSplit.swift */,
+				26FB10CFB16722447155C1AE /* PDFKitView.swift */,
+				80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */,
 				55756959E4BD347AD47DCBDB /* TeXLocalApp.swift */,
 				B11F66D3B533CFDC0A8F7EFF /* WorkspaceView.swift */,
 			);
@@ -275,6 +299,9 @@
 				4C7433C91108513A006DD93F /* SettingsView.swift in Sources */,
 				8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */,
 				91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */,
+				1658B283DECAFEBECD5197EB /* SidebarSplit.swift in Sources */,
+				510D98319A675206368A8123 /* PDFKitView.swift in Sources */,
+				7CBC5DAE1B5E4EE49FBA64BD /* FolderWatcher.swift in Sources */,
 				67CE7AFF7CE33C6B50A05521 /* TeXLocalApp.swift in Sources */,
 				2E7B6FE592C7CC4B81A8A946 /* WorkspaceView.swift in Sources */,
 			);
@@ -285,6 +312,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */,
+				1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */,
+				9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */,
+				817D9BB52A230F994AF7C259 /* SplitTests.swift in Sources */,
+				4AEFAADCF7DCC9849107F727 /* BarTests.swift in Sources */,
+				3273DE6B2DDF787BA770AA3C /* DocumentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

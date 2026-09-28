@@ -1,0 +1,265 @@
+import SwiftUI
+import Testing
+import XCTest
+@testable import TeXLocal
+
+@MainActor
+final class CommandTests: XCTestCase {
+    func testAcceleratorsBecomeMenuShortcuts() {
+        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Return"), KeyboardShortcut(.return, modifiers: .command))
+        XCTAssertEqual(MenuCommand.shortcut(for: "Ctrl+Shift+Return"), KeyboardShortcut(.return, modifiers: [.control, .shift]))
+        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Plus"), KeyboardShortcut("=", modifiers: .command))
+        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Shift+\\"), KeyboardShortcut("\\", modifiers: [.command, .shift]))
+        XCTAssertEqual(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F"), KeyboardShortcut("f", modifiers: [.command, .option]))
+    }
+
+    /// The build copies the shared table in; without it every shared chord is gone.
+    func testTheSharedTableIsInTheApp() {
+        XCTAssertEqual(MenuCommand.compileRun.accel, "CmdOrCtrl+Return")
+        XCTAssertEqual(MenuCommand.editBold.shortcut, KeyboardShortcut("b", modifiers: .command))
+    }
+
+    func testEveryAcceleratorParses() {
+        for command in MenuCommand.allCases {
+            for accel in [command.accel, command.macAccel].compactMap(\.self) {
+                XCTAssertNotNil(MenuCommand.shortcut(for: accel), command.rawValue)
+            }
+        }
+    }
+
+    func testNoTwoCommandsShareAMacChord() {
+        var seen: [KeyboardShortcut: MenuCommand] = [:]
+        for command in MenuCommand.allCases {
+            guard let shortcut = command.shortcut else { continue }
+            XCTAssertNil(seen[shortcut], "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
+            seen[shortcut] = command
+        }
+    }
+
+    func testTheEditorKeepsTheChordsItImplements() {
+        let ids = Set(MenuCommand.editorHostKeys.map(\.id))
+        XCTAssertTrue(ids.contains("compile.run"))
+        XCTAssertTrue(ids.contains("edit.gotoLine"))
+        XCTAssertTrue(ids.contains("view.zoomIn"))
+        XCTAssertFalse(ids.contains("edit.find"))
+        XCTAssertFalse(ids.contains("edit.findNext"))
+        XCTAssertFalse(ids.contains("edit.findPrevious"))
+        XCTAssertFalse(ids.contains("edit.comment"))
+        XCTAssertFalse(ids.contains("edit.undo"))
+        XCTAssertFalse(ids.contains("edit.redo"))
+        // The Mac's own chords, which the page would otherwise see first.
+        for id in ["project.open", "edit.findAndReplace", "view.toggleInspector", "view.actualSize", "compile.stop",
+                   "file.pageSetup", "file.print"] {
+            XCTAssertTrue(ids.contains(id), id)
+        }
+    }
+
+    /// web/src/workspace.js, copied into the scratch folder by the test scheme:
+    /// reading ~/Documents from the test host prompts for access after every build.
+    private func webWorkspace() throws -> URL {
+        let data = try XCTUnwrap(ProcessInfo.processInfo.environment["TEXLOCAL_DATA"])
+        return URL(fileURLWithPath: data).appendingPathComponent("workspace.js")
+    }
+
+    /// Settings… is the Settings scene's own; the interface size is the system's.
+    private let webOnly: Set<String> = ["app.settings", "view.uiScaleUp", "view.uiScaleDown"]
+
+    /// Open… reads a folder from disk; the rest are the Mac menu bar's own.
+    private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
+                                              .viewToggleProjectSettings, .viewToggleWordCount, .viewActualSize,
+                                              .compileStop]
+
+    /// The menu has every other command the web declares. Their chords are
+    /// the one table both read (web/src/shortcuts.json).
+    func testTheMenuHasEveryWebCommand() throws {
+        let source = try String(contentsOf: webWorkspace(), encoding: .utf8)
+        var ids: Set<String> = []
+        for line in source.split(separator: "\n") {
+            guard let match = line.firstMatch(of: /\{ id: '([^']+)'/) else { continue }
+            ids.insert(String(match.1))
+        }
+        XCTAssertEqual(Set(MenuCommand.allCases.filter { !macOnly.contains($0) }.map(\.rawValue)), ids.subtracting(webOnly))
+        XCTAssertTrue(macOnly.allSatisfy { !ids.contains($0.rawValue) })
+    }
+}
+
+/// The running app's menu bar (HIG, The menu bar).
+@MainActor
+struct MenuStructureTests {
+    /// Every item under `menu`, filled in as AppKit fills lazy menus before showing them.
+    private func all(_ menu: NSMenu) -> [NSMenuItem] {
+        menu.delegate?.menuNeedsUpdate?(menu)
+        return menu.items.flatMap { [$0] + ($0.submenu.map(all) ?? []) }
+    }
+
+    private func menu(_ title: String) throws -> NSMenu {
+        let menu = try #require(NSApp.mainMenu?.items.first { $0.title == title }?.submenu, "\(title) menu")
+        menu.delegate?.menuNeedsUpdate?(menu)
+        return menu
+    }
+
+    private func titles(_ menu: NSMenu) -> [String] {
+        menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+    }
+
+    private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
+        try #require(all(menu).first { $0.title == title }, "\(title)")
+    }
+
+    /// The item with this chord anywhere in the menu bar.
+    private func item(_ key: String, _ modifiers: NSEvent.ModifierFlags = .command) throws -> NSMenuItem {
+        let items = NSApp.mainMenu.map(all) ?? []
+        return try #require(items.first { item in
+            var mask = item.keyEquivalentModifierMask
+            // AppKit also spells Shift as an upper-case key.
+            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
+            return item.keyEquivalent.lowercased() == key && mask == modifiers
+        }, "\(modifiers) \(key)")
+    }
+
+    @Test func undoAndRedoAreTheAppsOwn() throws {
+        // Not the standard undo:/redo:, which ask WebKit's undo manager.
+        #expect(try item("z").action != Selector(("undo:")))
+        #expect(try item("z", [.command, .shift]).action != Selector(("redo:")))
+    }
+
+    @Test func findNextAndPreviousAreCommandG() throws {
+        #expect(try item("g").title == "Find Next")
+        #expect(try item("g", [.command, .shift]).title == "Find Previous")
+    }
+
+    /// The Mac's chords where the shared table's differ (`MenuCommand.macAccel`).
+    @Test func theViewMenuHasTheMacsChords() throws {
+        #expect(try item("s", [.command, .control]).title.hasSuffix("Sidebar"))
+        #expect(try item("0").title == "Actual Size")
+        #expect(try item("9").title == "Fit Width")
+        #expect(try item("9", [.command, .option]).title == "Fit Height")
+    }
+
+    /// Find in PDF… has no chord of its own: ⌥⌘F is Find and Replace….
+    @Test func findHasTheMacsChords() throws {
+        #expect(try item("f").title == "Find…")
+        #expect(try item("f", [.command, .option]).title == "Find and Replace…")
+        #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
+    }
+
+    @Test func theBottomPanelIsTheBuildPanel() throws {
+        let title = try item("l", [.command, .shift]).title
+        #expect(["Show Build Panel", "Hide Build Panel"].contains(title), "\(title)")
+    }
+
+    /// The system's spelling commands, which WebKit's spell checking answers.
+    @Test func spellingIsInTheEditMenu() throws {
+        _ = try item(";")
+        _ = try item(":")
+    }
+
+    @Test func theAppsMenusGoBetweenViewAndWindow() throws {
+        let order = try #require(NSApp.mainMenu).items.map(\.title)
+        let view = try #require(order.firstIndex(of: "View")), window = try #require(order.firstIndex(of: "Window"))
+        #expect(Array(order[view...window]) == ["View", "Insert", "Compile", "Window"])
+        #expect(try #require(order.firstIndex(of: "Format")) < view)
+    }
+
+    /// None of the system's text-editing items lost to a group of the app's own.
+    @Test func editKeepsTheSystemsTextItems() throws {
+        let edit = try menu("Edit")
+        for title in ["Find", "Spelling and Grammar", "Substitutions", "Transformations", "Speech",
+                      "Find in Project…", "Find in PDF…", "Go to Line…"] {
+            #expect(titles(edit).contains(title), "\(title)")
+        }
+        let find = try item("Find", in: edit).submenu
+        #expect(find.map(titles) == ["Find…", "Find and Replace…", "Find Next", "Find Previous",
+                                     "Use Selection for Find", "Jump to Selection"])
+        #expect(try item("Use Selection for Find", in: edit).keyEquivalent == "e")
+        #expect(try item("Jump to Selection", in: edit).keyEquivalent == "j")
+        #expect(try item("Check Spelling While Typing", in: edit).action == #selector(NSTextView.toggleContinuousSpellChecking(_:)))
+    }
+
+    /// Format holds the text's attributes; what inserts text is Insert's.
+    @Test func formatStylesAndInsertInserts() throws {
+        let format = try menu("Format"), insert = try menu("Insert")
+        #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
+        #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Symbols", "Reference"]))
+        #expect(titles(insert).contains("Figure"))
+    }
+
+    /// The Mac-only commands have their HIG chords (HIG, Keyboards).
+    @Test func theMacsCommandsHaveTheirChords() throws {
+        let file = try menu("File"), view = try menu("View"), compile = try menu("Compile")
+        #expect(try item("Open…", in: file).keyEquivalent == "o")
+        #expect(try item("Print…", in: file).keyEquivalent == "p")
+        let setup = try item("Page Setup…", in: file)
+        #expect(setup.keyEquivalent.lowercased() == "p"
+                && (setup.keyEquivalent == "P" || setup.keyEquivalentModifierMask.contains(.shift)))
+        let settings = try #require(view.items.first { $0.title.hasSuffix("Project Settings") })
+        #expect(settings.keyEquivalent == "i" && settings.keyEquivalentModifierMask == [.command, .option])
+        #expect(try item("Stop", in: compile).keyEquivalent == ".")
+    }
+
+    /// Share… as the HIG names it, there even with nothing to share.
+    @Test func shareIsOneItem() throws {
+        let file = try menu("File")
+        #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
+    }
+}
+
+/// Edit › Find's items reach the pane with the keyboard through
+/// `FindMenuResponder`, by the item's tag.
+@MainActor
+struct FindMenuResponderTests {
+    @Test func theItemsTagPicksTheAction() {
+        let responder = FindMenuResponder.Responder()
+        var done: [NSTextFinder.Action] = []
+        responder.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
+        let item = NSMenuItem(title: "Find Next", action: #selector(FindMenuResponder.Responder.performFindPanelAction(_:)),
+                              keyEquivalent: "g")
+        item.tag = NSTextFinder.Action.nextMatch.rawValue
+        #expect(responder.validateMenuItem(item))
+        responder.performFindPanelAction(item)
+        #expect(done == [.nextMatch])
+        // A Find the pane can't do is off.
+        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        #expect(!responder.validateMenuItem(item))
+    }
+
+    /// It joins its window's responder chain, after the window, and leaves
+    /// it as it was.
+    @Test func itJoinsAndLeavesTheResponderChain() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: true)
+        let next = NSResponder()
+        window.nextResponder = next
+        let anchor = FindMenuResponder.Anchor()
+        window.contentView?.addSubview(anchor)
+        #expect(window.nextResponder === anchor.responder)
+        #expect(anchor.responder.nextResponder === next)
+        anchor.removeFromSuperview()
+        #expect(window.nextResponder === next)
+    }
+
+    /// A find bar's field leaves the Find items to its pane; a filter's
+    /// keeps the window's field editor.
+    @Test func aFindBarsFieldPassesFindOn() throws {
+        let find = SearchField.FocusingSearchField(), window = NSWindow()
+        let cell = find.cell as? SearchField.FindFieldCell
+        cell?.passesFind = true
+        let editor = try #require(cell?.fieldEditor(for: find))
+        #expect(editor.isFieldEditor)
+        let pane = FindMenuResponder.Responder()
+        var done: [NSTextFinder.Action] = []
+        pane.find = { action in action == .showReplaceInterface ? nil : { done.append(action) } }
+        editor.nextResponder = pane
+        let item = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)),
+                              keyEquivalent: "g")
+        item.tag = NSTextFinder.Action.nextMatch.rawValue
+        #expect(editor.validateMenuItem(item))
+        editor.performFindPanelAction(item)
+        #expect(done == [.nextMatch])
+        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        #expect(!editor.validateMenuItem(item))
+        editor.nextResponder = nil
+        cell?.passesFind = false
+        window.contentView?.addSubview(find)
+        #expect(cell?.fieldEditor(for: find) !== editor)
+    }
+}
