@@ -187,7 +187,7 @@ struct PDFToolbar: CustomizableToolbarContent {
     // PDF column never animates; a removed column item vanished mid-animation.
     var body: some CustomizableToolbarContent {
         if project.showPDF {
-            ToolbarItem(id: "zoom") { zoomMenu }
+            ToolbarItem(id: "zoom") { zoomControl }
                 .visibilityPriority(.low)
         }
         ToolbarItem(id: "share") { shareControl }
@@ -205,39 +205,51 @@ struct PDFToolbar: CustomizableToolbarContent {
         .customizationBehavior(.disabled)
         // Compile on glass of its own, not joined to its neighbours.
         ToolbarSpacer(.fixed)
+        // The last to overflow: the one prominent action, and the way back to a hidden PDF.
         ToolbarItem(id: "compile") {
             CompileButton(project: project)
         }
         .customizationBehavior(.disabled)
+        .visibilityPriority(.high)
         ToolbarSpacer(.fixed)
         ToolbarItem(id: "togglePDF") {
             PDFToggle(project: project)
         }
         .customizationBehavior(.disabled)
+        .visibilityPriority(.high)
     }
 
-    /// The scale, as a pull-down of zoom steps, fits and presets (View has the same
-    /// commands with their shortcuts). While fitting, no preset is checked.
-    private var zoomMenu: some View {
-        Menu {
-            Button("Zoom In") { controller.zoom(in: true) }
-            Button("Zoom Out") { controller.zoom(in: false) }
-            Divider()
-            CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
-            CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
-            Divider()
-            ForEach(Self.zoomPresets, id: \.self) { percent in
-                CheckedItem((Double(percent) / 100).formatted(.percent),
-                            checked: controller.fit == nil && Int((controller.scale * 100).rounded()) == percent) {
-                    controller.setScale(CGFloat(percent) / 100)
+    /// Zoom out | the scale | zoom in, as Preview's; the scale is a pull-down of
+    /// fits and presets (View has the same commands with their shortcuts). While
+    /// fitting, no preset is checked.
+    private var zoomControl: some View {
+        ControlGroup {
+            Button("Zoom Out", systemImage: "minus.magnifyingglass") { controller.zoom(in: false) }
+                .help("Zoom Out")
+                .disabled(!controller.canZoomOut)
+            Menu {
+                CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
+                CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
+                Divider()
+                ForEach(Self.zoomPresets, id: \.self) { percent in
+                    CheckedItem((Double(percent) / 100).formatted(.percent),
+                                checked: controller.fit == nil && Int((controller.scale * 100).rounded()) == percent) {
+                        controller.setScale(CGFloat(percent) / 100)
+                    }
                 }
+            } label: {
+                Text(controller.zoomLabel).monospacedDigit()
             }
+            .help("Scale")
+            .accessibilityLabel("Scale")
+            .accessibilityValue(controller.zoomLabel)
+            Button("Zoom In", systemImage: "plus.magnifyingglass") { controller.zoom(in: true) }
+                .help("Zoom In")
+                .disabled(!controller.canZoomIn)
         } label: {
-            Text(controller.zoomLabel).monospacedDigit()
+            Label("Zoom", systemImage: "plus.magnifyingglass")
         }
-        .help("Zoom")
-        .accessibilityLabel("Zoom")
-        .accessibilityValue(controller.zoomLabel)
+        .controlGroupStyle(.navigation)
         .disabled(project.pdfVersion == 0)
     }
 
@@ -299,7 +311,10 @@ struct CompileButton: View {
 
 /// Collapses and opens the PDF column through its `NSSplitViewItem`: SwiftUI's split
 /// can hide only its first column. The source's holding priority matches the PDF's so
-/// the two share room the window gains or loses.
+/// the two share room the window gains or loses. A drag stops at the column's minimum,
+/// so the divider, and the toolbar's section over it, follow the pointer both ways;
+/// Hide PDF alone collapses it (a column collapsed at the window's edge can't be
+/// dragged back: the window's resize edge is there).
 private struct PDFColumn: NSViewRepresentable {
     let collapsed: Bool
     let project: ProjectModel
@@ -352,7 +367,7 @@ private struct PDFColumn: NSViewRepresentable {
             if item == nil {
                 item = splitViewItem
                 guard let item else { return assertionFailure("PDF column's NSSplitViewItem not found") }
-                item.canCollapse = true
+                item.canCollapse = false
             }
             guard let item, let (split, index) = position else { return }
             let sourceItem = split.splitViewItems[index - 1]

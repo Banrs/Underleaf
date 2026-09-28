@@ -35,6 +35,9 @@ final class PDFController {
     /// Whether fitting or set.
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
+    /// PDFKit's own limits.
+    private(set) var canZoomIn = true
+    private(set) var canZoomOut = true
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
@@ -48,6 +51,8 @@ final class PDFController {
     func scaleChanged() {
         guard let view else { return }
         scale = view.scaleFactor
+        canZoomIn = view.canZoomIn
+        canZoomOut = view.canZoomOut
         // Any other change of scale (a pinch, a zoom command) ends fitting.
         if view.autoScales {
             fit = .width

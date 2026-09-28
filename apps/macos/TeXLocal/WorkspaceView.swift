@@ -21,9 +21,7 @@ struct WorkspaceView: View {
         } content: {
             EditorArea(project: project)
                 .id(ObjectIdentifier(project))
-                .navigationSplitViewColumnWidth(
-                    min: ColumnMetrics.sourceMinimum + (app.sidebarVisible ? 0 : ColumnMetrics.windowControls),
-                    ideal: ColumnMetrics.ideal)
+                .navigationSplitViewColumnWidth(min: ColumnMetrics.sourceMinimum, ideal: ColumnMetrics.ideal)
         } detail: {
             // Collapsed while hidden, never rebuilt (`PDFColumn`).
             PDFPane(project: project)
@@ -90,23 +88,18 @@ struct WorkspaceView: View {
     }
 }
 
-/// Column widths. Each minimum holds its column's default toolbar tools, so the
-/// toolbar's section line stays on the divider. Constants, measured on 27.2: fed
-/// back from the toolbar's geometry, column widths loop layout. Measure again when
-/// a default toolbar item changes.
+/// Column widths. Each minimum is its content's: the toolbar is the system's to
+/// fit, its tools crossing a divider or going into its overflow menu (as Mail's).
 enum ColumnMetrics {
     static let sidebarWidth: ClosedRange<CGFloat> = 200...320
     /// UI kit: the window sidebar is 256 pt.
     static let sidebarIdeal: CGFloat = 256
-    /// Back, the title (always 160), Bold | Italic and Insert, with their gaps.
-    static let sourceMinimum: CGFloat = 360
-    /// The traffic lights and the sidebar toggle, before Back while the sidebar is hidden.
-    static let windowControls: CGFloat = 150
-    /// Zoom and Share, then the preview's state, Project Settings, Compile and Hide PDF.
-    static let pdfMinimum: CGFloat = 390
-    /// The window's content at its narrowest, the sidebar shown or hidden (one pt per divider).
-    static let contentMinimumWidth = max(sidebarWidth.lowerBound + sourceMinimum + pdfMinimum + 2,
-                                         windowControls + sourceMinimum + pdfMinimum + 1)
+    /// About 40 columns of the editor's default font.
+    static let sourceMinimum: CGFloat = 320
+    /// A page still legible, fitted to the width.
+    static let pdfMinimum: CGFloat = 280
+    /// The window's content at its narrowest (one pt per divider).
+    static let contentMinimumWidth = sidebarWidth.lowerBound + sourceMinimum + pdfMinimum + 2
     /// Half each of the default window's room past the sidebar.
     static var ideal: CGFloat { (WindowMetrics.projectDefault.width - sidebarIdeal) / 2 }
 }
