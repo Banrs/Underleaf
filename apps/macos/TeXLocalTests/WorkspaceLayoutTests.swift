@@ -35,9 +35,9 @@ final class WorkspaceLayoutTests: XCTestCase {
 
     /// A project's workspace as a window's content, laid out, as the window shows it.
     private func open(_ size: NSSize = NSSize(width: 1200, height: 760), panel: Bool = false,
-                      pdf: Bool = true) -> WorkspaceController {
+                      pdf: Bool = true, sidebar: Bool = true) -> WorkspaceController {
         let app = AppModel()
-        app.sidebarVisible = true
+        app.sidebarVisible = sidebar
         app.inspectorVisible = false
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
         project.showPDF = pdf
@@ -102,12 +102,15 @@ final class WorkspaceLayoutTests: XCTestCase {
         try await waitUntil { abs((PaneSize.pdfShare.value ?? 0) - share) < 0.01 }
     }
 
-    /// No pane's content raises the window's minimum: it goes down to the app's own.
+    /// No pane's content raises the window's minimum: it goes down to the app's own,
+    /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
     func testTheWindowReachesItsMinimum() {
-        let workspace = open()
+        let workspace = open(panel: true, sidebar: false)
         window?.setContentSize(WindowMetrics.contentMinimum)
         window?.layoutIfNeeded()
         XCTAssertEqual(workspace.view.frame.width, WindowMetrics.contentMinimum.width, accuracy: 0.5)
-        XCTAssertEqual(workspace.view.frame.height, WindowMetrics.contentMinimum.height, accuracy: 0.5)
+        // Below the titlebar: the panes stop at the safe area.
+        XCTAssertEqual(workspace.view.frame.height - workspace.view.safeAreaInsets.top,
+                       WindowMetrics.contentMinimum.height, accuracy: 0.5)
     }
 }

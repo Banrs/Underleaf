@@ -494,8 +494,12 @@ enum ColumnMetrics {
     static let filesMinimum: CGFloat = 100
     static let outlineMinimum: CGFloat = 80
     static let outlineShare: CGFloat = 0.45
-    /// The window's content at its narrowest (one pt per divider).
-    static let contentMinimumWidth = sidebarWidth.lowerBound + sourceMinimum + pdfMinimum + 2
+    /// The window's content at its narrowest: the source and the PDF, a divider
+    /// between. The sidebar folds first, as a narrowing window folds Mail's, so two
+    /// windows tile side by side on the smallest Mac display (1470 pt wide).
+    static let contentMinimumWidth = sourceMinimum + 1 + pdfMinimum
+    /// And at its shortest: the columns over the build panel, then the status bar.
+    static let contentMinimumHeight = columnsMinimum + 1 + panelMinimum + BarMetrics.secondaryBarHeight
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.

@@ -220,8 +220,9 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
 }
 
 enum WindowMetrics {
-    /// The content's minimum, below the toolbar: every column at its own.
-    static let contentMinimum = CGSize(width: ColumnMetrics.contentMinimumWidth, height: 548)
+    /// The content's minimum: the panes' own, the build panel open.
+    static let contentMinimum = CGSize(width: ColumnMetrics.contentMinimumWidth,
+                                       height: ColumnMetrics.contentMinimumHeight)
     /// Fits the smallest current Mac display's default resolution (1470 × 956)
     /// with the menu bar and Dock.
     static let projectDefault = CGSize(width: 1200, height: 760)
