@@ -165,34 +165,36 @@ struct SourceFindBar: View {
         FindBar(query: $project.findQuery.search, prompt: "Find", focus: project.findFocus, options: options,
                 matches: project.findMatches, searched: project.findQuery.search,
                 step: { project.findStep($0) }, close: { project.closeFind() }) {
-            GridRow {
-                TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
-                    .labelsHidden()
-                    // UI kit: a capsule, as the search field over it.
-                    .textFieldStyle(.bordered)
-                    .textInputBorderShape(.capsule)
-                    .onSubmit { project.replace(all: false) }
-                    .onExitCommand { project.closeFind() }
-                    .focused($replaceFocused)
-                    // Find and Replace…, whether or not the bar already shows.
-                    .task(id: project.replaceFocus) {
-                        if project.replaceFocus > 0 { replaceFocused = true }
+            if project.replaceShown {
+                GridRow {
+                    TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
+                        .labelsHidden()
+                        // UI kit: a capsule, as the search field over it.
+                        .textFieldStyle(.bordered)
+                        .textInputBorderShape(.capsule)
+                        .onSubmit { project.replace(all: false) }
+                        .onExitCommand { project.closeFind() }
+                        .focused($replaceFocused)
+                        // Find and Replace…, whether or not the bar already shows.
+                        .task(id: project.replaceFocus) {
+                            if project.replaceFocus > 0 { replaceFocused = true }
+                        }
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            Button("Replace") { project.replace(all: false) }
+                            Button("Replace All") { project.replace(all: true) }
+                        }
+                        .fixedSize()
+                        // Narrow: Replace All in Replace's menu.
+                        Menu("Replace") {
+                            Button("Replace All") { project.replace(all: true) }
+                        } primaryAction: {
+                            project.replace(all: false)
+                        }
                     }
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        Button("Replace") { project.replace(all: false) }
-                        Button("Replace All") { project.replace(all: true) }
-                    }
-                    .fixedSize()
-                    // Narrow: Replace All in Replace's menu.
-                    Menu("Replace") {
-                        Button("Replace All") { project.replace(all: true) }
-                    } primaryAction: {
-                        project.replace(all: false)
-                    }
+                    .disabled(project.findMatches.total == 0)
+                    .gridColumnAlignment(.trailing)
                 }
-                .disabled(project.findMatches.total == 0)
-                .gridColumnAlignment(.trailing)
             }
         }
     }

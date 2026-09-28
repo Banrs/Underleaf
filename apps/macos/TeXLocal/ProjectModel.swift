@@ -84,6 +84,8 @@ final class ProjectModel {
     var replaceFocus = 0
     /// Find and Replace… opens the bar on the replace field.
     private var replacing = false
+    /// The replace row: Find finds, Find and Replace… adds it until the bar closes (as TextEdit and Xcode).
+    var replaceShown = false
     @ObservationIgnored private var findSync: Task<Void, Never>?
 
     /// While the workspace asks Replace, Keep Both or Stop.
@@ -174,7 +176,12 @@ final class ProjectModel {
             guard let self else { return }
             findQuery = query
             findShown = true
-            if replacing { replaceFocus += 1 } else { findFocus += 1 }
+            if replacing {
+                replaceShown = true
+                replaceFocus += 1
+            } else {
+                findFocus += 1
+            }
             replacing = false
         }
         editor.onFindClosed = { [weak self] in self?.findClosed() }
@@ -828,6 +835,7 @@ final class ProjectModel {
 
     private func findClosed() {
         findShown = false
+        replaceShown = false
         findFocus = 0
         replaceFocus = 0
     }
