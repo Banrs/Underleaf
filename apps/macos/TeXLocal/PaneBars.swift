@@ -26,7 +26,6 @@ enum BarMetrics {
 /// everywhere.
 enum Typography {
     static let sectionTitle: Font = .title3.weight(.semibold)
-    static let groupTitle: Font = .headline
     static let itemTitle: Font = .headline
     /// Secondary rows and captions: the size `.small` controls use.
     static let secondary: Font = .subheadline

@@ -1,24 +1,14 @@
 import SwiftUI
 
-/// The line's section level as a submenu, for the Format menu.
+/// The section levels; choosing one makes the caret's line that heading. The
+/// Format menu's and the toolbar's (`NSHostingMenu`).
 struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        Menu("Section Level") {
-            ForEach(HeadingLevel.all, id: \.self) { level in
-                Button(level.title) { project?.format(.heading, level.command) }
-            }
+        ForEach(HeadingLevel.all, id: \.self) { level in
+            Button(level.title) { project?.format(.heading, level.command) }
         }
-    }
-}
-
-/// The symbols as a submenu, for the Insert menu.
-struct SymbolMenu: View {
-    let project: ProjectModel?
-
-    var body: some View {
-        Menu("Symbols") { SymbolItems(project: project) }
     }
 }
 
@@ -88,16 +78,17 @@ struct SourceFindBar: View {
     }
 }
 
-/// The Insert menu's items; the section level is Format's, a style.
+/// The Insert menu's items, the menu bar's and the toolbar's (`NSHostingMenu`); the
+/// section level is Format's, a style.
 struct InsertMenuItems<InlineMath: View>: View {
     let project: ProjectModel?
-    /// The menu bar's own Inline Math item, which carries its shortcut.
+    /// Inline Math: the menu bar's own item carries its shortcut.
     let inlineMath: InlineMath
 
     var body: some View {
         inlineMath
         Button("Display Math") { project?.format(.displayMath) }
-        SymbolMenu(project: project)
+        Menu("Symbols") { SymbolItems(project: project) }
         Menu("Reference") { items(referenceTemplates) }
         Divider()
         items(insertTemplates)

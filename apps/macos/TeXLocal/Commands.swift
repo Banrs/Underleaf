@@ -387,7 +387,7 @@ struct AppCommands: Commands {
             item(.editBold)
             item(.editItalic)
             Divider()
-            SectionLevelItems(project: project)
+            Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
             Divider()
             item(.editComment)

@@ -36,7 +36,7 @@ extension NSToolbarItem.Identifier {
 /// A line divides only a segmented control's parts, the two whose middle or end is
 /// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSMenuDelegate, NSMenuItemValidation {
+                              NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
@@ -125,7 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             menu.image = symbol("plus", "Insert")
             menu.label = "Insert"
             menu.toolTip = "Insert"
-            menu.menu = insertMenu()
+            menu.menu = NSHostingMenu(rootView: InsertMenuItems(project: project, inlineMath: inlineMath))
             item = menu
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
@@ -196,7 +196,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                                          trackingMode: .momentary, target: self, action: #selector(math(_:)))
         control.setToolTip(MenuCommand.editMath.title, forSegment: 0)
         control.setToolTip("Symbols", forSegment: 1)
-        control.setMenu(symbolsMenu(), forSegment: 1)
+        control.setMenu(NSHostingMenu(rootView: SymbolItems(project: project)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         let group = NSToolbarItemGroup(itemIdentifier: .math)
         group.label = "Math"
@@ -207,16 +207,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
         group.view = control
         let form = NSMenuItem(title: "Math", action: nil, keyEquivalent: "")
-        form.submenu = NSMenu(title: "Math")
-        form.submenu?.addItem(menuItem(MenuCommand.editMath.title) { [weak self] in self?.perform(.editMath) })
-        form.submenu?.addItem(submenu("Symbols", symbolsMenu()))
+        form.submenu = NSHostingMenu(rootView: Group { [project, inlineMath] in
+            inlineMath
+            Menu("Symbols") { SymbolItems(project: project) }
+        })
         group.menuFormRepresentation = form
         return group
     }
 
     /// Zoom out | the scale | zoom in, one capsule; the scale opens a menu of fits and
-    /// presets (View has the same commands with their shortcuts). While fitting, no
-    /// preset is checked.
+    /// presets.
     private func zoomItem() -> NSToolbarItem {
         let control = NSSegmentedControl(images: [symbol("minus.magnifyingglass", "Zoom Out"), NSImage(),
                                                   symbol("plus.magnifyingglass", "Zoom In")].compactMap(\.self),
@@ -226,7 +226,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         control.setToolTip("Zoom Out", forSegment: 0)
         control.setToolTip("Scale", forSegment: 1)
         control.setToolTip("Zoom In", forSegment: 2)
-        control.setMenu(scaleMenu(), forSegment: 1)
+        control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         control.setAccessibilityLabel("Zoom")
         let group = NSToolbarItemGroup(itemIdentifier: .zoom)
@@ -240,31 +240,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         // In the overflow menu: a Zoom submenu.
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
         form.image = symbol("plus.magnifyingglass", "Zoom")
-        let menu = scaleMenu()
-        menu.insertItem(.separator(), at: 0)
-        menu.insertItem(menuItem("Zoom Out") { [weak self] in self?.pdf.zoom(in: false) }, at: 0)
-        menu.insertItem(menuItem("Zoom In") { [weak self] in self?.pdf.zoom(in: true) }, at: 0)
-        form.submenu = menu
+        form.submenu = NSHostingMenu(rootView: Group { [pdf] in
+            Button("Zoom In") { pdf.zoom(in: true) }
+            Button("Zoom Out") { pdf.zoom(in: false) }
+            Divider()
+            ScaleMenuItems(pdf: pdf)
+        })
         group.menuFormRepresentation = form
         return group
     }
-
-    private func scaleMenu() -> NSMenu {
-        let menu = NSMenu(title: "Scale")
-        menu.delegate = self
-        menu.addItem(menuItem("Fit Width", tag: ScaleTag.fitWidth) { [weak self] in self?.pdf.fitWidth() })
-        menu.addItem(menuItem("Fit Height", tag: ScaleTag.fitHeight) { [weak self] in self?.pdf.fitHeight() })
-        menu.addItem(.separator())
-        for percent in Self.zoomPresets {
-            menu.addItem(menuItem((Double(percent) / 100).formatted(.percent), tag: percent) { [weak self] in
-                self?.pdf.setScale(CGFloat(percent) / 100)
-            })
-        }
-        return menu
-    }
-
-    private static let zoomPresets = [50, 75, 100, 125, 150, 200]
-    private enum ScaleTag { static let fitWidth = -1, fitHeight = -2 }
 
     /// The caret line's section level; choosing one makes the line that heading.
     private func sectionLevelItem() -> NSToolbarItem {
@@ -281,59 +265,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = "Section Level"
         item.view = popUp
         let form = NSMenuItem(title: "Section Level", action: nil, keyEquivalent: "")
-        form.submenu = NSMenu(title: "Section Level")
-        for level in HeadingLevel.all {
-            form.submenu?.addItem(menuItem(level.title) { [weak self] in
-                self?.project.format(.heading, level.command)
-            })
-        }
+        form.submenu = NSHostingMenu(rootView: SectionLevelItems(project: project))
         item.menuFormRepresentation = form
         return item
     }
 
-    /// The Insert menu's items; the section level is Format's, a style.
-    private func insertMenu() -> NSMenu {
-        let menu = NSMenu(title: "Insert")
-        menu.addItem(menuItem(MenuCommand.editMath.title) { [weak self] in self?.perform(.editMath) })
-        menu.addItem(menuItem("Display Math") { [weak self] in self?.project.format(.displayMath) })
-        menu.addItem(submenu("Symbols", symbolsMenu()))
-        menu.addItem(submenu("Reference", templatesMenu(referenceTemplates)))
-        menu.addItem(.separator())
-        for template in insertTemplates {
-            menu.addItem(menuItem(template.title) { [weak self] in self?.project.insert(template) })
-        }
-        menu.addItem(submenu("List", templatesMenu(listTemplates)))
-        return menu
-    }
-
-    private func templatesMenu(_ templates: [Template]) -> NSMenu {
-        let menu = NSMenu()
-        for template in templates {
-            menu.addItem(menuItem(template.title) { [weak self] in self?.project.insert(template) })
-        }
-        return menu
-    }
-
-    /// The symbols by kind, each kind a submenu; the glyph over its command.
-    private func symbolsMenu() -> NSMenu {
-        let menu = NSMenu(title: "Symbols")
-        for (kind, symbols) in symbolGroups {
-            let kindMenu = NSMenu(title: kind)
-            for (glyph, command) in symbols {
-                let item = menuItem(glyph) { [weak self] in self?.project.format(.symbol, command) }
-                item.subtitle = command
-                kindMenu.addItem(item)
-            }
-            menu.addItem(submenu(kind, kindMenu))
-        }
-        return menu
-    }
-
-    private func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        menu.title = title
-        item.submenu = menu
-        return item
+    /// Inline Math for the toolbar's menus; the menu bar's carries the shortcut.
+    private var inlineMath: some View {
+        Button(MenuCommand.editMath.title) { [app, project] in app.perform(.editMath, on: project) }
     }
 
     // ---------- state ----------
@@ -502,33 +441,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []
     }
-
-    // ---------- menus ----------
-
-    private func menuItem(_ title: String, tag: Int = 0, handler: @escaping () -> Void) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(runMenuItem(_:)), keyEquivalent: "")
-        item.target = self
-        item.tag = tag
-        item.representedObject = MenuAction(handler)
-        return item
-    }
-
-    @objc private func runMenuItem(_ item: NSMenuItem) {
-        (item.representedObject as? MenuAction)?.run()
-    }
-
-    /// The scale menu's check: the fit in use, or the preset at the scale.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        for item in menu.items {
-            switch item.tag {
-            case ScaleTag.fitWidth: item.state = pdf.fit == .width ? .on : .off
-            case ScaleTag.fitHeight: item.state = pdf.fit == .height ? .on : .off
-            case let percent where percent > 0:
-                item.state = pdf.fit == nil && Int((pdf.scale * 100).rounded()) == percent ? .on : .off
-            default: break
-            }
-        }
-    }
 }
 
 /// Compile, or Stop with a spinner while a build runs. Both lay out and one shows,
@@ -566,14 +478,5 @@ private struct CompileButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
-    }
-}
-
-/// What a toolbar menu's item does: its menus act on the project they were made for.
-private final class MenuAction: NSObject {
-    let run: () -> Void
-
-    init(_ run: @escaping () -> Void) {
-        self.run = run
     }
 }

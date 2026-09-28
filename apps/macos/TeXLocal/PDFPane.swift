@@ -114,6 +114,31 @@ struct PDFFindBar: View {
     }
 }
 
+/// The fits and preset scales, the one in use checked (none while it's between
+/// presets), for the toolbar's scale menu (`NSHostingMenu`); View has the fits and
+/// the zooms with their shortcuts.
+struct ScaleMenuItems: View {
+    let pdf: PDFController
+    private static let presets = [50, 75, 100, 125, 150, 200]
+
+    var body: some View {
+        Toggle("Fit Width", isOn: choice(pdf.fit == .width) { pdf.fitWidth() })
+        Toggle("Fit Height", isOn: choice(pdf.fit == .height) { pdf.fitHeight() })
+        Divider()
+        ForEach(Self.presets, id: \.self) { percent in
+            Toggle((Double(percent) / 100).formatted(.percent),
+                   isOn: choice(pdf.fit == nil && Int((pdf.scale * 100).rounded()) == percent) {
+                pdf.setScale(CGFloat(percent) / 100)
+            })
+        }
+    }
+
+    /// Checked while in use; choosing it, checked or not, applies it.
+    private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> {
+        Binding(get: { inUse }, set: { _ in apply() })
+    }
+}
+
 /// The find bar's rules, shared with the web's (web/src/findsession.js and
 /// workspace.js `showCount`, `pdfFindTimer`).
 enum PDFFind {
