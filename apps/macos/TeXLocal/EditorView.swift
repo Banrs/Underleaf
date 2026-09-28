@@ -153,20 +153,17 @@ private struct FilePreview: View {
     }
 }
 
-/// The build's summary, the save state and the caret, and the build panel's
-/// toggle (HIG, Windows: a status bar). Items drop whole, least important first
-/// (ViewThatFits).
+/// The source's part of the bottom bar (HIG, Windows: a status bar), level with the
+/// PDF's (`PDFStatusBar`): the build's summary, the save state and the caret, and
+/// the build panel's toggle. Items drop whole, least important first (ViewThatFits);
+/// none moves while a build runs.
 private struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
-    /// Where the window's rounded corners are beside the bar's ends.
-    @State private var corners = RectangleCornerInsets()
 
     var body: some View {
         @Bindable var project = project
-        SecondaryBar(spacing: 0,
-                     leadingInset: max(BarMetrics.inset, corners.bottomLeading.width),
-                     trailingInset: max(BarMetrics.inset, corners.bottomTrailing.width)) {
+        SecondaryBar(spacing: 0) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -177,10 +174,9 @@ private struct StatusBar: View {
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             ToolSeparator()
             ViewThatFits(in: .horizontal) {
-                items(save: true, counts: true, engine: true)
-                items(save: true, counts: true, engine: false)
-                items(save: true, counts: false, engine: false)
-                items(save: false, counts: false, engine: false)
+                items(save: true, counts: true)
+                items(save: true, counts: false)
+                items(save: false, counts: false)
             }
             .foregroundStyle(.secondary)
             ToolSeparator()
@@ -192,17 +188,16 @@ private struct StatusBar: View {
         }
         .toggleStyle(.button)
         .buttonStyle(.borderless)
-        .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: { corners = $0 }
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
     }
 
-    private func items(save: Bool, counts showCounts: Bool, engine showEngine: Bool) -> some View {
+    private func items(save: Bool, counts showCounts: Bool) -> some View {
         HStack(spacing: BarMetrics.itemSpacing) {
-            // While a build runs the build status says so. A preview has no save state.
-            if save, !project.compiling, project.editsText {
+            // A preview has no save state.
+            if save, project.editsText {
                 Text(project.status)
             }
             Spacer(minLength: 0)
@@ -212,9 +207,6 @@ private struct StatusBar: View {
                     Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
                         .monospacedDigit()
                 }
-            }
-            if showEngine, let engine = project.settings?.engine {
-                Text(texEngineName(engine))
             }
         }
         .lineLimit(1)
@@ -250,8 +242,6 @@ private struct StatusBar: View {
         .monospacedDigit()
         .lineLimit(1)
         .fixedSize()
-        .animation(.default, value: project.compiling)
-        .animation(.default, value: project.result?.ok)
     }
 
     private var failedTitle: String {

@@ -16,16 +16,22 @@ struct PDFPane: View {
     @State private var loaded: (version: Int, document: PDFDocument)?
 
     var body: some View {
-        PaneStack(finding: finding && project.pdfVersion > 0) {
-            findBar
-        } content: {
-            pages
+        VStack(spacing: 0) {
+            PaneStack(finding: finding && project.pdfVersion > 0) {
+                findBar
+            } content: {
+                pages
+            }
+            // Level with the source's status bar: one bar, the divider running through it.
+            Divider()
+            PDFStatusBar(app: app, project: project, controller: controller)
         }
         .toolbar(id: "pdf") { PDFToolbar(app: app, project: project, controller: controller) }
         .background { PDFColumn(collapsed: !project.showPDF, project: project) }
         // Edit › Find's items while the pages or the find bar have the keyboard.
         .focusedValue(\.find, findAction)
         .onChange(of: controller.page) { _, page in project.pdfPage = page }
+        .onChange(of: controller.pageCount) { _, count in project.pdfPageCount = count }
         // A new PDF leaves every match behind; the web closes the bar too.
         .onChange(of: project.pdfVersion) { _, _ in
             if finding { closeFind() }
@@ -70,11 +76,6 @@ struct PDFPane: View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .overlay(alignment: .bottomTrailing) {
-                    if controller.pageCount > 0 {
-                        PageTile(controller: controller).padding()
-                    }
-                }
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -124,6 +125,7 @@ struct PDFPane: View {
         case .actualSize: controller.setScale(1)
         case .fitWidth: controller.fitWidth()
         case .fitHeight: controller.fitHeight()
+        case .goToPage(let page): controller.go(toPage: page)
         case .find: finding = true; findFocus += 1
         case .print: controller.view?.print(with: .shared, autoRotate: true)
         case .inverseFromView:
@@ -435,17 +437,30 @@ private struct FreshnessButton: View {
     }
 }
 
-/// The PDF's own page numbers, not LaTeX's (front matter and roman numbers differ),
-/// floating on glass over the pages.
-private struct PageTile: View {
+/// The PDF's part of the bottom bar: the engine that makes it, and the page, which
+/// opens Go to Page. The PDF's own page numbers, not LaTeX's (front matter and roman
+/// numbers differ).
+private struct PDFStatusBar: View {
+    let app: AppModel
+    let project: ProjectModel
     let controller: PDFController
 
     var body: some View {
-        Text("Page \(controller.page) of \(controller.pageCount)")
-            .monospacedDigit()
-            .padding(.horizontal)
-            .frame(height: BarMetrics.largeControlHeight)
-            .glassEffect(.regular, in: .capsule)
+        SecondaryBar(spacing: BarMetrics.itemSpacing) {
+            if let engine = project.settings?.engine {
+                Text(texEngineName(engine))
+            }
+            Spacer(minLength: 0)
+            if project.pdfVersion > 0, controller.pageCount > 0 {
+                Button("Page \(controller.page) of \(controller.pageCount)") {
+                    app.perform(.pdfGotoPage, on: project)
+                }
+                .monospacedDigit()
+                .help("Go to Page")
+            }
+        }
+        .foregroundStyle(.secondary)
+        .buttonStyle(.borderless)
     }
 }
 

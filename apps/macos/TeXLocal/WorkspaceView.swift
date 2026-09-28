@@ -58,6 +58,7 @@ struct WorkspaceView: View {
             case .newFile: NewEntrySheet(project: project, directory: false)
             case .newFolder: NewEntrySheet(project: project, directory: true)
             case .gotoLine: GoToLineSheet(project: project)
+            case .gotoPage: GoToPageSheet(project: project)
             }
         }
         .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
@@ -173,6 +174,31 @@ private struct GoToLineSheet: View {
             if let line { project.reveal(line: line) }
         } fields: {
             TextField("Line", text: $text, prompt: Text(lines.map { "1–\($0)" } ?? "Line number"))
+                .focused($focused)
+        }
+        .defaultFocus($focused, true)
+    }
+}
+
+/// Edit › Go to Page…, and the page in the PDF's status bar.
+private struct GoToPageSheet: View {
+    @Environment(AppModel.self) private var app
+    let project: ProjectModel
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var pages: Int? { project.pdfPageCount > 0 ? project.pdfPageCount : nil }
+
+    private var page: Int? {
+        guard let page = Int(text.trimmingCharacters(in: .whitespaces)), page >= 1 else { return nil }
+        return pages.map { min(page, $0) } ?? page
+    }
+
+    var body: some View {
+        DialogSheet(title: "Go to Page", action: "Go", enabled: page != nil) {
+            if let page { app.requestPDF(.goToPage(page)) }
+        } fields: {
+            TextField("Page", text: $text, prompt: Text(pages.map { "1–\($0)" } ?? "Page number"))
                 .focused($focused)
         }
         .defaultFocus($focused, true)

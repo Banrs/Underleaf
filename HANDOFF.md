@@ -59,10 +59,10 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `ProjectModel`: the open project, saves, builds, file watching.
 - `Core`, `Models`, `Commands`: menus and shortcuts. Every item is a `MenuCommand`, which also lists the chords the editor page hands back. The menus act on the key window's project (`focusedSceneValue`). Insert sits between View and Window; Format keeps Bold, Italic, the section level and Comment.
 - `WorkspaceView`: a three-column `NavigationSplitView` (sidebar | source | PDF), the PDF toggle, the Project Settings popover (`ProjectSettingsView`) and `ColumnMetrics`: the columns' minimums (their content's, not the toolbar's) and the window's minimum derived from them.
-- `EditorView`: the source column (source, build panel, status bar) and its part of the toolbar.
+- `EditorView`: the source column (source, build panel, its part of the status bar) and its part of the toolbar.
 - `EditorBridge`: a project's editor `WebPage`.
 - `SourceBars`: the source's toolbar items (`SourceToolbar`), the section level, symbols, and the source's find bar.
-- `PDFPane`: the PDF column, its toolbar items (`PDFToolbar`), Compile, and `PDFColumn`, which collapses the column.
+- `PDFPane`: the PDF column, its toolbar items (`PDFToolbar`), Compile, its part of the status bar (`PDFStatusBar`: the engine, and the page, which opens Go to Page), and `PDFColumn`, which collapses the column.
 - `LogsView`: the build panel.
 - `SidebarView`, `Outline`, `HomeView`, `SettingsView`.
 - `PaneBars`: bar metrics (the UI kit's), `Typography`, and pieces: the accessory bars (find bars, the build panel's header) at the regular control size; `PaneStack` and `FindBar` serve both panes; `TabsControl` is the build panel's tab switcher; `DialogSheet` is every small sheet; `InPlaceRename`, `RenameField` and `ItemMenuItems` are the gallery's and the sidebar's rename and item menu.
@@ -162,7 +162,7 @@ Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
 - **Don't feed toolbar item geometry back into `navigationSplitViewColumnWidth(min:)`**: it loops layout and AppKit throws (`_crashOnException`). The navigation title is always 160 pt wide; `toolbarTitleDisplayMode` doesn't change it on macOS.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 - **`NSSplitViewController` opens an uncollapsed pane at its minimum** unless it has a size from this session. `PaneSplitViewController` holds a pane that has been hidden since launch at its stored size (`PaneSizes`), or its share, and then lets it go.
-- **PDFKit** re-anchors page one on every resize while fitting the width. `SyncPDFView` keeps the reading position through resizes and rebuilds, and `hideLinkBorders` hides hyperref's boxes.
+- **PDFKit is left to itself.** A scroll-view inset for the gap above page one, and the resize pinning it needed, fought PDFKit's own fit-width layout (a re-layout on every resize step: the scaling stuttered); the gap is a page-break margin now, and a rebuild goes back to `currentDestination`. `hideLinkBorders` hides hyperref's boxes.
 - **Core Image filters work in linear light:** dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16.
 - **macOS 26's `setPosition`** doesn't lay out panes that were just added, as 27's does. The split tests size a window explicitly.
 - **The tests' host is the app, with the app's defaults** (`com.texlocal.mac`) and the scheme's scratch `TEXLOCAL_DATA`. Split tests remove their `PaneSizes` key in `tearDown` (after taking the controller out of its window); recents aren't pruned when the library lists without them (`AppModel.recents` filters instead), since a scratch library would wipe them.

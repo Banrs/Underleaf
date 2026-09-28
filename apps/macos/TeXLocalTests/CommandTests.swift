@@ -67,7 +67,7 @@ final class CommandTests: XCTestCase {
     /// Open… reads a folder from disk; the rest are the Mac menu bar's own.
     private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
                                               .viewToggleProjectSettings, .viewToggleWordCount, .viewActualSize,
-                                              .compileStop]
+                                              .compileStop, .pdfGotoPage]
 
     /// The menu has every other command the web declares. Their chords are
     /// the one table both read (web/src/shortcuts.json).

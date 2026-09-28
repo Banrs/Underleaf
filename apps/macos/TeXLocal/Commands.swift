@@ -31,6 +31,8 @@ enum MenuCommand: String, CaseIterable {
     case editComment = "edit.comment"
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
+    /// Mac only: the web's viewer has no page field to go to.
+    case pdfGotoPage = "pdf.gotoPage"
     case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
     /// The web's id, which predates the name.
@@ -74,6 +76,7 @@ enum MenuCommand: String, CaseIterable {
         case .editComment: "Comment Selection"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
+        case .pdfGotoPage: "Go to Page…"
         case .viewToggleSidebar: "Hide Sidebar"
         case .viewTogglePdf: "Hide PDF"
         case .viewToggleProjectSettings: "Hide Project Settings"
@@ -120,6 +123,8 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitWidth: "CmdOrCtrl+9"
         case .viewFitHeight: "CmdOrCtrl+Alt+9"
         case .compileStop: "CmdOrCtrl+."
+        // Preview's.
+        case .pdfGotoPage: "CmdOrCtrl+Alt+G"
         // ⌘F finds in the PDF when it has the keyboard.
         case .pdfFind: nil
         default: accel
@@ -175,14 +180,14 @@ enum MenuCommand: String, CaseIterable {
 
 /// A sheet the workspace asks for a value with.
 enum Prompt: String, Identifiable {
-    case newFile, newFolder, gotoLine
+    case newFile, newFolder, gotoLine, gotoPage
 
     var id: String { rawValue }
 }
 
 /// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
 }
 
 /// Edit › Find's items for the pane with the keyboard; nil disables an item.
@@ -204,7 +209,7 @@ extension AppModel {
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
-        case .pdfSave, .filePrint, .pdfFind, .viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight,
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight,
              .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.editsText } ?? false
@@ -269,6 +274,7 @@ extension AppModel {
         case .editMath: project?.format(.math)
         case .editComment: project?.format(.comment)
         case .editGotoLine: prompt = .gotoLine
+        case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
         case .viewTogglePdf: project?.showPDF.toggle()
@@ -374,6 +380,7 @@ struct AppCommands: Commands {
         TextEditingCommands()
         CommandGroup(before: .textEditing) {
             item(.editGotoLine)
+            item(.pdfGotoPage)
             Divider()
             item(.projectSearch)
             item(.pdfFind)

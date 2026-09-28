@@ -29,6 +29,8 @@ final class ProjectModel {
     var showLogs = false
     /// 1-based, for reopening where it was.
     var pdfPage = 0
+    /// For Go to Page's range.
+    var pdfPageCount = 0
     @ObservationIgnored var restorePDFPage: Int?
     /// The PDF toolbar's Share button, where File › Share… anchors its picker.
     @ObservationIgnored weak var shareAnchor: NSView?

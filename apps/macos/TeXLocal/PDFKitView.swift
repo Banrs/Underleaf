@@ -16,8 +16,6 @@ nonisolated enum PDFMetrics {
     static let flashAlpha: CGFloat = 0.4
     /// PDFKit's `PDFAnnotation.type` is the subtype without its slash.
     static let linkType = String(PDFAnnotationSubtype.link.rawValue.dropFirst())
-    /// Resizes from a SwiftUI column animation send no end signal; let go once they stop.
-    static let resizeSettle: Duration = .milliseconds(300)
 }
 
 /// What the pane's controls and the menus ask of the PDF view.
@@ -78,6 +76,13 @@ final class PDFController {
         fit = nil
         view.autoScales = false
         if zoomIn { view.zoomIn(nil) } else { view.zoomOut(nil) }
+    }
+
+    /// One-based, as the page shows it; clamped to the document.
+    func go(toPage number: Int) {
+        guard let view, let document = view.document, document.pageCount > 0,
+              let page = document.page(at: min(max(number, 1), document.pageCount) - 1) else { return }
+        view.go(to: page)
     }
 
     /// In a continuous single-page layout, auto-scaling fits the page width.
@@ -163,83 +168,6 @@ final class SyncPDFView: PDFView {
         }
     }
 
-    /// The gap above page one, as a scroll inset rather than a page margin: fitting
-    /// the width, PDFKit re-anchors page one to the view's top on every resize.
-    var topInset: CGFloat = 0
-    private var topInsetApplied = false
-
-    /// PDFKit re-anchors page one on resize while fitting width; keep the top spot.
-    private var anchor: (page: PDFPage, point: CGPoint)?
-    private var anchorRelease: Task<Void, Never>?
-
-    /// Where the pages start showing: under the top inset.
-    private var topEdge: CGFloat {
-        let inset = scrollView?.contentInsets.top ?? 0
-        return isFlipped ? bounds.minY + inset : bounds.maxY - inset
-    }
-
-    private var scrollView: NSScrollView? { documentView?.enclosingScrollView }
-
-    /// The scroll view exists once there's a document.
-    func applyTopInset() {
-        guard !topInsetApplied, let scrollView else { return }
-        topInsetApplied = true
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
-    }
-
-    override func setFrameSize(_ size: NSSize) {
-        if anchor == nil, size != frame.size, frame.size != .zero,
-           let page = page(for: CGPoint(x: bounds.midX, y: topEdge), nearest: true) {
-            anchor = (page, convert(CGPoint(x: bounds.midX, y: topEdge), to: page))
-        }
-        super.setFrameSize(size)
-    }
-
-    override func layout() {
-        super.layout()
-        guard anchor != nil else { return }
-        // PDFKit sets its fitted scale after the layout that resized it.
-        restoreAnchor()
-        anchorRelease?.cancel()
-        anchorRelease = Task { [weak self] in
-            try? await Task.sleep(for: PDFMetrics.resizeSettle)
-            guard !Task.isCancelled else { return }
-            self?.releaseAnchor()
-        }
-    }
-
-    override func viewDidEndLiveResize() {
-        super.viewDidEndLiveResize()
-        if anchor != nil { releaseAnchor() }
-    }
-
-    private func releaseAnchor() {
-        anchorRelease?.cancel()
-        anchorRelease = nil
-        restoreAnchor()
-        anchor = nil
-    }
-
-    private func restoreAnchor() {
-        guard let (page, point) = anchor, let clip = scrollView?.contentView else { return }
-        layoutDocumentView()
-        let drift = convert(point, from: page).y - topEdge
-        // The clip view scrolls the other way when one of the two is flipped.
-        var origin = clip.bounds.origin
-        origin.y += isFlipped == clip.isFlipped ? drift : -drift
-        clip.scroll(to: origin)
-        scrollView?.reflectScrolledClipView(clip)
-    }
-
-    /// Page one's top at the top of what shows, at the next layout: a new document
-    /// is shown at the scroll view's edge, over the inset.
-    func scrollToTop() {
-        guard let page = document?.page(at: 0) else { return }
-        anchor = (page, CGPoint(x: 0, y: page.bounds(for: displayBox).maxY))
-        needsLayout = true
-    }
-
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 2, let document else {
             super.mouseDown(with: event)
@@ -275,8 +203,7 @@ struct PDFRepresentable: NSViewRepresentable {
         view.displaysPageBreaks = true
         // An even margin round every page, lined up with the bars' controls.
         let inset = BarMetrics.inset
-        view.pageBreakMargins = NSEdgeInsets(top: 0, left: inset, bottom: inset, right: inset)
-        view.topInset = inset
+        view.pageBreakMargins = NSEdgeInsets(top: inset, left: inset, bottom: inset, right: inset)
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
         view.onInverse = { [project] page, point in
@@ -314,27 +241,23 @@ struct PDFRepresentable: NSViewRepresentable {
         coordinator.watches.forEach { $0.cancel() }
     }
 
-    /// A rebuilt PDF at the same scroll offset and zoom: the same spot, pages keeping
-    /// their size. Not `currentDestination`: it ignores the top inset.
+    /// A rebuilt PDF at the same place and zoom, by PDFKit's own destination.
     private func show(_ document: PDFDocument, in view: SyncPDFView) {
-        let clip = view.documentView?.enclosingScrollView?.contentView
-        let offset = view.document == nil ? nil : clip?.bounds.origin
+        // Read before the swap: a page keeps its document only weakly.
+        let place = view.currentDestination.flatMap { destination in
+            destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
+        }
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
-        view.applyTopInset()
-        if !autoScales { view.scaleFactor = scale }
+        if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         // A reopened project's first PDF opens at the page it was left at.
         let restore = project.restorePDFPage.map { min(max($0, 1), document.pageCount) - 1 }
         project.restorePDFPage = nil
-        if let clip, let offset {
-            view.layoutDocumentView()
-            clip.scroll(to: offset)
-            clip.enclosingScrollView?.reflectScrolledClipView(clip)
-        } else if let restore, restore > 0, let page = document.page(at: restore) {
+        if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
+            view.go(to: PDFDestination(page: page, at: place.point))
+        } else if let restore, let page = document.page(at: restore) {
             view.go(to: page)
-        } else {
-            view.scrollToTop()
         }
         controller.pageCount = document.pageCount
         controller.pageChanged()

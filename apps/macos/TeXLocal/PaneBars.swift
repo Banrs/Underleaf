@@ -64,22 +64,23 @@ struct PaneBar<Content: View>: View {
     }
 }
 
-/// The window's status along its foot, at the secondary text style and control size.
+/// The window's status along its foot, at the secondary text style and control size,
+/// its ends clear of the window's rounded corners beside them.
 struct SecondaryBar<Content: View>: View {
     let spacing: CGFloat
-    var leadingInset = BarMetrics.inset
-    var trailingInset = BarMetrics.inset
     @ViewBuilder var content: Content
+    @State private var corners = RectangleCornerInsets()
 
     var body: some View {
         HStack(spacing: spacing) { content }
             .font(Typography.secondary)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
-            .padding(.leading, leadingInset)
-            .padding(.trailing, trailingInset)
+            .padding(.leading, max(BarMetrics.inset, corners.bottomLeading.width))
+            .padding(.trailing, max(BarMetrics.inset, corners.bottomTrailing.width))
             .frame(height: BarMetrics.secondaryBarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: { corners = $0 }
     }
 }
 
@@ -519,7 +520,7 @@ extension TextSelection {
 }
 
 #Preview("Secondary bar") {
-    SecondaryBar(spacing: 0, leadingInset: BarMetrics.inset, trailingInset: BarMetrics.inset) {
+    SecondaryBar(spacing: 0) {
         Text("Saved")
         ToolSeparator()
         Spacer(minLength: 0)
