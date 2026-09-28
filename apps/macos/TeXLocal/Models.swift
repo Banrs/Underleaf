@@ -69,7 +69,7 @@ nonisolated struct CompileResult: Decodable, Equatable {
     /// "1.2 s", in the user's locale.
     var durationText: String {
         Duration.milliseconds(durationMs)
-            .formatted(.units(allowed: [.seconds], width: .abbreviated, fractionalPart: .show(length: 1)))
+            .formatted(.units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1)))
     }
 }
 

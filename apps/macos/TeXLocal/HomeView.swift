@@ -51,9 +51,11 @@ struct HomeView: View {
             Section {
                 templates
                     .selectionDisabled()
+                    .listRowSeparator(.hidden)
             } header: {
                 Text("New")
             }
+            .listSectionSeparator(.hidden)
             Section {
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
@@ -63,6 +65,7 @@ struct HomeView: View {
             } header: {
                 Text("Recent")
             }
+            .listSectionSeparator(.hidden)
         }
         .headerProminence(.increased)
         .listStyle(.inset)

@@ -307,6 +307,8 @@ struct ProjectSettingsView: View {
                 Text(title)
                 Text(detail)
             }
+            // Wraps at the popover's width rather than truncating.
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
