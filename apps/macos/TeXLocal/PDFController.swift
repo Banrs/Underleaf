@@ -118,9 +118,8 @@ final class PDFController {
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
-    /// highlights with it; the keyboard goes back to the pages.
-    /// The keyboard goes back to the pages only from the bar: a new build closes it
-    /// while the editor has the keyboard.
+    /// highlights with it. The keyboard goes back to the pages only from the bar:
+    /// a new build closes it while the editor may have the keyboard.
     func closeFind() {
         let fromBar = findField.hasFocus
         finding = false

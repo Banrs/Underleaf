@@ -1,12 +1,12 @@
 import Foundation
 
-// The LaTeX the source bar and the Insert and Format menus write. Titles are
+// The LaTeX the toolbar and the Insert and Format menus write. Titles are
 // menu items, so title case without the web's parentheticals.
 
 /// A snippet at the cursor: a block named by its id in the editor page's
 /// table (web/src/latex-data.js `BLOCK_TEMPLATES`), or an inline command
-/// with "$0" where the selection goes. With a `symbol`, the source bar shows
-/// it as a button; the rest are in its menu.
+/// with "$0" where the selection goes. With a `symbol`, Customize Toolbar
+/// offers it as a button; all are in the Insert menu.
 struct Template {
     let title: String
     let body: String

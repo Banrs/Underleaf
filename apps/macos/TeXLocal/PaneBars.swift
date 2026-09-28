@@ -394,7 +394,8 @@ struct ItemMenuItems: View {
 }
 
 /// A name edited in place: Return or clicking away commits, Escape cancels.
-/// A file's name starts selected up to its extension, as in Finder.
+/// A file's name starts selected up to its extension, so typing replaces the name
+/// and keeps the file's type.
 struct RenameField: View {
     @Binding var text: String
     var isFile = false

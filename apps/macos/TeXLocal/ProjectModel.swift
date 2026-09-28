@@ -81,7 +81,8 @@ final class ProjectModel {
     var replaceFocus = 0
     /// Find and Replace… opens the bar on the replace field.
     private var replacing = false
-    /// The replace row: Find finds, Find and Replace… adds it until the bar closes (as TextEdit and Xcode).
+    /// The replace row: Find and Replace… adds it until the bar closes, so a plain
+    /// Find keeps the bar to one row.
     var replaceShown = false
     @ObservationIgnored private var findSync: Task<Void, Never>?
 

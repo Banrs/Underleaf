@@ -32,7 +32,7 @@ pub fn resolve(service: &Service, segments: &[String]) -> Result<Resolved, CoreE
     }
 }
 
-pub fn mime_for(path: &Path) -> &'static str {
+fn mime_for(path: &Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())
@@ -58,7 +58,7 @@ pub fn mime_for(path: &Path) -> &'static str {
 
 /// A `Range` header that cannot be served: answer 416.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Unsatisfiable;
+struct Unsatisfiable;
 
 /// The one byte range a `Range` header asks for, or None to send the whole
 /// file. pdf.js fetches large PDFs in ranges; the suffix and open-ended forms
@@ -67,7 +67,7 @@ pub struct Unsatisfiable;
 /// (which would need multipart/byteranges), so those, and a header that
 /// doesn't parse, get the whole file. Only a well-formed range that starts
 /// past the end is refused.
-pub fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, Unsatisfiable> {
+fn parse_range(header: &str, len: u64) -> Result<Option<(u64, u64)>, Unsatisfiable> {
     let spec = header
         .strip_prefix("bytes=")
         .filter(|spec| !spec.contains(','));
@@ -148,7 +148,7 @@ pub async fn respond(path: &Path, range: Option<&str>, sandboxed: bool) -> Serve
     }
 }
 
-pub async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
+async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
     // One trip to the blocking pool per request. tokio::fs::File makes one per
     // operation (open, seek, each read) and copies through its own buffer;
     // pdf.js fetches a large PDF as many small ranges.

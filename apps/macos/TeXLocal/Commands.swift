@@ -122,7 +122,8 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitWidth: "CmdOrCtrl+9"
         case .viewFitHeight: "CmdOrCtrl+Alt+9"
         case .compileStop: "CmdOrCtrl+."
-        // Preview's.
+        // ⌘L is Go to Line; ⌥⌘G is Go to Page in the Mac's PDF readers, the
+        // chord people know.
         case .pdfGotoPage: "CmdOrCtrl+Alt+G"
         // ⌘F finds in the PDF when it has the keyboard.
         case .pdfFind: nil

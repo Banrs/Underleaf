@@ -7,7 +7,7 @@ enum PanelTab: String, CaseIterable {
 
 /// The build panel below the editors: the build's issues, or its whole log.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
-struct PanelView: View {
+struct BuildPanel: View {
     @Bindable var project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true

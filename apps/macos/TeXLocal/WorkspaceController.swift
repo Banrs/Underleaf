@@ -127,7 +127,7 @@ final class WorkspaceController: NSSplitViewController {
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
 
-        panelItem = NSSplitViewItem(viewController: host(PanelView(project: project), height: panelHeight))
+        panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         // It keeps its height as the window resizes; the columns take the change.
         panelItem.holdingPriority = .defaultLow + 1
