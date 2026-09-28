@@ -7,6 +7,10 @@ import SwiftUI
 /// find bar is its top accessory, and the toolbar's sections follow the sidebar's and
 /// the source/PDF divider (`WorkspaceToolbar`). SwiftUI draws every pane.
 ///
+/// AppKit, not `NavigationSplitView`, which can't hide its last column (the PDF), run a
+/// panel under two of its columns, or put bars in its columns' accessories; and only
+/// an AppKit split gives the toolbar a section per column (`WorkspaceToolbar`).
+///
 /// The models say what shows: a change they make (View › Hide PDF, a find, a failed
 /// build) collapses or shows an item with AppKit's own animation, and the sidebar
 /// dragged or toggled shut goes back to them.
