@@ -133,6 +133,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             item = zoomItem()
             item.visibilityPriority = .low
+            // Customize Toolbar's default set squeezed its copy until the scale read
+            // "…". The toolbar's own stays compressible: held at its width, it kept
+            // the window 50 pt wider even in the overflow menu.
+            if !flag { item.view?.setContentCompressionResistancePriority(.required, for: .horizontal) }
         case .share:
             let share = NSSharingServicePickerToolbarItem(itemIdentifier: id)
             share.delegate = self
