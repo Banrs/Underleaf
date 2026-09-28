@@ -53,8 +53,10 @@ final class WorkspaceController: NSSplitViewController {
         self.project = project
         super.init(nibName: nil, bundle: nil)
         buildSidebar(height: size.height)
-        buildArea(size: size)
         buildInspector()
+        buildArea(size: size)
+        // Made before the area, which opens in the room the side columns leave.
+        addSplitViewItem(inspectorItem)
         toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
         watch()
     }
@@ -100,7 +102,8 @@ final class WorkspaceController: NSSplitViewController {
     /// Source | PDF over the build panel, the status bar at their foot.
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? sidebar.view.frame.width : 0
-        let room = max(size.width - sidebarWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
+        let inspectorWidth = inspectorItem.isCollapsed ? 0 : inspectorItem.viewController.view.frame.width
+        let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
         let share = (room * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
         let pdfWidth = min(max(share, ColumnMetrics.pdfMinimum), room - ColumnMetrics.sourceMinimum)
         let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
@@ -150,7 +153,6 @@ final class WorkspaceController: NSSplitViewController {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
         inspectorItem.viewController.view.frame.size.width = inspectorItem.minimumThickness
         inspectorItem.isCollapsed = !app.inspectorVisible
-        addSplitViewItem(inspectorItem)
     }
 
     /// The fixed inspector's divider takes no drag, so it shows no resize cursor.
@@ -494,7 +496,7 @@ enum ColumnMetrics {
     static let sourceMinimum: CGFloat = 320
     /// A page still legible, fitted to the width.
     static let pdfMinimum: CGFloat = 280
-    /// The PDF's share of the room past the sidebar, until one is dragged.
+    /// The PDF's share of the room past the side columns, until one is dragged.
     static let pdfShare: CGFloat = 0.5
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200

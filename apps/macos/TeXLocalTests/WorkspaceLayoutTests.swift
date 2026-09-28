@@ -35,10 +35,10 @@ final class WorkspaceLayoutTests: XCTestCase {
 
     /// A project's workspace as a window's content, laid out, as the window shows it.
     private func open(_ size: NSSize = NSSize(width: 1200, height: 760), panel: Bool = false,
-                      pdf: Bool = true, sidebar: Bool = true) -> WorkspaceController {
+                      pdf: Bool = true, sidebar: Bool = true, inspector: Bool = false) -> WorkspaceController {
         let app = AppModel()
         app.sidebarVisible = sidebar
-        app.inspectorVisible = false
+        app.inspectorVisible = inspector
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
         project.showPDF = pdf
         project.showLogs = panel
@@ -64,6 +64,15 @@ final class WorkspaceLayoutTests: XCTestCase {
         let columns = width(workspace.sourceItem) + workspace.columns.splitView.dividerThickness + width(workspace.pdfItem)
         XCTAssertEqual(width(workspace.panelItem), columns, accuracy: 0.5)
         XCTAssertEqual(width(workspace.panelItem), workspace.area.view.frame.width, accuracy: 0.5)
+    }
+
+    /// Both side columns open at their own widths; the source and PDF take the rest.
+    func testTheSideColumnsOpenAtTheirWidths() async throws {
+        let workspace = open(inspector: true)
+        try await waitUntil { self.width(workspace.inspectorItem) > 0 }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(width(workspace.sidebarItem), ColumnMetrics.sidebarIdeal, accuracy: 0.5)
+        XCTAssertEqual(width(workspace.inspectorItem), workspace.inspectorItem.minimumThickness, accuracy: 0.5)
     }
 
     /// Hide PDF gives the source the room; Show PDF brings the PDF back at its width.
