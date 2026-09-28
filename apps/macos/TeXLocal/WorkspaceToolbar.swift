@@ -26,9 +26,10 @@ extension NSToolbarItem.Identifier {
 /// the sidebar toggle over the sidebar; back, the title and the source's tools over
 /// the source; the PDF's and the build's over the PDF, from the source/PDF divider,
 /// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`). A hidden
-/// PDF's tools move over the source by themselves. Short of room, zoom and Share go
-/// to the overflow menu first, Compile and the PDF toggle last (HIG, Toolbars: few,
-/// frequent, grouped by task); Customize Toolbar adds the rest.
+/// PDF's tools move over the source by themselves. Short of room, zoom goes to the
+/// overflow menu first (the widest: with Share at the same priority, AppKit would
+/// hide both where Share still fits), Compile and the PDF toggle last (HIG,
+/// Toolbars: few, frequent, grouped by task); Customize Toolbar adds the rest.
 ///
 /// Each action is its own item: side by side, the system puts buttons on one glass
 /// capsule with no line between (the UI kit's button group: Bold and Italic, 73 pt).
@@ -74,9 +75,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
          .pdfSeparator, .zoom, .share, .flexibleSpace, .projectSettings, .compile, .togglePDF]
     }
 
+    /// Customize Toolbar's items, by task; the window's own aren't offered.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [.undo, .redo, .sectionLevel, .math]
-            + Self.buttonTemplates.map(NSToolbarItem.Identifier.template) + [.space, .flexibleSpace]
+        [.undo, .redo, .sectionLevel, .bold, .italic, .math, .insert]
+            + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
+            + [.zoom, .share, .projectSettings, .space, .flexibleSpace]
+            + toolbarImmovableItemIdentifiers(toolbar)
     }
 
     /// The templates with a symbol, each a button; all are in the Insert menu.
@@ -136,16 +140,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.delegate = self
             share.label = "Share"
             share.toolTip = "Share PDF"
-            share.visibilityPriority = .low
             item = share
         case .projectSettings:
             item = button(id, "Project Settings", "info.circle", #selector(toggleSettings))
         case .compile:
             // Its word, not a lone play symbol, which reads as media; the one
-            // prominent control, on glass of its own. Its own view, for Stop's
-            // spinner (an item's image can't animate).
+            // prominent control, on glass of its own. In the toolbar its own view,
+            // for Stop's spinner (an item's image can't animate); Customize
+            // Toolbar draws a view without the item's style, so it gets the title.
             item = NSToolbarItem(itemIdentifier: id)
-            item.view = NSHostingView(rootView: compileButton(state))
+            item.label = MenuCommand.compileRun.title
+            if flag {
+                item.view = NSHostingView(rootView: compileButton(state))
+            } else {
+                item.title = MenuCommand.compileRun.title
+            }
             item.style = .prominent
             let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
             form.target = self
@@ -234,6 +243,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         group.view = control
         // In the overflow menu: a Zoom submenu.
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
+        form.image = symbol("plus.magnifyingglass", "Zoom")
         let menu = scaleMenu()
         menu.insertItem(.separator(), at: 0)
         menu.insertItem(menuItem("Zoom Out") { [weak self] in self?.pdf.zoom(in: false) }, at: 0)
@@ -442,18 +452,30 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         project.insert(template)
     }
 
-    /// The Symbols segment opens its menu itself.
     @objc private func math(_ control: NSSegmentedControl) {
-        if control.selectedSegment == 0 { perform(.editMath) }
+        if control.selectedSegment == 0 { perform(.editMath) } else { openMenu(of: control) }
     }
 
-    /// The scale segment opens its menu itself.
     @objc private func zoom(_ control: NSSegmentedControl) {
         switch control.selectedSegment {
         case 0: pdf.zoom(in: false)
         case 2: pdf.zoom(in: true)
-        default: break
+        default: openMenu(of: control)
         }
+    }
+
+    /// A segment's menu. AppKit opens it on a click only in a control without an
+    /// action, and on a press and hold in one with: these have their other
+    /// segments' action, so a click opens it here, under the control where it was
+    /// clicked.
+    private func openMenu(of control: NSSegmentedControl) {
+        guard let menu = control.menu(forSegment: control.selectedSegment) else { return }
+        let x = if let event = NSApp.currentEvent, event.type == .leftMouseUp {
+            control.convert(event.locationInWindow, from: nil).x
+        } else {
+            control.bounds.midX
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: x, y: control.isFlipped ? control.bounds.maxY : 0), in: control)
     }
 
     @objc private func sectionLevel(_ popUp: NSPopUpButton) {
