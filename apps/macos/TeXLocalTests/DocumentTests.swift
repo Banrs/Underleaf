@@ -48,10 +48,13 @@ struct OutlineTests {
 
     /// A subsection before any section has no parent: it sits flush, as does
     /// the section after it; the subsection under that section is one in.
-    @Test func depthFollowsTheNestingNotTheLevel() async throws {
+    @Test func nestingFollowsTheHeadingsNotTheirLevels() async throws {
         let outline = try await outline(
             "\\subsection{}\n\\section{First Section}\n\\subsection{Detail}\n\\subsubsection{Finer}\n\\section{Second}")
-        #expect(Outline.depths(outline) == [0, 0, 1, 2, 0])
+        let tree = Outline.tree(outline)
+        #expect(tree.map(\.item).map(Outline.displayTitle) == ["Untitled Subsection", "First Section", "Second"])
+        #expect(tree[1].children?.map(\.item.title) == ["Detail"])
+        #expect(tree[1].children?[0].children?.map(\.item.title) == ["Finer"])
     }
 
     @Test func theTreeNestsAsTheHeadingsDo() async throws {

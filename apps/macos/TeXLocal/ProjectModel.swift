@@ -198,13 +198,8 @@ final class ProjectModel {
         } catch {
             if !closed { report(error, "Couldn’t Open “\(id)”") }
         }
-        pdfURL = try? await pdfPath()
         guard !closed else { return }
-        if let pdfURL, await Self.hasPages(pdfURL) {
-            pdfVersion += 1
-        } else if autoCompile {
-            await compile(auto: true)
-        }
+        if await !showPDFOnDisk(), autoCompile { await compile(auto: true) }
     }
 
     /// `quietly` for a reload another app's change asked for: its failure
@@ -225,8 +220,14 @@ final class ProjectModel {
         }
     }
 
-    private func pdfPath() async throws -> URL {
-        URL(fileURLWithPath: try await core.call("pdf_path", ["id": id], as: String.self))
+    /// Shows the PDF the last build left, if it has pages.
+    @discardableResult private func showPDFOnDisk() async -> Bool {
+        guard let path = try? await core.call("pdf_path", ["id": id], as: String.self) else { return false }
+        let url = URL(fileURLWithPath: path)
+        guard await Self.hasPages(url) else { return false }
+        pdfURL = url
+        pdfVersion += 1
+        return true
     }
 
     private func fileURL(_ path: String) async -> URL? {
@@ -243,26 +244,20 @@ final class ProjectModel {
         // after the last await before the editor.
         openGeneration += 1
         let generation = openGeneration
-        if path != openPath, !isTextFile(path) {
-            guard await saveEdits(), generation == openGeneration else { return }
-            let url = await fileURL(path)
-            guard generation == openGeneration, !closed else { return }
-            openPath = path
-            openURL = url
-            diskText = nil
-            analyze("")
-        } else if path != openPath {
+        if path != openPath {
             guard await saveEdits(), generation == openGeneration else { return }
             do {
-                let file = try await core.call("read_file", ["id": id, "path": path], as: FileText.self)
+                let text = isTextFile(path) ? try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text : nil
                 let url = await fileURL(path)
                 guard generation == openGeneration, !closed else { return }
                 openPath = path
                 openURL = url
-                diskText = file.text
-                analyze(file.text)
-                await editor.open(path: path, text: file.text, focus: focus)
-                cursorLine = await editor.currentLine()
+                diskText = text
+                analyze(text ?? "")
+                if let text {
+                    await editor.open(path: path, text: text, focus: focus)
+                    cursorLine = await editor.currentLine()
+                }
             } catch {
                 if !closed { report(error, "Couldn’t Open “\(name(path))”") }
                 return
@@ -550,10 +545,7 @@ final class ProjectModel {
                 }
                 self.result = result
                 // Shown whenever the build wrote one, errors or not.
-                let url = result.pdf == nil ? nil : try await pdfPath()
-                if let url, await Self.hasPages(url) {
-                    pdfURL = url
-                    pdfVersion += 1
+                if result.pdf != nil, await showPDFOnDisk() {
                     builtWrites = built
                     // Edits or saves made while it built aren't in it.
                     pdfFreshness = dirty || writes != built ? .edited : nil
@@ -737,10 +729,7 @@ final class ProjectModel {
     /// The PDF is named after the main file (sidebar.js `onMainFileChange`).
     /// The old one stays on screen until the build replaces it.
     private func mainFileChanged() async {
-        if let url = try? await pdfPath(), await Self.hasPages(url) {
-            pdfURL = url
-            pdfVersion += 1
-        }
+        await showPDFOnDisk()
         await compile(auto: true)
     }
 

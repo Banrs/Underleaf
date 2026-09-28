@@ -50,17 +50,6 @@ enum Outline {
         try await Core.shared.call("analyze", ["text": text], as: Analysis.self)
     }
 
-    /// How many headings enclose each heading, so a subsection before any
-    /// section sits flush rather than under a missing parent.
-    static func depths(_ outline: [OutlineItem]) -> [Int] {
-        var stack: [Int] = []
-        return outline.map { item in
-            while let last = stack.last, last >= item.level { stack.removeLast() }
-            stack.append(item.level)
-            return stack.count - 1
-        }
-    }
-
     /// Each heading's fold key ("1:Results#2"): level, title and occurrence, so a
     /// fold stays with its heading as others come and go above it.
     static func foldKeys(_ outline: [OutlineItem]) -> [String] {
@@ -72,21 +61,21 @@ enum Outline {
         }
     }
 
-    /// The outline as a tree by how the headings nest.
+    /// The outline as a tree by how the headings nest: a subsection before
+    /// any section sits flush rather than under a missing parent.
     static func tree(_ outline: [OutlineItem]) -> [OutlineNode] {
-        let depths = depths(outline)
         var index = 0
-        func children(at depth: Int) -> [OutlineNode] {
+        func nested(under level: Int) -> [OutlineNode] {
             var nodes: [OutlineNode] = []
-            while index < outline.count, depths[index] == depth {
+            while index < outline.count, outline[index].level > level {
                 let item = outline[index]
                 index += 1
-                let kids = children(at: depth + 1)
+                let kids = nested(under: item.level)
                 nodes.append(OutlineNode(item: item, children: kids.isEmpty ? nil : kids))
             }
             return nodes
         }
-        return children(at: 0)
+        return nested(under: -1)
     }
 
     /// An empty heading by its kind: "Untitled Subsection".

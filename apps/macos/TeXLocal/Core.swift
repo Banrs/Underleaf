@@ -1,10 +1,9 @@
 import Foundation
 import TeXLocalCore
 
-/// A command the Rust core refused, with its HTTP-style status (400, 404, 500).
+/// A command the Rust core refused.
 nonisolated struct CoreError: LocalizedError {
     let message: String
-    let status: Int
     var errorDescription: String? { message }
 }
 
@@ -49,7 +48,6 @@ final class Core {
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let ok: T?
         let error: String?
-        let status: Int?
     }
 
     /// Accepts any JSON, for commands whose result is not needed.
@@ -57,23 +55,18 @@ final class Core {
         init(from decoder: Decoder) throws {}
     }
 
-    /// The command's result, nil when it gave none; its error thrown.
-    nonisolated static func decode<T: Decodable & Sendable>(_ data: Data, as: T.Type) throws -> T? {
-        let envelope = try JSONDecoder().decode(Envelope<T>.self, from: data)
-        if let error = envelope.error {
-            throw CoreError(message: error, status: envelope.status ?? 500)
-        }
-        return envelope.ok
-    }
-
     private func result<T: Decodable & Sendable>(_ command: String, _ args: [String: Any], as: T.Type) async throws -> T? {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
         guard let handle else {
-            throw CoreError(message: "TeXLocal can’t open its library folder.", status: 500)
+            throw CoreError(message: "TeXLocal can’t open its library folder.")
         }
         let result = await withCheckedContinuation { (done: CheckedContinuation<Result<T?, Error>, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(returning: Result { try Core.decode(Core.run(handle, command, json), as: T.self) })
+                done.resume(returning: Result {
+                    let envelope = try JSONDecoder().decode(Envelope<T>.self, from: Core.run(handle, command, json))
+                    if let error = envelope.error { throw CoreError(message: error) }
+                    return envelope.ok
+                })
             }
         }
         return try result.get()
@@ -81,7 +74,7 @@ final class Core {
 
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {
         guard let ok = try await result(command, args, as: T.self) else {
-            throw CoreError(message: "The core returned nothing for \(command)", status: 500)
+            throw CoreError(message: "The core returned nothing for \(command)")
         }
         return ok
     }

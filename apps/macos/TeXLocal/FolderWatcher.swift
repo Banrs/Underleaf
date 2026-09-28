@@ -6,7 +6,7 @@ import Foundation
 /// came, went or moved rather than only changed. Watching the folder, not a
 /// file's descriptor, keeps up with a save that renames a new file over the old.
 final class FolderWatcher {
-    struct Change: Equatable {
+    struct Change {
         /// Symlinks resolved, as FSEvents gives it.
         let path: String
         /// Added, removed or renamed; or FSEvents lost count, and anything may have.
@@ -40,7 +40,7 @@ final class FolderWatcher {
     /// `path` from the folder ("chapters/one.tex"); nil for the folder itself
     /// or anything outside it.
     func relativePath(_ path: String) -> String? {
-        let prefix = folder.hasSuffix("/") ? folder : folder + "/"
+        let prefix = folder + "/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : nil
     }
 
@@ -60,7 +60,7 @@ final class FolderWatcher {
         let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
             let paths = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
-            let changes = zip(paths.prefix(count), UnsafeBufferPointer(start: flags, count: count)).map {
+            let changes = zip(paths, UnsafeBufferPointer(start: flags, count: count)).map {
                 Change(path: $0, structural: $1 & FolderWatcher.structuralFlags != 0)
             }
             MainActor.assumeIsolated {

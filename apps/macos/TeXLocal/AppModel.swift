@@ -26,7 +26,6 @@ enum DefaultsKey {
             autoCompile: true,
             showWordCount: true,
             showPDF: true,
-            outlineCollapsed: false,
         ])
     }
 }
@@ -179,10 +178,8 @@ final class AppModel {
         }
     }
 
-    /// What File › Open… takes: a folder, a .tex file or a .zip.
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
-    /// Whether an item dropped or handed to the app can be opened.
     static func canOpen(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
         if url.hasDirectoryPath { return true }

@@ -54,7 +54,7 @@ nonisolated struct LogItem: Decodable, Equatable {
 
 /// A build's outcome. Builds run past errors, so a failed one may still have
 /// written a PDF; `stopped` means Stop, a newer build or quitting ended it.
-nonisolated struct CompileResult: Decodable, Equatable {
+nonisolated struct CompileResult: Decodable {
     let ok: Bool
     let stopped: Bool
     let pdf: String?

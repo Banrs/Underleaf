@@ -94,7 +94,7 @@ struct CoreTests {
         let error = await #expect(throws: CoreError.self) {
             _ = try await core.call("read_file", ["id": info.id, "path": "../../x"], as: FileText.self)
         }
-        #expect(error?.status == 400)
+        #expect(error?.message == "Path escapes project")
     }
 
     /// Every template the projects screen offers is one the core can make.
