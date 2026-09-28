@@ -46,9 +46,11 @@ test('the commands the native apps send are ones the editor page runs', () => {
   for (const name of sent) assert.ok(pageCommands.includes(name), `Windows: ${name}`);
 });
 
-test('the palettes and fonts the native apps offer are the web\'s', () => {
+test('the palettes, fonts and appearances the native apps offer are the web\'s', () => {
   assert.deepEqual(swiftRawValues(bridge, 'EditorPalette'), prefChoices('editorTheme'));
   assert.deepEqual(swiftRawValues(bridge, 'EditorFont'), prefChoices('editorFont'));
+  const settingsView = source('apps/macos/TeXLocal/SettingsView.swift');
+  assert.deepEqual(swiftRawValues(settingsView, 'AppAppearance'), prefChoices('themeMode'));
   const settings = source('apps/windows/TeXLocal/SettingsView.xaml.cs');
   const list = (name) => all(body(settings, `${name} = [`, ']'), /"(\w+)"/g);
   assert.deepEqual(list('Palettes'), prefChoices('editorTheme'));

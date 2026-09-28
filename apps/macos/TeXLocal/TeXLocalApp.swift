@@ -33,6 +33,11 @@ struct TeXLocalApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let app = AppModel()
 
+    /// Before the first window, so it never shows in the other appearance.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        AppAppearance.saved.apply()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A save in flight has cleared `dirty` before its write is on disk.
         guard let project = app.project, project.hasUnsavedText || project.saving else { return .terminateNow }

@@ -14,6 +14,7 @@ enum DefaultsKey {
     static let outlineCollapsed = "OutlineCollapsed"
     static let outlineFolded = "OutlineFolded"
     static let settingsTab = "settingsTab"
+    static let appearance = "appearance"
 
     /// Registered defaults aren't persisted, so this runs at every launch.
     static func register() {

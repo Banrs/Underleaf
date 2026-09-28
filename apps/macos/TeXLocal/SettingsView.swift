@@ -25,8 +25,45 @@ extension View {
     }
 }
 
+/// Light, dark, or as the system is; raw values shared with web/src/prefs.js `themeMode`.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// Nil follows the system.
+    private var appearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
+    static var saved: AppAppearance {
+        UserDefaults.standard.string(forKey: DefaultsKey.appearance).flatMap(AppAppearance.init) ?? .system
+    }
+
+    /// The app's, so new windows, sheets and menus take it. A window already
+    /// made keeps the appearance it was made with, a popover's included (27.2),
+    /// so each takes it too; nil lets it follow the app again.
+    func apply() {
+        NSApp.appearance = appearance
+        for window in NSApp.windows { window.appearance = appearance }
+    }
+}
+
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
+    @AppStorage(DefaultsKey.appearance) private var appearance = AppAppearance.system
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
@@ -35,6 +72,10 @@ private struct GeneralSettings: View {
         @Bindable var app = app
         Form {
             Section("Appearance") {
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                }
+                .onChange(of: appearance) { _, appearance in appearance.apply() }
                 Picker(selection: $pdfPaper) {
                     ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
                 } label: {
