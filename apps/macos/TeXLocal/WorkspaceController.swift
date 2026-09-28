@@ -341,14 +341,19 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// Show PDF brings it back at its kept share, as it opens with the project:
-    /// macOS 27.0 uncollapses a pane to its minimum rather than the frame it had.
+    /// Show PDF brings it back at its kept share, as it opens with the project.
+    /// macOS 27.2 uncollapses a pane to its frame, 27.0 to its minimum, so the PDF
+    /// has both until it's back.
     private func setPDFShown(_ shown: Bool, done: (@MainActor () -> Void)? = nil) {
-        if shown, pdfItem.isCollapsed {
-            let split = columns.splitView
-            pdfItem.viewController.view.frame.size.width = keptPDFWidth(in: split.bounds.width - split.dividerThickness)
+        guard shown, pdfItem.isCollapsed else { return setCollapsed(pdfItem, !shown, done: done) }
+        let split = columns.splitView
+        let width = keptPDFWidth(in: split.bounds.width - split.dividerThickness)
+        pdfItem.viewController.view.frame.size.width = width
+        pdfItem.minimumThickness = width
+        setCollapsed(pdfItem, false) { [weak self] in
+            self?.pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
+            done?()
         }
-        setCollapsed(pdfItem, !shown, done: done)
     }
 
     private var animates: Bool {
