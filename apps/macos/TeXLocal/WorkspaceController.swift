@@ -2,18 +2,19 @@ import AppKit
 import SwiftUI
 
 /// An open project's window content, as AppKit's split view controllers lay it out:
-/// the sidebar | the rest; in the rest, source | PDF over the build panel, which spans
-/// both, and the status bar at their foot (the item's bottom accessory). Each column's
-/// find bar is its top accessory, and the toolbar's sections follow the sidebar's and
-/// the source/PDF divider (`WorkspaceToolbar`). SwiftUI draws every pane.
+/// the sidebar | the rest | the inspector; in the rest, source | PDF over the build
+/// panel, which spans both, and the status bar at their foot (the item's bottom
+/// accessory). Each column's find bar is its top accessory, and the toolbar's sections
+/// follow the sidebar's, the source/PDF and the inspector's dividers
+/// (`WorkspaceToolbar`). SwiftUI draws every pane.
 ///
 /// AppKit, not `NavigationSplitView`, which can't hide its last column (the PDF), run a
 /// panel under two of its columns, or put bars in its columns' accessories; and only
 /// an AppKit split gives the toolbar a section per column (`WorkspaceToolbar`).
 ///
 /// The models say what shows: a change they make (View › Hide PDF, a find, a failed
-/// build) collapses or shows an item with AppKit's own animation, and the sidebar
-/// dragged or toggled shut goes back to them.
+/// build) collapses or shows an item with AppKit's own animation, and the sidebar or
+/// the inspector dragged or toggled shut goes back to them.
 final class WorkspaceController: NSSplitViewController {
     let app: AppModel
     let project: ProjectModel
@@ -31,6 +32,7 @@ final class WorkspaceController: NSSplitViewController {
     private(set) var sourceItem: NSSplitViewItem!
     private(set) var pdfItem: NSSplitViewItem!
     private(set) var panelItem: NSSplitViewItem!
+    private(set) var inspectorItem: NSSplitViewItem!
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     private var sourceFind: NSSplitViewItemAccessoryViewController!
@@ -40,7 +42,7 @@ final class WorkspaceController: NSSplitViewController {
 
     private var watches: [Task<Void, Never>] = []
     private var resizes: [Task<Void, Never>] = []
-    private var sidebarCollapse: NSKeyValueObservation?
+    private var collapses: [NSKeyValueObservation] = []
     /// Collapses and shows under way: the sizes they pass through aren't kept.
     private var animating = 0
     /// Sizes are kept once the panes have appeared at their own.
@@ -52,6 +54,7 @@ final class WorkspaceController: NSSplitViewController {
         super.init(nibName: nil, bundle: nil)
         buildSidebar(height: size.height)
         buildArea(size: size)
+        buildInspector()
         toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
         watch()
     }
@@ -141,6 +144,14 @@ final class WorkspaceController: NSSplitViewController {
         addSplitViewItem(areaItem)
     }
 
+    /// The project's settings and facts, at AppKit's inspector width.
+    private func buildInspector() {
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
+        inspectorItem.viewController.view.frame.size.width = inspectorItem.minimumThickness
+        inspectorItem.isCollapsed = !app.inspectorVisible
+        addSplitViewItem(inspectorItem)
+    }
+
     /// A pane: SwiftUI whose sizes stay out of Auto Layout, so the split item's
     /// limits size it and its content never sets the window's minimum.
     private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0) -> NSViewController {
@@ -210,6 +221,10 @@ final class WorkspaceController: NSSplitViewController {
                 guard let self else { return }
                 setCollapsed(sidebarItem, !visible)
             },
+            track({ app.inspectorVisible }) { [weak self] visible in
+                guard let self else { return }
+                setCollapsed(inspectorItem, !visible)
+            },
             track({ project.showPDF }) { [weak self] shown in
                 guard let self else { return }
                 setCollapsed(pdfItem, !shown)
@@ -241,14 +256,10 @@ final class WorkspaceController: NSSplitViewController {
             track({ app.pdfRequest?.token }) { [weak self] _ in self?.takePDFRequest() },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
-        // The sidebar dragged shut, or shut by the toolbar's own toggle.
-        sidebarCollapse = sidebarItem.observe(\.isCollapsed) { [weak self] _, _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let visible = !self.sidebarItem.isCollapsed
-                if self.app.sidebarVisible != visible { self.app.sidebarVisible = visible }
-            }
-        }
+        collapses = [
+            follow(sidebarItem) { [app] visible in if app.sidebarVisible != visible { app.sidebarVisible = visible } },
+            follow(inspectorItem) { [app] visible in if app.inspectorVisible != visible { app.inspectorVisible = visible } },
+        ]
         for split in [splitView, sidebar.splitView, columns.splitView, area.splitView] {
             resizes.append(Task { [weak self] in
                 for await _ in NotificationCenter.default.notifications(named: NSSplitView.didResizeSubviewsNotification,
@@ -257,6 +268,15 @@ final class WorkspaceController: NSSplitViewController {
                     if keepsSizes, animating == 0 { saveSizes() }
                 }
             })
+        }
+    }
+
+    /// The model follows a column dragged shut, collapsed by a narrowing window, or
+    /// toggled by the toolbar's own button.
+    private func follow(_ item: NSSplitViewItem, _ shown: @escaping @MainActor (Bool) -> Void) -> NSKeyValueObservation {
+        item.observe(\.isCollapsed, options: .new) { _, change in
+            guard let collapsed = change.newValue else { return }
+            MainActor.assumeIsolated { shown(!collapsed) }
         }
     }
 
@@ -342,7 +362,7 @@ final class WorkspaceController: NSSplitViewController {
         saveSizes()
         watches.forEach { $0.cancel() }
         resizes.forEach { $0.cancel() }
-        sidebarCollapse = nil
+        collapses = []
         toolbar.close()
     }
 

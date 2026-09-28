@@ -9,8 +9,8 @@ import XCTest
 @MainActor
 final class WorkspaceLayoutTests: XCTestCase {
     /// The app's defaults the tests change, put back after each.
-    private static let keys = [DefaultsKey.paneSizes, DefaultsKey.sidebarVisible, DefaultsKey.showPDF,
-                               DefaultsKey.outlineCollapsed]
+    private static let keys = [DefaultsKey.paneSizes, DefaultsKey.sidebarVisible, DefaultsKey.inspectorVisible,
+                               DefaultsKey.showPDF, DefaultsKey.outlineCollapsed]
     private var saved: [String: Any] = [:]
     private var window: NSWindow?
     private var workspace: WorkspaceController?
@@ -38,6 +38,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                       pdf: Bool = true) -> WorkspaceController {
         let app = AppModel()
         app.sidebarVisible = true
+        app.inspectorVisible = false
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
         project.showPDF = pdf
         project.showLogs = panel

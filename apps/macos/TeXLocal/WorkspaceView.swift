@@ -164,113 +164,68 @@ private struct GoToPageSheet: View {
     }
 }
 
-/// The project's build settings, then facts about the open file and the build.
-struct ProjectSettingsView: View {
-    @Bindable var project: ProjectModel
-
-    /// Room for the pop-ups; the toggles' descriptions wrap.
-    private static let width: CGFloat = 320
+/// The inspector: the project's build settings, then facts about the open file and
+/// its build.
+struct InspectorView: View {
+    let project: ProjectModel
 
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: BarMetrics.groupSpacing,
-             verticalSpacing: BarMetrics.groupSpacing) {
-            header("Project")
-            let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
-            pickerRow("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
-            pickerRow("Engine", project.settings?.engine ?? "", texEngines, set: project.setEngine)
-            toggleRow("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
-                      project.settings?.shellEscape ?? false, set: project.setShellEscape)
-            toggleRow("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
-                      project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
+        Form {
+            Section("Project") {
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                picker("Main File", project.settings?.mainFile ?? "", texFiles.map { ($0, $0) }, set: project.setMainFile)
+                picker("Engine", project.settings?.engine ?? "", texEngines, set: project.setEngine)
+                toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
+                       project.settings?.shellEscape ?? false, set: project.setShellEscape)
+                toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
+                       project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
+            }
+            // Settings arrive from the core after the project opens.
+            .disabled(project.settings == nil)
             if let path = project.openPath {
-                separator
-                header("Document")
-                row("Name", (path as NSString).lastPathComponent)
-                row("Folder", folder(of: path))
-                if let counts = project.counts {
-                    row("Words", counts.words.formatted())
-                    row("Lines", counts.lines.formatted())
-                }
-                if !project.outline.isEmpty {
-                    row("Sections", project.outline.count.formatted())
+                Section("Document") {
+                    LabeledContent("Name", value: (path as NSString).lastPathComponent)
+                    LabeledContent("Folder", value: folder(of: path))
+                    if let counts = project.counts {
+                        LabeledContent("Words", value: counts.words.formatted())
+                        LabeledContent("Lines", value: counts.lines.formatted())
+                    }
+                    if !project.outline.isEmpty {
+                        LabeledContent("Sections", value: project.outline.count.formatted())
+                    }
                 }
             }
-            separator
-            header("Build")
-            if let result = project.result {
-                row("Last Build", result.stopped ? "Stopped" : result.ok ? "Succeeded" : "Failed")
-                row("Duration", result.durationText)
-                row("Errors", project.errorCount.formatted())
-                row("Warnings", project.warningCount.formatted())
-            } else {
-                row("Last Build", project.pdfVersion > 0 ? "None Yet" : "None")
-            }
-            if let freshness = project.pdfFreshness {
-                GridRow {
-                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            Section("Build") {
+                if let result = project.result {
+                    LabeledContent("Last Build", value: result.stopped ? "Stopped" : result.ok ? "Succeeded" : "Failed")
+                    LabeledContent("Duration", value: result.durationText)
+                    LabeledContent("Errors", value: project.errorCount.formatted())
+                    LabeledContent("Warnings", value: project.warningCount.formatted())
+                } else {
+                    LabeledContent("Last Build", value: project.pdfVersion > 0 ? "None Yet" : "None")
+                }
+                if let freshness = project.pdfFreshness {
                     Label(freshness.title, systemImage: freshness.systemImage)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        // Settings arrive from the core after the popover opens.
-        .disabled(project.settings == nil)
+        .formStyle(.grouped)
         .monospacedDigit()
-        .padding()
-        .frame(width: Self.width, alignment: .leading)
     }
 
-    private func header(_ title: String) -> some View {
-        Text(title)
-            .font(Typography.groupTitle)
-            .accessibilityAddTraits(.isHeader)
-            .gridCellColumns(2)
-    }
-
-    private var separator: some View {
-        Divider().gridCellColumns(2).padding(.vertical, BarMetrics.spacing)
-    }
-
-    /// Read out with its value or control, not as an element of its own.
-    private func label(_ text: String) -> some View {
-        Text(text)
-            .foregroundStyle(.secondary)
-            .gridColumnAlignment(.trailing)
-            .accessibilityHidden(true)
-    }
-
-    private func pickerRow(_ title: String, _ value: String, _ options: [(String, String)],
-                           set: @escaping (String) async -> Void) -> some View {
-        GridRow {
-            label(title)
-            Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
-                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
-            }
-            .labelsHidden()
-            .fixedSize()
+    private func picker(_ title: String, _ value: String, _ options: [(String, String)],
+                        set: @escaping (String) async -> Void) -> some View {
+        Picker(title, selection: Binding(get: { value }, set: { new in Task { await set(new) } })) {
+            ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
         }
     }
 
-    private func toggleRow(_ title: String, _ detail: String, _ isOn: Bool,
-                           set: @escaping (Bool) async -> Void) -> some View {
-        GridRow {
-            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-            Toggle(isOn: Binding(get: { isOn }, set: { on in Task { await set(on) } })) {
-                Text(title)
-                Text(detail)
-            }
-            // Wraps at the popover's width rather than truncating.
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func row(_ name: String, _ value: String) -> some View {
-        GridRow {
-            label(name)
-            Text(value)
-                .textSelection(.enabled)
-                .accessibilityLabel(name)
-                .accessibilityValue(value)
+    private func toggle(_ title: String, _ detail: String, _ isOn: Bool,
+                        set: @escaping (Bool) async -> Void) -> some View {
+        Toggle(isOn: Binding(get: { isOn }, set: { on in Task { await set(on) } })) {
+            Text(title)
+            Text(detail)
         }
     }
 

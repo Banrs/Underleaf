@@ -66,7 +66,7 @@ final class CommandTests: XCTestCase {
 
     /// Open… reads a folder from disk; the rest are the Mac menu bar's own.
     private let macOnly: Set<MenuCommand> = [.projectOpen, .filePageSetup, .filePrint, .editFindAndReplace,
-                                              .viewToggleProjectSettings, .viewToggleWordCount, .viewActualSize,
+                                              .viewToggleInspector, .viewToggleWordCount, .viewActualSize,
                                               .compileStop, .pdfGotoPage]
 
     /// The menu has every other command the web declares. Their chords are
@@ -192,8 +192,8 @@ struct MenuStructureTests {
         let setup = try item("Page Setup…", in: file)
         #expect(setup.keyEquivalent.lowercased() == "p"
                 && (setup.keyEquivalent == "P" || setup.keyEquivalentModifierMask.contains(.shift)))
-        let settings = try #require(view.items.first { $0.title.hasSuffix("Project Settings") })
-        #expect(settings.keyEquivalent == "i" && settings.keyEquivalentModifierMask == [.command, .option])
+        let inspector = try #require(view.items.first { $0.title.hasSuffix("Inspector") })
+        #expect(inspector.keyEquivalent == "i" && inspector.keyEquivalentModifierMask == [.command, .option])
         #expect(try item("Stop", in: compile).keyEquivalent == ".")
     }
 

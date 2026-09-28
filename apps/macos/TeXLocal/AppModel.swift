@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// The app's user-defaults keys, in one place, with their registered defaults.
 enum DefaultsKey {
     static let sidebarVisible = "sidebarVisible"
+    static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
@@ -87,6 +88,10 @@ final class AppModel {
     var sidebarVisible: Bool {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
     }
+    /// The inspector: the project's settings and facts, the window's trailing column.
+    var inspectorVisible: Bool {
+        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
+    }
     var autoCompile: Bool {
         didSet { UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile) }
     }
@@ -102,8 +107,6 @@ final class AppModel {
     var mainWindowIsKey = false
     /// The project the menus act on.
     var commandProject: ProjectModel? { mainWindowIsKey ? project : nil }
-    /// Not remembered: a popover doesn't outlive the app.
-    var showProjectSettings = false
     /// Newest first, by id.
     var recentProjects: [String] {
         didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
@@ -118,6 +121,7 @@ final class AppModel {
         DefaultsKey.register()
         let defaults = UserDefaults.standard
         sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
+        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
@@ -265,7 +269,6 @@ final class AppModel {
         guard await leave(openGeneration) else { return false }
         project = nil
         pdfRequest = nil
-        showProjectSettings = false
         prompt = nil
         addingFiles = false
         exporting = nil

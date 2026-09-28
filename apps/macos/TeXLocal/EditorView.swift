@@ -124,7 +124,7 @@ private struct BuildPanelToggle: View {
 /// far end. The PDF's own page
 /// numbers, not LaTeX's (front matter and roman numbers differ). Not here: the save
 /// state (edits save themselves 0.7 s after typing stops, as in Notes; a failed save
-/// is an alert), the caret's line (the gutter marks it) and the engine (Project Settings).
+/// is an alert), the caret's line (the gutter marks it) and the engine (the inspector).
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel

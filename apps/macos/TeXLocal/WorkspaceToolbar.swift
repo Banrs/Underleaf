@@ -14,7 +14,6 @@ extension NSToolbarItem.Identifier {
     static let pdfSeparator = Self("pdfSeparator")
     static let zoom = Self("zoom")
     static let share = Self("share")
-    static let projectSettings = Self("projectSettings")
     static let compile = Self("compile")
     static let togglePDF = Self("togglePDF")
 
@@ -25,7 +24,8 @@ extension NSToolbarItem.Identifier {
 /// The project window's toolbar, AppKit's so each column's tools sit over it:
 /// the sidebar toggle over the sidebar; back, the title and the source's tools over
 /// the source; the PDF's and the build's over the PDF, from the source/PDF divider,
-/// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`). A hidden
+/// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`); the
+/// inspector toggle over the inspector, or at the end while it's shut. A hidden
 /// PDF's tools move over the source by themselves. Short of room, zoom goes to the
 /// overflow menu first (the widest: with Share at the same priority, AppKit would
 /// hide both where Share still fits), Compile and the PDF toggle last (HIG,
@@ -36,14 +36,13 @@ extension NSToolbarItem.Identifier {
 /// A line divides only a segmented control's parts, the two whose middle or end is
 /// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSPopoverDelegate, NSMenuDelegate, NSMenuItemValidation {
+                              NSMenuDelegate, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
     private let pdf: PDFController
     private weak var workspace: WorkspaceController?
-    private var watches: [Task<Void, Never>] = []
-    private var settings: NSPopover?
+    private var watch: Task<Void, Never>?
 
     init(app: AppModel, project: ProjectModel, pdf: PDFController, workspace: WorkspaceController) {
         self.app = app
@@ -55,31 +54,28 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
-        watches = [
-            track({ [weak self] in self?.state }) { [weak self] state in
-                if let state { self?.apply(state) }
-            },
-            track({ [app] in app.showProjectSettings }) { [weak self] shown in self?.showSettings(shown) },
-        ]
+        watch = track({ [weak self] in self?.state }) { [weak self] state in
+            if let state { self?.apply(state) }
+        }
     }
 
     func close() {
-        watches.forEach { $0.cancel() }
-        settings?.close()
+        watch?.cancel()
     }
 
     // ---------- items ----------
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .bold, .italic, .insert,
-         .pdfSeparator, .zoom, .share, .flexibleSpace, .projectSettings, .compile, .togglePDF]
+         .pdfSeparator, .zoom, .share, .flexibleSpace, .compile, .togglePDF,
+         .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
     /// Customize Toolbar's items, by task; the window's own aren't offered.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.undo, .redo, .sectionLevel, .bold, .italic, .math, .insert]
             + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
-            + [.zoom, .share, .projectSettings, .space, .flexibleSpace]
+            + [.zoom, .share, .space, .flexibleSpace]
             + toolbarImmovableItemIdentifiers(toolbar)
     }
 
@@ -88,14 +84,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// The window's own: the way back, the build and the columns.
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .togglePDF]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .togglePDF,
+         .inspectorTrackingSeparator, .toggleInspector]
     }
 
-    /// The system's sidebar toggle sends `toggleSidebar:` down the responder chain,
-    /// where the columns' own split view controllers, which have no sidebar, would
-    /// answer first: it goes to the window's split.
+    /// The system's sidebar and inspector toggles send `toggleSidebar:` and
+    /// `toggleInspector:` down the responder chain, where the columns' own split view
+    /// controllers, which have neither, would answer first: they go to the window's split.
     func toolbarWillAddItem(_ notification: Notification) {
-        guard let item = notification.userInfo?["item"] as? NSToolbarItem, item.itemIdentifier == .toggleSidebar else { return }
+        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.target = workspace
     }
 
@@ -141,8 +139,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.label = "Share"
             share.toolTip = "Share PDF"
             item = share
-        case .projectSettings:
-            item = button(id, "Project Settings", "info.circle", #selector(toggleSettings))
         case .compile:
             // Its word, not a lone play symbol, which reads as media; the one
             // prominent control, on glass of its own. In the toolbar its own view,
@@ -503,42 +499,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
-    @objc private func toggleSettings() { app.showProjectSettings.toggle() }
-
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []
-    }
-
-    // ---------- Project Settings ----------
-
-    /// Under its toolbar item, or the overflow menu's button while it's there; under
-    /// the toolbar's trailing end when the item was taken out or the toolbar hidden.
-    private func showSettings(_ shown: Bool) {
-        guard shown else {
-            settings?.close()
-            return
-        }
-        guard settings == nil, let view = workspace?.view else { return }
-        let popover = NSPopover()
-        let content = NSHostingController(rootView: ProjectSettingsView(project: project).environment(app))
-        content.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = content
-        popover.behavior = .transient
-        popover.delegate = self
-        settings = popover
-        if toolbar.isVisible, let item = toolbar.items.first(where: { $0.itemIdentifier == .projectSettings }) {
-            popover.show(relativeTo: item)
-        } else {
-            let area = view.safeAreaRect
-            let top = NSRect(x: area.maxX - BarMetrics.inset - 1, y: view.isFlipped ? area.minY : area.maxY - 1,
-                             width: 1, height: 1)
-            popover.show(relativeTo: top, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
-        }
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        settings = nil
-        if app.showProjectSettings { app.showProjectSettings = false }
     }
 
     // ---------- menus ----------
