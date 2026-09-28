@@ -13,30 +13,56 @@ struct SidebarSearch: View {
     }
 }
 
-/// The File Outline folded to its header, at the Files pane's foot, the status
-/// bar's height so the two read as one bar. Choosing it unfolds the outline.
-struct OutlineFoldedBar: View {
+/// The File Outline's header, the one view for it folded or not: at the Files
+/// pane's foot, so it stays put over the outline's scrolling and rides up with it
+/// as it opens, its title the same distance under the line either way. Folded, it's
+/// the status bar's height at the window's foot, and the two read as one bar. As a
+/// sidebar section's, its chevron shows while the pointer is over it.
+struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    @FocusState private var chevronFocused: Bool
+
+    /// Open, the header ends this much sooner, so the first heading sits under its
+    /// title as a section's first row sits under the section's (measured, 27.2).
+    private static let openTrim: CGFloat = 6
 
     var body: some View {
-        Button {
-            app.outlineCollapsed = false
-        } label: {
-            HStack {
-                Text("File Outline")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
+        let collapsed = app.outlineCollapsed
+        HStack {
+            Text("File Outline")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button {
+                app.outlineCollapsed.toggle()
+            } label: {
+                // Right while folded, down while open.
                 Image(systemName: "chevron.right")
                     .imageScale(.small)
-                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .animation(reduceMotion ? nil : .default, value: collapsed)
+                    .contentShape(.rect)
             }
-            .padding(.horizontal, SidebarSelection.inset + SidebarSelection.leading)
-            .frame(height: BarMetrics.secondaryBarHeight)
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .focused($chevronFocused)
+            .opacity(hovering || chevronFocused ? 1 : 0)
+            .animation(.easeOut(duration: 0.15), value: hovering)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Show File Outline")
+        .padding(.horizontal, SidebarSelection.inset + SidebarSelection.leading)
+        .frame(height: BarMetrics.secondaryBarHeight)
+        .frame(height: BarMetrics.secondaryBarHeight - (collapsed ? 0 : Self.openTrim), alignment: .top)
+        .contentShape(.rect)
+        .onHover { hovering = $0 }
+        // One element, whether the chevron shows or not: a hidden view leaves the
+        // accessibility tree.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("File Outline")
+        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+        .accessibilityAddTraits([.isHeader, .isButton])
+        .accessibilityAction { app.outlineCollapsed.toggle() }
     }
 }
 
@@ -318,10 +344,9 @@ private func draggedFiles(_ accepts: (URL) -> Bool) -> Bool {
     return urls?.contains(where: accepts) ?? false
 }
 
-/// The open document's sections; the header's chevron folds the pane to its
-/// header (`OutlineFoldedBar`). Takes no drops: files go into the list above.
+/// The open document's sections, under `OutlineHeader`, which folds them away.
+/// Takes no drops: files go into the list above.
 struct OutlineList: View {
-    @Environment(AppModel.self) private var app
     let project: ProjectModel
     @Environment(\.sidebarRowSize) private var rowSize
     /// Folded headings, by file and `Outline.foldKeys`.
@@ -329,6 +354,9 @@ struct OutlineList: View {
     /// The line the highlight follows: the caret's or the top line, whichever
     /// changed last.
     @State private var line = 1
+
+    /// A sidebar list's room over its first row, inside its table (measured, 27.2).
+    private static let listTopRoom: CGFloat = 10
 
     /// A step under the files' rows: a table of contents under a list.
     private var outlineRowSize: SidebarRowSize {
@@ -346,17 +374,18 @@ struct OutlineList: View {
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
         ScrollViewReader { proxy in
             List {
-                Section("File Outline", isExpanded: Binding(get: { !app.outlineCollapsed },
-                                                            set: { app.outlineCollapsed = !$0 })) {
-                    if outline.isEmpty {
-                        Text("No Sections").foregroundStyle(.secondary)
-                    } else {
-                        OutlineRows(nodes: Outline.tree(outline), context: OutlineRows.Context(
-                            project: project, current: current, keys: keys), folded: $folded)
-                    }
+                if outline.isEmpty {
+                    Text("No Sections").foregroundStyle(.secondary)
+                } else {
+                    OutlineRows(nodes: Outline.tree(outline), context: OutlineRows.Context(
+                        project: project, current: current, keys: keys), folded: $folded)
                 }
             }
             .listStyle(.sidebar)
+            // The header over it stands where a section's would, so the room a
+            // sidebar list leaves over its first row goes.
+            .padding(.top, -Self.listTopRoom)
+            .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
             .onChange(of: project.topLine) { _, top in line = top }

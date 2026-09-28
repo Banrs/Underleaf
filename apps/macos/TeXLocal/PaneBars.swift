@@ -16,6 +16,16 @@ enum BarMetrics {
     static let itemSpacing: CGFloat = 12
     /// UI kit, Unified toolbar: items 8 pt apart.
     static let groupSpacing: CGFloat = 8
+    /// Where a bar meets the window's rounded corner, its first or last control this
+    /// far from the window's edge: clear of the curve, and no further in (Xcode's
+    /// bottom bars, measured on 27.2).
+    static let cornerInset: CGFloat = 16
+    /// The hairline before a bar's panel toggle, about a symbol's height (Xcode's
+    /// bottom bars, measured on 27.2).
+    static let separatorHeight: CGFloat = 12
+    /// The room an icon-only borderless toggle leaves either side of its symbol,
+    /// past what text buttons leave (measured, 27.2).
+    static let symbolPadding: CGFloat = 1
     /// Design: the least room a find query needs, and the widest a filter grows
     /// (UI kit search fields are drawn 120 pt).
     static let fieldMinWidth: CGFloat = 100
@@ -59,10 +69,29 @@ struct PaneBar<Content: View>: View {
     }
 }
 
+extension View {
+    /// An icon-only borderless toggle laid out by its symbol's edges, so a bar's
+    /// spacing reaches it as it reaches text.
+    func symbolEdgeAligned() -> some View {
+        padding(.horizontal, -BarMetrics.symbolPadding)
+    }
+}
+
+/// The hairline between what a bar reports and its panel toggle, which sets the
+/// window's control apart from the document's figures.
+struct BarSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1, height: BarMetrics.separatorHeight)
+            .accessibilityHidden(true)
+    }
+}
+
 /// The window's status along its foot, at the secondary text style and control size.
-/// Its host keeps its ends clear of the window's rounded corners (AppKit's
-/// corner-adapted safe area: SwiftUI's container corner insets are zero in an
-/// AppKit split item's accessory).
+/// Its host keeps its ends clear of the window's rounded corners (`CornerBar`, from
+/// AppKit's corner-adapted safe area: SwiftUI's container corner insets are zero in
+/// an AppKit split item's accessory).
 struct SecondaryBar<Content: View>: View {
     let spacing: CGFloat
     @ViewBuilder var content: Content

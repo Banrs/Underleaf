@@ -103,8 +103,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The middle item holds source | PDF (`columns`) over the build panel, which spans both.
   - The inspector is the trailing column: `NSSplitViewItem(inspectorWithViewController:)`, AppKit's fixed 270 pt, whose divider takes no drag.
   - The sidebar opens at the same 270 pt and drags from 200 to 400 pt.
-  - Bars are split-item accessories: the sidebar's search field, the find bars, the folded outline's bar, and the status bar at the foot of source + PDF.
-  - Also here: `DetentSplitViewController` (the dividers' detents), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
+  - Bars are split-item accessories: the sidebar's search field, the find bars, the File Outline's header (`OutlineHeader`, at the files' foot folded or not), and the status bar at the foot of source + PDF.
+  - Also here: `DetentSplitViewController` (the dividers' detents), `OutlineSplitViewController` (files over the outline, the header's line taking the divider's drags), `CornerBar` (the status bar's ends), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
 - `WorkspaceToolbar`: the `NSToolbar`.
   - The sidebar section holds the toggle.
   - The source section holds back, the title, B I and Insert.
@@ -121,7 +121,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`.
 - `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper.
-- `SidebarView`: the sidebar's search, the folded outline bar, the files and the outline.
+- `SidebarView`: the sidebar's search, the File Outline's header, the files and the outline.
 - `Outline`, `HomeView`, `SettingsView`.
 - `AppModel`: library, recents, imports, alerts; `DefaultsKey` (every defaults key, registered defaults).
 - `ProjectModel`: the open project, saves, builds, file watching; `SavedWorkspace`. `FolderWatcher` is the FSEvents watch.
@@ -139,8 +139,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - `NavigationSplitView` can't hide its last column (the PDF), can't run a panel under two of its columns, and has no split-item accessories.
   - SwiftUI's toolbar has no tracking separators, so it can't give each column its own section.
   - A SwiftUI scene's window owns its toolbar, so the window is AppKit's too.
-- **The status bar's ends** use `layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))`. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
-- **Its hairline and the folded outline's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
+- **The status bar's ends** (`CornerBar`): where the corner-adapted safe area (`edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))`) reports a window corner, the content sits 16 pt from the window's edge, as Xcode's bottom bars have it; the safe area's own 18 pt would hold it further in. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
+- **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
 - **A plain `WKWebView` for the editor.**
   - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
@@ -220,7 +220,9 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A toolbar configuration saved before them (after a Customize Toolbar change) could lack them, with no way to add them back.
   - The toolbar saves as "Workspace", and none was saved on the owner's Mac; the owner accepted the risk.
 - **Orphaned defaults:** split sizes are `PaneSizes` keys, and the old per-split keys are orphaned. On the owner's Mac they were deleted on 2026-09-28; other Macs keep them, unread.
-- The folded "File Outline" bar's secondary label reads a little like a disabled one.
+- The File Outline header's secondary label reads a little like a disabled one.
+- **The header's drag, not yet done by hand:** `theOutlineHeadersLineTakesTheDividersDrags` checks the wiring (the line's rect, none under the header), not a real drag.
+- **Biber on macOS 27:** TeX Live 2026's `biber` 2.21 unpacks its arm64 half with `lipo -extract_family`, which Xcode 27's `lipo` no longer has ("extracting arm64 binary with lipo failed"), so biblatex with biber gets no bibliography. Replacing it with its arm64 half (`lipo -thin arm64`) works. The build panel shows it only as undefined citations.
 
 ## Deferred (not dropped)
 
@@ -279,6 +281,10 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **AppKit's inspector is fixed (270 pt minimum and maximum), yet its divider shows a resize cursor.** `WorkspaceController` overrides `splitView(_:effectiveRect:forDrawnRect:ofDividerAt:)` to give that divider no hit area.
 - **The inspector item is made before the area**, which opens in the room both side columns leave. Sized past the sidebar alone, the area pushed the sidebar to its minimum.
 - **The nested split view controllers answer `toggleSidebar:` and `toggleInspector:` before the window's split**, and they have neither. `WorkspaceToolbar.toolbarWillAddItem` points the system's toggles at the `WorkspaceController`.
+- **The File Outline's header is the files pane's foot accessory, folded or not,** so it never swaps views and its title keeps its distance from the line.
+  - The sidebar split's divider runs under it. That divider draws nothing (`QuietSplitView`) and takes no drags; the header's line takes them (`splitView(_:additionalEffectiveRectOfDividerAt:)`).
+  - Open, the header is 6 pt shorter at its foot, so the first heading sits under it as a section's first row would.
+  - A sidebar `List`'s 10 pt over its first row is inside its table (`NSTableView` `.sourceList`), so `contentMargins` doesn't reach it. The outline pulls its list up by 10 pt and clips it.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
 
 **Toolbar**
@@ -293,6 +299,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **A toolbar item's own view** keeps the item's `.prominent` or `.plain` glass, 36 pt high, which wraps the view and passes it no clicks: the view must fill it. Customize Toolbar draws the view without the style, so its copy (`willBeInsertedIntoToolbar` false) is a title item.
 - **Customize Toolbar compresses the default set's views.** The zoom control's palette copy resists compression, or its scale reads "…". The toolbar's own copy must not, or it holds the window 50 pt wider even from the overflow menu.
 - **A segmented control's segment menu** opens on a click only in a control with no action. With one, it opens only on a press and hold, and the click sends the action. Momentary tracking resets `selectedSegment` before `mouseDown` returns, and segment frames aren't public, so the action opens the menu under the click.
+- **Xcode's bottom bars, measured on 27.2:** a corner control's glyph 16.5 pt from the window's edge, and a 1 pt × 12 pt separator 8.5 pt from what's either side of it. A borderless icon-only toggle leaves 1 pt more around its symbol than a text button does around its text (`symbolEdgeAligned`).
 - **Toolbar items at the same visibility priority overflow together**: Share went to `>>` with zoom where it still fitted. Rank the widest lowest.
 - **Closing a toolbar popover logs "Invalid attempt to open a new transaction during CA commit"** on macOS 27.2, from AppKit: a bare SwiftUI app with one toolbar popover logs it too. It is not the app's.
 
@@ -300,6 +307,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **`track` needs `nonisolated` Equatable values** (`OutlineState`, the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
 - **An `NSMenuItem` subclass can't override its initialisers under default main-actor isolation.** The toolbar's menus are `NSHostingMenu`s over SwiftUI items instead, which also keeps them the menu bar's.
+- **A SwiftUI view at zero opacity leaves the accessibility tree.** The File Outline's chevron shows only on hover, as a sidebar section's does, so the header is one accessibility element with the fold as its action.
 - **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
 - **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
 - **`NSBox`'s separator is 1 px, the thin split divider 1 pt.** The bars' lines are a small view (`Hairline`) in the split's `dividerColor`.

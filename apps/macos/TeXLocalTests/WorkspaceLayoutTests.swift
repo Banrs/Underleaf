@@ -141,6 +141,34 @@ final class WorkspaceLayoutTests {
         #expect(isClose(width(workspace.sourceItem) - width(workspace.pdfItem), 80, within: 1.5))
     }
 
+    /// The File Outline's header stays at the files' foot, folded or not. Open, the
+    /// line over it takes the divider's drags, and the divider under it none; folded,
+    /// nothing does.
+    @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
+        let workspace = open()
+        let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
+        let split = sidebar.splitView, delegate = try #require(split.delegate)
+        let header = try #require(sidebar.splitViewItems.first?.bottomAlignedAccessoryViewControllers.first)
+        let outline = try #require(sidebar.splitViewItems.last)
+        workspace.project.openPath = "main.tex"
+        workspace.app.outlineCollapsed = false
+        try await waitUntil { !outline.isCollapsed && !header.isHidden }
+        split.layoutSubtreeIfNeeded()
+
+        let frame = header.view.convert(header.view.bounds, to: split)
+        let line = split.isFlipped ? frame.minY : frame.maxY
+        let drag = try #require(delegate.splitView?(split, additionalEffectiveRectOfDividerAt: 0))
+        #expect(isClose(drag.midY, line), "\(drag) for the line at \(line)")
+        #expect(drag.height > 0 && isClose(drag.width, frame.width))
+        let divider = NSRect(x: 0, y: frame.maxY, width: split.bounds.width, height: split.dividerThickness)
+        #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
+
+        workspace.app.outlineCollapsed = true
+        try await waitUntil { outline.isCollapsed }
+        #expect(!header.isHidden)
+        #expect(delegate.splitView?(split, additionalEffectiveRectOfDividerAt: 0) == .zero)
+    }
+
     /// No pane's content raises the window's minimum: it goes down to the app's own,
     /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
     @Test func theWindowReachesItsMinimum() {

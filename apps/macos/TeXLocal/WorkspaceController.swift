@@ -26,7 +26,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// The columns over the build panel.
     let area = NSSplitViewController()
     /// The files over the File Outline.
-    private let sidebar = NSSplitViewController()
+    private let sidebar = OutlineSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
     private var outlineItem: NSSplitViewItem!
     private(set) var sourceItem: NSSplitViewItem!
@@ -81,10 +81,11 @@ final class WorkspaceController: DetentSplitViewController {
         let files = host(FilesList(project: project))
         let filesItem = NSSplitViewItem(viewController: files)
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        // Its line is where the unfolded outline's divider would be, level with the status bar's.
-        outlineBar = accessory(OutlineFoldedBar(), hidden: !(showsOutline && app.outlineCollapsed),
-                               footOf: sidebar.splitView)
+        // The outline's header, folded or not: its line stands for the divider under it,
+        // and folded, it's level with the status bar's.
+        outlineBar = accessory(OutlineHeader(), hidden: !showsOutline, footOf: sidebar.splitView)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
+        sidebar.header = outlineBar
 
         let outline = host(OutlineList(project: project),
                            height: PaneSize.outline.value ?? height * ColumnMetrics.outlineShare)
@@ -191,7 +192,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// A bar along a pane's top or foot, as tall as its content, as wide as the pane.
     /// A foot bar has a line over it, `split`'s divider as it would be there; with
     /// `clearsCorners` its ends keep clear of the window's rounded corners where they
-    /// meet them (the status bar's).
+    /// meet them (the status bar's, `CornerBar`).
     private func accessory(_ content: some View, hidden: Bool = false, footOf split: NSSplitView? = nil,
                            clearsCorners: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -201,13 +202,15 @@ final class WorkspaceController: DetentSplitViewController {
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         if let split {
-            let bar = NSView()
+            let bar = clearsCorners ? CornerBar() : NSView()
             let hairline = Hairline(split: split)
             for view in [host, hairline] {
                 view.translatesAutoresizingMaskIntoConstraints = false
                 bar.addSubview(view)
             }
-            let ends = clearsCorners ? bar.layoutGuide(for: .safeArea(cornerAdaptation: .horizontal)) : nil
+            let leading = host.leadingAnchor.constraint(equalTo: bar.leadingAnchor)
+            let trailing = bar.trailingAnchor.constraint(equalTo: host.trailingAnchor)
+            (bar as? CornerBar)?.ends = (leading, trailing)
             NSLayoutConstraint.activate([
                 hairline.topAnchor.constraint(equalTo: bar.topAnchor),
                 hairline.heightAnchor.constraint(equalToConstant: split.dividerThickness),
@@ -215,8 +218,7 @@ final class WorkspaceController: DetentSplitViewController {
                 hairline.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
                 host.topAnchor.constraint(equalTo: bar.topAnchor),
                 host.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-                host.leadingAnchor.constraint(equalTo: ends?.leadingAnchor ?? bar.leadingAnchor),
-                host.trailingAnchor.constraint(equalTo: ends?.trailingAnchor ?? bar.trailingAnchor),
+                leading, trailing,
             ])
             accessory.view = bar
         } else {
@@ -264,7 +266,7 @@ final class WorkspaceController: DetentSplitViewController {
                                    collapsed: app.outlineCollapsed) }) { [weak self] state in
                 guard let self else { return }
                 setCollapsed(outlineItem, !state.shown || state.collapsed)
-                setHidden(outlineBar, !(state.shown && state.collapsed))
+                setHidden(outlineBar, !state.shown)
             },
             track({ project.findShown }) { [weak self] shown in
                 guard let self else { return }
@@ -516,6 +518,67 @@ class DetentSplitViewController: NSSplitViewController {
 
 /// A split view's thin divider, drawn along a bar's top: the same colour and
 /// thickness as the dividers it continues.
+/// Files over the File Outline, whose header sits at the files' foot, so the
+/// divider runs under the header. The header's line, over it, stands for the
+/// divider and takes its drags; the divider itself draws nothing and takes none.
+private final class OutlineSplitViewController: NSSplitViewController {
+    /// The outline's header, whose line takes the drags while the outline shows.
+    weak var header: NSSplitViewItemAccessoryViewController?
+
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        splitView = QuietSplitView()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        _ = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                            ofDividerAt: dividerIndex)
+        return .zero
+    }
+
+    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex)
+        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return rect }
+        let frame = header.view.convert(header.view.bounds, to: splitView)
+        let line = splitView.isFlipped ? frame.minY : frame.maxY
+        // As much either side of the line as a thin divider takes.
+        return NSRect(x: frame.minX, y: line - ColumnMetrics.dividerReach, width: frame.width,
+                      height: 2 * ColumnMetrics.dividerReach)
+    }
+}
+
+/// A split view whose dividers draw nothing: something else draws their line.
+private final class QuietSplitView: NSSplitView {
+    override func drawDivider(in rect: NSRect) {}
+}
+
+/// A foot bar whose ends keep clear of the window's rounded corners where they meet
+/// them: its content `BarMetrics.cornerInset` from the window's edge there, and at
+/// the bar's own inset elsewhere. AppKit's corner-adapted safe area says where a
+/// corner is; its own inset there (18 pt) would hold the content further in than
+/// the curve needs.
+private final class CornerBar: NSView {
+    /// The content's leading and trailing constraints, each measured inward.
+    var ends: (leading: NSLayoutConstraint, trailing: NSLayoutConstraint)?
+
+    override func layout() {
+        if let ends {
+            let corners = edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))
+            let rightToLeft = userInterfaceLayoutDirection == .rightToLeft
+            let inset = BarMetrics.cornerInset - BarMetrics.inset
+            for (constraint, corner) in [(ends.leading, rightToLeft ? corners.right : corners.left),
+                                         (ends.trailing, rightToLeft ? corners.left : corners.right)] {
+                let constant = corner > 0 ? inset : 0
+                if constraint.constant != constant { constraint.constant = constant }
+            }
+        }
+        super.layout()
+    }
+}
+
 private final class Hairline: NSView {
     private weak var split: NSSplitView?
 
@@ -555,6 +618,8 @@ enum ColumnMetrics {
     /// How near a dragged divider comes to its detent before it stops there:
     /// enough to catch a drag aimed at it, little enough to drag straight past.
     static let detentReach: CGFloat = 8
+    /// How far either side of a thin divider's line a drag takes it.
+    static let dividerReach: CGFloat = 3
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
     /// The build panel: a header and a few issues; a quarter of the window at first.

@@ -4,7 +4,8 @@ import SwiftUI
 /// its issues; the word count (View › Show Word Count); whether the PDF is out of
 /// date; its page, which opens Go to Page (the PDF's own numbers, not LaTeX's,
 /// which front matter and roman numbering change); and the build panel's toggle at
-/// the far end. Not here: the save state (edits save themselves 0.7 s after typing
+/// the far end, past a hairline that sets it apart from what the bar reports.
+/// Not here: the save state (edits save themselves 0.7 s after typing
 /// stops, and a failed save is an alert), the caret's line (the gutter marks it)
 /// and the engine (the inspector).
 struct StatusBar: View {
@@ -23,19 +24,28 @@ struct StatusBar: View {
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             Spacer(minLength: 0)
-            if project.editsText, app.showWordCount, let counts = project.counts {
-                Text("^[\(counts.words) word](inflect: true)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .layoutPriority(-1)
+            HStack(spacing: BarMetrics.groupSpacing) {
+                let counts = project.editsText && app.showWordCount ? project.counts : nil
+                let pages = project.showPDF && project.pdfVersion > 0 && pdf.pageCount > 0
+                if counts != nil || pages {
+                    HStack(spacing: BarMetrics.itemSpacing) {
+                        if let counts {
+                            Text("^[\(counts.words) word](inflect: true)")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .layoutPriority(-1)
+                        }
+                        if pages {
+                            if let freshness = project.pdfFreshness { freshnessButton(freshness) }
+                            Button("Page \(pdf.page) of \(pdf.pageCount)") { app.perform(.pdfGotoPage, on: project) }
+                                .monospacedDigit()
+                                .help("Go to Page")
+                        }
+                    }
+                    BarSeparator()
+                }
+                BuildPanelToggle(project: project)
             }
-            if project.showPDF, project.pdfVersion > 0, pdf.pageCount > 0 {
-                if let freshness = project.pdfFreshness { freshnessButton(freshness) }
-                Button("Page \(pdf.page) of \(pdf.pageCount)") { app.perform(.pdfGotoPage, on: project) }
-                    .monospacedDigit()
-                    .help("Go to Page")
-            }
-            BuildPanelToggle(project: project)
         }
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
@@ -119,6 +129,7 @@ private struct BuildPanelToggle: View {
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
+        .symbolEdgeAligned()
         .help(app.title(.viewToggleLogs, on: project))
     }
 }
