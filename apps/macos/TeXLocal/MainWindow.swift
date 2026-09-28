@@ -118,13 +118,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     /// Keeps the window's frame and minimum: a new content view controller sizes the
-    /// window to its view and sets the minimum to zero.
+    /// window to its view and sets the minimum to zero. The view comes at the window's
+    /// size, so the window never shrinks to an unsized one (with the projects'
+    /// toolbar coming in, that squeezed its title to a few points and broke its
+    /// constraints).
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         let frame = window.frame
+        controller.view.setFrameSize(window.contentRect(forFrameRect: frame).size)
         window.contentViewController = controller
         window.contentMinSize = WindowMetrics.contentMinimum
-        window.setFrame(frame, display: true)
     }
 
     // ---------- window ----------
