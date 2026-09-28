@@ -27,12 +27,6 @@ function swiftRawValues(text, name) {
   }));
 }
 
-// A C# switch expression's `MenuCommand.X => "value"` arms.
-function csharpArms(text, start) {
-  const arms = [...body(text, start, '};').matchAll(/MenuCommand\.(\w+) => "((?:[^"\\]|\\.)*)"/g)];
-  return new Map(arms.map((m) => [m[1], m[2].replace(/\\\\/g, '\\')]));
-}
-
 const page = source('web/src/embed/editor.js');
 const pageCommands = all(body(page, 'const COMMANDS = {', '\n};'), /^ {2}(\w+):/gm);
 const bridge = source('apps/macos/TeXLocal/EditorBridge.swift');
@@ -57,11 +51,13 @@ test('the palettes, fonts and appearances the native apps offer are the web\'s',
   assert.deepEqual(list('Fonts'), prefChoices('editorFont'));
 });
 
-// The Mac reads shortcuts.json itself; Windows keeps a copy.
+// The Mac reads shortcuts.json itself; Windows keeps a copy in its command
+// table, `[MenuCommand.X] = ("id", "Title", "accel")`, beside chords of its own.
 test('Windows keeps the shared accelerators', () => {
-  const commands = source('apps/windows/TeXLocal.Core/MenuCommand.cs');
-  const ids = csharpArms(commands, 'public static string Id(');
-  const accels = csharpArms(commands, 'public static string? Accel(');
-  const windows = Object.fromEntries([...accels].map(([name, accel]) => [ids.get(name), accel]));
-  assert.deepEqual(windows, SHORTCUTS);
+  const table = body(source('apps/windows/TeXLocal.Core/MenuCommand.cs'), 'Defs = new()', '\n    };');
+  const entries = [...table.matchAll(/\("([\w.]+)", "[^"]*", "((?:[^"\\]|\\.)*)"\)/g)];
+  assert.ok(entries.length > 0);
+  const windows = Object.fromEntries(entries.map((m) => [m[1], m[2].replace(/\\\\/g, '\\')]));
+  const shared = Object.fromEntries(Object.entries(windows).filter(([id]) => id in SHORTCUTS));
+  assert.deepEqual(shared, SHORTCUTS);
 });

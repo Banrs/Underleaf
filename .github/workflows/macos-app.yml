@@ -24,7 +24,8 @@ concurrency:
 jobs:
   build:
     name: Build and test
-    # Xcode 27 on macOS 27: the app targets macOS 27 (preview image).
+    # The app is built for macOS 27. GitHub's macOS 27 runner is the
+    # xcode-27 image (in preview); there is no macos-27 label.
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4

@@ -5,7 +5,7 @@
 - `main` is pushed (`91bd62f`). CI hasn't reported on it yet.
 - `claude/macos-polish` (not pushed) is the Mac polish pass: one window with a back button, menus on focused values, one family of native bar controls, split, sidebar and drop fixes, a consistency and VoiceOver sweep, main-actor default isolation, and the fixes from an on-screen check and a code review. Its Mac Debug and Release builds have no Swift warnings and its tests pass.
 - **`claude/macos-polish` (not pushed): a clean-up pass over the whole Mac app** (short WHY comments, magic numbers named or taken from the system, fragile tricks replaced). `c700d05` is a snapshot with a measured toolbar fold (`ToolbarFit`); later commits drop the fold: each column's minimum is its content's and the toolbar is the system's to fit (below). Defaults keys live in `DefaultsKey`; split sizes in `PaneSizes`; the file watcher is FSEvents. Later still, the Mac UI layer was rewritten (AppKit window, split and toolbar; SwiftUI panes; below), then given an inspector, a Stop with a spinner, and toolbar menus hosted from the menu bar's SwiftUI items. The window's minimums are now the panes' own (the sidebar folds first), and both side columns open at AppKit's 270 pt inspector width. Debug and Release build with no Swift warnings and the tests pass.
-- PR #11 (`claude/windows-parity`: WebView2 recovery, a trimmed SDK, an Inno Setup installer) is open. It needs `main` merged in; the conflicts are in the Windows `Outline`, `Dialogs`, `LogsView`, `ProjectModel`, `SettingsView` and `WorkspaceView`.
+- PR #11 (`claude/windows-parity`: the Fluent redesign, WebView2 recovery, a trimmed SDK, an Inno Setup installer) is merged into `main`, and `main` into `claude/macos-polish`.
 - Last full check passed: `cargo fmt --check`, clippy `-D warnings`, `cargo test --workspace`, `npm test`, Mac Debug and Release builds with no Swift warnings, and the XCTests.
 
 ## Layout
@@ -43,7 +43,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: `xcode-27` runner and the XCTests;
+  - `macos-app.yml`: the `xcode-27` runner (macOS 27, in preview; there is no `macos-27` label) and the XCTests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
 - **Mac Debug build on screen:** run it with `open -g -n --env TEXLOCAL_DATA=<library copy> <app> --args -openProject <id>`.
@@ -120,9 +120,18 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Windows (`apps/windows`)
 
-- **Projects:** `TeXLocal.Core` (FFI, models, preferences), `TeXLocal.Tests` (xUnit) and `TeXLocal` (WinUI 3, unpackaged x64, .NET 10).
-- **Written blind:** the last pass wired Windows from the Mac without building it, so CI must confirm it builds with warnings as errors and that the tests pass.
-- **Still to check by hand:** shortcuts, the title bar, Settings, drops, Compile/Stop, SyncTeX and Narrator.
+- **Projects:** `TeXLocal.Core` (FFI, models, preferences, no WinUI), `TeXLocal.Tests` (xUnit) and `TeXLocal` (WinUI 3, unpackaged x64, .NET 10; .NET and the Windows App SDK are bundled).
+- **SDK packages:** WinUI, Foundation and InteractiveExperiences only, not the `Microsoft.WindowsAppSDK` metapackage (a Release publish went from 234 MB to 174 MB).
+- **Web surfaces:** the editor and PDF pages each run in a WebView2; `web\` is served at `app.texlocal`, the PDF at `project.texlocal`. A renderer crash reloads the page; if the whole browser process dies, `EmbeddedPage.Replace` puts a new WebView2 in the old one's place. Window shortcuts stand down while a page has focus; the pages post chords back.
+- **Layout (the 2026-09 Fluent redesign):** the Tall 48 px `TitleBar` over Mica (menus, a centred search box, PDF and Details toggles; `FitCaptionInset` corrects WinUI's caption column at scales above 100%); 48 px rows and 32 px detail rows; the sidebar and Details pane are inline `SplitView` panes that slide both ways; the source and PDF bars are `CommandBar`s whose overflow folds them. Motion is in `Motion.cs`.
+- **Insert blocks** are named by id (`LatexTemplates.Lists` / `Environments`) and sent with the editor's `block` command; `test/blocks.test.js` checks the ids.
+- **Compile/Stop:** the PDF pane shows Compile, or a spinner and Stop while a build runs (`stop_compile`); a stopped build reads "Build stopped" and sends no notification. Settings has Stop on first error, per project. An import onto taken names asks once (Replace, Keep both, Stop). The outline, words and lines come from the core's `analyze`.
+- **Installer:** `apps/windows/installer/TeXLocal.iss` (Inno Setup 6), per user into `%LOCALAPPDATA%\Programs\TeXLocal`; the Windows workflow's "Installer" job builds `TeXLocal-<version>-setup.exe`. By hand, build the core with `--release` first: a stale `target\release\texlocal_ffi.dll` was once published.
+- **Deviations:** settings cards and dividers are hand-written, not the Community Toolkit; Interface Size scales only the editor page.
+- **Verified by hand on Windows 11 (26340), TeX Live 2026, before `main`'s Stop / clash / analyze work was merged in:** PDF rendering and find, compiling and recompiling, choosing the TeX folder, the title bar's hit-testing, the redesign's measurements, pane motion, the source bar and its overflow, the symbol palette and section level, the outline following the editor, a file changed on disk reloading, and WebView2 browser-process recovery.
+- **Known issues:** a Release build once fail-fasted in `ucrtbase.dll` while idle (it linked the stale core; not reproduced since). A window once showed a frozen frame while it went on working.
+- **Running a Debug build beside the installed one** breaks the Debug build's WebView2 pages (they share `%LOCALAPPDATA%\TeXLocal\WebView2`); run one at a time.
+- **Still to check by hand:** the merged-in Stop, Stop on first error, import clash dialog and core-analyzed outline; shortcuts firing once from every pane; the title bar (themes, high contrast, Snap Layouts); access keys; dividers by keyboard; Settings surviving a restart; the unsaved-edits conflict dialog; drops; saving and closing during a compile; SyncTeX both ways; Narrator; no `latexmk` left after quitting; the installer's install and uninstall.
 
 ## Known issues
 
@@ -158,7 +167,7 @@ Found by the 2026-09-28 audit, left because they need code outside `apps/macos`:
 ## Next
 
 - **The Rust core, then the web**: the owner's next steps after the Mac UI rewrite (2026-09-28).
-- Confirm CI on `main`, then update PR #11 and merge it after a Windows review.
+- Confirm CI on `main`; the Windows hand checks above.
 - Deferred features:
   - error hints and gutter markers;
   - `.blg` parsing;
