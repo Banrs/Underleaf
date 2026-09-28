@@ -120,6 +120,7 @@ private struct NewEntrySheet: View {
     @State private var name: String
     @State private var folder: String
     @FocusState private var nameFocused: Bool
+    @State private var selection: TextSelection?
 
     init(project: ProjectModel, directory: Bool) {
         self.project = project
@@ -136,8 +137,11 @@ private struct NewEntrySheet: View {
             let path = folder.isEmpty ? trimmed : "\(folder)/\(trimmed)"
             Task { await project.createEntry(path, directory: directory) }
         } fields: {
-            TextField("Name", text: $name)
+            TextField("Name", text: $name, selection: $selection)
                 .focused($nameFocused)
+                .onChange(of: nameFocused) { _, now in
+                    if now, !directory { selection = .baseName(of: name) }
+                }
             Picker("Where", selection: $folder) {
                 Label(project.id, systemImage: "folder").tag("")
                 ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in

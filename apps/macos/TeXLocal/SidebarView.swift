@@ -150,7 +150,7 @@ private struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name) { commitRename(node) } cancel: { rename.cancel() }
+                    RenameField(text: $rename.name, isFile: !node.isDirectory) { commitRename(node) } cancel: { rename.cancel() }
                 } else {
                     Text(node.name)
                 }

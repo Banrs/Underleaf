@@ -479,22 +479,35 @@ struct ItemMenuItems: View {
 }
 
 /// A name edited in place: Return or clicking away commits, Escape cancels.
+/// A file's name starts selected up to its extension, as in Finder.
 struct RenameField: View {
     @Binding var text: String
+    var isFile = false
     let commit: () -> Void
     let cancel: () -> Void
     @FocusState private var focused: Bool
+    @State private var selection: TextSelection?
 
     var body: some View {
-        TextField("Name", text: $text)
+        TextField("Name", text: $text, selection: $selection)
             .labelsHidden()
             .focused($focused)
             .onSubmit(commit)
             .onExitCommand(perform: cancel)
             .onChange(of: focused) { was, now in
+                if now, isFile { selection = .baseName(of: text) }
                 if was, !now { commit() }
             }
-            .defaultFocus($focused, true)
+            // Taken from wherever it is, such as the editor: a default focus would leave it there.
+            .onAppear { focused = true }
+    }
+}
+
+extension TextSelection {
+    /// A file name up to its extension; all of a name without one, or a dot file's.
+    static func baseName(of name: String) -> TextSelection {
+        let dot = name.lastIndex(of: ".").flatMap { $0 > name.startIndex ? $0 : nil }
+        return TextSelection(range: name.startIndex..<(dot ?? name.endIndex))
     }
 }
 
