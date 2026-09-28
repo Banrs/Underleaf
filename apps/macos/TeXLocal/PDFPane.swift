@@ -6,7 +6,6 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    let fit: ToolbarFit
     @State private var findQuery = ""
     @State private var finding = false
     /// Bumped to put the cursor in the find field, its text selected.
@@ -23,9 +22,8 @@ struct PDFPane: View {
         } content: {
             pages
         }
-        .background { ColumnReader(column: .pdf, fit: fit) }
-        .toolbar(id: "pdf") { PDFToolbar(app: app, project: project, controller: controller, fit: fit) }
-        .background { PDFColumn(collapsed: !project.showPDF, project: project, fit: fit) }
+        .toolbar(id: "pdf") { PDFToolbar(app: app, project: project, controller: controller) }
+        .background { PDFColumn(collapsed: !project.showPDF, project: project) }
         // Edit › Find's items while the pages or the find bar have the keyboard.
         .focusedValue(\.find, findAction)
         .onChange(of: controller.page) { _, page in project.pdfPage = page }
@@ -184,72 +182,63 @@ struct PDFToolbar: CustomizableToolbarContent {
     let app: AppModel
     let project: ProjectModel
     let controller: PDFController
-    let fit: ToolbarFit
 
     // Declared whether the PDF shows or not: the system moves a collapsed column's
     // items to the source's section. Conditional items are safe only because the
     // PDF column never animates; a removed column item vanished mid-animation.
     var body: some CustomizableToolbarContent {
-        if project.showPDF, fit.showsZoom {
-            ToolbarItem(id: "zoom") { zoomControls.background { ToolbarProbe(item: .zoom, fit: fit) } }
+        if project.showPDF {
+            ToolbarItem(id: "zoom") { zoomMenu }
                 .visibilityPriority(.low)
         }
-        if fit.showsShare {
-            ToolbarItem(id: "share") { shareControl.background { ToolbarProbe(item: .share, fit: fit) } }
-                .visibilityPriority(.low)
-        }
+        ToolbarItem(id: "share") { shareControl }
+            .visibilityPriority(.low)
         ToolbarSpacer(.flexible)
         if project.hasPDF, project.pdfFreshness != nil {
             ToolbarItem(id: "freshness") {
-                FreshnessButton(project: project).background { ToolbarProbe(item: .freshness, fit: fit) }
+                FreshnessButton(project: project)
             }
             .customizationBehavior(.disabled)
         }
         ToolbarItem(id: "settings") {
-            ProjectSettingsButton(project: project).background { ToolbarProbe(item: .settings, fit: fit) }
+            ProjectSettingsButton(project: project)
         }
         .customizationBehavior(.disabled)
         // Compile on glass of its own, not joined to its neighbours.
         ToolbarSpacer(.fixed)
         ToolbarItem(id: "compile") {
-            CompileButton(project: project).background { ToolbarProbe(item: .compile, fit: fit) }
+            CompileButton(project: project)
         }
         .customizationBehavior(.disabled)
         ToolbarSpacer(.fixed)
         ToolbarItem(id: "togglePDF") {
-            PDFToggle(project: project).background { ToolbarProbe(item: .togglePDF, fit: fit) }
+            PDFToggle(project: project)
         }
         .customizationBehavior(.disabled)
     }
 
-    /// Zoom out | the scale's menu | zoom in. While fitting, no preset is checked,
-    /// even at a preset's scale.
-    private var zoomControls: some View {
-        ControlGroup {
-            Button("Zoom Out", systemImage: "minus") { controller.zoom(in: false) }
-                .help("Zoom Out")
-            Menu {
-                CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
-                CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
-                Divider()
-                ForEach(Self.zoomPresets, id: \.self) { percent in
-                    CheckedItem((Double(percent) / 100).formatted(.percent),
-                                checked: controller.fit == nil && Int((controller.scale * 100).rounded()) == percent) {
-                        controller.setScale(CGFloat(percent) / 100)
-                    }
+    /// The scale, as a pull-down of zoom steps, fits and presets (View has the same
+    /// commands with their shortcuts). While fitting, no preset is checked.
+    private var zoomMenu: some View {
+        Menu {
+            Button("Zoom In") { controller.zoom(in: true) }
+            Button("Zoom Out") { controller.zoom(in: false) }
+            Divider()
+            CheckedItem("Fit Width", checked: controller.fit == .width) { controller.fitWidth() }
+            CheckedItem("Fit Height", checked: controller.fit == .height) { controller.fitHeight() }
+            Divider()
+            ForEach(Self.zoomPresets, id: \.self) { percent in
+                CheckedItem((Double(percent) / 100).formatted(.percent),
+                            checked: controller.fit == nil && Int((controller.scale * 100).rounded()) == percent) {
+                    controller.setScale(CGFloat(percent) / 100)
                 }
-            } label: {
-                Text(controller.zoomLabel)
-                    .monospacedDigit()
             }
-            .help("Zoom")
-            .accessibilityLabel("Zoom")
-            .accessibilityValue(controller.zoomLabel)
-            Button("Zoom In", systemImage: "plus") { controller.zoom(in: true) }
-                .help("Zoom In")
+        } label: {
+            Text(controller.zoomLabel).monospacedDigit()
         }
-        // Unverified that .automatic draws this the same in the toolbar on 27.2.
-        .controlGroupStyle(.navigation)
+        .help("Zoom")
+        .accessibilityLabel("Zoom")
+        .accessibilityValue(controller.zoomLabel)
         .disabled(project.pdfVersion == 0)
     }
 
@@ -315,7 +304,6 @@ struct CompileButton: View {
 private struct PDFColumn: NSViewRepresentable {
     let collapsed: Bool
     let project: ProjectModel
-    let fit: ToolbarFit
 
     final class Coordinator {
         var lastCollapsed: Bool?
@@ -323,7 +311,6 @@ private struct PDFColumn: NSViewRepresentable {
 
     final class ColumnView: NSView {
         weak var project: ProjectModel?
-        weak var fit: ToolbarFit?
         var collapsed = false
         private(set) var item: NSSplitViewItem?
         /// The source's share of its and the PDF's room as the PDF collapsed, given back
@@ -378,17 +365,12 @@ private struct PDFColumn: NSViewRepresentable {
             if collapsed {
                 let room = source.frame.width + item.viewController.view.frame.width
                 if room > 0 { sourceShare = source.frame.width / room }
-                fit?.pdfColumnChanging(shown: false, sourceMaxX: nil)
                 item.isCollapsed = true
                 return
             }
             let divider = sourceShare.map { share in
                 source.frame.minX + ((source.frame.width - splitView.dividerThickness) * share).rounded()
             }
-            fit?.pdfColumnChanging(shown: true,
-                                   sourceMaxX: divider.flatMap { x in
-                                       splitView.window?.convertPoint(toScreen: splitView.convert(NSPoint(x: x, y: 0), to: nil)).x
-                                   })
             item.isCollapsed = false
             guard let divider else { return }
             splitView.layoutSubtreeIfNeeded()
@@ -401,13 +383,11 @@ private struct PDFColumn: NSViewRepresentable {
     func makeNSView(context: Context) -> ColumnView {
         let view = ColumnView()
         view.project = project
-        view.fit = fit
         return view
     }
 
     func updateNSView(_ view: ColumnView, context: Context) {
         view.project = project
-        view.fit = fit
         view.collapsed = collapsed
         let coordinator = context.coordinator
         guard collapsed != coordinator.lastCollapsed || view.item == nil || view.priorityDrifted else { return }

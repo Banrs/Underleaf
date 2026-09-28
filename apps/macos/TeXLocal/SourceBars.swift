@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// The source's tools in the toolbar over it (HIG, Toolbars: group by function,
-/// at most three groups by default). The rest are editing actions people add with
+/// The source's tools in the toolbar over it: Bold | Italic and Insert by default
+/// (HIG, Toolbars: few, frequent, grouped by function); the rest are added with
 /// Customize Toolbar.
 struct SourceToolbar: CustomizableToolbarContent {
     let app: AppModel
     let project: ProjectModel
-    let fit: ToolbarFit
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: "undo") {
@@ -14,24 +13,21 @@ struct SourceToolbar: CustomizableToolbarContent {
                 button(.editUndo, "arrow.uturn.backward")
                 button(.editRedo, "arrow.uturn.forward")
             }
-            .background { ToolbarProbe(item: .undo, fit: fit) }
         }
         .defaultCustomization(.hidden)
         .visibilityPriority(.low)
-        if fit.sectionLevelStyle != .hidden {
-            ToolbarItem(id: "sectionLevel") {
-                let compact = fit.sectionLevelStyle == .icon
-                SectionLevelMenu(project: project, compact: compact)
-                    .disabled(!project.isLaTeX)
-                    .background { ToolbarProbe(item: compact ? .sectionLevelIcon : .sectionLevelPopUp, fit: fit) }
-            }
+        // Occasional, and in Format › Section Level: added with Customize Toolbar
+        // (HIG, Toolbars: the default set holds the most frequent actions).
+        ToolbarItem(id: "sectionLevel") {
+            SectionLevelMenu(project: project)
+                .disabled(!project.isLaTeX)
         }
+        .defaultCustomization(.hidden)
         ToolbarItem(id: "format") {
             segments(enabled: project.isLaTeX) {
                 button(.editBold, "bold")
                 button(.editItalic, "italic")
             }
-            .background { ToolbarProbe(item: .format, fit: fit) }
         }
         ToolbarItem(id: "math") {
             segments(enabled: project.isLaTeX) {
@@ -39,25 +35,21 @@ struct SourceToolbar: CustomizableToolbarContent {
                 Menu { SymbolItems(project: project) } label: { Label("Symbols", systemImage: "sum") }
                     .help("Symbols")
             }
-            .background { ToolbarProbe(item: .math, fit: fit) }
         }
         .defaultCustomization(.hidden)
         .visibilityPriority(.low)
         ToolbarItem(id: "references") {
             segments(enabled: project.isLaTeX) { templateButtons(referenceTemplates) }
-                .background { ToolbarProbe(item: .references, fit: fit) }
         }
         .defaultCustomization(.hidden)
         .visibilityPriority(.low)
         ToolbarItem(id: "figures") {
             segments(enabled: project.isLaTeX) { templateButtons(insertTemplates) }
-                .background { ToolbarProbe(item: .figures, fit: fit) }
         }
         .defaultCustomization(.hidden)
         .visibilityPriority(.low)
         ToolbarItem(id: "lists") {
             segments(enabled: project.isLaTeX) { templateButtons(listTemplates) }
-                .background { ToolbarProbe(item: .lists, fit: fit) }
         }
         .defaultCustomization(.hidden)
         .visibilityPriority(.low)
@@ -70,7 +62,6 @@ struct SourceToolbar: CustomizableToolbarContent {
             }
             .help("Insert")
             .disabled(!project.isLaTeX)
-            .background { ToolbarProbe(item: .insert, fit: fit) }
         }
     }
 
@@ -101,34 +92,23 @@ struct SourceToolbar: CustomizableToolbarContent {
 }
 
 /// The caret line's section level; choosing one makes the line that heading. A
-/// pop-up sized to its widest item, so it keeps its width as the caret moves; an
-/// icon's menu when the column narrows (`ToolbarFit`). Its own view, so a caret
-/// move redraws it alone.
+/// pop-up sized to its widest item, so it keeps its width as the caret moves. Its
+/// own view, so a caret move redraws it alone.
 private struct SectionLevelMenu: View {
     let project: ProjectModel
-    let compact: Bool
 
     var body: some View {
         let current = project.outline.first { $0.line == project.cursorLine }
             .flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
-        let picker = Picker("Section Level", selection: Binding(get: { current },
-                                                               set: { project.format(.heading, $0.command) })) {
+        Picker("Section Level", selection: Binding(get: { current }, set: { project.format(.heading, $0.command) })) {
             ForEach(HeadingLevel.all, id: \.self) { level in
                 Text(level.title).tag(level)
                 if level == .normalText { Divider() }
             }
         }
-        Group {
-            if compact {
-                Menu { picker.pickerStyle(.inline).labelsHidden() } label: {
-                    Label("Section Level", systemImage: "textformat.size")
-                }
-                .menuIndicator(.hidden)
-                .accessibilityValue(current.title)
-            } else {
-                picker.pickerStyle(.menu).labelsHidden().fixedSize()
-            }
-        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
         .help("Section Level")
     }
 }

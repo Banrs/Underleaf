@@ -31,7 +31,6 @@ struct EditorView: View {
 struct EditorArea: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    let fit: ToolbarFit
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,7 +39,6 @@ struct EditorArea: View {
             Divider()
             StatusBar(project: project)
         }
-        .background { ColumnReader(column: .source, fit: fit) }
         .toolbar(id: "source") { toolbar }
     }
 
@@ -64,10 +62,9 @@ struct EditorArea: View {
                 Label("Projects", systemImage: "chevron.backward")
             }
             .help("Back to Projects")
-            .background { ToolbarProbe(item: .back, fit: fit) }
         }
         .customizationBehavior(.disabled)
-        SourceToolbar(app: app, project: project, fit: fit)
+        SourceToolbar(app: app, project: project)
     }
 }
 

@@ -743,17 +743,6 @@ struct MenuStructureTests {
     }
 }
 
-/// The window's minimum holds every column at its own.
-@MainActor
-struct WindowMetricsTests {
-    @Test func theMinimumHoldsTheColumns() {
-        let width = WindowMetrics.contentMinimum.width
-        #expect(width >= ColumnMetrics.sidebarWidth.lowerBound + ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
-        // The sidebar hidden: the window controls sit over the source.
-        #expect(width >= ColumnMetrics.sourceMinimum + ColumnMetrics.windowControls + ColumnMetrics.pdfMinimum)
-    }
-}
-
 /// Edit › Find's items reach the pane with the keyboard through
 /// `FindMenuResponder`, by the item's tag.
 @MainActor

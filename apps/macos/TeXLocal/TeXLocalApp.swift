@@ -156,9 +156,10 @@ extension View {
 }
 
 enum WindowMetrics {
-    /// The content's minimum, below the toolbar: the columns' minimums fit
-    /// (checked in the tests), and the whole window is 960 × 600.
-    static let contentMinimum = CGSize(width: 960, height: 548)
+    /// The content's minimum, below the toolbar: every column at its own, with the
+    /// sidebar shown or hidden. Fixed, not per state: a minimum that changes
+    /// mid-layout loops the split (27.2).
+    static let contentMinimum = CGSize(width: ColumnMetrics.contentMinimumWidth, height: 548)
     /// Fits the smallest current Mac display's default resolution (1470 × 956)
     /// with the menu bar and Dock.
     static let projectDefault = CGSize(width: 1200, height: 760)
