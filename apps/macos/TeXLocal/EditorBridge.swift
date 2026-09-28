@@ -1,5 +1,4 @@
 import AppKit
-import Observation
 import os
 import SwiftUI
 import UniformTypeIdentifiers
@@ -9,41 +8,40 @@ import WebKit
 /// A plain `WKWebView`, not SwiftUI's `WebView`: that one's adapter answers Edit ›
 /// Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn,
 /// where a plain web view passes the menu's find items on to the window.
-@Observable
 final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let scheme = "texlocal-app"
 
     /// Made once per project and moved between hosts as SwiftUI rebuilds them.
-    @ObservationIgnored let webView: WKWebView
-    @ObservationIgnored var onChanged: () -> Void = {}
-    @ObservationIgnored var onCursor: (Int) -> Void = { _ in }
+    let webView: WKWebView
+    var onChanged: () -> Void = {}
+    var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
-    @ObservationIgnored var onScroll: (Int) -> Void = { _ in }
-    @ObservationIgnored var onCommand: (String) -> Void = { _ in }
+    var onScroll: (Int) -> Void = { _ in }
+    var onCommand: (String) -> Void = { _ in }
     /// The page opened its search, with the query it starts from; the find bar is the host's.
-    @ObservationIgnored var onFind: (FindQuery) -> Void = { _ in }
-    @ObservationIgnored var onFindClosed: () -> Void = {}
-    @ObservationIgnored var onFindMatches: (FindMatches) -> Void = { _ in }
+    var onFind: (FindQuery) -> Void = { _ in }
+    var onFindClosed: () -> Void = {}
+    var onFindMatches: (FindMatches) -> Void = { _ in }
     /// The web process died, taking the editor's text with it.
-    @ObservationIgnored var onCrash: () -> Void = {}
+    var onCrash: () -> Void = {}
     /// The page is back, empty, after its web process died.
-    @ObservationIgnored var onRestart: () -> Void = {}
-    @ObservationIgnored private(set) var crashes = 0
+    var onRestart: () -> Void = {}
+    private(set) var crashes = 0
     /// The page never loaded; every call answers nil.
-    @ObservationIgnored private(set) var failed = false
+    private(set) var failed = false
 
-    @ObservationIgnored private var ready = false
-    @ObservationIgnored private var restarting = false
-    @ObservationIgnored private var whenReady: [CheckedContinuation<Void, Never>] = []
+    private var ready = false
+    private var restarting = false
+    private var whenReady: [CheckedContinuation<Void, Never>] = []
     /// Calls whose effect the page holds, made again after a crash.
-    @ObservationIgnored private var kept: [PageMethod: KeyValuePairs<String, Any>] = [:]
+    private var kept: [PageMethod: KeyValuePairs<String, Any>] = [:]
     /// Re-sent with fresh system colours when the accent or highlight colour changes.
-    @ObservationIgnored private var appearance: EditorAppearance?
+    private var appearance: EditorAppearance?
     /// The file the page shows: messages about another are stale.
-    @ObservationIgnored private var openPath: String?
-    @ObservationIgnored private let controller = WKUserContentController()
-    @ObservationIgnored private var colorToken: NotificationCenter.ObservationToken?
-    @ObservationIgnored private var closed = false
+    private var openPath: String?
+    private let controller = WKUserContentController()
+    private var colorToken: NotificationCenter.ObservationToken?
+    private var closed = false
 
     private static let log = Logger(subsystem: "com.texlocal.mac", category: "editor")
 

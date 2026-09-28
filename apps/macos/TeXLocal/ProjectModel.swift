@@ -91,7 +91,7 @@ final class ProjectModel {
     var searchQuery = "" { didSet { scheduleSearch() } }
     var searchHits: [SearchHit] = []
 
-    /// Per project: a `WebPage` attaches to one `WebView`, once (27.2).
+    /// Per project: one editor web view, which the source column shows.
     let editor = EditorBridge()
     private weak var app: AppModel?
     private let core = Core.shared
@@ -139,13 +139,6 @@ final class ProjectModel {
     var noBuildTitle: String { pdfVersion > 0 ? "Not Built Since Opening" : "Not Compiled" }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
-
-    var status: String {
-        if compiling { return "Compiling…" }
-        if saving { return "Saving…" }
-        if dirty { return "Edited" }
-        return "Saved"
-    }
 
     private func report(_ error: Error, _ title: String) {
         app?.alert = AppAlert(title, error)
@@ -813,7 +806,8 @@ final class ProjectModel {
         format(.find)
     }
 
-    /// Edit › Find's items where no pane has its own (`FindActions`). The
+    /// Edit › Find's items for the source (`WorkspaceController.findAction` sends
+    /// them here unless the PDF has the keyboard). The
     /// page's find takes the selection as its query, so it serves Use
     /// Selection for Find too. With no text open, Find goes to the PDF.
     func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
@@ -851,8 +845,8 @@ final class ProjectModel {
     }
 }
 
-/// Where a project was left, in the window's scene storage. Pane visibility
-/// and sizes are in the defaults instead.
+/// Where a project was left, in the window's restorable state (`MainWindowController`).
+/// Pane visibility and sizes are in the defaults instead.
 nonisolated struct SavedWorkspace: Codable, Equatable {
     var project: String
     var file: String?

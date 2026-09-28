@@ -54,8 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let url = urls.first(where: AppModel.canOpen) { app.pendingImport = url }
     }
 
+    /// The Dock icon brings the window back, closed or minimised, even while Settings shows.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { mainWindow.showWindow(nil) }
+        if mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
         return true
     }
 

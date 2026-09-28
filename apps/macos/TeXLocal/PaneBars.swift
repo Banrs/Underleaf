@@ -5,21 +5,17 @@ enum BarMetrics {
     static let controlSize: ControlSize = .regular
     /// UI kit: small controls (buttons, pop-ups, fields) are 20 pt high.
     static let secondaryControlHeight: CGFloat = 20
-    /// UI kit: large controls, 28 pt; glass floating over content (the PDF's page).
-    static let largeControlHeight: CGFloat = 28
     /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The status bar and the folded outline share this height so their
-    /// hairlines continue.
+    /// The status bar and the folded outline share this height, so the hairlines
+    /// over them run on as one.
     static var secondaryBarHeight: CGFloat { secondaryControlHeight + 2 * spacing }
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
     /// UI kit, Unified toolbar: items 8 pt apart.
     static let groupSpacing: CGFloat = 8
-    /// UI kit: the toolbar separator, 1 × 16 pt.
-    static let separatorHeight: CGFloat = 16
     /// Design: the least room a find query needs, and the widest a filter grows
     /// (UI kit search fields are drawn 120 pt).
     static let fieldMinWidth: CGFloat = 100
@@ -64,23 +60,22 @@ struct PaneBar<Content: View>: View {
     }
 }
 
-/// The window's status along its foot, at the secondary text style and control size,
-/// its ends clear of the window's rounded corners beside them.
+/// The window's status along its foot, at the secondary text style and control size.
+/// Its host keeps its ends clear of the window's rounded corners (AppKit's
+/// corner-adapted safe area: SwiftUI's container corner insets are zero in an
+/// AppKit split item's accessory).
 struct SecondaryBar<Content: View>: View {
     let spacing: CGFloat
     @ViewBuilder var content: Content
-    @State private var corners = RectangleCornerInsets()
 
     var body: some View {
         HStack(spacing: spacing) { content }
             .font(Typography.secondary)
             .controlSize(Typography.secondaryControlSize)
             .lineLimit(1)
-            .padding(.leading, max(BarMetrics.inset, corners.bottomLeading.width))
-            .padding(.trailing, max(BarMetrics.inset, corners.bottomTrailing.width))
+            .padding(.horizontal, BarMetrics.inset)
             .frame(height: BarMetrics.secondaryBarHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .onGeometryChange(for: RectangleCornerInsets.self) { $0.containerCornerInsets } action: { corners = $0 }
     }
 }
 
@@ -114,15 +109,6 @@ struct TabsControl<Value: Hashable>: NSViewRepresentable {
         @objc func changed(_ control: NSSegmentedControl) {
             select(control.selectedSegment)
         }
-    }
-}
-
-/// The line between the status bar's parts.
-struct ToolSeparator: View {
-    var body: some View {
-        Divider()
-            .frame(height: BarMetrics.separatorHeight)
-            .padding(.horizontal, BarMetrics.groupSpacing)
     }
 }
 
@@ -178,23 +164,6 @@ extension FindBar where Replace == EmptyView {
          step: @escaping @MainActor (Int) -> Void, close: @escaping @MainActor () -> Void) {
         self.init(query: query, prompt: prompt, field: field, matches: matches, searched: searched,
                   step: step, close: close) { EmptyView() }
-    }
-}
-
-/// A menu item checked while in use; choosing it always acts (a Toggle would uncheck).
-struct CheckedItem<Label: View>: View {
-    let checked: Bool
-    let action: () -> Void
-    @ViewBuilder var label: Label
-
-    var body: some View {
-        Toggle(isOn: Binding(get: { checked }, set: { _ in action() })) { label }
-    }
-}
-
-extension CheckedItem where Label == Text {
-    init(_ title: String, checked: Bool, action: @escaping () -> Void) {
-        self.init(checked: checked, action: action) { Text(title) }
     }
 }
 
@@ -272,7 +241,6 @@ struct SearchField: NSViewRepresentable {
         let view = NSSearchField()
         // A find bar's: its field editor passes Edit › Find's items on
         // (`FindFieldEditor`); a filter has no matches to step.
-        if step != nil { view.identifier = FindFieldEditor.fieldIdentifier }
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -317,8 +285,6 @@ struct SearchField: NSViewRepresentable {
 /// Edit › Find's items on to the window (`MainWindowController`), where the shared
 /// field editor would answer them itself and turn them off.
 final class FindFieldEditor: NSTextView {
-    static let fieldIdentifier = NSUserInterfaceItemIdentifier("findField")
-
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
     }
@@ -469,11 +435,11 @@ extension TextSelection {
 }
 
 #Preview("Secondary bar") {
-    SecondaryBar(spacing: 0) {
-        Text("Saved")
-        ToolSeparator()
+    SecondaryBar(spacing: BarMetrics.itemSpacing) {
+        Text("Compiled in 1.2 s")
         Spacer(minLength: 0)
-        Text("Line 12").monospacedDigit()
+        Text("1,204 words").monospacedDigit()
+        Text("Page 2 of 5").monospacedDigit()
     }
     .frame(width: 480)
 }

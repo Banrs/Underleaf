@@ -3,22 +3,23 @@ import SwiftUI
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
-    static let undoRedo = Self("undoRedo")
+    static let undo = Self("undo")
+    static let redo = Self("redo")
     static let sectionLevel = Self("sectionLevel")
-    static let format = Self("format")
+    static let bold = Self("bold")
+    static let italic = Self("italic")
     static let math = Self("math")
-    static let references = Self("references")
-    static let figures = Self("figures")
-    static let lists = Self("lists")
     static let insert = Self("insert")
     /// The source/PDF divider's line through the toolbar.
     static let pdfSeparator = Self("pdfSeparator")
     static let zoom = Self("zoom")
     static let share = Self("share")
-    static let freshness = Self("freshness")
     static let projectSettings = Self("projectSettings")
     static let compile = Self("compile")
     static let togglePDF = Self("togglePDF")
+
+    /// A template's own button, for Customize Toolbar.
+    static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
 /// The project window's toolbar, AppKit's so each column's tools sit over it:
@@ -28,6 +29,11 @@ extension NSToolbarItem.Identifier {
 /// PDF's tools move over the source by themselves. Short of room, zoom and Share go
 /// to the overflow menu first, Compile and the PDF toggle last (HIG, Toolbars: few,
 /// frequent, grouped by task); Customize Toolbar adds the rest.
+///
+/// Each action is its own item: side by side, the system puts buttons on one glass
+/// capsule with no line between (the UI kit's button group: Bold and Italic, 73 pt).
+/// A line divides only a segmented control's parts, the two whose middle or end is
+/// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSPopoverDelegate, NSMenuDelegate {
     let toolbar = NSToolbar(identifier: "Workspace")
@@ -64,14 +70,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     // ---------- items ----------
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .insert,
-         .pdfSeparator, .zoom, .share, .flexibleSpace, .freshness, .projectSettings, .compile, .togglePDF]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .bold, .italic, .insert,
+         .pdfSeparator, .zoom, .share, .flexibleSpace, .projectSettings, .compile, .togglePDF]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-            + [.undoRedo, .sectionLevel, .math, .references, .figures, .lists, .space, .flexibleSpace]
+        toolbarDefaultItemIdentifiers(toolbar) + [.undo, .redo, .sectionLevel, .math]
+            + Self.buttonTemplates.map(NSToolbarItem.Identifier.template) + [.space, .flexibleSpace]
     }
+
+    /// The templates with a symbol, each a button; all are in the Insert menu.
+    private static let buttonTemplates = (referenceTemplates + insertTemplates + listTemplates).filter { $0.symbol != nil }
 
     /// The window's own: the way back, the build and the columns.
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
@@ -94,24 +103,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "Projects", "chevron.backward", #selector(back), help: "Back to Projects")
             // Before the title (HIG, Toolbars: back leads). One level, no history to go forward.
             item.isNavigational = true
-        case .undoRedo:
-            item = segments(id, "Undo and Redo", [(MenuCommand.editUndo.title, "arrow.uturn.backward"),
-                                                 (MenuCommand.editRedo.title, "arrow.uturn.forward")], #selector(undoRedo(_:)))
+        case .undo:
+            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", #selector(undo))
+            item.visibilityPriority = .low
+        case .redo:
+            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", #selector(redo))
             item.visibilityPriority = .low
         case .sectionLevel:
             item = sectionLevelItem()
-        case .format:
-            item = segments(id, "Format", [(MenuCommand.editBold.title, "bold"), (MenuCommand.editItalic.title, "italic")],
-                            #selector(formatText(_:)))
+        case .bold:
+            item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
+        case .italic:
+            item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic))
         case .math:
             item = mathItem()
             item.visibilityPriority = .low
-        case .references:
-            item = templates(id, "References", referenceTemplates)
-        case .figures:
-            item = templates(id, "Figures and Tables", insertTemplates)
-        case .lists:
-            item = templates(id, "Lists", listTemplates)
         case .insert:
             let menu = NSMenuToolbarItem(itemIdentifier: id)
             menu.image = symbol("plus", "Insert")
@@ -132,8 +138,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share PDF"
             share.visibilityPriority = .low
             item = share
-        case .freshness:
-            item = button(id, "Preview Status", "clock.arrow.circlepath", #selector(freshness))
         case .projectSettings:
             item = button(id, "Project Settings", "info.circle", #selector(toggleSettings))
         case .compile:
@@ -151,7 +155,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "PDF", "doc.richtext", #selector(togglePDF))
             item.visibilityPriority = .high
         default:
-            return nil
+            guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
+                  let symbolName = template.symbol else { return nil }
+            item = button(id, template.title, symbolName, #selector(insertTemplate(_:)))
+            item.visibilityPriority = .low
         }
         // Their state is the models' (`apply`), not validation's, which would turn
         // on any item whose target answers its action.
@@ -174,25 +181,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.target = self
         item.action = action
         return item
-    }
-
-    /// The UI kit's segmented toolbar control: one capsule, a line between segments.
-    private func segments(_ id: NSToolbarItem.Identifier, _ label: String, _ parts: [(title: String, symbol: String)],
-                          _ action: Selector) -> NSToolbarItemGroup {
-        let group = NSToolbarItemGroup(itemIdentifier: id, images: parts.compactMap { symbol($0.symbol, $0.title) },
-                                       selectionMode: .momentary, labels: parts.map(\.title), target: self, action: action)
-        group.label = label
-        group.controlRepresentation = .expanded
-        for (subitem, part) in zip(group.subitems, parts) { subitem.toolTip = part.title }
-        return group
-    }
-
-    /// A segment per template with a symbol; the rest are in the Insert menu.
-    private func templates(_ id: NSToolbarItem.Identifier, _ label: String, _ templates: [Template]) -> NSToolbarItemGroup {
-        let shown = templates.filter { $0.symbol != nil }
-        let group = segments(id, label, shown.map { ($0.title, $0.symbol ?? "") }, #selector(insertTemplate(_:)))
-        group.visibilityPriority = .low
-        return group
     }
 
     /// Inline Math | Symbols: a segmented control whose second segment opens its menu.
@@ -356,7 +344,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         var canZoomOut = false
         var compiling = false
         var canCompile = false
-        var freshness: PDFFreshness?
         var pdfTitle = ""
     }
 
@@ -375,7 +362,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         state.canZoomOut = pdf.canZoomOut
         state.compiling = project.compiling
         state.canCompile = app.isEnabled(.compileRun, on: project)
-        state.freshness = project.hasPDF ? project.pdfFreshness : nil
         state.pdfTitle = app.title(.viewTogglePdf, on: project)
         return state
     }
@@ -386,10 +372,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func configure(_ item: NSToolbarItem, _ state: State) {
         switch item.itemIdentifier {
-        case .undoRedo:
-            enable(item, state.canUndo)
-        case .format, .references, .figures, .lists, .insert:
-            enable(item, state.isLaTeX)
+        case .undo, .redo:
+            item.isEnabled = state.canUndo
+        case .bold, .italic, .insert:
+            item.isEnabled = state.isLaTeX
         case .math:
             enable(item, state.isLaTeX)
             (item.view as? NSSegmentedControl)?.isEnabled = state.isLaTeX
@@ -410,15 +396,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.isHidden = !state.showsPDF
         case .share:
             item.isEnabled = state.hasPDF
-        case .freshness:
-            item.isHidden = state.freshness == nil
-            if let freshness = state.freshness {
-                item.image = symbol(freshness.systemImage, freshness.title)
-                item.label = freshness.title
-                item.toolTip = freshness == .lastSuccessful
-                    ? "The latest build failed; this is the last one that succeeded. Show Issues"
-                    : "The preview doesn’t reflect the current source. Compile"
-            }
         case .compile:
             // Stop in its place while a build runs.
             let title = state.compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title
@@ -431,7 +408,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.label = state.pdfTitle
             item.toolTip = state.pdfTitle
         default:
-            break
+            // A template's button.
+            if item.action == #selector(insertTemplate(_:)) { item.isEnabled = state.isLaTeX }
         }
     }
 
@@ -448,19 +426,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func back() { perform(.projectClose) }
 
-    @objc private func undoRedo(_ group: NSToolbarItemGroup) {
-        perform(group.selectedIndex == 0 ? .editUndo : .editRedo)
-    }
+    @objc private func undo() { perform(.editUndo) }
 
-    @objc private func formatText(_ group: NSToolbarItemGroup) {
-        perform(group.selectedIndex == 0 ? .editBold : .editItalic)
-    }
+    @objc private func redo() { perform(.editRedo) }
 
-    @objc private func insertTemplate(_ group: NSToolbarItemGroup) {
-        let all = [referenceTemplates, insertTemplates, listTemplates].flatMap { $0 }.filter { $0.symbol != nil }
-        let titles = group.subitems.map(\.label)
-        guard titles.indices.contains(group.selectedIndex),
-              let template = all.first(where: { $0.title == titles[group.selectedIndex] }) else { return }
+    @objc private func bold() { perform(.editBold) }
+
+    @objc private func italic() { perform(.editItalic) }
+
+    @objc private func insertTemplate(_ item: NSToolbarItem) {
+        guard let template = Self.buttonTemplates.first(where: { .template($0) == item.itemIdentifier }) else { return }
         project.insert(template)
     }
 
@@ -485,10 +460,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         project.format(.heading, level.command)
     }
 
-    @objc private func freshness() {
-        if project.pdfFreshness == .edited { perform(.compileRun) } else { project.showBuildPanel() }
-    }
-
     @objc private func compile() {
         perform(project.compiling ? .compileStop : .compileRun)
     }
@@ -503,16 +474,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     // ---------- Project Settings ----------
 
-    /// Under its toolbar item, or the overflow menu's button while it's there.
+    /// Under its toolbar item, or the overflow menu's button while it's there; under
+    /// the toolbar's trailing end when the item was taken out or the toolbar hidden.
     private func showSettings(_ shown: Bool) {
         guard shown else {
             settings?.close()
             return
         }
-        guard settings == nil, let item = toolbar.items.first(where: { $0.itemIdentifier == .projectSettings }) else {
-            if settings == nil { app.showProjectSettings = false }
-            return
-        }
+        guard settings == nil, let view = workspace?.view else { return }
         let popover = NSPopover()
         let content = NSHostingController(rootView: ProjectSettingsView(project: project).environment(app))
         content.sizingOptions = [.preferredContentSize]
@@ -520,7 +489,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         popover.behavior = .transient
         popover.delegate = self
         settings = popover
-        popover.show(relativeTo: item)
+        if toolbar.isVisible, let item = toolbar.items.first(where: { $0.itemIdentifier == .projectSettings }) {
+            popover.show(relativeTo: item)
+        } else {
+            let area = view.safeAreaRect
+            let top = NSRect(x: area.maxX - BarMetrics.inset - 1, y: view.isFlipped ? area.minY : area.maxY - 1,
+                             width: 1, height: 1)
+            popover.show(relativeTo: top, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
+        }
     }
 
     func popoverDidClose(_ notification: Notification) {

@@ -118,18 +118,20 @@ private struct BuildPanelToggle: View {
     }
 }
 
-/// The status bar under the source and the PDF (HIG, Windows): the build's summary
-/// and the save state; the caret; the engine and the PDF's page, which opens Go to
-/// Page; and the build panel's toggle at the far end. The PDF's own page numbers,
-/// not LaTeX's (front matter and roman numbers differ). When the bar is narrow the
-/// counts give way first.
+/// The status bar under the source and the PDF: the build's summary, which shows
+/// its issues; the word count (View › Show Word Count); whether the PDF is out of
+/// date, and its page, which opens Go to Page; and the build panel's toggle at the
+/// far end. The PDF's own page
+/// numbers, not LaTeX's (front matter and roman numbers differ). Not here: the save
+/// state (edits save themselves 0.7 s after typing stops, as in Notes; a failed save
+/// is an alert), the caret's line (the gutter marks it) and the engine (Project Settings).
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
     let pdf: PDFController
 
     var body: some View {
-        SecondaryBar(spacing: 0) {
+        SecondaryBar(spacing: BarMetrics.itemSpacing) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -138,37 +140,19 @@ struct StatusBar: View {
                 buildStatus
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
-            // A preview has no save state or caret.
-            if project.editsText {
-                ToolSeparator()
-                Text(project.status)
+            Spacer(minLength: 0)
+            if project.editsText, app.showWordCount, let counts = project.counts {
+                Text("^[\(counts.words) word](inflect: true)")
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .layoutPriority(-1)
             }
-            Spacer(minLength: BarMetrics.itemSpacing)
-            if project.editsText {
-                HStack(spacing: BarMetrics.itemSpacing) {
-                    Text("Line \(project.cursorLine)")
-                    if app.showWordCount, let counts = project.counts {
-                        Text("^[\(counts.words) word](inflect: true) · ^[\(counts.lines) line](inflect: true)")
-                            .layoutPriority(-2)
-                    }
-                }
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            }
-            if let engine = project.settings?.engine {
-                ToolSeparator()
-                Text(texEngineName(engine))
-                    .foregroundStyle(.secondary)
-            }
             if project.showPDF, project.pdfVersion > 0, pdf.pageCount > 0 {
-                ToolSeparator()
+                if let freshness = project.pdfFreshness { freshnessButton(freshness) }
                 Button("Page \(pdf.page) of \(pdf.pageCount)") { app.perform(.pdfGotoPage, on: project) }
                     .monospacedDigit()
                     .help("Go to Page")
             }
-            ToolSeparator()
             BuildPanelToggle(project: project)
         }
         .buttonStyle(.borderless)
@@ -176,6 +160,19 @@ struct StatusBar: View {
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
+    }
+
+    /// Why the pages may not match the source, by the page they concern: edits since
+    /// the build (Compile), or the last build that worked after one that failed.
+    private func freshnessButton(_ freshness: PDFFreshness) -> some View {
+        Button {
+            if freshness == .edited { app.perform(.compileRun, on: project) } else { project.showBuildPanel() }
+        } label: {
+            Label(freshness.title, systemImage: freshness.systemImage)
+                .labelStyle(.titleAndIcon)
+        }
+        .help(freshness == .edited ? "The preview doesn’t reflect the current source. Compile"
+                                   : "The latest build failed; this is the last one that succeeded. Show Issues")
     }
 
     /// Only the symbols carry colour; the words stay secondary.

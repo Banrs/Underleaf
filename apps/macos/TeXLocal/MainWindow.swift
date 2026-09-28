@@ -16,6 +16,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
+    /// Polls for TeX while it's missing; one at a time.
+    private var texWatch: Task<Void, Never>?
     /// The find bars' fields' field editor (`FindFieldEditor`).
     private let findEditor: FindFieldEditor = {
         let editor = FindFieldEditor()
@@ -34,7 +36,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
         window.collectionBehavior.insert(.fullScreenPrimary)
-        window.contentMinSize = WindowMetrics.contentMinimum
         super.init(window: window)
         window.delegate = self
         showHome()
@@ -45,8 +46,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             track({ [app] in app.project.map(ObjectIdentifier.init) }) { [weak self] _ in self?.showProject() },
             track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
             // Installing TeX takes effect without a restart, whichever screen shows.
-            track({ [app] in app.tex?.available }) { [app] available in
-                if available == false { Task { await app.watchForTeX() } }
+            track({ [app] in app.tex?.available }) { [weak self, app] available in
+                self?.texWatch?.cancel()
+                self?.texWatch = available == false ? Task { await app.watchForTeX() } : nil
             },
         ]
     }
@@ -56,6 +58,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     isolated deinit {
         watches.forEach { $0.cancel() }
         titleWatch?.cancel()
+        texWatch?.cancel()
     }
 
     /// Shows the window, then loads the library and opens the project the launch
@@ -82,18 +85,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             return
         }
         guard workspace?.project !== project, let window else { return }
+        // Opening one project from another: the last one's panes let go, their sizes kept.
+        workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace)
         window.toolbar = workspace.toolbar.toolbar
         self.workspace = workspace
         home = nil
         titleWatch?.cancel()
-        titleWatch = track({ [project] in project.openPath }) { [weak self, project] path in
+        titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
             guard let window = self?.window else { return }
-            window.title = path.map { ($0 as NSString).lastPathComponent } ?? project.id
-            window.subtitle = path == nil ? "" : project.id
+            window.title = file.path.map { ($0 as NSString).lastPathComponent } ?? project.id
+            window.subtitle = file.path == nil ? "" : project.id
             // The title's proxy icon: the file itself, to drag or Command-click.
-            window.representedURL = project.openURL
+            window.representedURL = file.url
         }
     }
 
@@ -112,11 +117,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame: a new content view controller would size the window to its view.
+    /// Keeps the window's frame and minimum: a new content view controller sizes the
+    /// window to its view and sets the minimum to zero.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         let frame = window.frame
         window.contentViewController = controller
+        window.contentMinSize = WindowMetrics.contentMinimum
         window.setFrame(frame, display: true)
     }
 
@@ -130,8 +137,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         app.mainWindowIsKey = false
     }
 
+    /// The find bars' fields get the editor that passes Edit › Find's items on.
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
-        (client as? NSSearchField)?.identifier == FindFieldEditor.fieldIdentifier ? findEditor : nil
+        guard let field = client as? NSTextField, workspace?.hostsFindField(field) == true else { return nil }
+        return findEditor
     }
 
     /// Edit › Find's items, which the system sends down the responder chain with
@@ -174,6 +183,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private static let workspaceKey = "workspace"
+}
+
+/// The file the title names: renaming it moves the URL after the path.
+private nonisolated struct OpenFile: Equatable {
+    let path: String?
+    let url: URL?
 }
 
 /// The projects screen, with the window's own sheets and alerts.

@@ -1,7 +1,6 @@
 import AppKit
 import os
 import SwiftUI
-import WebKit
 
 /// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
 /// and its accelerators. One accelerator string drives both the menu's key
@@ -323,7 +322,8 @@ struct AppCommands: Commands {
 
     private func item(_ command: MenuCommand) -> some View {
         Button(app.title(command, on: project)) { app.perform(command, on: project) }
-        .keyboardShortcut(app.shortcut(command, on: project))
+        // ⌘N follows whether a project is open, not which window is key.
+        .keyboardShortcut(app.shortcut(command, on: app.project))
         .disabled(!app.isEnabled(command, on: project))
     }
 

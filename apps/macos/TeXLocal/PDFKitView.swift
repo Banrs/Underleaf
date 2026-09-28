@@ -119,11 +119,28 @@ final class PDFController {
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
     /// highlights with it; the keyboard goes back to the pages.
+    /// The keyboard goes back to the pages only from the bar: a new build closes it
+    /// while the editor has the keyboard.
     func closeFind() {
+        let fromBar = findField.hasFocus
         finding = false
         findText = ""
         find("")
-        if let view { view.window?.makeFirstResponder(view) }
+        if fromBar, let view { view.window?.makeFirstResponder(view) }
+    }
+
+    /// A menu's request for pages not shown yet (a column that never showed, a
+    /// document still loading) waits for them.
+    @ObservationIgnored private var pending: [() -> Void] = []
+
+    func whenShown(_ action: @escaping () -> Void) {
+        if view?.document != nil { action() } else { pending.append(action) }
+    }
+
+    func documentShown() {
+        let run = pending
+        pending = []
+        run.forEach { $0() }
     }
 
     func step(_ delta: Int) {
@@ -276,6 +293,7 @@ struct PDFRepresentable: NSViewRepresentable {
         controller.pageCount = document.pageCount
         controller.pageChanged()
         controller.scaleChanged()
+        controller.documentShown()
     }
 
     /// Scroll to a forward-search result and flash it.

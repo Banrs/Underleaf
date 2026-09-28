@@ -74,11 +74,6 @@ nonisolated struct HeadingLevel: Hashable {
 /// The engines a project can compile with: (the core's id, the menu title).
 let texEngines = [("pdflatex", "pdfLaTeX"), ("xelatex", "XeLaTeX"), ("lualatex", "LuaLaTeX")]
 
-/// An engine's menu title, or its id when it isn't one of `texEngines`.
-func texEngineName(_ engine: String) -> String {
-    texEngines.first { $0.0 == engine }?.1 ?? engine
-}
-
 /// Symbols by kind, each inserted as its command.
 let symbolGroups: [(String, [(String, String)])] = [
     ("Greek", [("α", "\\alpha"), ("β", "\\beta"), ("γ", "\\gamma"), ("δ", "\\delta"), ("ε", "\\epsilon"),
