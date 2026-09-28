@@ -24,6 +24,29 @@ let path = null;
 let symbols = { labels: [], citations: [] };
 let dark = matchMedia('(prefers-color-scheme: dark)').matches;
 
+// ---------- resizing ----------
+// While the editor's size changes (a divider dragged, a pane shown or
+// hidden), and for a moment after, the page is marked resizing: a host that
+// draws its own chrome hides the overlay scroller meanwhile (editor.html).
+// Not a scroller that takes room (System Settings, "Always"): hiding it
+// would re-wrap the text.
+
+const RESIZE_SETTLE_MS = 400;
+let resizeTimer = 0;
+let lastSize = null;
+new ResizeObserver(([entry]) => {
+  const size = `${entry.contentRect.width}×${entry.contentRect.height}`;
+  const first = lastSize === null;
+  if (size === lastSize) return;
+  lastSize = size;
+  const scroller = parent.querySelector('.cm-scroller');
+  if (first || !scroller || scroller.offsetWidth > scroller.clientWidth) return;
+  const root = document.documentElement;
+  root.dataset.resizing = '';
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { delete root.dataset.resizing; }, RESIZE_SETTLE_MS);
+}).observe(parent);
+
 // ---------- the host's find bar ----------
 // A host that draws its own find bar (the Mac's) drives CodeMirror's search
 // from it: the page keeps the query, the matches and their highlighting;

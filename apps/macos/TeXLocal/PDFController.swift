@@ -176,7 +176,8 @@ final class PDFController {
     }
 }
 
-/// PDFView with a double-click that jumps to the source (inverse search).
+/// PDFView where Command-click jumps to the source (inverse search), as in the
+/// Mac's TeX apps; a double-click stays PDFKit's, selecting a word.
 final class SyncPDFView: PDFView {
     var onInverse: (Int, CGPoint) -> Void = { _, _ in }
 
@@ -199,7 +200,7 @@ final class SyncPDFView: PDFView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.clickCount == 2, let document else {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, let document else {
             super.mouseDown(with: event)
             return
         }
@@ -230,10 +231,9 @@ struct PDFRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> SyncPDFView {
         let view = SyncPDFView()
         view.displayMode = .singlePageContinuous
+        // PDFKit's own margins round the pages: with others set, it scrolls the
+        // pages as the column resizes, and the scroller shows on every step.
         view.displaysPageBreaks = true
-        // An even margin round every page, lined up with the bars' controls.
-        let inset = BarMetrics.inset
-        view.pageBreakMargins = NSEdgeInsets(top: inset, left: inset, bottom: inset, right: inset)
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
         view.onInverse = { [project] page, point in

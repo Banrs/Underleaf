@@ -14,6 +14,11 @@
        Settings on a Mac, Fluent ones on Windows — rather than the browser
        version's tinted bar (styles.css). */
     * { scrollbar-width: auto; scrollbar-color: auto; }
+    /* No scroller while the editor's size changes (editor.js sets
+       data-resizing): CodeMirror scrolls to keep the top line in place as
+       lines re-wrap, and WebKit shows its scroller for any scroll, where a
+       native text view shows none as its pane resizes. */
+    :root[data-host][data-resizing] .cm-scroller { scrollbar-width: none; }
     /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
     /* The host's highlight colour for the selection when it sends one (the

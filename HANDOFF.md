@@ -271,6 +271,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.
   - `DetentSplitViewController` snaps within 8 pt and taps `NSHapticFeedbackManager`'s `.alignment` once, as the divider arrives.
   - Only the sidebar (at its opening 270 pt) and the source/PDF divider (at half) have detents. The File Outline's and the build panel's dividers have no size worth stopping at, and a snap there would fight fine adjustment, so they have neither snap nor haptic.
+- **No scroller while the editor resizes.** CodeMirror keeps the top line in place as lines re-wrap by scrolling, and WebKit shows its overlay scroller for any scroll, a native text view's none. The embed page marks itself `data-resizing` while its size changes and for 0.4 s after (`web/src/embed/editor.js`), and `editor.html` hides the Mac's overlay scroller meanwhile (not a scroller that takes room: hiding it would re-wrap the text). Measured with a knob detector on window captures after a divider move: the PDF and the editor each showed a scroller for about 0.7 s before, none after.
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
@@ -317,7 +318,9 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **`NSBox`'s separator is 1 px, the thin split divider 1 pt.** The bars' lines are a small view (`Hairline`) in the split's `dividerColor`.
 
 **PDF**
-- **PDFKit is left to itself.** A scroll-view inset for the gap above page one, and the resize pinning it needed, fought PDFKit's own fit-width layout: a re-layout on every resize step, so the scaling stuttered. The gap is a page-break margin now, and a rebuild goes back to `currentDestination`. `hideLinkBorders` hides hyperref's boxes.
+- **PDFKit is left to itself.** A scroll-view inset for the gap above page one, and the resize pinning it needed, fought PDFKit's own fit-width layout: a re-layout on every resize step, so the scaling stuttered. A rebuild goes back to `currentDestination`. `hideLinkBorders` hides hyperref's boxes.
+- **The pages keep PDFKit's own margins.** With `pageBreakMargins` set (8 pt all round, once), PDFKit scrolled the pages on every resize step, and its overlay scroller showed throughout a divider drag or a pane's animation. With its own (4 pt at the sides, 4.75 pt between pages) it keeps them still.
+- **Command-click in the PDF jumps to the source**, as in the Mac's TeX apps; a double-click stays PDFKit's word selection. The web and Windows viewers use a double-click.
 - **Core Image filters work in linear light:** dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16.
 
 **Files and TeX**
