@@ -35,7 +35,7 @@ extension NSToolbarItem.Identifier {
 /// A line divides only a segmented control's parts, the two whose middle or end is
 /// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSPopoverDelegate, NSMenuDelegate {
+                              NSPopoverDelegate, NSMenuDelegate, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
@@ -141,14 +141,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .projectSettings:
             item = button(id, "Project Settings", "info.circle", #selector(toggleSettings))
         case .compile:
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.compileRun.title
-            item.title = MenuCommand.compileRun.title
-            item.target = self
-            item.action = #selector(compile)
             // Its word, not a lone play symbol, which reads as media; the one
-            // prominent control, on glass of its own.
+            // prominent control, on glass of its own. Its own view, for Stop's
+            // spinner (an item's image can't animate).
+            item = NSToolbarItem(itemIdentifier: id)
+            item.view = NSHostingView(rootView: compileButton(state))
             item.style = .prominent
+            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
+            form.target = self
+            item.menuFormRepresentation = form
             item.visibilityPriority = .high
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
@@ -397,13 +398,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             item.isEnabled = state.hasPDF
         case .compile:
-            // Stop in its place while a build runs.
+            // Stop in its place while a build runs, on clear glass: still prominent,
+            // whose glass stays its own, where a plain item's joins its neighbours'.
             let title = state.compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title
-            item.title = title
             item.label = title
             item.toolTip = title
-            item.style = state.compiling ? .plain : .prominent
+            item.menuFormRepresentation?.title = title
+            item.backgroundTintColor = state.compiling ? .clear : nil
             item.isEnabled = state.compiling || state.canCompile
+            (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
         case .togglePDF:
             item.label = state.pdfTitle
             item.toolTip = state.pdfTitle
@@ -462,6 +465,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     @objc private func compile() {
         perform(project.compiling ? .compileStop : .compileRun)
+    }
+
+    private func compileButton(_ state: State) -> CompileButton {
+        CompileButton(compiling: state.compiling, enabled: state.compiling || state.canCompile) { [weak self] in
+            self?.compile()
+        }
+    }
+
+    /// The overflow menu's Compile, which the item's own view doesn't enable.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(compile) else { return true }
+        return project.compiling || app.isEnabled(.compileRun, on: project)
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -529,6 +544,44 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             default: break
             }
         }
+    }
+}
+
+/// Compile, or Stop with a spinner while a build runs. Both lay out and one shows,
+/// so the button keeps Compile's width. It fills the item's glass, which passes no
+/// clicks on to an item's own view.
+private struct CompileButton: View {
+    let compiling: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    /// Measured on macOS 27: a toolbar item's glass is 36 pt high, and its title is
+    /// medium weight, 12 pt from the ends.
+    private static let height: CGFloat = 36
+    private static let padding: CGFloat = 12
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Text(MenuCommand.compileRun.title)
+                    .opacity(compiling ? 0 : 1)
+                HStack(spacing: BarMetrics.spacing) {
+                    // The button stays a button to VoiceOver; the status bar says Compiling.
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text(MenuCommand.compileStop.title)
+                }
+                .opacity(compiling ? 1 : 0)
+            }
+            .fontWeight(.medium)
+            .padding(.horizontal, Self.padding)
+            .frame(height: Self.height)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 }
 
