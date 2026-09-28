@@ -457,7 +457,7 @@ private struct CompileButton: View {
     let action: () -> Void
 
     /// Measured on macOS 27: a toolbar item's glass is 36 pt high, and its title is
-    /// medium weight, 12 pt from the ends.
+    /// the system font, 12 pt from the ends.
     private static let height: CGFloat = 36
     private static let padding: CGFloat = 12
 
@@ -475,7 +475,6 @@ private struct CompileButton: View {
                 }
                 .opacity(compiling ? 1 : 0)
             }
-            .fontWeight(.medium)
             .padding(.horizontal, Self.padding)
             .frame(height: Self.height)
             .contentShape(.capsule)

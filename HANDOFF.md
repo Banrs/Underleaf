@@ -141,7 +141,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A SwiftUI scene's window owns its toolbar, so the window is AppKit's too.
 - **The status bar's ends** (`CornerBar`): where the corner-adapted safe area (`edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))`) reports a window corner, the content sits 16 pt from the window's edge, as Xcode's bottom bars have it; the safe area's own 18 pt would hold it further in. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
-- **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one.
+- **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one. Their content sits under their lines, and the header's title is raised the 1.5 pt the list puts it low (`titleDrop`), so both bars' words are centred and level, as in Xcode.
 - **A plain `WKWebView` for the editor.**
   - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
@@ -151,7 +151,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
   - The view fills the item's glass (36 pt, measured), which passes no clicks to it.
-  - The title is medium weight, 12 pt from the ends, matching an item's title.
+  - The title is the system font, 12 pt from the ends, as an item's title is (by glyph width: medium read wider and bolder).
+  - One view for both states: swapping an item's `view` in or out while it's in the toolbar throws in `NSToolbarItemViewer` on the next layout (27.2).
 - **The segmented zoom and Math controls open their menu segment's menu from their action** (`openMenu(of:)`). AppKit opens a segment's menu on a click only in a control with no action, and these have one for their other segments.
   - So a click opens it as the mouse goes up, and a press and hold opens AppKit's own after 0.26 s (real clicks on a prototype, 27.2).
   - Without an action AppKit opens it on the press, but the control then doesn't say which other segment was clicked (`selectedSegment` is back to -1 when `mouseDown` returns), and keyboard and VoiceOver presses send nothing. Segment frames aren't public API.
@@ -269,6 +270,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 **Split view**
 - **A pane opens at its view's frame as it's added**, and on macOS 27.2 a collapsed one uncollapses to it. `WorkspaceController` sets each frame from `PaneSize`, or from its share of the window.
+- **The build panel reopens at its kept height** (`setPanelShown`): left to AppKit it came back a status bar's height shorter each time (27.2), so it gets the PDF's treatment, its frame and minimum set until it's back.
 - **macOS 27.0 uncollapses a pane to its minimum**, not its frame. Show PDF (`setPDFShown`) sets both the PDF's frame and its minimum to its kept share until it's back. The frame alone left it at 320 pt on the runner.
 - **Divider detents:** `NSSplitViewController` doesn't implement `splitView(_:constrainSplitPosition:ofSubviewAt:)` (`instancesRespond` is false), so there's no super to call. Swift still needs `override`.
   - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.

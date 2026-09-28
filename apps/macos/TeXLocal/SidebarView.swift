@@ -29,6 +29,9 @@ struct OutlineHeader: View {
     /// (measured, 27.2).
     private static let headerRow: CGFloat = 19
     private static let listTopRoom: CGFloat = 10
+    /// How far under the middle of the status bar's height the list puts the title
+    /// (measured, 27.2): it's raised so the two bars' words are level and centred.
+    private static let titleDrop: CGFloat = 1.5
 
     var body: some View {
         let collapsed = app.outlineCollapsed
@@ -42,6 +45,7 @@ struct OutlineHeader: View {
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
+        .offset(y: -Self.titleDrop)
         .frame(height: collapsed ? BarMetrics.secondaryBarHeight : Self.listTopRoom + Self.headerRow)
     }
 }

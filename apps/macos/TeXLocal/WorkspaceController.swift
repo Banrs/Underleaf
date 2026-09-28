@@ -190,9 +190,9 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// A bar along a pane's top or foot, as tall as its content, as wide as the pane.
-    /// A foot bar has a line over it, `split`'s divider as it would be there; with
-    /// `clearsCorners` its ends keep clear of the window's rounded corners where they
-    /// meet them (the status bar's, `CornerBar`).
+    /// A foot bar has a line over it, `split`'s divider as it would be there, and its
+    /// content under the line; with `clearsCorners` its ends keep clear of the
+    /// window's rounded corners where they meet them (the status bar's, `CornerBar`).
     private func accessory(_ content: some View, hidden: Bool = false, footOf split: NSSplitView? = nil,
                            clearsCorners: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -216,7 +216,7 @@ final class WorkspaceController: DetentSplitViewController {
                 hairline.heightAnchor.constraint(equalToConstant: split.dividerThickness),
                 hairline.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
                 hairline.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-                host.topAnchor.constraint(equalTo: bar.topAnchor),
+                host.topAnchor.constraint(equalTo: hairline.bottomAnchor),
                 host.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
                 leading, trailing,
             ])
@@ -260,7 +260,7 @@ final class WorkspaceController: DetentSplitViewController {
             },
             track({ project.showLogs }) { [weak self] shown in
                 guard let self else { return }
-                setCollapsed(panelItem, !shown)
+                setPanelShown(shown)
             },
             track({ OutlineState(shown: project.searchQuery.isEmpty && project.isLaTeX,
                                    collapsed: app.outlineCollapsed) }) { [weak self] state in
@@ -355,6 +355,21 @@ final class WorkspaceController: DetentSplitViewController {
         setCollapsed(pdfItem, false) { [weak self] in
             self?.pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
             done?()
+        }
+    }
+
+    /// Show Build Panel brings it back at its kept height. Left to AppKit, it came
+    /// back a status bar's height shorter each time (27.2), so it has that height
+    /// as its frame and its minimum until it's back, as the PDF has its width.
+    private func setPanelShown(_ shown: Bool) {
+        guard shown, panelItem.isCollapsed else { return setCollapsed(panelItem, !shown) }
+        let split = area.splitView
+        let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
+        let height = min(PaneSize.panel.value ?? split.bounds.height * ColumnMetrics.panelShare, room)
+        panelItem.viewController.view.frame.size.height = height
+        panelItem.minimumThickness = max(height, ColumnMetrics.panelMinimum)
+        setCollapsed(panelItem, false) { [weak self] in
+            self?.panelItem.minimumThickness = ColumnMetrics.panelMinimum
         }
     }
 
@@ -635,8 +650,9 @@ enum ColumnMetrics {
     /// between. A narrowing window folds the sidebar first (AppKit's way with
     /// sidebars), so two windows tile side by side on the smallest Mac display.
     static let contentMinimumWidth = sourceMinimum + divider + pdfMinimum
-    /// And at its shortest: the columns over the build panel, then the status bar.
-    static let contentMinimumHeight = columnsMinimum + divider + panelMinimum + BarMetrics.secondaryBarHeight
+    /// And at its shortest: the columns over the build panel, then the status bar
+    /// under its line.
+    static let contentMinimumHeight = columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.
