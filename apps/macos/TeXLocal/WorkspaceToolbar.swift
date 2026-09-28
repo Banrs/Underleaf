@@ -24,12 +24,13 @@ extension NSToolbarItem.Identifier {
 /// The project window's toolbar, AppKit's so each column's tools sit over it:
 /// the sidebar toggle over the sidebar; back, the title and the source's tools over
 /// the source; the PDF's and the build's over the PDF, from the source/PDF divider,
-/// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`); the
-/// inspector toggle over the inspector, or at the end while it's shut. A hidden
-/// PDF's tools move over the source by themselves. Short of room, zoom goes to the
+/// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`); the PDF
+/// toggle and the system's inspector toggle over the inspector, or at the end while
+/// it's shut, so the columns' toggles keep to the window's edges. A hidden PDF's
+/// tools move over the source by themselves. Short of room, zoom goes to the
 /// overflow menu first (the widest: with Share at the same priority, AppKit would
-/// hide both where Share still fits), Compile and the PDF toggle last (HIG,
-/// Toolbars: few, frequent, grouped by task); Customize Toolbar adds the rest.
+/// hide both where Share still fits), Compile and the toggles last (HIG, Toolbars:
+/// few, frequent, grouped by task); Customize Toolbar adds the rest.
 ///
 /// Each action is its own item: side by side, the system puts buttons on one glass
 /// capsule with no line between (the UI kit's button group: Bold and Italic, 73 pt).
@@ -67,8 +68,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .bold, .italic, .insert,
-         .pdfSeparator, .zoom, .share, .flexibleSpace, .compile, .togglePDF,
-         .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
+         .pdfSeparator, .zoom, .share, .flexibleSpace, .compile,
+         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
     }
 
     /// Customize Toolbar's items, by task; the window's own aren't offered.

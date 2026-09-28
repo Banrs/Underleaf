@@ -15,14 +15,14 @@ import SwiftUI
 /// The models say what shows: a change they make (View › Hide PDF, a find, a failed
 /// build) collapses or shows an item with AppKit's own animation, and the sidebar or
 /// the inspector dragged or toggled shut goes back to them.
-final class WorkspaceController: NSSplitViewController {
+final class WorkspaceController: DetentSplitViewController {
     let app: AppModel
     let project: ProjectModel
     let pdf = PDFController()
     private(set) var toolbar: WorkspaceToolbar!
 
     /// Source | PDF: the toolbar's second section follows its divider.
-    let columns = NSSplitViewController()
+    let columns = DetentSplitViewController()
     /// The columns over the build panel.
     let area = NSSplitViewController()
     /// The files over the File Outline.
@@ -57,6 +57,14 @@ final class WorkspaceController: NSSplitViewController {
         buildArea(size: size)
         // Made before the area, which opens in the room the side columns leave.
         addSplitViewItem(inspectorItem)
+        // The sidebar's opening width, and source and PDF at half each.
+        detent = { [unowned self] divider in
+            divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil
+        }
+        columns.detent = { [unowned columns] _ in
+            let split = columns.splitView
+            return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
+        }
         toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
         watch()
     }
@@ -103,12 +111,13 @@ final class WorkspaceController: NSSplitViewController {
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? sidebar.view.frame.width : 0
         let inspectorWidth = inspectorItem.isCollapsed ? 0 : inspectorItem.viewController.view.frame.width
-        let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.sourceMinimum + ColumnMetrics.pdfMinimum)
-        let share = (room * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
-        let pdfWidth = min(max(share, ColumnMetrics.pdfMinimum), room - ColumnMetrics.sourceMinimum)
+        let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimumWidth)
+        let panes = room - ColumnMetrics.divider
+        let share = (panes * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
+        let pdfWidth = min(max(share, ColumnMetrics.pdfMinimum), panes - ColumnMetrics.sourceMinimum)
         let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
 
-        sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: room - pdfWidth))
+        sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
         sourceFind = accessory(SourceFindBar(project: project, field: sourceFindField), hidden: !project.findShown)
         sourceItem.addTopAlignedAccessoryViewController(sourceFind)
@@ -461,6 +470,29 @@ final class WorkspaceController: NSSplitViewController {
     }
 }
 
+/// A split view controller whose dividers can have a detent: a drag that comes
+/// within reach stops there, with the system's alignment haptic as it arrives, so
+/// a pane goes back to its opening size without measuring. AppKit's split views
+/// have none of their own.
+class DetentSplitViewController: NSSplitViewController {
+    /// A divider's detent, if it has one now, in the split view's coordinates.
+    var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
+
+    /// NSSplitViewController doesn't answer this delegate method itself, so
+    /// there's no super to call.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                            ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard splitView === self.splitView, let detent = detent(dividerIndex),
+              abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
+        // Once, as the divider arrives: not on each step of a drag held there.
+        let pane = splitView.arrangedSubviews[dividerIndex].frame
+        if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return detent
+    }
+}
+
 /// A split view's thin divider, drawn along a bar's top: the same colour and
 /// thickness as the dividers it continues.
 private final class Hairline: NSView {
@@ -492,12 +524,16 @@ enum ColumnMetrics {
     static let sidebarWidth: ClosedRange<CGFloat> = 200...400
     /// AppKit's inspector width (NSSplitViewItem.h), so the side columns open alike.
     static let sidebarIdeal: CGFloat = 270
-    /// About 40 columns of the editor's default font.
+    /// About 40 columns of the editor's default font, and a page still legible
+    /// fitted to the width. Source and PDF share it, so at their narrowest they
+    /// split the room evenly, as they open.
     static let sourceMinimum: CGFloat = 320
-    /// A page still legible, fitted to the width.
-    static let pdfMinimum: CGFloat = 280
+    static let pdfMinimum: CGFloat = sourceMinimum
     /// The PDF's share of the room past the side columns, until one is dragged.
     static let pdfShare: CGFloat = 0.5
+    /// How near a dragged divider comes to its detent before it stops there:
+    /// enough to catch a drag aimed at it, little enough to drag straight past.
+    static let detentReach: CGFloat = 8
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
     /// The build panel: a header and a few issues; a quarter of the window at first.

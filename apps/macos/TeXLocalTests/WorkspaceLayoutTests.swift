@@ -115,6 +115,27 @@ final class WorkspaceLayoutTests {
         try await waitUntil { isClose(PaneSize.pdfShare.value ?? 0, share, within: 0.01) }
     }
 
+    /// A divider dragged near its detent stops there: the sidebar at its opening
+    /// width, source and PDF at half each. Farther off, it goes where it's dragged.
+    @Test func dividersStopAtTheirDetents() async throws {
+        let workspace = open()
+        try await waitUntil { self.width(workspace.pdfItem) > 0 }
+        for (offset, expected) in [(5.0, ColumnMetrics.sidebarIdeal), (-7, ColumnMetrics.sidebarIdeal),
+                                   (30, ColumnMetrics.sidebarIdeal + 30)] {
+            workspace.splitView.setPosition(ColumnMetrics.sidebarIdeal + offset, ofDividerAt: 0)
+            workspace.view.layoutSubtreeIfNeeded()
+            #expect(isClose(width(workspace.sidebarItem), expected), "\(offset)")
+        }
+        let split = workspace.columns.splitView
+        let half = (split.bounds.width - split.dividerThickness) / 2
+        split.setPosition(half + 6, ofDividerAt: 0)
+        split.layoutSubtreeIfNeeded()
+        #expect(abs(width(workspace.sourceItem) - width(workspace.pdfItem)) <= 1)
+        split.setPosition(half + 40, ofDividerAt: 0)
+        split.layoutSubtreeIfNeeded()
+        #expect(isClose(width(workspace.sourceItem) - width(workspace.pdfItem), 80, within: 1.5))
+    }
+
     /// No pane's content raises the window's minimum: it goes down to the app's own,
     /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
     @Test func theWindowReachesItsMinimum() {
