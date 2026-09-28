@@ -113,8 +113,7 @@ final class WorkspaceController: DetentSplitViewController {
         let inspectorWidth = inspectorItem.isCollapsed ? 0 : inspectorItem.viewController.view.frame.width
         let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimumWidth)
         let panes = room - ColumnMetrics.divider
-        let share = (panes * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
-        let pdfWidth = min(max(share, ColumnMetrics.pdfMinimum), panes - ColumnMetrics.sourceMinimum)
+        let pdfWidth = keptPDFWidth(in: panes)
         let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
@@ -154,6 +153,13 @@ final class WorkspaceController: DetentSplitViewController {
         areaItem.addBottomAlignedAccessoryViewController(accessory(StatusBar(project: project, pdf: pdf),
                                                                    footOf: area.splitView, clearsCorners: true))
         addSplitViewItem(areaItem)
+    }
+
+    /// The PDF's kept share of `panes` (source and PDF, less the divider), leaving
+    /// both their minimums.
+    private func keptPDFWidth(in panes: CGFloat) -> CGFloat {
+        let share = (panes * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
+        return min(max(share, ColumnMetrics.pdfMinimum), panes - ColumnMetrics.sourceMinimum)
     }
 
     /// The project's settings and facts, at AppKit's fixed inspector width: a column
@@ -248,7 +254,7 @@ final class WorkspaceController: DetentSplitViewController {
             },
             track({ project.showPDF }) { [weak self] shown in
                 guard let self else { return }
-                setCollapsed(pdfItem, !shown)
+                setPDFShown(shown)
             },
             track({ project.showLogs }) { [weak self] shown in
                 guard let self else { return }
@@ -333,6 +339,16 @@ final class WorkspaceController: DetentSplitViewController {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated { self?.animating -= 1 }
         }
+    }
+
+    /// Show PDF brings it back at its kept share, as it opens with the project:
+    /// macOS 27.0 uncollapses a pane to its minimum rather than the frame it had.
+    private func setPDFShown(_ shown: Bool, done: (@MainActor () -> Void)? = nil) {
+        if shown, pdfItem.isCollapsed {
+            let split = columns.splitView
+            pdfItem.viewController.view.frame.size.width = keptPDFWidth(in: split.bounds.width - split.dividerThickness)
+        }
+        setCollapsed(pdfItem, !shown, done: done)
     }
 
     private var animates: Bool {
@@ -431,7 +447,7 @@ final class WorkspaceController: DetentSplitViewController {
         guard let action = app.pdfRequest?.action else { return }
         app.pdfRequest = nil
         guard action.showsPDF else { return perform(action) }
-        setCollapsed(pdfItem, false) { [weak self] in
+        setPDFShown(true) { [weak self] in
             guard let self, project.pdfVersion > 0 else { return }
             switch action {
             case .find, .share: perform(action)

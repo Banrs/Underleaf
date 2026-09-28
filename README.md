@@ -9,7 +9,7 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 
 One Rust core, several clients:
 
-- **macOS app** — SwiftUI, in `apps/macos`.
+- **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`.
 - **Windows app** — WinUI 3 in C#, in `apps/windows`.
 - **Browser version** — the `web/` UI served by `crates/texlocal-server` on
   `127.0.0.1` only; never exposed to the network.
@@ -80,7 +80,7 @@ crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZI
                          export, and the JSON command service every host shares.
 crates/texlocal-ffi/     C ABI the native apps link (header in include/).
 crates/texlocal-server/  The browser version's local HTTP host.
-apps/macos/              SwiftUI app.
+apps/macos/              AppKit and SwiftUI app.
 apps/windows/            WinUI 3 app.
 src-tauri/               Tauri desktop shell (being retired).
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
@@ -95,12 +95,13 @@ scripts/                 Version check
 
 ```sh
 npm run build                 # bundle the frontend
-npm test                      # frontend tests (node --test)
+npm test                      # frontend and protocol tests (node --test)
 cargo test --workspace        # Rust tests
 
-# macOS app (Xcode 26; the build runs cargo and npm itself)
+# macOS app (Xcode 27; the build runs cargo and npm itself)
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
 
 # Windows app (.NET 10), after npm run build and cargo build -p texlocal-ffi
 dotnet build apps/windows/TeXLocal/TeXLocal.csproj -p:Platform=x64
