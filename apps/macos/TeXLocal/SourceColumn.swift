@@ -42,7 +42,16 @@ struct SourceColumn: View {
                     .background(.background)
             }
         }
-        .columnSurface(.textBackgroundColor)
+        // The source stops at the toolbar, its colour running on under it in a
+        // scroll view, the one kind AppKit draws and joins a column's edge effect
+        // from. A web view under it draws WebKit's own, which never joins, and
+        // CodeMirror's text, scrolling inside the page, can't pass under anyway.
+        .background {
+            ScrollView {}
+                .background(Color(nsColor: .textBackgroundColor))
+                .accessibilityHidden(true)
+                .ignoresSafeArea(.container, edges: .top)
+        }
         .task(id: appearance) { await project.editor.setAppearance(appearance) }
         .workspaceModals(project)
         .windowModals()
