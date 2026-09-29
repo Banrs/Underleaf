@@ -89,16 +89,18 @@ struct FilesList: View {
                     row(node).tag(node.path)
                 }
             } header: {
-                // The project's top level, marked while a drop would go there.
-                Text("Files").headerDropHighlight(dropFolder == "")
+                // The project's top level, marked while a drop would go there, as a
+                // row takes a drop into its folder. The list's own drop never sees
+                // its empty space. Search results aren't the tree, so they take none.
+                Text("Files")
+                    .headerDropHighlight(dropFolder == "")
+                    .contentShape(.rect)
+                    .fileDrop(moves: { project.projectPath($0) != nil }, targeted: { listTargeted = $0 }) { urls in
+                        Task { await project.dropFiles(urls, into: "") }
+                    }
             }
         }
         .listStyle(.sidebar)
-        // Into the top level; a row takes a drop into its folder. Search
-        // results aren't the tree, so they take none.
-        .fileDrop(targeted: { listTargeted = $0 }) { urls in
-            Task { await project.importFiles(urls) }
-        }
         // The clicked row's menu, which leaves the selection (and the open file) as
         // it is; on the list's empty space, the list's own.
         .contextMenu(forSelectionType: String.self) { paths in
@@ -200,12 +202,13 @@ struct FilesList: View {
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         // Into the folder dropped on, or the dropped-on file's folder.
-        .fileDrop(targeted: { over in
+        .fileDrop(moves: { project.projectPath($0) != nil }, targeted: { over in
             if over { rowTargeted = node } else if rowTargeted?.path == node.path { rowTargeted = nil }
         }) { urls in
             let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
-            Task { await project.importFiles(urls, into: folder) }
+            Task { await project.dropFiles(urls, into: folder) }
         }
+        .draggable(file: project.url(node.path))
     }
 
     private func commitRename(_ node: TreeNode) {
@@ -303,31 +306,42 @@ private extension View {
 }
 
 extension View {
-    /// Takes dropped files, copied in; anything else, or a file `accepts`
-    /// turns down, is refused while dragged. `targeted`: a taken drag is over it.
-    func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, targeted: @escaping (Bool) -> Void,
-                  action: @escaping ([URL]) -> Void) -> some View {
+    /// Takes dropped files, copied in or, those `moves` names, moved (as Finder
+    /// does within a volume); anything else, or a file `accepts` turns down, is
+    /// refused while dragged. `targeted`: a taken drag is over it.
+    func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, moves: @escaping (URL) -> Bool = { _ in false },
+                  targeted: @escaping (Bool) -> Void, action: @escaping ([URL]) -> Void) -> some View {
         dropDestination(for: URL.self) { urls, _ in
             targeted(false)
             let files = urls.filter { $0.isFileURL && accepts($0) }
             if !files.isEmpty { action(files) }
         }
-        .dropConfiguration { _ in DropConfiguration(operation: draggedFiles(accepts) ? .copy : .forbidden) }
+        .dropConfiguration { _ in DropConfiguration(operation: dropOperation(accepts, moves)) }
         .onDropSessionUpdated { session in
             switch session.phase {
-            case .entering, .active: targeted(draggedFiles(accepts))
+            case .entering, .active: targeted(dropOperation(accepts, moves) != .forbidden)
             default: targeted(false)
             }
         }
     }
+
+    /// Dragged out as the file itself: other apps copy it, the tree moves it.
+    @ViewBuilder
+    func draggable(file url: URL?) -> some View {
+        if let url {
+            draggable(url).dragConfiguration(DragConfiguration(operationsWithinApp: .init(allowMove: true)))
+        } else {
+            self
+        }
+    }
 }
 
-/// Whether a drag holds a file `accepts` takes. AppKit's drag pasteboard: a
-/// drop session names none of its items until they're dropped.
-private func draggedFiles(_ accepts: (URL) -> Bool) -> Bool {
-    let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
-                                                     options: [.urlReadingFileURLsOnly: true]) as? [URL]
-    return urls?.contains(where: accepts) ?? false
+/// What a drop does with the dragged files `accepts` takes. AppKit's drag
+/// pasteboard: a drop session names none of its items until they're dropped.
+private func dropOperation(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool) -> DropOperation {
+    let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
+                                                      options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
+    return urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy
 }
 
 /// The open document's sections, under `OutlineHeader`, which folds them away.

@@ -267,10 +267,20 @@ final class ProjectModel {
         if let line, editsText, generation == openGeneration, !closed { await editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
+    /// A file of the project on disk, to drag out; nil until its folder is watched.
+    func url(_ path: String) -> URL? {
+        folderWatcher.map { URL(filePath: $0.folder).appending(path: path) }
+    }
+
+    /// A dragged file's path in the project; nil for one from elsewhere.
+    func projectPath(_ url: URL) -> String? {
+        folderWatcher?.relativePath(FolderWatcher.realPath(url))
+    }
+
     /// A file dropped on the source: the project's own opens in the editor, and a
     /// project from elsewhere opens as it would from the Dock.
     private func dropped(_ url: URL) -> (() -> Void)? {
-        if let path = folderWatcher?.relativePath(FolderWatcher.realPath(url)) {
+        if let path = projectPath(url) {
             guard tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) else { return nil }
             return { [weak self] in Task { await self?.open(path) } }
         }
@@ -747,6 +757,21 @@ final class ProjectModel {
 
     /// Taken names are asked about first (`importClash`), then copied again
     /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
+    /// Files dropped on the tree: the project's own move into `dir`, as in Finder,
+    /// and files from elsewhere are copied in.
+    func dropFiles(_ urls: [URL], into dir: String) async {
+        var outside: [URL] = []
+        for url in urls {
+            guard let path = projectPath(url) else { outside.append(url); continue }
+            // Not into the folder it's in, nor a folder into itself.
+            let folder = (path as NSString).deletingLastPathComponent
+            guard folder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
+            let name = (path as NSString).lastPathComponent
+            await renameEntry(path, to: dir.isEmpty ? name : "\(dir)/\(name)")
+        }
+        if !outside.isEmpty { await importFiles(outside, into: dir) }
+    }
+
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
         var args: [String: Any] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
         args["conflict"] = conflict

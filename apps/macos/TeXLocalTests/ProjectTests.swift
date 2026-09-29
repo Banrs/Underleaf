@@ -243,4 +243,29 @@ final class ProjectFlowTests {
         #expect(drop(files.temporaryDirectory.appending(path: "figure.png")) == nil)
         await app.close()
     }
+
+    /// Dropped on the tree, the project's own files move, as in Finder, but a
+    /// folder not into itself; a file from elsewhere is copied in.
+    @Test(.timeLimit(.minutes(1)))
+    func treeDropsMoveTheProjectsFiles() async throws {
+        let (project, folder) = try await opened()
+        try files.createDirectory(at: folder.appending(path: "parts"), withIntermediateDirectories: false)
+        try "notes".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
+        let url = { (path: String) in try #require(project.url(path)) }
+
+        await project.dropFiles([try url("notes.tex")], into: "parts")
+        #expect(exists(folder.appending(path: "parts/notes.tex")) && !exists(folder.appending(path: "notes.tex")))
+        await project.dropFiles([try url("parts")], into: "parts")
+        #expect(exists(folder.appending(path: "parts/notes.tex")))
+        await project.dropFiles([try url("parts/notes.tex")], into: "")
+        #expect(exists(folder.appending(path: "notes.tex")) && !exists(folder.appending(path: "parts/notes.tex")))
+
+        let outside = files.temporaryDirectory.appending(path: "outside-\(UUID().uuidString.prefix(8)).tex")
+        try "x".write(to: outside, atomically: false, encoding: .utf8)
+        defer { try? files.removeItem(at: outside) }
+        await project.dropFiles([outside], into: "parts")
+        #expect(exists(folder.appending(path: "parts/\(outside.lastPathComponent)")) && exists(outside))
+        await app.close()
+    }
 }

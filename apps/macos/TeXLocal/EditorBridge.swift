@@ -17,7 +17,9 @@ final class EditorWebView: WKWebView {
     /// Nil for a drag without files, which is WebKit's.
     private func fileOperation(_ info: any NSDraggingInfo) -> NSDragOperation? {
         let files = files(info)
-        return files.isEmpty ? nil : files.contains { fileDrop($0) != nil } ? .generic : []
+        guard !files.isEmpty else { return nil }
+        guard files.contains(where: { fileDrop($0) != nil }) else { return [] }
+        return info.draggingSourceOperationMask.contains(.generic) ? .generic : .copy
     }
 
     override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation {
