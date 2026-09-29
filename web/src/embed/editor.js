@@ -168,6 +168,12 @@ function reportHistory(state) {
 }
 const hostHistory = EditorView.updateListener.of((u) => reportHistory(u.state));
 
+// The Mac's text runs on under its toolbar and find bar, where the host draws
+// the system's edge effect over it: the first line starts below them
+// (editor.html), and a line scrolled to stays below them.
+let topInset = 0;
+const hostInset = EditorView.scrollMargins.of(() => ({ top: topInset }));
+
 // A new editor (a file opened) takes the host's search as it stands. The
 // caller keeps the stand-in quiet meanwhile.
 function attachHostFind(view) {
@@ -284,7 +290,7 @@ window.texlocal = {
     });
     editor.setScrollTop(scrollTop);
     if ('host' in document.documentElement.dataset) {
-      currentView()?.dispatch({ effects: StateEffect.appendConfig.of([hostAttributes, hostHistory]) });
+      currentView()?.dispatch({ effects: StateEffect.appendConfig.of([hostAttributes, hostHistory, hostInset]) });
       history = '';
       reportHistory(currentView().state);
     }
@@ -322,6 +328,11 @@ window.texlocal = {
   },
   setFind,
   closeFind,
+  setTopInset(px) {
+    topInset = px;
+    document.documentElement.style.setProperty('--host-top-inset', `${px}px`);
+    currentView()?.requestMeasure();
+  },
   // `accent` is the host system's accent colour; without it the page keeps its own.
   // `host` holds the host's own colours for the text's surface, the selection and
   // the editor's chrome (the Mac's), as CSS; the page then matches the native

@@ -172,7 +172,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     private enum PageMethod: String {
         case open, getDocument, currentLine, reveal, command, forget, rename
-        case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance
+        case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance, setTopInset
     }
 
     @discardableResult
@@ -250,6 +250,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// The page's search runs from the native find bar; CodeMirror's panel stays hidden.
     func useHostFind() async {
         await keep(.setHostFind)
+    }
+
+    /// The height of the toolbar and bars the text runs on under.
+    private var topInset: CGFloat?
+    func setTopInset(_ inset: CGFloat) async {
+        guard inset != topInset else { return }
+        topInset = inset
+        await keep(.setTopInset, ["px": inset])
     }
 
     func setFind(_ query: FindQuery) async {

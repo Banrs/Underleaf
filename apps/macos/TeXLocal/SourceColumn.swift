@@ -2,15 +2,22 @@ import SwiftUI
 import WebKit
 
 /// The project's editor page, one web view the bridge keeps; SwiftUI may rebuild
-/// this wrapper, which only hosts it.
+/// this wrapper, which only hosts it. It runs on under the toolbar and the find
+/// bar with no inset of WebKit's own: WebKit's edge effect is Safari's, hard and
+/// never joined with the other columns'; AppKit's is drawn over it instead.
 struct EditorView: NSViewRepresentable {
     let bridge: EditorBridge
     let shown: Bool
+    /// The toolbar's and find bar's height over the text.
+    let topInset: CGFloat
 
     func makeNSView(context: Context) -> WKWebView { bridge.webView }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         if bridge.shown != shown { bridge.shown = shown }
+        // WebKit takes the safe area for its own inset as it lays out.
+        if view.obscuredContentInsets.top != 0 { view.obscuredContentInsets = NSEdgeInsetsZero }
+        Task { await bridge.setTopInset(topInset) }
     }
 }
 
@@ -23,6 +30,7 @@ struct SourceColumn: View {
     @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font: EditorFont = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @State private var topInset: CGFloat = 0
 
     var body: some View {
         // The editor stays mounted under a preview or the placeholder, so its
@@ -31,7 +39,17 @@ struct SourceColumn: View {
         let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
         ZStack {
-            EditorView(bridge: project.editor, shown: editing)
+            EditorView(bridge: project.editor, shown: editing, topInset: topInset)
+                .ignoresSafeArea(.container, edges: .top)
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topInset = $0 }
+                // The system's edge effect over the text: AppKit draws a column's
+                // only from a scroll view, and this empty one lets clicks through.
+                .overlay {
+                    ScrollView {}
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .ignoresSafeArea(.container, edges: .top)
+                }
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
@@ -41,16 +59,6 @@ struct SourceColumn: View {
                 FilePreview(url: url)
                     .background(.background)
             }
-        }
-        // The source stops at the toolbar, its colour running on under it in a
-        // scroll view, the one kind AppKit draws and joins a column's edge effect
-        // from. A web view under it draws WebKit's own, which never joins, and
-        // CodeMirror's text, scrolling inside the page, can't pass under anyway.
-        .background {
-            ScrollView {}
-                .background(Color(nsColor: .textBackgroundColor))
-                .accessibilityHidden(true)
-                .ignoresSafeArea(.container, edges: .top)
         }
         .task(id: appearance) { await project.editor.setAppearance(appearance) }
         .workspaceModals(project)

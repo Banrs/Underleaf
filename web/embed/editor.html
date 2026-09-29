@@ -17,6 +17,8 @@
     /* No scroller while the editor resizes (editor.js): CodeMirror scrolls to keep
        the top line as lines re-wrap, and a native text view shows none. */
     :root[data-host][data-resizing] .cm-scroller { scrollbar-width: none; }
+    /* Room for the Mac's toolbar and find bar over the text's top (setTopInset). */
+    :root[data-host] .cm-content { padding-top: calc(4px + var(--host-top-inset, 0px)); }
     /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
 

@@ -527,7 +527,8 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
     const report = () => {
       frame = 0;
       if (!view.dom.isConnected) return;
-      const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
+      const margin = view.state.facet(EditorView.scrollMargins).reduce((sum, f) => sum + (f(view)?.top ?? 0), 0);
+      const top = view.scrollDOM.getBoundingClientRect().top + margin - view.documentTop;
       onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(top + view.defaultLineHeight / 2).from).number);
     };
     view.scrollDOM.addEventListener('scroll', () => { frame ||= requestAnimationFrame(report); }, { passive: true });
