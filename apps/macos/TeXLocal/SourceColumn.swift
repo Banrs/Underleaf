@@ -126,7 +126,7 @@ struct SourceFindBar: View {
                         .task(id: project.replaceFocus) {
                             if project.replaceFocus > 0 { replaceFocused = true }
                         }
-                    HStack(spacing: BarMetrics.groupSpacing) {
+                    HStack {
                         Button("Replace") { project.replace(all: false) }
                         Button("Replace All") { project.replace(all: true) }
                     }

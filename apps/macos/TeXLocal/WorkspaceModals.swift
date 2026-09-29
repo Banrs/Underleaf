@@ -30,7 +30,8 @@ private struct WorkspaceModals: ViewModifier {
             }
             .background {
                 Color.clear
-                    .fileExporter(isPresented: Binding(presenting: $app.exporting), item: app.exporting,
+                    .fileExporter(isPresented: Binding(get: { app.exporting != nil }, set: { if !$0 { app.exporting = nil } }),
+                                  item: app.exporting,
                                   contentTypes: app.exporting.map { [$0.type] } ?? [],
                                   defaultFilename: app.exporting?.name) { [name = app.exporting?.name ?? ""] result in
                         if case .failure(let error) = result { app.alert = AppAlert("Couldn’t Save “\(name)”", error) }
@@ -43,15 +44,18 @@ private struct WorkspaceModals: ViewModifier {
                 switch prompt {
                 case .newFile: NewEntrySheet(project: project, directory: false)
                 case .newFolder: NewEntrySheet(project: project, directory: true)
-                case .gotoLine: GoToLineSheet(project: project)
-                case .gotoPage: GoToPageSheet(project: project)
+                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.reveal(line: $0) }
+                case .gotoPage:
+                    GoToSheet(noun: "Page", limit: { project.pdfPageCount > 0 ? project.pdfPageCount : nil }) {
+                        app.requestPDF(.goToPage($0))
+                    }
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
                 Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                     .keyboardShortcut(.defaultAction)
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
-                Button("Stop", role: .cancel) {}
+                Button("Cancel", role: .cancel) {}
             } message: { clash in
                 Text(clash.message)
             }
@@ -115,49 +119,25 @@ private struct NewEntrySheet: View {
     }
 }
 
-/// Edit › Go to Line…
-private struct GoToLineSheet: View {
-    let project: ProjectModel
+/// Edit › Go to Line… and Go to Page…; the page also from the status bar.
+/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
+private struct GoToSheet: View {
+    let noun: String
+    let limit: () -> Int?
+    let go: (Int) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
 
-    private var lines: Int? { project.counts?.lines }
-
-    private var line: Int? {
-        guard let line = Int(text.trimmingCharacters(in: .whitespaces)), line >= 1 else { return nil }
-        return lines.map { min(line, $0) } ?? line
+    private var number: Int? {
+        guard let number = Int(text.trimmingCharacters(in: .whitespaces)), number >= 1 else { return nil }
+        return limit().map { min(number, $0) } ?? number
     }
 
     var body: some View {
-        DialogSheet(title: "Go to Line", action: "Go", enabled: line != nil) {
-            if let line { project.reveal(line: line) }
+        DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number != nil) {
+            if let number { go(number) }
         } fields: {
-            TextField("Line", text: $text, prompt: Text(lines.map { "1–\($0)" } ?? "Line number"))
-                .focused($focused)
-        }
-        .defaultFocus($focused, true)
-    }
-}
-
-/// Edit › Go to Page…, and the page in the PDF's status bar.
-private struct GoToPageSheet: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    private var pages: Int? { project.pdfPageCount > 0 ? project.pdfPageCount : nil }
-
-    private var page: Int? {
-        guard let page = Int(text.trimmingCharacters(in: .whitespaces)), page >= 1 else { return nil }
-        return pages.map { min(page, $0) } ?? page
-    }
-
-    var body: some View {
-        DialogSheet(title: "Go to Page", action: "Go", enabled: page != nil) {
-            if let page { app.requestPDF(.goToPage(page)) }
-        } fields: {
-            TextField("Page", text: $text, prompt: Text(pages.map { "1–\($0)" } ?? "Page number"))
+            TextField(noun, text: $text, prompt: Text(limit().map { "1–\($0)" } ?? "\(noun) number"))
                 .focused($focused)
         }
         .defaultFocus($focused, true)

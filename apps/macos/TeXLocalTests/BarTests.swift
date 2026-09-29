@@ -10,12 +10,13 @@ struct PaneBarLayoutTests {
     }
 
     @Test func aBarIsARegularControlAndItsInsets() {
-        #expect(height(PaneBar { Button("Done") {} }) == regularControlHeight() + 2 * BarMetrics.inset)
+        #expect(height(HStack { Button("Done") {} }.padding(.vertical, BarMetrics.inset))
+                == regularControlHeight() + 2 * BarMetrics.inset)
     }
 
     /// A control group draws a little taller than a button, but still inside the bar.
     @Test func everyControlFitsTheBar() {
-        let bar = height(PaneBar { Button("Done") {} })
+        let bar = height(HStack { Button("Done") {} }.padding(.vertical, BarMetrics.inset))
         let steps = ControlGroup {
             Button("Previous Match", systemImage: "chevron.up") {}
             Button("Next Match", systemImage: "chevron.down") {}
@@ -33,7 +34,7 @@ struct FindBarTests {
     /// One row is a pane bar's height; the replace row adds at least a control's.
     @Test func aFindBarIsABarsHeight() {
         let find = FindBar(query: .constant("the"), prompt: "Find in PDF", field: FieldHandle(), matches: FindMatches(),
-                           searched: "the", step: { _ in }, close: {})
+                           searched: "the", step: { _ in }, close: {}) {}
         let replace = FindBar(query: .constant("the"), prompt: "Find", field: FieldHandle(), matches: FindMatches(),
                               searched: "the", step: { _ in }, close: {}) {
             GridRow {

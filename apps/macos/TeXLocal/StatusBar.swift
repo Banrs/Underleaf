@@ -10,43 +10,60 @@ import SwiftUI
 /// and the engine (the inspector).
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
-    let project: ProjectModel
+    @Bindable var project: ProjectModel
     let pdf: PDFController
 
     var body: some View {
-        SecondaryBar(spacing: BarMetrics.itemSpacing) {
+        HStack(spacing: BarMetrics.itemSpacing) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
                 if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
             } label: {
-                buildStatus
+                buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             Spacer(minLength: 0)
-            HStack(spacing: BarMetrics.groupSpacing) {
+            HStack {
                 let counts = project.editsText && app.showWordCount ? project.counts : nil
                 let pages = project.showPDF && project.pdfVersion > 0 && pdf.pageCount > 0
                 if counts != nil || pages {
                     HStack(spacing: BarMetrics.itemSpacing) {
                         if let counts {
                             Text("^[\(counts.words) word](inflect: true)")
-                                .monospacedDigit()
                                 .foregroundStyle(.secondary)
                                 .layoutPriority(-1)
                         }
                         if pages {
                             if let freshness = project.pdfFreshness { freshnessButton(freshness) }
-                            Button("Page \(pdf.page) of \(pdf.pageCount)") { app.perform(.pdfGotoPage, on: project) }
-                                .monospacedDigit()
-                                .help("Go to Page")
+                            Button { app.perform(.pdfGotoPage, on: project) } label: {
+                                Text("Page \(pdf.page) of \(pdf.pageCount)").hitTarget()
+                            }
+                            .help("Go to Page")
                         }
                     }
-                    BarSeparator()
+                    // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
+                    Divider().frame(height: 12)
                 }
-                BuildPanelToggle(project: project)
+                // At the far end, as a panel's toggle sits at its window's edge.
+                Toggle(isOn: $project.showLogs) {
+                    Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled").hitTarget()
+                }
+                .labelStyle(.iconOnly)
+                .toggleStyle(.button)
+                // Laid out by its symbol, as a text button is by its words, so the bar's
+                // inset and spacing reach the symbol: its 20 pt hit area reaches past.
+                .padding(.horizontal, -3)
+                .help(app.title(.viewToggleLogs, on: project))
             }
         }
+        .font(Typography.secondary)
+        .monospacedDigit()
+        .controlSize(.small)
+        .lineLimit(1)
+        .padding(.horizontal, BarMetrics.inset)
+        .frame(height: BarMetrics.secondaryBarHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
@@ -62,6 +79,7 @@ struct StatusBar: View {
         } label: {
             Label(freshness.title, systemImage: freshness.systemImage)
                 .labelStyle(.titleAndIcon)
+                .hitTarget()
         }
         .help(freshness == .edited ? "The preview doesn’t reflect the current source. Compile"
                                    : "The latest build failed; this is the last one that succeeded. Show Issues")
@@ -69,7 +87,7 @@ struct StatusBar: View {
 
     /// Only the symbols carry colour; the words stay secondary.
     private var buildStatus: some View {
-        HStack(spacing: BarMetrics.groupSpacing) {
+        HStack {
             if project.compiling {
                 ProgressView()
                 Text("Compiling…")
@@ -94,8 +112,6 @@ struct StatusBar: View {
                     .accessibilityLabel(Text("^[\(project.warningCount) warning](inflect: true)"))
             }
         }
-        .monospacedDigit()
-        .lineLimit(1)
         .fixedSize()
     }
 
@@ -117,19 +133,8 @@ struct StatusBar: View {
     }
 }
 
-/// Shows and hides the build panel, at the status bar's far end, as a panel's
-/// toggle sits at its window's edge.
-private struct BuildPanelToggle: View {
-    @Environment(AppModel.self) private var app
-    @Bindable var project: ProjectModel
-
-    var body: some View {
-        Toggle(isOn: $project.showLogs) {
-            Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled")
-        }
-        .labelStyle(.iconOnly)
-        .toggleStyle(.button)
-        .symbolEdgeAligned()
-        .help(app.title(.viewToggleLogs, on: project))
-    }
+private extension View {
+    /// The HIG's least control size, 20 × 20 pt: a small borderless button is
+    /// otherwise only as tall as its words.
+    func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
 }

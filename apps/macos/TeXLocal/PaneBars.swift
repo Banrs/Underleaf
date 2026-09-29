@@ -2,28 +2,15 @@ import SwiftUI
 
 /// The in-window bars' metrics, from the macOS 27 UI kit.
 enum BarMetrics {
-    static let controlSize: ControlSize = .regular
     /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
     /// The status bar and the folded File Outline header share this height, so the
-    /// hairlines over them run on as one (Xcode's status bar, measured on 27.2).
+    /// hairlines over them run on as one (Xcode's status bar).
     static let secondaryBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
-    /// UI kit, Unified toolbar: items 8 pt apart.
-    static let groupSpacing: CGFloat = 8
-    /// Where a bar meets the window's rounded corner, its first or last control this
-    /// far from the window's edge: clear of the curve, and no further in (Xcode's
-    /// bottom bars, measured on 27.2).
-    static let cornerInset: CGFloat = 16
-    /// The hairline before a bar's panel toggle, about a symbol's height (Xcode's
-    /// bottom bars, measured on 27.2).
-    static let separatorHeight: CGFloat = 12
-    /// The room an icon-only borderless toggle leaves either side of its symbol,
-    /// past what text buttons leave (measured, 27.2).
-    static let symbolPadding: CGFloat = 1
     /// Design: the least room a find query needs, and the widest a filter grows
     /// (UI kit search fields are drawn 120 pt).
     static let fieldMinWidth: CGFloat = 100
@@ -33,98 +20,40 @@ enum BarMetrics {
 /// The app's text roles, each a system text style, so a role reads the same
 /// everywhere.
 enum Typography {
-    static let sectionTitle: Font = .title3.weight(.semibold)
     static let itemTitle: Font = .headline
     /// Secondary rows and captions: the size `.small` controls use.
     static let secondary: Font = .subheadline
     /// UI kit, form rows: the description 2 pt under the title.
     static let subtitleSpacing: CGFloat = 2
-    static let secondaryControlSize: ControlSize = .small
-    /// SF Mono at the secondary size, for AppKit text (the build log).
-    static var secondaryMono: NSFont {
-        .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
-    }
 }
 
 extension View {
     /// An accessory bar's controls, inset from the pane's edges.
     func paneBarControls() -> some View {
-        controlSize(BarMetrics.controlSize)
-            .lineLimit(1)
+        lineLimit(1)
             .padding(.horizontal, BarMetrics.inset)
             .frame(maxWidth: .infinity)
     }
 }
 
-/// An accessory bar over a view's content (the build panel's header).
-struct PaneBar<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        HStack { content }
-            .padding(.vertical, BarMetrics.inset)
-            .paneBarControls()
-    }
-}
-
-extension View {
-    /// An icon-only borderless toggle laid out by its symbol's edges, so a bar's
-    /// spacing reaches it as it reaches text.
-    func symbolEdgeAligned() -> some View {
-        padding(.horizontal, -BarMetrics.symbolPadding)
-    }
-}
-
-/// The hairline between what a bar reports and its panel toggle, which sets the
-/// window's control apart from the document's figures.
-struct BarSeparator: View {
-    var body: some View {
-        Rectangle()
-            .fill(.separator)
-            .frame(width: 1, height: BarMetrics.separatorHeight)
-            .accessibilityHidden(true)
-    }
-}
-
-/// The window's status along its foot, at the secondary text style and control size.
-/// Its host keeps its ends clear of the window's rounded corners (`CornerBar`, from
-/// AppKit's corner-adapted safe area: SwiftUI's container corner insets are zero in
-/// an AppKit split item's accessory).
-struct SecondaryBar<Content: View>: View {
-    let spacing: CGFloat
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        HStack(spacing: spacing) { content }
-            .font(Typography.secondary)
-            .controlSize(Typography.secondaryControlSize)
-            .lineLimit(1)
-            .padding(.horizontal, BarMetrics.inset)
-            .frame(height: BarMetrics.secondaryBarHeight)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// NSSegmentedControl (.tabs role): SwiftUI's tabs picker moved its thumb on hover (27.2).
-struct TabsControl<Value: Hashable>: NSViewRepresentable {
-    let title: String
-    @Binding var selection: Value
-    let options: [(value: Value, title: String)]
+/// The build panel's tabs: NSSegmentedControl (.tabs role), as SwiftUI's tabs
+/// picker moved its thumb on hover (27.2).
+struct TabsControl: NSViewRepresentable {
+    @Binding var selection: PanelTab
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: options.map(\.title), trackingMode: .selectOne,
+        let control = NSSegmentedControl(labels: PanelTab.allCases.map(\.rawValue), trackingMode: .selectOne,
                                          target: context.coordinator, action: #selector(Coordinator.changed(_:)))
         control.role = .tabs
-        control.setAccessibilityLabel(title)
+        control.setAccessibilityLabel("Build Panel")
         return control
     }
 
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.select = { index in selection = options[index].value }
-        control.controlSize = NSControl.ControlSize(context.environment.controlSize) ?? .regular
-        if let index = options.firstIndex(where: { $0.value == selection }), control.selectedSegment != index {
+        context.coordinator.select = { index in selection = PanelTab.allCases[index] }
+        if let index = PanelTab.allCases.firstIndex(of: selection), control.selectedSegment != index {
             control.selectedSegment = index
         }
     }
@@ -156,11 +85,11 @@ struct FindBar<Replace: View>: View {
     @ViewBuilder var replace: Replace
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: BarMetrics.groupSpacing, verticalSpacing: BarMetrics.inset) {
+        Grid(alignment: .leading, verticalSpacing: BarMetrics.inset) {
             GridRow {
                 SearchField(text: $query, prompt: prompt, handle: field, options: options, step: step, close: close)
                     .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-                HStack(spacing: BarMetrics.groupSpacing) {
+                HStack {
                     ControlGroup {
                         Button("Previous Match", systemImage: "chevron.up") { step(-1) }
                             .help("Previous Match")
@@ -182,14 +111,6 @@ struct FindBar<Replace: View>: View {
         }
         .padding(.vertical, BarMetrics.inset)
         .paneBarControls()
-    }
-}
-
-extension FindBar where Replace == EmptyView {
-    init(query: Binding<String>, prompt: String, field: FieldHandle, matches: FindMatches, searched: String,
-         step: @escaping @MainActor (Int) -> Void, close: @escaping @MainActor () -> Void) {
-        self.init(query: query, prompt: prompt, field: field, matches: matches, searched: searched,
-                  step: step, close: close) { EmptyView() }
     }
 }
 
@@ -283,12 +204,9 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ view: NSSearchField, context: Context) {
         let coordinator = context.coordinator
         coordinator.field = self
-        handle?.field = view
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        view.controlSize = NSControl.ControlSize(context.environment.controlSize) ?? .regular
-        view.font = .systemFont(ofSize: NSFont.systemFontSize(for: view.controlSize))
         if view.stringValue != text { view.stringValue = text }
         // The field copies its menu, so it is made again when a state changes.
         let states = options.map(\.isOn.wrappedValue)
@@ -340,16 +258,11 @@ struct DialogSheet<Fields: View>: View {
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
 
-    /// A grouped form's own inset, so the title lines up with its sections
-    /// (UI kit Dialogs: content 20 pt from every edge).
-    private static var formInset: CGFloat { 20 }
-    private static var width: CGFloat { 390 } // UI kit Dialogs
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: BarMetrics.spacing) {
                 Text(title)
-                    .font(Typography.sectionTitle)
+                    .font(.title3.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
                 if let message {
                     Text(message)
@@ -358,7 +271,9 @@ struct DialogSheet<Fields: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding([.horizontal, .top], Self.formInset)
+            // A grouped form's own inset, so the title lines up with its sections
+            // (UI kit Dialogs: content 20 pt from every edge).
+            .padding([.horizontal, .top], 20)
             // The grouped form's background differs in dark mode, leaving seams.
             Form { fields }
                 .formStyle(.grouped)
@@ -366,7 +281,7 @@ struct DialogSheet<Fields: View>: View {
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: Self.width)
+        .frame(width: 390) // UI kit Dialogs
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
@@ -457,16 +372,6 @@ extension TextSelection {
 #Preview("Find bar") {
     @Previewable @State var query = "theorem"
     FindBar(query: $query, prompt: "Find", field: FieldHandle(), matches: FindMatches(index: 3, total: 12),
-            searched: query, step: { _ in }, close: {})
+            searched: query, step: { _ in }, close: {}) {}
         .frame(width: 480)
-}
-
-#Preview("Secondary bar") {
-    SecondaryBar(spacing: BarMetrics.itemSpacing) {
-        Text("Compiled in 1.2 s")
-        Spacer(minLength: 0)
-        Text("1,204 words").monospacedDigit()
-        Text("Page 2 of 5").monospacedDigit()
-    }
-    .frame(width: 480)
 }

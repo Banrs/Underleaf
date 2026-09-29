@@ -80,13 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-extension Binding where Value == Bool {
-    /// For `fileExporter`, which takes a Bool and an item rather than an item binding.
-    init<Item: Sendable>(presenting item: Binding<Item?>) {
-        self.init(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
-    }
-}
-
 extension View {
     /// Not destructive-styled: the Trash gives the item back (HIG, Alerts).
     func trashConfirmation<Item: Sendable>(_ item: Binding<Item?>, name: @escaping (Item) -> String,

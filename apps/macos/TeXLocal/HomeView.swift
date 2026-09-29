@@ -206,7 +206,7 @@ private struct TemplateCard: View {
 
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: BarMetrics.groupSpacing) {
+            VStack(alignment: .leading, spacing: 8) {
                 page
                 VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
                     Text(template.title).font(Typography.itemTitle)

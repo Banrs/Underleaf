@@ -14,7 +14,9 @@ struct BuildPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneBar { header }
+            HStack { header }
+                .padding(.vertical, BarMetrics.inset)
+                .paneBarControls()
                 .buttonStyle(.accessoryBar)
                 .labelStyle(.iconOnly)
             Group {
@@ -32,8 +34,7 @@ struct BuildPanel: View {
     /// status bar's.
     @ViewBuilder
     private var header: some View {
-        TabsControl(title: "Build Panel", selection: $project.panelTab,
-                    options: PanelTab.allCases.map { ($0, $0.rawValue) })
+        TabsControl(selection: $project.panelTab)
             .fixedSize()
             .layoutPriority(1)
         Spacer(minLength: 0)
@@ -181,7 +182,8 @@ private struct LogTextView: NSViewRepresentable {
         // would put it past them.
         view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
         view.textContainer?.lineFragmentPadding = 0
-        view.font = Typography.secondaryMono
+        view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
+                                          weight: .regular)
         view.textColor = .labelColor
         // A text view has no title of its own for VoiceOver.
         view.setAccessibilityLabel("Build Log")

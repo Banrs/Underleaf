@@ -184,7 +184,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// A bar along a pane's top or foot, as tall as its content, as wide as the pane.
     /// A foot bar has a line over it, `split`'s divider as it would be there, and its
     /// content under the line; with `clearsCorners` its ends keep clear of the
-    /// window's rounded corners where they meet them (the status bar's, `CornerBar`).
+    /// window's rounded corners where they meet them (the status bar's).
     private func accessory(_ content: some View, hidden: Bool = false, footOf split: NSSplitView? = nil,
                            clearsCorners: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -194,7 +194,7 @@ final class WorkspaceController: DetentSplitViewController {
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         if let split {
-            let bar = clearsCorners ? CornerBar() : NSView()
+            let bar = NSView()
             let hairline = Hairline(split: split)
             for view in [host, hairline] {
                 view.translatesAutoresizingMaskIntoConstraints = false
@@ -202,7 +202,17 @@ final class WorkspaceController: DetentSplitViewController {
             }
             let leading = host.leadingAnchor.constraint(equalTo: bar.leadingAnchor)
             let trailing = bar.trailingAnchor.constraint(equalTo: host.trailingAnchor)
-            (bar as? CornerBar)?.ends = (leading, trailing)
+            if clearsCorners {
+                // At a corner, the content (inset 8 pt itself) 16 pt from the window's
+                // edge, where the corner-adapted safe area ends: Xcode's bottom bars.
+                let corners = bar.layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))
+                leading.priority = .defaultHigh
+                trailing.priority = .defaultHigh
+                NSLayoutConstraint.activate([
+                    host.leadingAnchor.constraint(greaterThanOrEqualTo: corners.leadingAnchor, constant: -BarMetrics.inset),
+                    corners.trailingAnchor.constraint(greaterThanOrEqualTo: host.trailingAnchor, constant: -BarMetrics.inset),
+                ])
+            }
             NSLayoutConstraint.activate([
                 hairline.topAnchor.constraint(equalTo: bar.topAnchor),
                 hairline.heightAnchor.constraint(equalToConstant: split.dividerThickness),
@@ -534,30 +544,6 @@ private final class OutlineSplitViewController: NSSplitViewController {
 /// A split view whose dividers draw nothing: something else draws their line.
 private final class QuietSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {}
-}
-
-/// A foot bar whose ends keep clear of the window's rounded corners where they meet
-/// them: its content `BarMetrics.cornerInset` from the window's edge there, and at
-/// the bar's own inset elsewhere. AppKit's corner-adapted safe area says where a
-/// corner is; its own inset there (18 pt) would hold the content further in than
-/// the curve needs.
-private final class CornerBar: NSView {
-    /// The content's leading and trailing constraints, each measured inward.
-    var ends: (leading: NSLayoutConstraint, trailing: NSLayoutConstraint)?
-
-    override func layout() {
-        if let ends {
-            let corners = edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))
-            let rightToLeft = userInterfaceLayoutDirection == .rightToLeft
-            let inset = BarMetrics.cornerInset - BarMetrics.inset
-            for (constraint, corner) in [(ends.leading, rightToLeft ? corners.right : corners.left),
-                                         (ends.trailing, rightToLeft ? corners.left : corners.right)] {
-                let constant = corner > 0 ? inset : 0
-                if constraint.constant != constant { constraint.constant = constant }
-            }
-        }
-        super.layout()
-    }
 }
 
 /// A split view's thin divider, drawn along a bar's top: the same colour and

@@ -9,7 +9,6 @@ struct SidebarSearch: View {
         SearchField(text: $project.searchQuery, prompt: "Search Project", handle: field)
             .padding(.horizontal, BarMetrics.inset)
             .padding(.bottom, BarMetrics.inset)
-            .controlSize(BarMetrics.controlSize)
     }
 }
 

@@ -104,7 +104,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The inspector is the trailing column: `NSSplitViewItem(inspectorWithViewController:)`, AppKit's fixed 270 pt, whose divider takes no drag.
   - The sidebar opens at the same 270 pt and drags from 200 to 400 pt.
   - Bars are split-item accessories: the sidebar's search field, the find bars, the File Outline's header (`OutlineHeader`, at the files' foot folded or not), and the status bar at the foot of source + PDF.
-  - Also here: `DetentSplitViewController` (the dividers' detents), `OutlineSplitViewController` (files over the outline, the header's line taking the divider's drags), `CornerBar` (the status bar's ends), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
+  - Also here: `DetentSplitViewController` (the dividers' detents), `OutlineSplitViewController` (files over the outline, the header's line taking the divider's drags), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
 - `WorkspaceToolbar`: the `NSToolbar`.
   - The sidebar section holds the toggle.
   - The source section holds back, the title, B I and Insert.
@@ -130,7 +130,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - Every item is a `MenuCommand`, which also lists the chords the editor page hands back.
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
   - Insert sits between View and Window. Format keeps Bold, Italic, the section level and Comment.
-- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `SecondaryBar`, `TabsControl`, `DialogSheet`, and the rename pieces.
+- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `TabsControl`, `DialogSheet`, and the rename pieces.
 - `SyncTeXGeometry`.
 - Leaf views have `#Preview`s that need no Rust core.
 
@@ -139,7 +139,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - `NavigationSplitView` can't hide its last column (the PDF), can't run a panel under two of its columns, and has no split-item accessories.
   - SwiftUI's toolbar has no tracking separators, so it can't give each column its own section.
   - A SwiftUI scene's window owns its toolbar, so the window is AppKit's too.
-- **The status bar's ends** (`CornerBar`): where the corner-adapted safe area (`edgeInsets(for: .safeArea(cornerAdaptation: .horizontal))`) reports a window corner, the content sits 16 pt from the window's edge, as Xcode's bottom bars have it; the safe area's own 18 pt would hold it further in. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
+- **The status bar's ends:** constraints to the corner-adapted safe area's layout guide (`layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))`) put the content 16 pt from the window's edge where there's a corner, as Xcode's bottom bars have it, and at the bar's own 8 pt elsewhere. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
 - **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one. Their content sits under their lines, and the header's title is raised the 1.5 pt the list puts it low (`titleDrop`), so both bars' words are centred and level, as in Xcode.
 - **A plain `WKWebView` for the editor.**
@@ -167,7 +167,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 - **Compiling past errors:** builds run with latexmk `-f`, so a PDF is returned even on failure. The per-project `stopOnFirstError` passes `-halt-on-error` instead.
 - **Stopping:** `stop_compile {id}` stops one project's build; `kill_all` is for quit.
-- **Import name clashes** are per file: Replace (moves the old file to the Trash), Keep Both, or Stop.
+- **Import name clashes** are per file: Replace (moves the old file to the Trash), Keep Both, or cancel (the Mac's Cancel, Windows' Stop).
 - **`build` is reserved** at a project's top level: it holds the compiled PDF.
 - **latexmkrc:** a project's own rc runs only with shell escape on (`-norc` otherwise).
 
@@ -310,7 +310,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **A toolbar item's own view** keeps the item's `.prominent` or `.plain` glass, 36 pt high, which wraps the view and passes it no clicks: the view must fill it. Customize Toolbar draws the view without the style, so its copy (`willBeInsertedIntoToolbar` false) is a title item.
 - **Customize Toolbar compresses the default set's views.** The zoom control's palette copy resists compression, or its scale reads "…". The toolbar's own copy must not, or it holds the window 50 pt wider even from the overflow menu.
 - **A segmented control's segment menu** opens on a click only in a control with no action. With one, it opens only on a press and hold, and the click sends the action. Momentary tracking resets `selectedSegment` before `mouseDown` returns, and segment frames aren't public, so the action opens the menu under the click.
-- **Xcode's bottom bars, measured on 27.2:** a corner control's glyph 16.5 pt from the window's edge, and a 1 pt × 12 pt separator 8.5 pt from what's either side of it. A borderless icon-only toggle leaves 1 pt more around its symbol than a text button does around its text (`symbolEdgeAligned`).
+- **Xcode's bottom bars, measured on 27.2:** a corner control's glyph 16.5 pt from the window's edge, and a 1 pt × 12 pt separator 8.5 pt from what's either side of it. A borderless icon-only toggle leaves 1 pt more around its symbol than a text button does around its text (the status bar's toggle takes 1 pt off either side).
 - **Toolbar items at the same visibility priority overflow together**: Share went to `>>` with zoom where it still fitted. Rank the widest lowest.
 - **Closing a toolbar popover logs "Invalid attempt to open a new transaction during CA commit"** on macOS 27.2, from AppKit: a bare SwiftUI app with one toolbar popover logs it too. It is not the app's.
 
