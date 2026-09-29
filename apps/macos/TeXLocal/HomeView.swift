@@ -104,7 +104,7 @@ struct HomeView: View {
             ContentUnavailableView.search(text: query)
         } else {
             ContentUnavailableView(
-                "No Projects Yet", systemImage: "doc.text",
+                "No Projects Yet", systemImage: "text.document",
                 description: Text("Choose a template above to start writing. Your files never leave this Mac.")
             )
         }
@@ -155,7 +155,7 @@ private struct ProjectRow: View {
                     .foregroundStyle(.secondary)
             }
         } icon: {
-            Image(systemName: "doc.text")
+            Image(systemName: "text.document")
                 .font(.title2)
                 .foregroundStyle(.secondary)
         }

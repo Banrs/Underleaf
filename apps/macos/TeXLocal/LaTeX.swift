@@ -38,7 +38,7 @@ let listTemplates = [
 
 /// Cross-references, citations and links; each opens completion in its braces.
 let referenceTemplates = [
-    Template(title: "Reference", body: "\\ref{$0}", symbol: "number", inline: true),
+    Template(title: "Reference", body: "\\ref{$0}", symbol: "number.sign", inline: true),
     Template(title: "Equation Reference", body: "\\eqref{$0}", inline: true),
     Template(title: "Citation", body: "\\cite{$0}", symbol: "text.quote", inline: true),
     Template(title: "Label", body: "\\label{$0}", inline: true),

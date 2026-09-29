@@ -59,7 +59,7 @@ struct PDFPane: View {
     private var emptyState: some View {
         if !project.texAvailable {
             ContentUnavailableView {
-                Label("TeX Isn’t Installed", systemImage: "doc.richtext")
+                Label("TeX Isn’t Installed", systemImage: "richtext.page")
             } description: {
                 Text("Install MacTeX to compile. TeXLocal notices it once it’s there.")
             } actions: {
@@ -78,7 +78,7 @@ struct PDFPane: View {
             }
         } else {
             ContentUnavailableView {
-                Label("No PDF Yet", systemImage: "doc.richtext")
+                Label("No PDF Yet", systemImage: "richtext.page")
             } description: {
                 Text("Compile to preview your document.")
             } actions: {

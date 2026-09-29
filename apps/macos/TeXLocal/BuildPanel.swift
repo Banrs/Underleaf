@@ -94,7 +94,7 @@ struct BuildPanel: View {
                     .joined(separator: "\n")
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
         } else {
-            ContentUnavailableView("No Log", systemImage: "doc.plaintext",
+            ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
         }
     }
@@ -152,7 +152,7 @@ private struct IssueRow: View {
             }
         } icon: {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(item.isError ? .red : .orange)
+                .symbolRenderingMode(.multicolor)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
@@ -188,7 +188,6 @@ private struct LogTextView: NSViewRepresentable {
         view.textContainer?.lineFragmentPadding = 0
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
-        view.textColor = .labelColor
         // A text view has no title of its own for VoiceOver.
         view.setAccessibilityLabel("Build Log")
         return scroll

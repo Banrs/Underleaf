@@ -166,7 +166,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.visibilityPriority = .high
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
-            item = button(id, "PDF", "doc.richtext", #selector(togglePDF))
+            item = button(id, "PDF", "richtext.page", #selector(togglePDF))
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -201,7 +201,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// Inline Math | Symbols: a segmented control whose second segment opens its menu.
     private func mathItem() -> NSToolbarItem {
-        let control = NSSegmentedControl(images: [symbol("x.squareroot", MenuCommand.editMath.title),
+        let control = NSSegmentedControl(images: [symbol("radicand.squareroot", MenuCommand.editMath.title),
                                                   symbol("sum", "Symbols")].compactMap(\.self),
                                          trackingMode: .momentary, target: self, action: #selector(math(_:)))
         control.setToolTip(MenuCommand.editMath.title, forSegment: 0)
@@ -340,6 +340,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.isEnabled = state.isLaTeX
         case .zoom:
             let control = item.view as? NSSegmentedControl
+            // Tabular digits, so Share doesn't move as the scale changes. The toolbar
+            // resets the control's font, so it's set with each label.
+            if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
             control?.setLabel(state.zoomLabel, forSegment: 1)
             control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
             control?.setEnabled(state.hasPDF, forSegment: 1)

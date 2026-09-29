@@ -170,13 +170,13 @@ func isPreviewFile(_ path: String) -> Bool {
 func fileSymbol(_ path: String, directory: Bool = false) -> String {
     if directory { return "folder" }
     switch (path as NSString).pathExtension.lowercased() {
-    case "tex": return "doc.text"
+    case "tex": return "text.document"
     case "bib": return "books.vertical"
     default: break
     }
     return switch FileKind(path) {
     case .image: "photo"
-    case .pdf: "doc.richtext"
-    case .text, .other: "doc"
+    case .pdf: "richtext.page"
+    case .text, .other: "document"
     }
 }

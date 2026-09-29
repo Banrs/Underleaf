@@ -47,7 +47,7 @@ struct StatusBar: View {
                 }
                 // At the far end, as a panel's toggle sits at its window's edge.
                 Toggle(isOn: $project.showLogs) {
-                    Label("Build Panel", systemImage: "rectangle.bottomthird.inset.filled").hitTarget()
+                    Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
                 }
                 .labelStyle(.iconOnly)
                 .toggleStyle(.button)
@@ -98,17 +98,17 @@ struct StatusBar: View {
                     badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
                     // The error count folds into the failure, so its symbol shows once.
-                    badge(failedTitle, "xmark.octagon.fill", .red)
+                    badge(failedTitle, "xmark.octagon.fill")
                 }
             } else {
                 Text(project.noBuildTitle)
             }
             if project.errorCount > 0, project.result?.failed != true {
-                badge("\(project.errorCount)", "xmark.octagon.fill", .red)
+                badge("\(project.errorCount)", "xmark.octagon.fill")
                     .accessibilityLabel(Text("^[\(project.errorCount) error](inflect: true)"))
             }
             if project.warningCount > 0 {
-                badge("\(project.warningCount)", "exclamationmark.triangle.fill", .orange)
+                badge("\(project.warningCount)", "exclamationmark.triangle.fill")
                     .accessibilityLabel(Text("^[\(project.warningCount) warning](inflect: true)"))
             }
         }
@@ -123,11 +123,15 @@ struct StatusBar: View {
         }
     }
 
-    private func badge(_ title: String, _ systemImage: String, _ color: Color) -> some View {
+    /// Errors and warnings in the symbols' own colours; success in green, which
+    /// the multicolour checkmark isn't.
+    private func badge(_ title: String, _ systemImage: String, _ color: Color? = nil) -> some View {
         Label {
             Text(title)
         } icon: {
-            Image(systemName: systemImage).foregroundStyle(color)
+            Image(systemName: systemImage)
+                .symbolRenderingMode(color == nil ? .multicolor : nil)
+                .foregroundStyle(color ?? .primary)
         }
         .labelStyle(.titleAndIcon)
     }

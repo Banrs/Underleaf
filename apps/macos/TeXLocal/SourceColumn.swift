@@ -43,7 +43,7 @@ struct SourceColumn: View {
                 FilePreview(url: url)
                     .background(.background)
             } else if project.openPath == nil {
-                ContentUnavailableView("No File Open", systemImage: "doc.text",
+                ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background)

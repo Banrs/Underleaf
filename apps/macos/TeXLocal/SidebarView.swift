@@ -158,7 +158,7 @@ struct FilesList: View {
     private var searchResults: some View {
         let groups = Dictionary(grouping: project.searchHits ?? [], by: \.file).sorted { $0.key < $1.key }
         ForEach(groups, id: \.key) { file, hits in
-            Section("\(file) — \(hits.count)") {
+            Section {
                 ForEach(hits) { hit in
                     HStack(alignment: .firstTextBaseline) {
                         Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
@@ -173,6 +173,9 @@ struct FilesList: View {
                     // One hit, its line and where on it, as one element.
                     .accessibilityElement(children: .combine)
                 }
+            } header: {
+                // Middle truncation keeps the extension and the count, as Finder keeps a name's end.
+                Text("\(file) — \(hits.count)").truncationMode(.middle)
             }
         }
     }
@@ -188,7 +191,7 @@ struct FilesList: View {
                         rename.cancel()
                     }
                 } else {
-                    Text(node.name)
+                    Text(node.name).truncationMode(.middle)
                 }
                 if isMain {
                     Spacer()

@@ -929,7 +929,7 @@ nonisolated enum PDFFreshness {
 
     var systemImage: String {
         switch self {
-        case .edited: "clock.arrow.circlepath"
+        case .edited: "arrow.clockwise"
         case .lastSuccessful: "exclamationmark.triangle.fill"
         }
     }

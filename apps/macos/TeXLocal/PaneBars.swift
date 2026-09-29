@@ -60,9 +60,9 @@ struct FindBar<Replace: View>: View {
                     .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
                 HStack {
                     ControlGroup {
-                        Button("Previous Match", systemImage: "chevron.up") { step(-1) }
+                        Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
                             .help("Previous Match")
-                        Button("Next Match", systemImage: "chevron.down") { step(1) }
+                        Button("Next Match", systemImage: "chevron.forward") { step(1) }
                             .help("Next Match")
                     }
                     .disabled(matches.total == 0)
@@ -236,7 +236,6 @@ struct DialogSheet<Fields: View>: View {
                 if let message {
                     Text(message)
                         .font(Typography.secondary)
-                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -301,7 +300,6 @@ struct ItemMenuItems: View {
         Button("Show in Finder", action: showInFinder)
         Divider()
         Button("Move to Trash", action: moveToTrash)
-            .keyboardShortcut(.delete)
     }
 }
 
