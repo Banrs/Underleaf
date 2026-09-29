@@ -18,7 +18,13 @@
        data-resizing): CodeMirror scrolls to keep the top line in place as
        lines re-wrap, and WebKit shows its scroller for any scroll, where a
        native text view shows none as its pane resizes. */
-    :root[data-host][data-resizing] .cm-scroller { scrollbar-width: none; }
+    :root[data-host][data-resizing] { scrollbar-width: none; }
+    /* The Mac scrolls the page, not CodeMirror's scroller, so the text passes
+       under the toolbar, where WebKit draws the system's scroll edge effect
+       (the host's obscuredContentInsets); a short file still fills the view. */
+    :root[data-host], :root[data-host] body { height: auto; overflow: visible; }
+    :root[data-host] #editor { height: auto; }
+    :root[data-host] .cm-editor { min-height: 100vh; }
     /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
     /* The host's highlight colour for the selection when it sends one (the

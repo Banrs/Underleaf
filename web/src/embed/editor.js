@@ -272,6 +272,8 @@ window.texlocal = {
     });
     editor.setScrollTop(scrollTop);
     if ('host' in document.documentElement.dataset) {
+      // The page scrolls on the Mac (editor.html), and it outlives the file.
+      document.scrollingElement.scrollTop = scrollTop;
       currentView()?.dispatch({ effects: StateEffect.appendConfig.of(hostAttributes) });
     }
     attachHostFind(currentView());

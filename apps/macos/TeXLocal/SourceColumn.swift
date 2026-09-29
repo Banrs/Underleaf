@@ -2,15 +2,19 @@ import SwiftUI
 import WebKit
 
 /// The project's editor page, one web view the bridge keeps; SwiftUI may rebuild
-/// this wrapper, which only hosts it.
+/// this wrapper, which only hosts it. It runs on under the toolbar and the find
+/// bar (`obscuredTop`), where WebKit draws the system's scroll edge effect over
+/// the page, which scrolls under them (embed/editor.html).
 struct EditorView: NSViewRepresentable {
     let bridge: EditorBridge
     let shown: Bool
+    let obscuredTop: CGFloat
 
     func makeNSView(context: Context) -> WKWebView { bridge.webView }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         if bridge.shown != shown { bridge.shown = shown }
+        if view.obscuredContentInsets.top != obscuredTop { view.obscuredContentInsets.top = obscuredTop }
     }
 }
 
@@ -23,6 +27,7 @@ struct SourceColumn: View {
     @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font: EditorFont = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @State private var obscuredTop: CGFloat = 0
 
     var body: some View {
         // The editor stays mounted under a preview or the placeholder, so its
@@ -31,7 +36,9 @@ struct SourceColumn: View {
         let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
         ZStack {
-            EditorView(bridge: project.editor, shown: editing)
+            EditorView(bridge: project.editor, shown: editing, obscuredTop: obscuredTop)
+                .ignoresSafeArea(.container, edges: .top)
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { obscuredTop = $0 }
             if project.openPath != nil, !project.editsText, let url = project.openURL {
                 FilePreview(url: url)
                     .background(.background)
