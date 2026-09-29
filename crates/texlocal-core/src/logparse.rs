@@ -12,6 +12,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
+use crate::paths::is_absolute_like;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct LogItem {
     #[serde(rename = "type")]
@@ -54,8 +56,7 @@ fn has_error(items: &[LogItem]) -> bool {
 /// A path relative to the project, without its "./"; None for an absolute
 /// one, which is one of TeX's own files.
 fn project_path(path: &str) -> Option<&str> {
-    let absolute = path.starts_with(['/', '\\']) || path.as_bytes().get(1) == Some(&b':');
-    (!absolute).then(|| path.strip_prefix("./").unwrap_or(path))
+    (!is_absolute_like(path)).then(|| path.strip_prefix("./").unwrap_or(path))
 }
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
@@ -287,7 +288,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 #[cfg(test)]
 mod tests {
-    use super::{latexmk_errors, parse_blg, parse_log};
+    use super::{latexmk_errors, parse_blg, parse_log, project_path};
 
     #[test]
     fn an_error_without_its_own_line_names_no_place() {
@@ -519,5 +520,19 @@ mod tests {
         let items = latexmk_errors(output);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].message, "biber main: Could not find main.bcf");
+    }
+
+    #[test]
+    fn tex_distribution_paths_are_not_the_projects() {
+        assert_eq!(project_path("./main.tex"), Some("main.tex"));
+        assert_eq!(project_path("chapters/a.tex"), Some("chapters/a.tex"));
+        for path in [
+            "/usr/local/texlive/a.sty",
+            "C:/texlive/a.sty",
+            "c:\\a.sty",
+            "\\\\server\\a.sty",
+        ] {
+            assert_eq!(project_path(path), None);
+        }
     }
 }

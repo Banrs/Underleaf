@@ -33,7 +33,6 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
           key: ${{ matrix.target }}
       - run: npm ci
       - run: npm test

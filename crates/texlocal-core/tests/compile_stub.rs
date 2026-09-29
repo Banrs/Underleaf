@@ -479,14 +479,6 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     assert_eq!(loc.line, 7);
 }
 
-extern "C" {
-    fn pthread_atfork(
-        prepare: Option<extern "C" fn()>,
-        parent: Option<extern "C" fn()>,
-        child: Option<extern "C" fn()>,
-    ) -> i32;
-}
-
 static FORKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 extern "C" fn forked() {
@@ -497,7 +489,7 @@ extern "C" fn forked() {
 async fn tools_start_by_posix_spawn_never_a_fork() {
     // A forked child of a multithreaded process (the Mac app) can crash
     // before its exec; std forks for a bare name when PATH is set.
-    assert_eq!(unsafe { pthread_atfork(None, Some(forked), None) }, 0);
+    assert_eq!(unsafe { libc::pthread_atfork(None, Some(forked), None) }, 0);
     let before = FORKS.load(std::sync::atomic::Ordering::SeqCst);
     let (_tmp, root, mgr) =
         setup("#!/bin/sh\necho 'Latexmk, John Collins, Version 4.85'\nexit 0\n");

@@ -58,7 +58,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - Pre-build runs `cargo build -p texlocal-ffi`. Post-compile (`scripts/copy-resources.sh`) copies `shortcuts.json`, and JetBrains Mono and KaTeX from `node_modules` into `Resources/Fonts` and `Resources/KaTeX`, so `npm ci` comes first.
   - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
-  - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed. `apps/macos/scripts/add-source.py app|tests Name.swift` registers a new file with both.
+  - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed. `TeXLocal/` and `TeXLocalTests/` are synchronized folders, so a new file in either joins its target from disk (`Info.plist` is excepted); the build phases call `scripts/*.sh`.
 - **Mac tests** are Swift Testing (`TeXLocalTests/`), one file per area:
   - `WorkspaceLayoutTests`: the split, on screen and unseen;
   - `CommandTests`: chords, the menu bar, Find routing;
@@ -179,7 +179,6 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - A startup token goes in an `X-TeXLocal-Token` header on every `/api/` and `/__` request, never in a cookie. The page keeps it in sessionStorage.
 - It refuses foreign Hosts (DNS rebinding) and non-GET requests with a foreign Origin, checking both on the request head before reading the body.
 - Every response carries `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff` and `no-referrer`. Project files are served with a sandbox CSP.
-- `httparse` is pinned to a GitHub tag; it can move to crates.io now.
 
 ## Windows (`apps/windows`)
 

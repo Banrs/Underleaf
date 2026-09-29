@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// bridge.js is browser-safe at module load as long as navigator exists.
-globalThis.navigator ??= { platform: '', userAgent: '' };
+// bridge.js loads outside a browser: it checks for window and navigator first.
 const { runQuitFlush, setQuitInteractionLocked } = await import('../web/src/bridge.js');
 
 test('quit acknowledges success only after the flush resolves', async () => {

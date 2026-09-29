@@ -33,8 +33,6 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
       # The core, the editor logic, and the two hosts built on them without a
       # webview — the native apps' C ABI and the browser server — carry no GUI
       # dependencies on purpose, so they are checked here without installing
@@ -65,16 +63,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
           key: ${{ matrix.target }}
       - run: npm ci
       # Run the JS suite on Windows too: filename aliases and separators are
       # platform semantics, not cross-compilation semantics.
       - run: npm test
-      - run: cargo fmt --all --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} -- -D warnings
       - uses: tauri-apps/tauri-action@v0

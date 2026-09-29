@@ -9,7 +9,6 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use chrono::{Datelike, Timelike};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -140,16 +139,6 @@ fn dated(options: SimpleFileOptions, path: &Path) -> SimpleFileOptions {
     };
     let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();
     // Outside ZIP's 1980–2107, the entry keeps the default.
-    let date = u16::try_from(local.year()).ok().and_then(|year| {
-        zip::DateTime::from_date_and_time(
-            year,
-            local.month() as u8,
-            local.day() as u8,
-            local.hour() as u8,
-            local.minute() as u8,
-            local.second() as u8,
-        )
-        .ok()
-    });
+    let date = zip::DateTime::try_from(local).ok();
     date.map_or(options, |date| options.last_modified_time(date))
 }

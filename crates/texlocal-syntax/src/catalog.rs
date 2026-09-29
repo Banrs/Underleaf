@@ -2,7 +2,7 @@
 //! the web's latex-data.js reads too).
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use serde::Deserialize;
 
@@ -28,12 +28,9 @@ pub struct Catalog {
     pub commands: Vec<(String, String, String)>,
 }
 
-pub fn get() -> &'static Catalog {
-    static CATALOG: OnceLock<Catalog> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
-    })
-}
+pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("catalog.json")).expect("catalog.json is valid")
+});
 
 /// A list as a regex alternation: `a|b|c`.
 pub fn alternation(names: &[String]) -> String {

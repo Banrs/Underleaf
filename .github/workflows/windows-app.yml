@@ -37,7 +37,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
           key: windows-app
       # texlocal_ffi.dll, from target\debug for the Debug build below.
       - run: cargo build -p texlocal-ffi
@@ -63,7 +62,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
           key: windows-installer
       - run: cargo build --release -p texlocal-ffi
       - uses: actions/setup-dotnet@v4

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
 const { foldCount, headingAt, HEADING_LEVELS, paletteMove, SYMBOL_GROUPS } = await import('../web/src/sourcebar.js');
 const { sectionIndexAt } = await import('../web/src/state.js');

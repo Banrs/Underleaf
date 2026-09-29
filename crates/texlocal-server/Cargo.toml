@@ -7,9 +7,7 @@ license.workspace = true
 
 [dependencies]
 getrandom = "0.3"
-# Pinned to the release tag from GitHub: the crates.io download host is
-# unreachable from some networks, and httparse has no dependencies of its own.
-httparse = { git = "https://github.com/seanmonstar/httparse", tag = "v1.10.1" }
+httparse = "1"
 percent-encoding = "2"
 serde_json = "1"
 tempfile = "3"

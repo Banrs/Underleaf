@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 const { collectDroppedFiles, clashQuestion } = await import('../web/src/sidebar.js');
 
 // A dropped item as webkitGetAsEntry gives it.

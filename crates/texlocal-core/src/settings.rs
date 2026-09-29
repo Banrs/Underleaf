@@ -126,9 +126,8 @@ pub fn compiled_pdf_path(root: &Path) -> Result<PathBuf, CoreError> {
 
 /// The main file's name without its extension ("chapters/paper.tex" → "paper").
 pub fn main_base_name(rel_slash: &str) -> String {
-    let name = rel_slash.rsplit('/').next().unwrap_or(rel_slash);
-    Path::new(name)
+    Path::new(rel_slash)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| name.to_string())
+        .unwrap_or_else(|| rel_slash.to_string())
 }
