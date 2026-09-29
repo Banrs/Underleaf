@@ -332,6 +332,35 @@ struct ItemMenuItems: View {
         Button("Show in Finder", action: showInFinder)
         Divider()
         Button("Move to Trash", action: moveToTrash)
+            .keyboardShortcut(.delete)
+    }
+}
+
+/// What File › Move to Trash (⌘⌫) moves: the chosen item of the list with the
+/// keyboard, and none while its name is edited, where ⌘⌫ edits the name.
+enum TrashItem: Hashable {
+    case project(ProjectInfo.ID)
+    case file(String)
+}
+
+extension View {
+    /// Through `AppModel`: a focused value doesn't reach the menus from an
+    /// AppKit window's hosting views.
+    func offersToTrash(_ item: TrashItem?) -> some View {
+        modifier(TrashOffer(item: item))
+    }
+}
+
+private struct TrashOffer: ViewModifier {
+    @Environment(AppModel.self) private var app
+    let item: TrashItem?
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .onChange(of: focused ? item : nil, initial: true) { _, item in app.trashItem = item }
+            .onDisappear { app.trashItem = nil }
     }
 }
 

@@ -62,7 +62,6 @@ struct FilesList: View {
     @Bindable var project: ProjectModel
     @State private var selection: String?
     @State private var hit: SearchHit.ID?
-    @State private var deleting: String?
     @State private var rename = InPlaceRename<String>()
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
@@ -73,12 +72,7 @@ struct FilesList: View {
     var body: some View {
         // Two lists: one list diffed from the tree to grouped hits and back
         // kept stale rows.
-        Group {
-            if project.isSearching { results } else { files }
-        }
-        .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
-            Task { await project.deleteEntry(path) }
-        }
+        if project.isSearching { results } else { files }
     }
 
     /// The folder a drop would go into ("" the project's top level): the
@@ -115,7 +109,7 @@ struct FilesList: View {
                 }
                 ItemMenuItems(rename: { rename.begin(node.path, name: node.name) },
                               showInFinder: { project.showInFinder(node.path) },
-                              moveToTrash: { deleting = node.path })
+                              moveToTrash: { Task { await project.deleteEntry(node.path) } })
             } else {
                 Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
                 Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
@@ -134,7 +128,7 @@ struct FilesList: View {
             }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
-        .onDeleteCommand { if let selection { deleting = selection } }
+        .offersToTrash(rename.id == nil ? selection.map(TrashItem.file) : nil)
     }
 
     /// Choosing a hit opens it; double-clicking or Return opens the chosen one again.

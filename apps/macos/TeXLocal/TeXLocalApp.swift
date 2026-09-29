@@ -81,19 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension View {
-    /// Not destructive-styled: the Trash gives the item back (HIG, Alerts).
-    func trashConfirmation<Item: Sendable>(_ item: Binding<Item?>, name: @escaping (Item) -> String,
-                                           perform: @escaping (Item) -> Void) -> some View {
-        confirmationDialog("Move “\(item.wrappedValue.map(name) ?? "")” to the Trash?", item: item,
-                           titleVisibility: .visible) { value in
-            Button("Move to Trash") { perform(value) }
-        } message: { _ in
-            Text("You can restore it from the Trash.")
-        }
-    }
-}
-
-extension View {
     /// The window's own sheets, alerts and dialogs, whichever screen shows:
     /// File › Open…, New Project…, an item handed to the app, and `AppModel.alert`.
     func windowModals() -> some View {

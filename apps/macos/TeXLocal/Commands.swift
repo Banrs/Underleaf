@@ -352,6 +352,11 @@ struct AppCommands: Commands {
             item(.fileNew)
             item(.fileNewFolder)
             item(.fileUpload)
+            Divider()
+            // Not a MenuCommand: the web has no command id for it.
+            Button("Move to Trash") { if let item = app.trashItem { app.moveToTrash(item) } }
+                .keyboardShortcut(.delete)
+                .disabled(!app.mainWindowIsKey || app.trashItem == nil)
         }
         // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {

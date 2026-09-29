@@ -6,7 +6,6 @@ struct HomeView: View {
     /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
-    @State private var deleting: ProjectInfo?
     @State private var query = ""
     @State private var dropTargeted = false
 
@@ -43,7 +42,6 @@ struct HomeView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Search Projects")
-        .trashConfirmation($deleting, name: \.name) { project in Task { await app.delete(project) } }
     }
 
     private var list: some View {
@@ -75,14 +73,12 @@ struct HomeView: View {
                 Divider()
                 ItemMenuItems(rename: { rename.begin(project.id, name: project.name) },
                               showInFinder: { app.revealProject(project) },
-                              moveToTrash: { deleting = project })
+                              moveToTrash: { Task { await app.delete(project) } })
             }
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
-        .onDeleteCommand {
-            if let project = app.projects.first(where: { $0.id == selection }) { deleting = project }
-        }
+        .offersToTrash(rename.id == nil ? selection.map(TrashItem.project) : nil)
     }
 
     private var templates: some View {
