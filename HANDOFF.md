@@ -102,7 +102,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The sidebar item holds files over the File Outline.
   - The middle item holds source | PDF (`columns`) over the build panel, which spans both.
   - The inspector is the trailing column: `NSSplitViewItem(inspectorWithViewController:)`, AppKit's fixed 270 pt, whose divider takes no drag.
-  - The sidebar opens at the same 270 pt and drags from 200 to 400 pt.
+  - The sidebar opens at the same 270 pt and has the system's limits: 144 pt, no maximum.
   - Bars are split-item accessories: the sidebar's search field, the find bars, the File Outline's header (`OutlineHeader`, at the files' foot folded or not), and the status bar at the foot of source + PDF.
   - Also here: `DetentSplitViewController` (the dividers' detents), `OutlineSplitViewController` (files over the outline, the header's line taking the divider's drags), `ColumnMetrics` (column and pane limits), `PaneSize` (sizes in the `PaneSizes` defaults dictionary) and `Hairline`.
 - `WorkspaceToolbar`: the `NSToolbar`.
@@ -119,7 +119,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `StatusBar`: the status bar and its build-panel toggle.
 - `EditorBridge`: a project's editor, a plain `WKWebView`; the editor's commands, appearance and prefs; `FindQuery` and `FindMatches`.
 - `BuildPanel`: the build panel (issues and the log).
-- `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`.
+- `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
 - `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper.
 - `SidebarView`: the sidebar's search, the File Outline's header, the files and the outline.
 - `Outline`, `HomeView`, `SettingsView`.
@@ -129,6 +129,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `Commands`: menus and shortcuts.
   - Every item is a `MenuCommand`, which also lists the chords the editor page keeps from CodeMirror; WebKit hands them on to the menu, which matches them by character and validates them (the page posts them only on Windows).
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
+  - File › Move to Trash (⌘⌫, without asking, as in Finder) and Share… aren't `MenuCommand`s: the web has no ids for them. Move to Trash acts on the chosen item of the list with the keyboard, which the list passes to `AppModel.trashItem` (`offersToTrash`): a SwiftUI focused value doesn't reach the menus from an AppKit window's hosting views. A bare ⌫ does nothing.
   - Insert sits between View and Window. Format keeps Bold, Italic, the section level and Comment.
 - `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `TabsControl`, `DialogSheet`, and the rename pieces.
 - `SyncTeXGeometry`.
@@ -147,6 +148,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
   - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
   - Its context menu is WebKit's text menu, as a text view's: none on the line numbers, where WebKit offered only Reload (which would reload the page and lose unsaved edits), and no Look Up “” in blank space, where WebKit selects the line break (`web/src/embed/editor.js`, with a host's chrome only). WebKit's Font, Paragraph Direction and Selection Direction stay: they have no public identifiers, and Safari's text areas show them too.
+  - `EditorWebView` takes a drag with files before WebKit does: a dropped file opens, the project's own in the editor and a project from elsewhere as from the Dock, as other editors open one. CodeMirror would paste a text file's contents in.
   - The caret is WebKit's, not CodeMirror's drawn one: 2 pt, fading in and out as a text view's (measured on 27.2 in window captures), in `NSColor.textInsertionPointColor` (`--host-insertion-point`; `caret-color: auto` takes the text's colour). `editor.html` undoes `drawSelection`'s transparent caret and hides CodeMirror's primary cursor; a multiple selection's other cursors stay CodeMirror's.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
@@ -235,7 +237,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - Edit › Undo and Redo are always enabled and never titled ("Undo Typing"), native fields included. The fix is the system's items with an `EditorWebView` routing `undo:`/`redo:` to CodeMirror and a Mac-only page message for `undoDepth`/`redoDepth`: more code, so not done unasked.
   - An outline row takes clicks only on its 14 pt of text, not its whole 24 pt row (its `Button` label); the sidebar redo decides between that and list rows with selection.
   - The build panel's issue list clears its selection whenever the filter or Warnings change what shows (rows by position, as LaTeX repeats identical warnings).
-- **Waiting on the owner (design):** removing the Move to Trash confirmation (HIG, Alerts); removing the app's Appearance setting (HIG, Dark Mode); the sidebar's own 144 pt minimum and no maximum instead of 200–400; `QLPreviewView` for file previews; keeping the PDF find bar open across rebuilds; what a file dropped on the editor does; the source scrolling under the toolbar; SwiftUI's tabs picker for the build panel; one sidebar list for files and outline; drags in the file tree; spellcheck in the source.
+- **Waiting on the owner (design):** the source scrolling under the toolbar; SwiftUI's tabs picker for the build panel; one sidebar list for files and outline; drags in the file tree; spellcheck in the source.
+- **Declined by the owner:** `QLPreviewView` for file previews: it draws hyperref's link boxes, which no LaTeX editor shows.
 
 - **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Analysis.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
   - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
@@ -259,7 +262,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - more templates;
   - version history;
   - duplicate project;
-  - image drop to insert a figure;
+  - image drop to insert a figure (Overleaf's: an image dropped in the editor is uploaded and opens Insert Figure);
   - import UI on Windows and the web.
 - Web follow-ups are in `docs/web.md`.
 - Retire Tauri once both apps are verified: delete `src-tauri`, the Tauri path in `bridge.js`, `@tauri-apps/cli`, and the Tauri entries in `check-version.mjs`, `ci.yml` and `release.yml`.
@@ -288,7 +291,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
 - **The PDF column doesn't collapse on a drag**, AppKit's default for a plain item, kept on purpose: collapsed at the window's trailing edge, its divider would sit under the window's resize edge, so a drag back would resize the window instead of opening the PDF.
 - **Sidebars fold on a window resize, inspectors don't** (`canCollapseFromWindowResize`: YES for sidebars, NO for inspectors).
-  - The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 200 pt, folds it, and brings it back when there's room.
+  - The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 144 pt, folds it, and brings it back when there's room.
   - Tiling folds it too. `setContentSize` doesn't, so the minimum test hides the sidebar first.
 - **A sidebar squeezes before it folds**, down to its minimum, and grows back as the window widens (AppKit's default). Scripted resizes (AppleScript, Return to Previous Size) don't grow it back; a drag does.
 - **Pane sizes are saved as a divider's drag resizes them,** from a synchronous `didResizeSubviews` observer while `NSApp.currentEvent` is `.leftMouseDragged`: never from a window resized in code, a collapse, a close or a quit. A live window resize is a drag too, so `saveSizes` skips `inLiveResize`. The notification's userInfo can't tell (it has a divider index on resizes and animations too), and an async notifications loop runs after the event has moved on.
