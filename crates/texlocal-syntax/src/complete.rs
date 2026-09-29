@@ -3,22 +3,13 @@
 //! type, or a command. Commands are snippets, expanded here as CodeMirror's
 //! `snippet()` expands them, so an editor only places the text and its fields.
 
-use crate::{catalog, Text};
+use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-pub enum CompletionKind {
-    Command,
-    Environment,
-    Label,
-    Citation,
-    EntryType,
-}
+use crate::{catalog, Text};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SnippetField {
     /// From the start of the completion's text, in UTF-16 units.
     pub start: u32,
@@ -27,13 +18,9 @@ pub struct SnippetField {
     pub index: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completion {
     pub label: String,
-    /// What it is ("sectioning"), empty for names from the project.
-    pub detail: String,
-    pub kind: CompletionKind,
     /// What goes in, with the fields' defaults and the line's indentation.
     pub text: String,
     /// In order of position.
@@ -41,8 +28,7 @@ pub struct Completion {
 }
 
 /// Completions for the text from `start` to the caret, which they replace.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Completions {
     pub start: u32,
     pub items: Vec<Completion>,
@@ -97,18 +83,16 @@ pub fn completions(
                 .take_while(|&&u| !is(u, '{') && !is(u, ','))
                 .count();
         let catalog = catalog::get();
-        let (kind, names): (CompletionKind, &[String]) = match command.as_str() {
-            c if CITE.contains(&c) => (CompletionKind::Citation, citations),
-            c if REF.contains(&c) => (CompletionKind::Label, labels),
-            "begin" | "end" => (CompletionKind::Environment, &catalog.environments),
+        let names: &[String] = match command.as_str() {
+            c if CITE.contains(&c) => citations,
+            c if REF.contains(&c) => labels,
+            "begin" | "end" => &catalog.environments,
             _ => return None,
         };
         let items = matching(names, &typed_from(start), |n| n)
             .into_iter()
             .map(|name| Completion {
                 label: name.clone(),
-                detail: String::new(),
-                kind,
                 text: name.clone(),
                 fields: vec![],
             })
@@ -131,8 +115,6 @@ pub fn completions(
             .into_iter()
             .map(|t| Completion {
                 label: t.clone(),
-                detail: String::new(),
-                kind: CompletionKind::EntryType,
                 text: t.clone(),
                 fields: vec![],
             })
@@ -154,12 +136,10 @@ pub fn completions(
             |(name, _, _)| name,
         )
         .into_iter()
-        .map(|(name, detail, snippet)| {
+        .map(|(name, _, snippet)| {
             let (text, fields) = expand(snippet, &String::from_utf16_lossy(&indentation));
             Completion {
                 label: name.clone(),
-                detail: detail.clone(),
-                kind: CompletionKind::Command,
                 text,
                 fields,
             }
@@ -269,12 +249,12 @@ mod tests {
     use crate::SourceDocument;
 
     fn complete(before: &str) -> Option<Completions> {
-        let doc = SourceDocument::new(before.into());
+        let doc = SourceDocument::new(before);
         doc.completions(
             before.encode_utf16().count() as u32,
             false,
-            vec!["sec:intro".into()],
-            vec!["knuth84".into()],
+            &["sec:intro".into()],
+            &["knuth84".into()],
         )
     }
 
@@ -308,8 +288,8 @@ mod tests {
         assert!(result.items.iter().any(|i| i.label == "\\alpha"));
         // A bare backslash waits for a letter, unless asked.
         assert!(complete("x \\").is_none());
-        let doc = SourceDocument::new("\\".into());
-        assert!(doc.completions(1, true, vec![], vec![]).is_some());
+        let doc = SourceDocument::new("\\");
+        assert!(doc.completions(1, true, &[], &[]).is_some());
     }
 
     #[test]

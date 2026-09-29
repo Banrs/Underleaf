@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import TeXLocalSyntax
 
 /// A project's source editor: one native text view (`SourceTextView`) for its
 /// text files, each file's text, undo and selection kept while another shows;
@@ -121,7 +120,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     // ---------- where it is ----------
 
     var currentLine: Int {
-        Int(textView.document.lineAt(offset: UInt32(textView.selectedRange().location)))
+        textView.document.line(at: textView.selectedRange().location)
     }
 
     /// `atTop` puts the line at the top of the view, as an outline's jump to a
@@ -129,8 +128,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// system's find indicator shows where it went.
     func reveal(line: Int, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
-        let start = Int(document.lineStart(line: UInt32(max(1, line))))
-        let end = line < Int(document.lineCount()) ? Int(document.lineStart(line: UInt32(line + 1))) - 1 : (textView.string as NSString).length
+        let start = document.lineStart(line)
+        let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: start, length: 0))
         scroll(to: start, atTop: atTop)
         if focus { self.focus() }
@@ -159,7 +158,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
             + font.boundingRectForFont.height / 2
         guard let fragment = manager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y))) else { return }
-        let line = Int(textView.document.lineAt(offset: UInt32(textView.offset(fragment.rangeInElement.location))))
+        let line = textView.document.line(at: textView.offset(fragment.rangeInElement.location))
         guard line != topLine else { return }
         topLine = line
         onScroll(line)
@@ -184,9 +183,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
         // The results count from the start of the range checked (27.2).
-        let code = textView.document.highlights(start: UInt32(range.location), length: UInt32(range.length))
+        let code = textView.document.highlights(in: range)
             .filter { $0.kind != .comment }
-            .map { NSRange(location: Int($0.start) - range.location, length: Int($0.length)) }
+            .map { NSRange(location: $0.range.location - range.location, length: $0.range.length) }
         return results.filter { result in
             result.resultType != .spelling || !code.contains { NSIntersectionRange($0, result.range).length > 0 }
         }
@@ -204,9 +203,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func perform(_ command: EditorCommand, _ argument: String? = nil) -> Bool {
         guard path != nil else { return false }
         let document = textView.document, selection = textView.selectedRange()
-        let range = TextRange(start: UInt32(selection.location), length: UInt32(selection.length))
-        let insert = { (insertion: Insertion, name: String) in
-            self.textView.apply([insertion.edit], named: name, select: NSRange(location: Int(insertion.caret), length: 0))
+        let insert = { (insertion: Insertion?, name: String) in
+            guard let insertion else { return false }
+            self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
+            return true
         }
         switch command {
         case .bold: wrap("\\textbf{", "}", named: String(localized: "Bold"))
@@ -220,17 +220,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             // Empty braces: the labels or citations for them, once the menu has closed.
             if selection.length == 0 { DispatchQueue.main.async { self.textView.complete(nil) } }
         case .comment:
-            let selections = textView.selectedRanges.map(\.rangeValue).map {
-                TextRange(start: UInt32($0.location), length: UInt32($0.length))
-            }
-            textView.apply(document.toggleComment(selections: selections), named: String(localized: "Comment"))
+            textView.apply(document.toggleComment(textView.selectedRanges.map(\.rangeValue)), named: String(localized: "Comment"))
         case .heading:
-            insert(document.setHeading(caret: range.start, command: argument ?? ""), String(localized: "Section Level"))
+            guard insert(document.setHeading(caret: selection.location, command: argument ?? ""), String(localized: "Section Level")) else { return false }
         case .symbol:
-            insert(document.insertSymbol(command: argument ?? "", selection: range), String(localized: "Insert Symbol"))
+            guard insert(document.insertSymbol(argument ?? "", replacing: selection), String(localized: "Insert Symbol")) else { return false }
         case .block:
-            guard let block = document.insertBlock(id: argument ?? "", selection: range) else { return false }
-            insert(block, String(localized: "Insert"))
+            guard insert(document.insertBlock(argument ?? "", replacing: selection), String(localized: "Insert")) else { return false }
         }
         focus()
         return true
@@ -240,7 +236,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     private func wrap(_ prefix: String, _ suffix: String, named name: String) {
         let selection = textView.selectedRange()
         let selected = (textView.string as NSString).substring(with: selection)
-        let edit = TextEdit(start: UInt32(selection.location), length: UInt32(selection.length), text: prefix + selected + suffix)
+        let edit = TextEdit(selection, prefix + selected + suffix)
         textView.apply([edit], named: name,
                        select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
     }
@@ -291,7 +287,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let text = textView.string as NSString
         if all {
             let edits = query.matches(in: text, limit: .max).ranges.map { range in
-                TextEdit(start: UInt32(range.location), length: UInt32(range.length), text: query.replacement(for: range, in: text))
+                TextEdit(range, query.replacement(for: range, in: text))
             }
             textView.apply(edits, named: String(localized: "Replace All"))
             return
@@ -300,7 +296,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         guard let hit = next(from: selection.location) else { return }
         guard hit == selection else { return select(hit) }
         let replacement = query.replacement(for: hit, in: text)
-        let edit = TextEdit(start: UInt32(hit.location), length: UInt32(hit.length), text: replacement)
+        let edit = TextEdit(hit, replacement)
         textView.apply([edit], named: String(localized: "Replace"), select: NSRange(location: hit.location + (replacement as NSString).length, length: 0))
         if let after = next(from: textView.selectedRange().location) { select(after) }
     }

@@ -1,8 +1,11 @@
-/* TeXLocal core, for the native apps. Every call is JSON in, JSON out, with
- * the command names and arguments the browser server uses. See
+/* TeXLocal core, for the native apps. The service's calls are JSON in, JSON
+ * out, with the command names and arguments the browser server uses. See
  * crates/texlocal-ffi/src/lib.rs for the contract. */
 #ifndef TEXLOCAL_H
 #define TEXLOCAL_H
+
+#include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +25,33 @@ void tl_free(char *text);
 
 /* Stops running compiles. No call may be in flight. */
 void tl_close(TlHandle *handle);
+
+/* The source editor's mirror of a file's text (crates/texlocal-syntax), on
+ * the editor's thread. Offsets and lengths count UTF-16 units; lines count
+ * from 1. */
+typedef struct TlSource TlSource;
+
+TlSource *tl_source_new(const char *text);
+
+/* The editor replaced length units at start with text. */
+void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const char *text);
+
+uint32_t tl_source_line_at(const TlSource *source, uint32_t offset);
+uint32_t tl_source_line_start(const TlSource *source, uint32_t line);
+uint32_t tl_source_line_count(const TlSource *source);
+
+/* The highlighted runs of the lines a range touches: start, length and kind
+ * (HighlightKind's order) for each; *count is the number of values. Free
+ * them with tl_source_free_runs. */
+uint32_t *tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *count);
+void tl_source_free_runs(uint32_t *runs, size_t count);
+
+/* "completions", "toggle_comment", "set_heading", "insert_block",
+ * "insert_symbol" or "text", with a JSON object of arguments. Returns the
+ * result's JSON, or NULL for an unknown command; free it with tl_free. */
+char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
+
+void tl_source_free(TlSource *source);
 
 #ifdef __cplusplus
 }

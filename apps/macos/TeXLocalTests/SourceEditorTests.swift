@@ -117,7 +117,7 @@ struct SourceEditorTests {
         text.insertTab(nil)
         #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}")
         // The core's copy went through every step with it.
-        #expect(text.document.text() == text.string)
+        #expect(text.document.text == text.string)
     }
 
     /// Misspellings count in the prose and comments, not in commands, labels

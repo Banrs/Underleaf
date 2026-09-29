@@ -1,5 +1,4 @@
 import AppKit
-import TeXLocalSyntax
 
 /// The source's text view: TextKit 2's own, which types, selects, undoes,
 /// spells, speaks and drags as every Mac text view does. The core
@@ -58,14 +57,13 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         let old = NSRange(location: edited.location, length: edited.length - delta)
-        document.edit(start: UInt32(old.location), length: UInt32(old.length),
-                      text: (textStorage.string as NSString).substring(with: edited))
+        document.edit(old, with: (textStorage.string as NSString).substring(with: edited))
         // The fields follow the change itself, when it's the one expected.
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
         changing = nil
         follow(changed ?? old, delta)
         coloured = nil
-        if lineCountDigits != digits(document.lineCount()) {
+        if lineCountDigits != digits(document.lineCount) {
             // After the edit: a layout change mid-edit would lay out stale text.
             DispatchQueue.main.async { self.updateGutterWidth() }
         }
@@ -78,9 +76,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let selections = selectedRanges.map(\.rangeValue)
         undoManager?.beginUndoGrouping()
         for edit in edits.reversed() {
-            let range = NSRange(location: Int(edit.start), length: Int(edit.length))
-            if shouldChangeText(in: range, replacementString: edit.text) {
-                textStorage?.replaceCharacters(in: range, with: edit.text)
+            if shouldChangeText(in: edit.range, replacementString: edit.text) {
+                textStorage?.replaceCharacters(in: edit.range, with: edit.text)
                 didChangeText()
             }
         }
@@ -102,12 +99,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     private static func map(_ position: Int, through edits: [TextEdit]) -> Int {
         var shift = 0
         for edit in edits {
-            let (start, end) = (Int(edit.start), Int(edit.start + edit.length))
             let inserted = (edit.text as NSString).length
-            if end <= position {
-                shift += inserted - Int(edit.length)
-            } else if start < position {
-                return start + shift + inserted
+            if NSMaxRange(edit.range) <= position {
+                shift += inserted - edit.length
+            } else if edit.start < position {
+                return edit.start + shift + inserted
             }
         }
         return position + shift
@@ -124,11 +120,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         .monospacedSystemFont(ofSize: max(8, (font?.pointSize ?? NSFont.systemFontSize) - 2), weight: .regular)
     }
 
-    private func digits(_ n: UInt32) -> Int { max(2, String(n).count) }
+    private func digits(_ n: Int) -> Int { max(2, String(n).count) }
 
     /// Room for the largest line number, 8 pt either side of it.
     func updateGutterWidth() {
-        lineCountDigits = digits(document.lineCount())
+        lineCountDigits = digits(document.lineCount)
         let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
         let width = (CGFloat(lineCountDigits) * digit + 16).rounded(.up)
         guard width != gutterWidth else { return }
@@ -195,7 +191,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
             let color: NSColor = offset == current ? .textColor : .secondaryLabelColor
-            let number = NSAttributedString(string: "\(document.lineAt(offset: UInt32(offset)))",
+            let number = NSAttributedString(string: "\(document.line(at: offset))",
                                             attributes: [.font: font, .foregroundColor: color])
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
             let x = gutterWidth - 8 - number.size().width
@@ -225,10 +221,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let mark = { (range: NSRange, key: NSAttributedString.Key, color: NSColor) in
             if let r = self.textRange(range) { manager.addRenderingAttribute(key, value: color, for: r) }
         }
-        for run in document.highlights(start: UInt32(start), length: UInt32(end - start)) {
-            if let color = palette.color(run.kind) {
-                mark(NSRange(location: Int(run.start), length: Int(run.length)), .foregroundColor, color)
-            }
+        for run in document.highlights(in: NSRange(location: start, length: end - start)) {
+            if let color = palette.color(run.kind) { mark(run.range, .foregroundColor, color) }
         }
         let inView = { (r: NSRange) in NSMaxRange(r) > start && r.location < end }
         for match in selectionMatches(in: start..<end) {
@@ -436,10 +430,10 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
             }
         }
         let edits: [TextEdit] = starts.compactMap { start in
-            if direction > 0 { return TextEdit(start: UInt32(start), length: 0, text: "  ") }
+            if direction > 0 { return TextEdit(NSRange(location: start, length: 0), "  ") }
             var spaces = 0
             while spaces < 2, start + spaces < text.length, text.character(at: start + spaces) == 0x20 { spaces += 1 }
-            return spaces == 0 ? nil : TextEdit(start: UInt32(start), length: UInt32(spaces), text: "")
+            return spaces == 0 ? nil : TextEdit(NSRange(location: start, length: spaces), "")
         }
         apply(edits, named: direction > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
     }
@@ -469,8 +463,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 
     private func completions(explicit: Bool) -> Completions? {
         guard selectedRange().length == 0 else { return nil }
-        return document.completions(caret: UInt32(caret), explicit: explicit,
-                                    labels: symbols.labels, citations: symbols.citations)
+        return document.completions(caret: caret, explicit: explicit, symbols: symbols)
     }
 
     /// After typing, as CodeMirror offers them: the list opens whenever the
@@ -493,7 +486,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     override var rangeForUserCompletion: NSRange {
         offered = completions(explicit: explicit)
         guard let offered else { return NSRange(location: NSNotFound, length: 0) }
-        return NSRange(location: Int(offered.start), length: caret - Int(offered.start))
+        return NSRange(location: offered.start, length: caret - offered.start)
     }
 
     override func completions(forPartialWordRange charRange: NSRange,
@@ -532,7 +525,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     private var needsMirror = false
 
     private func startSnippet(_ fields: [SnippetField], at location: Int) {
-        let fields = fields.map { (index: Int($0.index), range: NSRange(location: location + Int($0.start), length: Int($0.length))) }
+        let fields = fields.map { (index: $0.index, range: NSRange(location: location + $0.start, length: $0.length)) }
         guard let first = fields.first(where: { $0.index == 0 }) else { return }
         // A session only while there's somewhere to Tab to, or a field in two places.
         snippet = fields.count > 1 ? Snippet(fields: fields, active: 0) : nil

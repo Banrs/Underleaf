@@ -5,7 +5,7 @@
 - **`main`** has the Mac app's rewrite and polish (PR #12, `claude/macos-polish`): AppKit owns the window, split and toolbar, SwiftUI draws the panes; one window with a back button and an inspector; tests in Swift Testing.
 - **`claude/native-editor`** (from `main`) is the native frontend study's first phase (the study: https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm):
   - `crates/texlocal-syntax`: the LaTeX editing logic every editor can share (highlighting, completion with snippets, maths mode, comments, headings, blocks, symbols), ported from the web's editor and CodeMirror's stex mode, over a UTF-16 mirror of the text.
-  - The Mac's editor is native: an `NSTextView` on TextKit 2 (`SourceTextView`, `SourceEditor`), which asks the core through UniFFI bindings (`apps/macos/TeXLocalSyntax`). The Mac embeds no web page any more.
+  - The Mac's editor is native: an `NSTextView` on TextKit 2 (`SourceTextView`, `SourceEditor`), which asks the core through `texlocal-ffi`'s `tl_source_*` (`SourceDocument.swift`). The Mac embeds no web page any more.
   - The web and Windows keep CodeMirror; the web reads the core's catalog (`catalog.json`), and shared fixtures hold the JS and the Rust to the same answers.
 - **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono.
 - **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
@@ -34,12 +34,11 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - the browser server calls `Service` directly, and `web/src/bridge.js` is its client;
   - Tauri forwards to one `call` command;
   - `serve.rs` serves `__pdf` / `__raw`.
-- **`texlocal-syntax`** (`crates/texlocal-syntax`): the editing logic, pure Rust, with an optional `uniffi` feature.
+- **`texlocal-syntax`** (`crates/texlocal-syntax`): the editing logic, pure Rust with no I/O.
   - A `SourceDocument` mirrors the editor's text through its edits (`edit`) and answers in UTF-16 offsets: `highlights` (per-line state cached, forgotten from the first line an edit moves), `completions`, `toggle_comment`, `set_heading`, `insert_block`, `insert_symbol`. The editor owns the text, its undo and its drawing, and applies the edits it gets back.
   - A port of CodeMirror's stex mode (the web's highlighter, token for token on the test library and 1,500 fuzzed documents) and of `web/src/editor.js` (completion, snippets, `mathModeAt`, headings, blocks). `tests/fixtures/editing.json` is checked by `cargo test` and by `test/mathmode.test.js` and `test/editor.test.js`.
   - `src/catalog.json` is the one catalog of commands, environments, blocks and entry types; `web/src/latex-data.js` reads it.
-  - `texlocal-ffi` links it in (`pub use texlocal_syntax`), so the Mac's static library carries its UniFFI exports beside `tl_call`. `crates/texlocal-bindgen` is the `uniffi-bindgen` tool; `apps/macos/scripts/generate-bindings.sh` writes the Swift into `apps/macos/TeXLocalSyntax`, and CI fails if the committed bindings aren't current.
-  - The JSON `tl_call` service stays for everything else: only the editor's API is typed.
+  - `texlocal-ffi` exposes it as `tl_source_*` beside `tl_call` (`include/texlocal.h`): the per-frame calls (edits, lines, highlights as a flat array of start, length and kind) are plain C; the editing commands are JSON, as `tl_call`'s are, so Windows could P/Invoke the same functions. A hand-written ABI rather than UniFFI: the generated Swift was 2,400 lines and a build tool for a dozen functions.
 - **`analyze`** (`analyze.rs`): outline, words and lines.
   - Ported from the web's `analyzeDoc` (`web/src/state.js`), which stays the source of truth.
   - `crates/texlocal-core/tests/fixtures/analyze.json` is checked by both `cargo test` and `test/analyze.test.js`.
@@ -59,8 +58,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - `npm run serve` runs the browser version; `npm run app` runs Tauri.
 - **macOS:** `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -derivedDataPath <dd> build` (or `test`).
   - Pre-build runs `cargo build -p texlocal-ffi`. Post-compile (`scripts/copy-resources.sh`) copies `shortcuts.json`, and JetBrains Mono from `node_modules` into `Resources/Fonts`, so `npm ci` comes first.
-  - The app links the static `libtexlocal_ffi.a` by path, and the local package `TeXLocalSyntax` (the generated Swift, its own module: generated UniFFI code doesn't compile under the app's main-actor default isolation).
-  - After changing `texlocal-syntax`'s exported API, run `apps/macos/scripts/generate-bindings.sh` and commit what it writes.
+  - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
   - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed. `apps/macos/scripts/add-source.py app|tests Name.swift` registers a new file with both.
 - **Mac tests** are Swift Testing (`TeXLocalTests/`), one file per area:
@@ -72,11 +70,11 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - `BarTests`.
 
   The scheme runs them one suite at a time (`parallelizable = NO`) in the scratch library `TEXLOCAL_DATA=/tmp/texlocal-xctest`. Run them under `caffeinate -d -i -u`: the split tests need an awake, unlocked display.
-- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -default-isolation MainActor -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include -I <dd>/Build/Products/Debug -Xcc -fmodule-map-file=apps/macos/TeXLocalSyntax/Sources/texlocal_syntaxFFI/module.modulemap apps/macos/TeXLocal/*.swift`, after a build has made `TeXLocalSyntax.swiftmodule` in `<dd>`.
+- **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -default-isolation MainActor -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
 - **Windows:** `cargo build -p texlocal-ffi`, then `dotnet build apps/windows/TeXLocal/TeXLocal.csproj -c Debug -p:Platform=x64` and `dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj`.
 - **CI:**
   - `ci.yml`: web, version check, Rust on Linux, Tauri bundles;
-  - `macos-app.yml`: the `xcode-27` runner (macOS 27.0, in preview; there is no `macos-27` label), the bindings' freshness and the Mac tests;
+  - `macos-app.yml`: the `xcode-27` runner (macOS 27.0, in preview; there is no `macos-27` label) and the Mac tests;
   - `windows-app.yml`;
   - `release.yml`: runs on `v*` tags.
 - **A Mac Debug build on screen, beside the installed app:**
@@ -119,7 +117,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - `SourceColumn`: the source column (the editor, a file preview or no file) and `SourceFindBar`.
 - `StatusBar`: the status bar and its build-panel toggle.
 - `SourceEditor`: a project's editor. One `SourceTextView` for its text files, each file's text, undo manager and selection kept while another shows (back only while its text is unchanged); the find bar's search (`FindQuery`, CodeMirror's `SearchQuery` semantics, and `FindMatches`); the formatting commands; `EditorView` (its scroll view in SwiftUI); the appearance and prefs.
-- `SourceTextView`: the text view. It forwards every edit to the core's `SourceDocument`, draws the line numbers and the current line in `drawBackground` (from the viewport's layout fragments), colours what shows with TextKit 2 rendering attributes (syntax, selection matches, find matches, brackets), and edits as the web's editor does: brackets close and are stepped over, new lines keep their indentation, Tab indents or moves between snippet fields, completion offers the core's items in the system's list as you type, a chosen one goes in as its snippet with linked fields.
+- `SourceTextView`: the text view. It forwards every edit to the core's `SourceDocument` (`SourceDocument.swift`, the Swift side of `tl_source_*`), draws the line numbers and the current line in `drawBackground` (from the viewport's layout fragments), colours what shows with TextKit 2 rendering attributes (syntax, selection matches, find matches, brackets), and edits as the web's editor does: brackets close and are stepped over, new lines keep their indentation, Tab indents or moves between snippet fields, completion offers the core's items in the system's list as you type, a chosen one goes in as its snippet with linked fields.
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
 - `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. Dark paper inverts the pages only (`documentView`'s filters), so the view's background and scrollers stay the window's.

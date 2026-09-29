@@ -11,18 +11,12 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "27.0"
     ARCHS: arm64
-packages:
-  # The core's editor API (crates/texlocal-syntax), generated bindings.
-  TeXLocalSyntax:
-    path: TeXLocalSyntax
 targets:
   TeXLocal:
     type: application
     platform: macOS
     sources:
       - path: TeXLocal
-    dependencies:
-      - package: TeXLocalSyntax
     # What Finder's Open With and the Dock icon can hand the app, as Open…
     # takes them: a .tex file, a .zip or a folder. Alternate, so TeXLocal
     # never becomes their default app; org.tug.tex is TeX distributions'

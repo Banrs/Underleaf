@@ -1,7 +1,7 @@
 #!/bin/sh
 # Xcode build step: what the app shares with the web version, into its
 # Resources: the menu's chords (web/src/shortcuts.json) and the editor's
-# JetBrains Mono, which Info.plist's ATSApplicationFontsPath registers.
+# JetBrains Mono (EditorFont registers it).
 set -e
 cd "$SRCROOT/../.."
 DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"

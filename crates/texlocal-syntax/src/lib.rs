@@ -13,26 +13,21 @@ mod complete;
 mod edit;
 mod highlight;
 
-use std::sync::Mutex;
+use serde::{Deserialize, Serialize};
 
-pub use complete::{Completion, CompletionKind, Completions, SnippetField};
+pub use complete::{Completion, Completions, SnippetField};
 pub use edit::math_mode_at;
 pub use highlight::{Highlight, HighlightKind};
 
-#[cfg(feature = "uniffi")]
-uniffi::setup_scaffolding!();
-
 /// A range of the text, in UTF-16 units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextRange {
     pub start: u32,
     pub length: u32,
 }
 
 /// Replace `length` units at `start` with `text`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TextEdit {
     pub start: u32,
     pub length: u32,
@@ -40,8 +35,7 @@ pub struct TextEdit {
 }
 
 /// An edit and where the caret goes after it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Insertion {
     pub edit: TextEdit,
     pub caret: u32,
@@ -112,81 +106,52 @@ impl Text {
 }
 
 /// An open file's text, mirrored from the editor, and the answers about it.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
 pub struct SourceDocument {
-    inner: Mutex<Inner>,
-}
-
-struct Inner {
     text: Text,
     highlighter: highlight::Cache,
 }
 
 impl SourceDocument {
-    fn with<T>(&self, f: impl FnOnce(&mut Inner) -> T) -> T {
-        // A panic mid-edit can't leave the mirror half-changed in a way that
-        // matters more than losing the editor: carry on with what's there.
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        f(&mut inner)
-    }
-}
-
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-impl SourceDocument {
-    #[cfg_attr(feature = "uniffi", uniffi::constructor)]
-    pub fn new(text: String) -> Self {
+    pub fn new(text: &str) -> Self {
         SourceDocument {
-            inner: Mutex::new(Inner {
-                text: Text::new(&text),
-                highlighter: highlight::Cache::default(),
-            }),
+            text: Text::new(text),
+            highlighter: highlight::Cache::default(),
         }
     }
 
     /// The editor replaced `length` units at `start` with `text`. A range
     /// past the end is cut to the text: the mirror never fails the editor.
-    pub fn edit(&self, start: u32, length: u32, text: String) {
-        self.with(|inner| {
-            let start = start.min(inner.text.len());
-            let length = length.min(inner.text.len() - start);
-            let units: Vec<u16> = text.encode_utf16().collect();
-            let first = inner.text.replace(start, length, &units);
-            inner.highlighter.forget_from(first);
-        })
+    pub fn edit(&mut self, start: u32, length: u32, text: &str) {
+        let start = start.min(self.text.len());
+        let length = length.min(self.text.len() - start);
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let first = self.text.replace(start, length, &units);
+        self.highlighter.forget_from(first);
     }
 
     pub fn text(&self) -> String {
-        self.with(|inner| String::from_utf16_lossy(&inner.text.units))
+        String::from_utf16_lossy(&self.text.units)
     }
 
     /// The line an offset is on, from 1.
     pub fn line_at(&self, offset: u32) -> u32 {
-        self.with(|inner| inner.text.line_index(offset) as u32 + 1)
+        self.text.line_index(offset) as u32 + 1
     }
 
     /// Where a line (from 1) starts; past the last line, the last line's start.
     pub fn line_start(&self, line: u32) -> u32 {
-        self.with(|inner| {
-            let index = (line.max(1) as usize - 1).min(inner.text.lines.len() - 1);
-            inner.text.lines[index]
-        })
+        let index = (line.max(1) as usize - 1).min(self.text.lines.len() - 1);
+        self.text.lines[index]
     }
 
     pub fn line_count(&self) -> u32 {
-        self.with(|inner| inner.text.lines.len() as u32)
+        self.text.lines.len() as u32
     }
 
     /// The highlighted runs of the lines a range touches.
-    pub fn highlights(&self, start: u32, length: u32) -> Vec<Highlight> {
-        self.with(|inner| {
-            let end = start.saturating_add(length).min(inner.text.len());
-            inner
-                .highlighter
-                .highlights(&inner.text, start.min(end), end)
-        })
+    pub fn highlights(&mut self, start: u32, length: u32) -> Vec<Highlight> {
+        let end = start.saturating_add(length).min(self.text.len());
+        self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
     /// What to offer at the caret, if anything: commands after a backslash
@@ -197,61 +162,52 @@ impl SourceDocument {
         &self,
         caret: u32,
         explicit: bool,
-        labels: Vec<String>,
-        citations: Vec<String>,
+        labels: &[String],
+        citations: &[String],
     ) -> Option<Completions> {
-        self.with(|inner| {
-            complete::completions(
-                &inner.text,
-                caret.min(inner.text.len()),
-                explicit,
-                &labels,
-                &citations,
-            )
-        })
+        let caret = caret.min(self.text.len());
+        complete::completions(&self.text, caret, explicit, labels, citations)
     }
 
     /// "%" comments on or off for the lines the selections touch: off when
     /// every one is already commented (or blank), on otherwise. In order;
     /// the editor applies them from the last.
-    pub fn toggle_comment(&self, selections: Vec<TextRange>) -> Vec<TextEdit> {
-        self.with(|inner| edit::toggle_comment(&inner.text, &selections))
+    pub fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
+        edit::toggle_comment(&self.text, selections)
     }
 
     /// The caret's line as a heading of `command` ("section"), or as plain
     /// text given none, as a paragraph style does: a heading changes level
     /// and keeps its title, a line of text becomes the title.
-    pub fn set_heading(&self, caret: u32, command: String) -> Insertion {
-        self.with(|inner| edit::set_heading(&inner.text, caret.min(inner.text.len()), &command))
+    pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
+        edit::set_heading(&self.text, caret.min(self.text.len()), command)
     }
 
     /// A block by its id (the catalog's `blocks`) in place of the selection,
     /// on a line of its own; none for an id the catalog hasn't.
-    pub fn insert_block(&self, id: String, selection: TextRange) -> Option<Insertion> {
-        self.with(|inner| edit::insert_block(&inner.text, &id, clamp(selection, inner.text.len())))
+    pub fn insert_block(&self, id: &str, selection: TextRange) -> Option<Insertion> {
+        edit::insert_block(&self.text, id, clamp(selection, self.text.len()))
     }
 
     /// A maths symbol's command in place of the selection: as it is in
     /// maths, and between dollars in text, where the bare command would stop
     /// the build.
-    pub fn insert_symbol(&self, command: String, selection: TextRange) -> Insertion {
-        self.with(|inner| {
-            let selection = clamp(selection, inner.text.len());
-            let text = if math_mode_at(&inner.text.units[..selection.start as usize]) {
-                command
-            } else {
-                format!("${command}$")
-            };
-            let caret = selection.start + text.encode_utf16().count() as u32;
-            Insertion {
-                edit: TextEdit {
-                    start: selection.start,
-                    length: selection.length,
-                    text,
-                },
-                caret,
-            }
-        })
+    pub fn insert_symbol(&self, command: &str, selection: TextRange) -> Insertion {
+        let selection = clamp(selection, self.text.len());
+        let text = if math_mode_at(&self.text.units[..selection.start as usize]) {
+            command.to_string()
+        } else {
+            format!("${command}$")
+        };
+        let caret = selection.start + text.encode_utf16().count() as u32;
+        Insertion {
+            edit: TextEdit {
+                start: selection.start,
+                length: selection.length,
+                text,
+            },
+            caret,
+        }
     }
 }
 
@@ -269,28 +225,28 @@ mod tests {
 
     #[test]
     fn line_starts_follow_edits() {
-        let doc = SourceDocument::new("a\nb\nc".into());
+        let mut doc = SourceDocument::new("a\nb\nc");
         assert_eq!(doc.line_count(), 3);
-        doc.edit(1, 2, "x\ny\nz".into()); // "a" + "x\ny\nz" + "\nc"
+        doc.edit(1, 2, "x\ny\nz"); // "a" + "x\ny\nz" + "\nc"
         assert_eq!(doc.text(), "ax\ny\nz\nc");
         assert_eq!(
             (0..4).map(|l| doc.line_start(l + 1)).collect::<Vec<_>>(),
             [0, 3, 5, 7]
         );
-        doc.edit(0, 7, String::new());
+        doc.edit(0, 7, "");
         assert_eq!(doc.text(), "c");
         assert_eq!(doc.line_count(), 1);
         assert_eq!(doc.line_at(1), 1);
         // Past the end: cut to the text, never a panic.
-        doc.edit(10, 5, "!".into());
+        doc.edit(10, 5, "!");
         assert_eq!(doc.text(), "c!");
     }
 
     #[test]
     fn offsets_are_utf16() {
-        let doc = SourceDocument::new("é😀\nx".into());
+        let mut doc = SourceDocument::new("é😀\nx");
         assert_eq!(doc.line_start(2), 4); // é is one unit, the emoji two, then the line feed
-        doc.edit(1, 2, String::new());
+        doc.edit(1, 2, "");
         assert_eq!(doc.text(), "é\nx");
     }
 }

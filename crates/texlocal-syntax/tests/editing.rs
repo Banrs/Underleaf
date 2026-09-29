@@ -34,8 +34,8 @@ fn math_mode_matches_the_web() {
 #[test]
 fn headings_match_the_web() {
     for (line, command, text, cursor) in fixture().headings {
-        let doc = SourceDocument::new(format!("above\n{line}\nbelow"));
-        let insertion = doc.set_heading(7, command.clone());
+        let doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
+        let insertion = doc.set_heading(7, &command);
         assert_eq!(insertion.edit.text, text, "{line} as {command}");
         assert_eq!(
             (insertion.edit.start, insertion.edit.length),
@@ -47,22 +47,22 @@ fn headings_match_the_web() {
 
 #[test]
 fn a_block_starts_a_line_of_its_own() {
-    let doc = SourceDocument::new("Some text".into());
+    let doc = SourceDocument::new("Some text");
     let at_end = TextRange {
         start: 9,
         length: 0,
     };
-    let block = doc.insert_block("equation".into(), at_end).unwrap();
+    let block = doc.insert_block("equation", at_end).unwrap();
     assert_eq!(
         block.edit.text,
         "\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n"
     );
     assert_eq!(block.caret, 9 + "\n\\begin{equation}\n  ".len() as u32);
     // At a line's start (or after its indentation) it goes straight in.
-    let doc = SourceDocument::new("  ".into());
+    let doc = SourceDocument::new("  ");
     let block = doc
         .insert_block(
-            "itemize".into(),
+            "itemize",
             TextRange {
                 start: 2,
                 length: 0,
@@ -70,17 +70,17 @@ fn a_block_starts_a_line_of_its_own() {
         )
         .unwrap();
     assert!(block.edit.text.starts_with("\\begin{itemize}"));
-    assert!(doc.insert_block("nothing".into(), at_end).is_none());
+    assert!(doc.insert_block("nothing", at_end).is_none());
 }
 
 #[test]
 fn comments_toggle_by_line() {
-    let doc = SourceDocument::new("a\n  b\n\nc".into());
+    let doc = SourceDocument::new("a\n  b\n\nc");
     let all = TextRange {
         start: 0,
         length: 8,
     };
-    let on = doc.toggle_comment(vec![all]);
+    let on = doc.toggle_comment(&[all]);
     let insert = |start| TextEdit {
         start,
         length: 0,
@@ -91,8 +91,8 @@ fn comments_toggle_by_line() {
         [insert(0), insert(2), insert(7)],
         "blank lines stay as they are"
     );
-    let doc = SourceDocument::new("% a\n  %b\n".into());
-    let off = doc.toggle_comment(vec![TextRange {
+    let doc = SourceDocument::new("% a\n  %b\n");
+    let off = doc.toggle_comment(&[TextRange {
         start: 0,
         length: 9,
     }]);
@@ -103,9 +103,9 @@ fn comments_toggle_by_line() {
     };
     assert_eq!(off, [delete(0, 2), delete(6, 1)]);
     // A selection that ends at a line's start leaves that line alone.
-    let doc = SourceDocument::new("a\nb".into());
+    let doc = SourceDocument::new("a\nb");
     assert_eq!(
-        doc.toggle_comment(vec![TextRange {
+        doc.toggle_comment(&[TextRange {
             start: 0,
             length: 2
         }]),
@@ -115,9 +115,9 @@ fn comments_toggle_by_line() {
 
 #[test]
 fn symbols_go_in_as_maths() {
-    let doc = SourceDocument::new("text $x$ and $".into());
+    let doc = SourceDocument::new("text $x$ and $");
     let in_text = doc.insert_symbol(
-        "\\alpha".into(),
+        "\\alpha",
         TextRange {
             start: 5,
             length: 0,
@@ -128,7 +128,7 @@ fn symbols_go_in_as_maths() {
         ("$\\alpha$", 13)
     );
     let in_maths = doc.insert_symbol(
-        "\\alpha".into(),
+        "\\alpha",
         TextRange {
             start: 14,
             length: 0,

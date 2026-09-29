@@ -7,9 +7,8 @@
 use crate::Text;
 
 /// What a run of text is, by the stex mode's token names. Plain text and
-/// brackets have none.
+/// brackets have none. The C ABI numbers them in this order, from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum HighlightKind {
     /// `\command`, an escape (`\%`), `\\`, and maths' `^ _ &` (stex's tag).
     Command,
@@ -32,7 +31,6 @@ pub enum HighlightKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct Highlight {
     pub start: u32,
     pub length: u32,
@@ -352,7 +350,7 @@ mod tests {
 
     /// The runs as (text, kind) pairs.
     fn runs(source: &str) -> Vec<(String, super::HighlightKind)> {
-        let doc = SourceDocument::new(source.into());
+        let mut doc = SourceDocument::new(source);
         let units: Vec<u16> = source.encode_utf16().collect();
         doc.highlights(0, units.len() as u32)
             .into_iter()
@@ -410,7 +408,7 @@ mod tests {
 
     #[test]
     fn state_carries_across_lines_until_a_blank_one() {
-        let doc = SourceDocument::new("$$\nx\n\ny".into());
+        let mut doc = SourceDocument::new("$$\nx\n\ny");
         let kinds: Vec<_> = doc
             .highlights(0, 8)
             .into_iter()
@@ -418,7 +416,7 @@ mod tests {
             .collect();
         assert_eq!(kinds, [(0, MathDelimiter), (3, MathIdentifier)]); // y, after the blank line, is text
                                                                       // An edit re-reads from its line: closing the maths makes the rest text.
-        doc.edit(0, 0, "$$".into()); // "$$$$\nx…": opened and closed on line 1
+        doc.edit(0, 0, "$$"); // "$$$$\nx…": opened and closed on line 1
         assert_eq!(doc.highlights(5, 1).len(), 0);
     }
 
@@ -432,18 +430,18 @@ mod tests {
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             (seed >> 16) as usize % n
         };
-        let doc = SourceDocument::new(String::new());
+        let mut doc = SourceDocument::new("");
         let mut text: Vec<u16> = Vec::new();
         for _ in 0..400 {
             let start = next(text.len() + 1);
             let length = next(text.len() - start + 1).min(4);
             let piece = PIECES[next(PIECES.len())];
-            doc.edit(start as u32, length as u32, piece.into());
+            doc.edit(start as u32, length as u32, piece);
             text.splice(start..start + length, piece.encode_utf16());
             // Read part of it, so the kept states run only so far.
             let from = next(text.len() + 1) as u32;
             doc.highlights(from, 3);
-            let fresh = SourceDocument::new(String::from_utf16_lossy(&text));
+            let mut fresh = SourceDocument::new(&String::from_utf16_lossy(&text));
             assert_eq!(
                 doc.highlights(0, text.len() as u32),
                 fresh.highlights(0, text.len() as u32)
@@ -453,7 +451,7 @@ mod tests {
 
     #[test]
     fn only_the_lines_asked_for() {
-        let doc = SourceDocument::new("\\a\n\\b\n\\c".into());
+        let mut doc = SourceDocument::new("\\a\n\\b\n\\c");
         let runs = doc.highlights(3, 1);
         assert_eq!(runs.len(), 1);
         assert_eq!((runs[0].start, runs[0].length), (3, 2));
