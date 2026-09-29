@@ -19,11 +19,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     /// Polls for TeX while it's missing; one at a time.
     private var texWatch: Task<Void, Never>?
     /// The find bars' fields' field editor (`FindFieldEditor`).
-    private let findEditor: FindFieldEditor = {
-        let editor = FindFieldEditor()
-        editor.isFieldEditor = true
-        return editor
-    }()
+    private let findEditor = FindFieldEditor()
 
     init(app: AppModel) {
         self.app = app
@@ -38,6 +34,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.collectionBehavior.insert(.fullScreenPrimary)
         super.init(window: window)
         window.delegate = self
+        findEditor.isFieldEditor = true
         showHome()
         window.center()
         // After centring: a frame saved by an earlier launch wins.
@@ -54,12 +51,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    isolated deinit {
-        watches.forEach { $0.cancel() }
-        titleWatch?.cancel()
-        texWatch?.cancel()
-    }
 
     /// Shows the window, then loads the library and opens the project the launch
     /// argument names, or the one the restored window was left on.
@@ -97,7 +88,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
             guard let window = self?.window else { return }
             window.title = file.path.map { ($0 as NSString).lastPathComponent } ?? project.id
             window.subtitle = file.path == nil ? "" : project.id
-            // The title's proxy icon: the file itself, to drag or Command-click.
             window.representedURL = file.url
         }
     }

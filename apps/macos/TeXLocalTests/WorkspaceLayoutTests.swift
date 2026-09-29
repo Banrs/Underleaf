@@ -38,20 +38,19 @@ final class WorkspaceLayoutTests {
     }
 
     /// A project's workspace as a window's content, laid out, as the window shows it.
-    private func open(_ size: NSSize = WorkspaceLayoutTests.size, panel: Bool = false, pdf: Bool = true,
-                      sidebar: Bool = true, inspector: Bool = false) -> WorkspaceController {
+    private func open(panel: Bool = false, sidebar: Bool = true, inspector: Bool = false) -> WorkspaceController {
         let app = AppModel()
         app.sidebarVisible = sidebar
         app.inspectorVisible = inspector
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
-        project.showPDF = pdf
+        project.showPDF = true
         project.showLogs = panel
-        let workspace = WorkspaceController(app: app, project: project, size: size)
-        let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
+        let workspace = WorkspaceController(app: app, project: project, size: Self.size)
+        let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: Self.size),
                                      styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.contentViewController = workspace
-        window.setContentSize(size)
+        window.setContentSize(Self.size)
         window.alphaValue = 0
         window.orderFront(nil)
         window.layoutIfNeeded()

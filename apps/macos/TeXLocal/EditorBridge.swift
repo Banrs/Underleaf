@@ -17,7 +17,6 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
     var onScroll: (Int) -> Void = { _ in }
-    var onCommand: (String) -> Void = { _ in }
     /// The page opened its search, with the query it starts from; the find bar is the host's.
     var onFind: (FindQuery) -> Void = { _ in }
     var onFindClosed: () -> Void = {}
@@ -261,7 +260,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     // ---------- page → host ----------
 
     private enum PageMessage: String {
-        case ready, changed, cursor, scroll, command, findOpen, findClosed, findMatches
+        case ready, changed, cursor, scroll, findOpen, findClosed, findMatches
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -289,8 +288,6 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             if let line = body["line"] as? Int { onCursor(line) }
         case .scroll:
             if let line = body["line"] as? Int { onScroll(line) }
-        case .command:
-            if let id = body["id"] as? String { onCommand(id) }
         case .findOpen:
             onFind(FindQuery(body["query"] as? [String: Any] ?? [:]))
         case .findClosed:

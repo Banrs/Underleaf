@@ -201,9 +201,8 @@ extension AppModel {
         switch command {
         // Undo and redo also serve text fields outside the editor.
         case .projectNew, .projectOpen, .filePageSetup, .editUndo, .editRedo: true
-        case .editFind: project?.findAction(.showFindInterface) != nil
         case .editFindAndReplace: project?.findAction(.showReplaceInterface) != nil
-        case .fileSave, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .fileSave, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
@@ -261,12 +260,8 @@ extension AppModel {
         case .filePrint: requestPDF(.print)
         case .editUndo: undo(redo: false, project)
         case .editRedo: undo(redo: true, project)
-        // Chords from the editor page; the menu's own Find items are the
-        // system's, which reach the window (`MainWindowController.performFindPanelAction`).
-        case .editFind: project?.findAction(.showFindInterface)?()
+        // A chord from the editor page.
         case .editFindAndReplace: project?.findAction(.showReplaceInterface)?()
-        case .editFindNext: project?.findAction(.nextMatch)?()
-        case .editFindPrevious: project?.findAction(.previousMatch)?()
         case .editBold: project?.format(.bold)
         case .editItalic: project?.format(.italic)
         case .editMath: project?.format(.math)
@@ -286,8 +281,10 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
-        // A Toggle bound to `autoCompile` in the menu.
-        case .compileToggleAuto: break
+        // A Toggle bound to `autoCompile` in the menu. Find, Find Next and Find
+        // Previous are the system's items, which reach the window
+        // (`MainWindowController.performFindPanelAction`); the page keeps their chords.
+        case .compileToggleAuto, .editFind, .editFindNext, .editFindPrevious: break
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }

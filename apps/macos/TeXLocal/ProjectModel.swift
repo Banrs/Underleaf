@@ -163,10 +163,6 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onScroll = { [weak self] line in self?.topLine = line }
-        // A chord the page hands back to the menu (`MenuCommand.editorHostKeys`).
-        editor.onCommand = { [weak self] id in
-            if let self, let command = MenuCommand(rawValue: id) { app?.perform(command, on: self) }
-        }
         editor.onFind = { [weak self] query in
             guard let self else { return }
             findQuery = query

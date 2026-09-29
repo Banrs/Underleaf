@@ -150,6 +150,9 @@ const hostFindExtension = [
   Prec.highest(keymap.of([{ key: 'Mod-f', run: openFind, scope: 'editor search-panel' }])),
 ];
 
+// The text's own name for VoiceOver on the Mac, not only the web view's round it.
+const hostLabel = EditorView.contentAttributes.of({ 'aria-label': 'Source' });
+
 // A new editor (a file opened) takes the host's search as it stands. The
 // caller keeps the stand-in quiet meanwhile.
 function attachHostFind(view) {
@@ -265,6 +268,9 @@ window.texlocal = {
       onScroll: (line) => post({ type: 'scroll', path, line }),
     });
     editor.setScrollTop(scrollTop);
+    if ('host' in document.documentElement.dataset) {
+      currentView()?.dispatch({ effects: StateEffect.appendConfig.of(hostLabel) });
+    }
     attachHostFind(currentView());
     quiet = false;
     if (focus) editor.focus();

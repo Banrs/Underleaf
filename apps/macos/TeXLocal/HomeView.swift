@@ -163,14 +163,12 @@ private struct ProjectRow: View {
     }
 }
 
-let macTeXURL = URL(string: "https://tug.org/mactex/")!
-
 /// A button, not a link, to match the actions beside it.
 struct GetMacTeXButton: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button("Get MacTeX") { openURL(macTeXURL) }
+        Button("Get MacTeX") { openURL(URL(string: "https://tug.org/mactex/")!) }
     }
 }
 
@@ -189,11 +187,6 @@ struct ProjectTemplate: Identifiable {
         ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", page: .report),
         ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", page: .slides),
     ]
-}
-
-private enum GalleryMetrics {
-    /// UI kit: Group Boxes, 12.
-    static let groupBoxCorner: CGFloat = 12
 }
 
 /// A template's card: a drawing of its first page, then its name.
@@ -220,7 +213,7 @@ private struct TemplateCard: View {
         }
         .contentShape(.rect)
         // The focus ring on the group box's corners, not a square.
-        .contentShape(.focusEffect, .rect(cornerRadius: GalleryMetrics.groupBoxCorner, style: .continuous))
+        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous)) // UI kit: Group Boxes
         .accessibilityElement(children: .combine)
     }
 
@@ -343,12 +336,4 @@ struct NewProjectSheet: View {
                    rename: InPlaceRename()) {}
     }
     .listStyle(.inset)
-}
-
-#Preview("Get MacTeX") {
-    VStack {
-        GetMacTeXButton()
-        GetMacTeXButton().buttonStyle(.borderedProminent)
-    }
-    .padding()
 }

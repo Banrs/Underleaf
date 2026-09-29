@@ -127,7 +127,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `ProjectModel`: the open project, saves, builds, file watching; `SavedWorkspace`. `FolderWatcher` is the FSEvents watch.
 - `Core`, `Models` (the core's JSON types), `LaTeX` (the snippets the toolbar and menus write).
 - `Commands`: menus and shortcuts.
-  - Every item is a `MenuCommand`, which also lists the chords the editor page hands back.
+  - Every item is a `MenuCommand`, which also lists the chords the editor page keeps from CodeMirror; WebKit hands them on to the menu, which matches them by character and validates them (the page posts them only on Windows).
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
   - Insert sits between View and Window. Format keeps Bold, Italic, the section level and Comment.
 - `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `TabsControl`, `DialogSheet`, and the rename pieces.
