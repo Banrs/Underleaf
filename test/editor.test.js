@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
+// Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
 import fixture from '../crates/texlocal-syntax/tests/fixtures/editing.json' with { type: 'json' };
 
 globalThis.addEventListener ??= () => {};
