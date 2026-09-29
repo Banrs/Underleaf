@@ -1,0 +1,16 @@
+[package]
+name = "texlocal-syntax"
+description = "LaTeX editing logic every editor shares: highlighting, completion and the editing commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "texlocal_syntax"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The native apps' bindings (texlocal-ffi turns it on); the crate itself
+# stays pure, with no I/O, so it can build for the browser too.
+uniffi = { version = "0.31", optional = true }

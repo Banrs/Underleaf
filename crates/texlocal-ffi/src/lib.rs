@@ -5,6 +5,9 @@
 //! `tl_call` blocks until the command finishes (a compile can take minutes),
 //! so hosts call it off their UI thread. Concurrent calls from several threads
 //! are fine: each drives the handle's runtime on its own thread.
+//!
+//! The library also carries the editor's API (`texlocal_syntax`), whose
+//! bindings UniFFI generates (the Mac's: apps/macos/TeXLocalSyntax).
 
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -13,6 +16,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use texlocal_core::service::{arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
+/// Linked in for its UniFFI exports.
+pub use texlocal_syntax;
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
@@ -34,15 +35,13 @@ test('moving within an unchanged equation keeps the same preview tooltip', () =>
   assert.notEqual(state.field(mathPreviewField), first);
 });
 
+// Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
 test('a heading changes level wherever the outline finds it', () => {
-  const as = (line, command) => headingLine(line, command).text;
-  assert.equal(as('\\section[Short]{A Long Title}', 'subsection'), '\\subsection[Short]{A Long Title}');
-  assert.equal(as('\\section[Short]{A Long Title}', ''), 'A Long Title');
-  assert.equal(as('Intro text \\section{X} more', 'chapter'), 'Intro text \\chapter{X} more');
-  assert.equal(as('Intro text \\section{X}', ''), 'Intro text X');
-  assert.equal(as('  \\section*{A {b} c} % note', 'part'), '  \\part*{A {b} c} % note');
-  assert.equal(as('  Plain words', 'section'), '  \\section{Plain words}');
-  assert.deepEqual(headingLine('\\section[S]{T} x', 'paragraph'), { text: '\\paragraph[S]{T} x', cursor: '\\paragraph[S]{T'.length });
+  const fixture = new URL('../crates/texlocal-syntax/tests/fixtures/editing.json', import.meta.url);
+  const { headings } = JSON.parse(readFileSync(fixture, 'utf8'));
+  for (const [line, command, text, cursor] of headings) {
+    assert.deepEqual(headingLine(line, command), { text, cursor }, `${line} as ${command || 'text'}`);
+  }
 });
 
 test('a block starts a line of its own, with no blank line before it', () => {

@@ -9,8 +9,10 @@ const ids = (text, pattern) => [...text.matchAll(pattern)].map((m) => m[1]);
 // The list a declaration starts, to its closing bracket.
 const list = (text, start) => text.slice(text.indexOf(start), text.indexOf('];', text.indexOf(start)));
 
-// The blocks' LaTeX lives in the editor page alone; the native apps name
-// them by id, so an id either host names must be one the page knows.
+// The blocks' LaTeX lives in the core's catalog alone
+// (crates/texlocal-syntax/src/catalog.json, which the web reads through
+// latex-data.js); the apps name them by id, so every id named must be one
+// the catalog has.
 test('every block the Mac and Windows name is in the one table', () => {
   const mac = ids(source('apps/macos/TeXLocal/LaTeX.swift'), /Template\(title: "[^"]+", body: "([a-z]+)"/g);
   const latex = source('apps/windows/TeXLocal.Core/LatexTemplates.cs');
