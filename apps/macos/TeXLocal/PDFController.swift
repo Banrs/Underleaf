@@ -2,26 +2,13 @@ import CoreImage.CIFilterBuiltins
 import PDFKit
 import SwiftUI
 
-/// Named PDF view values.
-nonisolated enum PDFMetrics {
-    /// "The text you are looking at": the first line at or below this fraction of the view.
-    static let sourcePointFraction: CGFloat = 0.2
-    /// How far down the page each look for that line steps.
-    static let sourcePointStep: CGFloat = 6
-    /// A neutral near-white that dark paper's inversion turns into dark mode's
-    /// under-page grey: Core Image inverts in linear light.
-    static let darkPaperBackground = NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1)
-    /// Matches .sync-flash in web/styles.css.
-    static let flashDuration: Duration = .seconds(2.2)
-    static let flashAlpha: CGFloat = 0.4
-    /// PDFKit's `PDFAnnotation.type` is the subtype without its slash.
-    static let linkType = String(PDFAnnotationSubtype.link.rawValue.dropFirst())
-}
-
 /// What the toolbar, the find bar and the menus ask of the PDF view.
 @Observable
 final class PDFController {
-    @ObservationIgnored weak var view: SyncPDFView?
+    @ObservationIgnored weak var view: SyncPDFView? {
+        // PDFView keeps a set scale as it resizes: Fit Height sets it again.
+        didSet { view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } } }
+    }
     var page = 0
     var pageCount = 0
     /// Find in PDF: whether its bar shows, and what's typed in it (searched
@@ -64,9 +51,11 @@ final class PDFController {
         }
     }
 
+    /// The page and its page-break margins, which scale with it, the view's height.
     private func heightScale(_ view: PDFView) -> CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
-        return view.bounds.height / page.bounds(for: view.displayBox).height
+        let margins = view.pageBreakMargins
+        return view.bounds.height / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
     }
 
     func setScale(_ scale: CGFloat) {
@@ -158,8 +147,8 @@ final class PDFController {
     /// box, and the page centre is usually whitespace.
     func sourcePoint() -> (Int, CGPoint)? {
         guard let view, let document = view.document else { return nil }
-        let probe = CGPoint(x: view.bounds.midX,
-                            y: view.bounds.maxY - view.bounds.height * PDFMetrics.sourcePointFraction)
+        // "The text you are looking at": the first line at or below a fifth of the way down.
+        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.bounds.height * 0.2)
         guard let page = view.page(for: probe, nearest: true) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
         var point = view.convert(probe, to: page)
@@ -170,7 +159,7 @@ final class PDFController {
                 point = CGPoint(x: box.midX, y: box.minY)
                 break
             }
-            point.y -= PDFMetrics.sourcePointStep
+            point.y -= 6
         }
         return (document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: bounds))
     }
@@ -180,6 +169,12 @@ final class PDFController {
 /// Mac's TeX apps; a double-click stays PDFKit's, selecting a word.
 final class SyncPDFView: PDFView {
     var onInverse: (Int, CGPoint) -> Void = { _, _ in }
+    var onResize: () -> Void = {}
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        onResize()
+    }
 
     /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
     /// colour wheel so figures keep their hues. The view keeps the light appearance,
@@ -190,8 +185,10 @@ final class SyncPDFView: PDFView {
             wantsLayer = true
             layerUsesCoreImageFilters = true
             appearance = darkPaper ? NSAppearance(named: .aqua) : nil
-            // The tinted under-page colour would invert to olive.
-            backgroundColor = darkPaper ? PDFMetrics.darkPaperBackground : .underPageBackgroundColor
+            // The tinted under-page colour would invert to olive; a neutral near-white
+            // inverts to dark mode's under-page grey (Core Image inverts in linear light).
+            backgroundColor = darkPaper ? NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1)
+                                        : .underPageBackgroundColor
             pageShadowsEnabled = !darkPaper
             let hue = CIFilter.hueAdjust()
             hue.angle = .pi
@@ -300,11 +297,13 @@ struct PDFRepresentable: NSViewRepresentable {
         guard let page = view.document?.page(at: Int(loc.page) - 1) else { return }
         let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         let mark = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
-        mark.color = NSColor.systemYellow.withAlphaComponent(PDFMetrics.flashAlpha)
+        mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
         page.addAnnotation(mark)
-        view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3), on: page)
+        // A third of the view above and below it, in page points.
+        view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3 / view.scaleFactor), on: page)
         Task {
-            try? await Task.sleep(for: PDFMetrics.flashDuration)
+            // web/styles.css .sync-flash
+            try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)
         }
     }

@@ -32,19 +32,16 @@ struct PDFPane: View {
     /// Read whole: the next build rewrites the file in place.
     @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
         guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return nil }
-        hideLinkBorders(document)
-        return document
-    }
-
-    /// pdf.js (browser, Windows) leaves out hyperref's link boxes; the links still work.
-    nonisolated private static func hideLinkBorders(_ document: PDFDocument) {
+        // pdf.js (browser, Windows) leaves out hyperref's link boxes; the links still work.
         for index in 0..<document.pageCount {
-            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == PDFMetrics.linkType {
+            // PDFAnnotation.type: the subtype without its slash.
+            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
                 let border = PDFBorder()
                 border.lineWidth = 0
                 annotation.border = border
             }
         }
+        return document
     }
 
     private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }

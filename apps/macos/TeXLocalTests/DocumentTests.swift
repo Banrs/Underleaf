@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -96,5 +97,36 @@ struct FindTests {
         #expect(PDFFind.normalize("  theorem \n") == "theorem")
         #expect(PDFFind.normalize(" \t ").isEmpty)
         #expect(PDFFind.normalize(String(repeating: "a", count: 300)).count == PDFFind.maxQuery)
+    }
+}
+
+/// The PDF view's fits, off screen.
+@MainActor
+struct PDFFitTests {
+    /// Fit Height shows the whole page, its page-break margins too, and keeps it
+    /// whole as the view resizes.
+    @Test func fitHeightKeepsTheWholePageInView() throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.displayMode = .singlePageContinuous
+        view.displaysPageBreaks = true
+        let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let document = PDFDocument()
+        document.insert(try #require(PDFPage(image: image)), at: 0)
+        view.document = document
+        let controller = PDFController()
+        controller.view = view
+        controller.fitHeight()
+        for height in [500.0, 380] {
+            view.setFrameSize(NSSize(width: 600, height: height))
+            view.layoutDocumentView()
+            // In page space, magnified by the scale.
+            let shown = try #require(view.documentView).frame.height * view.scaleFactor
+            #expect(isClose(shown, height, within: 1), "pages \(shown) in \(height)")
+            #expect(controller.fit == .height)
+        }
     }
 }
