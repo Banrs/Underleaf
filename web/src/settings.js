@@ -1,7 +1,7 @@
 // Settings dialog. Grouped rows in the macOS System Settings idiom, with real
 // control semantics: switches expose checked state, segmented controls are radio
 // groups, and every control has an accessible name tied to its row label. The
-// dialog shell (focus trap, Escape, focus restore) comes from dom.js.
+// dialog shell (a native <dialog>, with focus restore) comes from dom.js.
 
 import { api } from './api.js';
 import { $, el, toast, showModal, nextId } from './dom.js';
@@ -108,7 +108,7 @@ function projectSwitch(projectId, key) {
 // Stepper over a fixed list of values, with the ends disabled rather than silently
 // doing nothing.
 function stepper(values, get, set, format) {
-  const label = el('span', { class: 'stepper-value' }, format(get()));
+  const label = el('output', { class: 'stepper-value' }, format(get()));
   const dec = el('button', { class: 'icon-btn small', title: 'Decrease' }, icon('minus'));
   const inc = el('button', { class: 'icon-btn small', title: 'Increase' }, icon('plus'));
   // Clamp: a stored value off the list (hand-edited, older build) must not

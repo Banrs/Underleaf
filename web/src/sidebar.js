@@ -101,10 +101,10 @@ export function buildSidebar(callbacks, titlebarTrailing) {
 
   nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
 
-  return el('div', { class: 'sidebar pane', role: 'complementary', 'aria-label': 'Project navigator' },
+  return el('aside', { class: 'sidebar pane', 'aria-label': 'Project navigator' },
     el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
       el('span', { class: 'spacer' }), titlebarTrailing),
-    el('div', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
+    el('search', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
     el('div', { class: 'section-header' },
       el('span', {}, 'Files'),
       el('span', { class: 'spacer' }),
@@ -166,14 +166,12 @@ export function renderTree() {
 // changed on a plain file open, so replacing every row just churns the DOM.
 export function updateTreeSelection() {
   if (!nodes.tree) return;
-  const prev = nodes.tree.querySelector('.tree-row.selected');
+  const prev = nodes.tree.querySelector('.tree-row[aria-current]');
   const next = state.openPath
     ? nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.openPath)}"]`)
     : null;
   if (prev !== next) {
-    prev?.classList.remove('selected');
     prev?.removeAttribute('aria-current');
-    next?.classList.add('selected');
     next?.setAttribute('aria-current', 'true');
   }
   syncRovingFocus();
@@ -201,7 +199,7 @@ function renderNode(node, level) {
       },
       onkeydown: treeKeys,
     },
-      el('span', { class: `twisty ${isOpen ? 'open' : ''}` }, icon('chevron')),
+      el('span', { class: 'twisty' }, icon('chevron')),
       el('span', { class: 'row-icon' }, icon(isOpen ? 'folder-open' : 'folder')),
       el('span', { class: 'row-label' }, node.name),
     );
@@ -213,7 +211,7 @@ function renderNode(node, level) {
 
   const isMain = node.path === state.settings?.mainFile;
   return el('button', {
-    class: `tree-row ${node.path === state.openPath ? 'selected' : ''}`,
+    class: 'tree-row',
     role: 'treeitem',
     'aria-level': String(level),
     'aria-current': node.path === state.openPath ? 'true' : undefined,
@@ -233,7 +231,7 @@ function renderNode(node, level) {
 // how a source list behaves natively (Tab through 200 files is not usable).
 function syncRovingFocus() {
   const rows = [...(nodes.tree?.querySelectorAll('.tree-row') ?? [])];
-  const current = rows.find((r) => r.classList.contains('selected')) ?? rows[0];
+  const current = rows.find((r) => r.hasAttribute('aria-current')) ?? rows[0];
   for (const r of rows) r.tabIndex = r === current ? 0 : -1;
 }
 
@@ -460,14 +458,12 @@ async function upload(files) {
 
 // ---------- outline ----------
 
-const GUTTER = 10, INDENT = 14, RAIL = 3;
 const OUTLINE_MIN = 80;
 
 export function renderOutline() {
   const box = nodes.outline;
   if (!box) return;
   const open = prefs.outlineOpen;
-  nodes.outlineToggle.querySelector('.twisty')?.classList.toggle('open', open);
   box.hidden = !open || !!state.searchQuery;
   nodes.outlineSplit.hidden = box.hidden;
   if (box.hidden) return;
@@ -479,26 +475,16 @@ export function renderOutline() {
   // A rebuild (every edit) keeps keyboard focus on the same row.
   const focused = [...box.children].indexOf(document.activeElement);
   const minDepth = Math.min(...state.outline.map((o) => o.depth));
-  box.replaceChildren(...state.outline.map((o, i) => {
-    const rd = o.depth - minDepth;
-    // One vertical guide rail per ancestor level, painted as stacked background
-    // gradients so nesting reads at a glance without extra elements.
-    let style = `padding-left:${GUTTER + rd * INDENT}px`;
-    if (rd > 0) {
-      const rail = 'linear-gradient(var(--separator),var(--separator))';
-      const pos = Array.from({ length: rd }, (_, k) => `${GUTTER + k * INDENT + RAIL}px 0`);
-      style += `;background-image:${Array(rd).fill(rail)};background-position:${pos};background-size:1px 100%`;
-    }
-    return el('div', {
-      class: 'outline-row',
-      role: 'option',
-      tabindex: '-1',
-      'aria-selected': 'false',
-      style,
-      title: o.title,
-      onclick: () => chooseSection(i),
-    }, o.title);
-  }));
+  // --depth indents the row and draws its nesting rails (styles.css).
+  box.replaceChildren(...state.outline.map((o, i) => el('div', {
+    class: 'outline-row',
+    role: 'option',
+    tabindex: '-1',
+    'aria-selected': 'false',
+    style: `--depth:${o.depth - minDepth}`,
+    title: o.title,
+    onclick: () => chooseSection(i),
+  }, o.title)));
   updateOutlineSelection();
   if (focused !== -1) box.children[Math.min(focused, box.children.length - 1)].focus();
 }
@@ -514,7 +500,6 @@ export function updateOutlineSelection() {
   const focused = rows.includes(document.activeElement);
   rows.forEach((r, i) => {
     r.setAttribute('aria-selected', String(i === index));
-    r.classList.toggle('selected', i === index);
     if (!focused) r.tabIndex = i === Math.max(0, index) ? 0 : -1;
   });
   const row = rows[index];
@@ -567,23 +552,21 @@ function setupOutlineSplit(handle, box) {
   };
   // Until the sidebar is laid out its height is unknown; clamp on first use.
   box.style.height = prefs.outlineHeight ? `${prefs.outlineHeight}px` : '';
+  let startY, startH;
   handle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     handle.classList.add('dragging');
     handle.setPointerCapture(e.pointerId);
-    const startY = e.clientY;
-    const startH = box.getBoundingClientRect().height;
-    const onMove = (ev) => apply(startH - (ev.clientY - startY));
-    const onUp = () => {
-      handle.classList.remove('dragging');
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      handle.removeEventListener('pointercancel', onUp);
-      apply(box.getBoundingClientRect().height, true);
-    };
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
-    handle.addEventListener('pointercancel', onUp);
+    startY = e.clientY;
+    startH = box.getBoundingClientRect().height;
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (handle.hasPointerCapture(e.pointerId)) apply(startH - (e.clientY - startY));
+  });
+  // Capture ends once, on release or cancel.
+  handle.addEventListener('lostpointercapture', () => {
+    handle.classList.remove('dragging');
+    apply(box.getBoundingClientRect().height, true);
   });
   handle.addEventListener('keydown', (e) => {
     const h = box.getBoundingClientRect().height;

@@ -106,10 +106,9 @@ const baseTheme = EditorView.theme({
     color: 'var(--label-2)',
   },
   '.cm-activeLineGutter': { color: 'var(--label)' },
-  // Right-align the line numbers with tabular figures so 1-, 2- and 3-digit
-  // numbers line up on their last digit instead of looking ragged/left-leaning.
+  // Tabular figures, so the (right-aligned) 1-, 2- and 3-digit line numbers
+  // line up on their last digit instead of looking ragged.
   '.cm-lineNumbers .cm-gutterElement': {
-    textAlign: 'right',
     fontVariantNumeric: 'tabular-nums',
     padding: '0 8px 0 12px',
   },

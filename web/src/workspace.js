@@ -156,6 +156,7 @@ function buildChrome(id) {
     },
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.classList.toggle('collapsed', prefs.sidebarCollapsed);
+  sidebar.inert = prefs.sidebarCollapsed;   // hidden from Tab and assistive tech too
 
   const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
 
@@ -228,7 +229,7 @@ function buildChrome(id) {
     findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${totalLabel}` : 'Not found') : '';
   };
   const stepFind = (delta) => showCount(state.pdf.findStep(delta));
-  const findBar = el('div', { class: 'pdf-find', hidden: true },
+  const findBar = el('search', { class: 'pdf-find', hidden: true },
     findInput,
     findCount,
     el('button', { class: 'icon-btn small', title: 'Previous match', onclick: () => stepFind(-1) }, icon('chevron-up')),
@@ -279,7 +280,7 @@ function buildChrome(id) {
   );
   const paneDivider = el('div', { class: 'divider divider-sync', role: 'separator', 'aria-orientation': 'vertical' }, syncPill);
 
-  const workspace = el('div', { class: 'workspace' }, editorPane, paneDivider, pdfPane);
+  const workspace = el('main', { class: 'workspace' }, editorPane, paneDivider, pdfPane);
   workspace.classList.toggle('pdf-collapsed', prefs.pdfCollapsed);
 
   $('#app').replaceChildren(
@@ -334,11 +335,7 @@ export function syncToolbarState() {
     b.disabled = cmd.enabled ? !cmd.enabled() : false;
     b.title = tooltip(id);
     b.setAttribute('aria-label', commandTitle(id));
-    if (cmd.checked) {
-      const on = !!cmd.checked();
-      b.classList.toggle('selected', on);
-      b.setAttribute('aria-pressed', String(on));
-    }
+    if (cmd.checked) b.setAttribute('aria-pressed', String(!!cmd.checked()));
   }
 }
 
@@ -366,7 +363,7 @@ function commandDefs() {
     { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
     { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
     { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
-    { id: 'project.search', title: 'Find in Project', run: focusSearch, enabled: hasProject },
+    { id: 'project.search', title: 'Find in Project', run: () => { if (prefs.sidebarCollapsed) toggleSidebar(); focusSearch(); }, enabled: hasProject },
 
     { id: 'file.new', title: 'New File…', run: newFileFlow, enabled: hasProject },
     { id: 'file.newFolder', title: 'New Folder…', run: newFolderFlow, enabled: hasProject },
@@ -423,7 +420,6 @@ function openPdfFind() {
   // The log takes the PDF's place, so matches would be highlighted out of sight.
   if (state.logOpen) toggleLogs();
   ui.findBar.hidden = false;
-  ui.findBar.parentElement?.classList.add('find-open');
   ui.findInput.focus();
   ui.findInput.select();
 }
@@ -434,7 +430,6 @@ function closePdfFind() {
   pdfFindTimer = null;
   pdfFindGeneration++;
   ui.findBar.hidden = true;
-  ui.findBar.parentElement?.classList.remove('find-open');
   ui.findInput.value = '';
   state.pdf?.clearFind();
 }
@@ -861,8 +856,7 @@ async function inverseSync() {
 function toggleSidebar() {
   prefs.sidebarCollapsed = !prefs.sidebarCollapsed;
   ui.sidebar?.classList.toggle('collapsed', prefs.sidebarCollapsed);
-  if (prefs.sidebarCollapsed) ui.sidebar.style.width = '';
-  else if (prefs.sidebarWidth) ui.sidebar.style.width = `${prefs.sidebarWidth}px`;
+  ui.sidebar.inert = prefs.sidebarCollapsed;
   refreshCommands();
 }
 
@@ -888,6 +882,8 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     if (mode === 'flex') pane.style.flex = 'none';
     pane.style.width = `${w}px`;
   }
+  const dir = mode === 'width' ? 1 : -1;
+  let drag = null;
   handle.addEventListener('pointerdown', (e) => {
     // The sync pill rides on this divider; a pointerdown there is a button
     // click, never a resize.
@@ -896,31 +892,21 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     handle.classList.add('dragging');
     handle.setPointerCapture(e.pointerId);
     // Resizing tracks the pointer 1:1 — suppress the collapse animation.
-    const prevTransition = pane.style.transition;
+    drag = { x: e.clientX, w: pane.getBoundingClientRect().width, transition: pane.style.transition };
     pane.style.transition = 'none';
     state.pdf?.beginLiveResize();
-    const startX = e.clientX;
-    const startW = pane.getBoundingClientRect().width;
-    const dir = mode === 'width' ? 1 : -1;
-    const onMove = (ev) => {
-      const w = Math.max(min, Math.min(max ?? innerWidth * 0.7, startW + dir * (ev.clientX - startX)));
-      applyWidth(w);
-      state.pdf?.liveResize();
-    };
-    let done = false;
-    const onUp = () => {
-      if (done) return;
-      done = true;
-      handle.classList.remove('dragging');
-      pane.style.transition = prevTransition;
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      handle.removeEventListener('pointercancel', onUp);
-      state.pdf?.endLiveResize();
-      prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
-    };
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
-    handle.addEventListener('pointercancel', onUp);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    applyWidth(Math.max(min, Math.min(max ?? innerWidth * 0.7, drag.w + dir * (e.clientX - drag.x))));
+    state.pdf?.liveResize();
+  });
+  // Capture ends once, on release, cancel, or the handle leaving the page.
+  handle.addEventListener('lostpointercapture', () => {
+    handle.classList.remove('dragging');
+    pane.style.transition = drag.transition;
+    drag = null;
+    state.pdf?.endLiveResize();
+    prefs[prefKey] = Math.round(pane.getBoundingClientRect().width);
   });
 }

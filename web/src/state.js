@@ -84,7 +84,5 @@ export function outlineChain(line) {
 // above the first. Given the editor's top line, it is the section on screen,
 // which the outline's selection follows as the source scrolls.
 export function sectionIndexAt(outline, line) {
-  let found = -1;
-  for (let i = 0; i < outline.length && outline[i].line <= line; i++) found = i;
-  return found;
+  return outline.findLastIndex((o) => o.line <= line);
 }
