@@ -458,6 +458,7 @@ async function upload(files) {
 
 // ---------- outline ----------
 
+const GUTTER = 10, INDENT = 14, RAIL = 3;
 const OUTLINE_MIN = 80;
 
 export function renderOutline() {
@@ -475,16 +476,27 @@ export function renderOutline() {
   // A rebuild (every edit) keeps keyboard focus on the same row.
   const focused = [...box.children].indexOf(document.activeElement);
   const minDepth = Math.min(...state.outline.map((o) => o.depth));
-  // --depth indents the row and draws its nesting rails (styles.css).
-  box.replaceChildren(...state.outline.map((o, i) => el('div', {
-    class: 'outline-row',
-    role: 'option',
-    tabindex: '-1',
-    'aria-selected': 'false',
-    style: `--depth:${o.depth - minDepth}`,
-    title: o.title,
-    onclick: () => chooseSection(i),
-  }, o.title)));
+  box.replaceChildren(...state.outline.map((o, i) => {
+    const rd = o.depth - minDepth;
+    // One vertical guide rail per ancestor level, painted as stacked background
+    // gradients so nesting reads at a glance without extra elements. (Not one
+    // repeating gradient: at fractional scales engines drop or add a rail.)
+    let style = `padding-left:${GUTTER + rd * INDENT}px`;
+    if (rd > 0) {
+      const rail = 'linear-gradient(var(--separator),var(--separator))';
+      const pos = Array.from({ length: rd }, (_, k) => `${GUTTER + k * INDENT + RAIL}px 0`);
+      style += `;background-image:${Array(rd).fill(rail)};background-position:${pos};background-size:1px 100%`;
+    }
+    return el('div', {
+      class: 'outline-row',
+      role: 'option',
+      tabindex: '-1',
+      'aria-selected': 'false',
+      style,
+      title: o.title,
+      onclick: () => chooseSection(i),
+    }, o.title);
+  }));
   updateOutlineSelection();
   if (focused !== -1) box.children[Math.min(focused, box.children.length - 1)].focus();
 }

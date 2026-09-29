@@ -901,8 +901,9 @@ function setupResizer(handle, pane, mode, min, max, prefKey) {
     applyWidth(Math.max(min, Math.min(max ?? innerWidth * 0.7, drag.w + dir * (e.clientX - drag.x))));
     state.pdf?.liveResize();
   });
-  // Capture ends once, on release, cancel, or the handle leaving the page.
-  handle.addEventListener('lostpointercapture', () => {
+  // Capture ends on release or cancel. Ignore the sync buttons' touch capture.
+  handle.addEventListener('lostpointercapture', (e) => {
+    if (e.target !== handle) return;
     handle.classList.remove('dragging');
     pane.style.transition = drag.transition;
     drag = null;

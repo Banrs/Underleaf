@@ -693,13 +693,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* --depth (set in sidebar.js) indents the row and draws one 1 px rail per
-     ancestor level as a background gradient, so hover uses background-COLOR to
-     layer over them rather than erase them. */
-  padding-left: calc(10px + var(--depth, 0) * 14px);
-  background-image: repeating-linear-gradient(to right, var(--separator) 0 1px, transparent 1px 14px);
-  background-position: 13px 0;
-  background-size: calc(var(--depth, 0) * 14px) 100%;
+  /* Nesting rails are per-row background gradients set in sidebar.js, so hover
+     uses background-COLOR to layer over them rather than erase them. */
   background-repeat: no-repeat;
   display: block;
 }
