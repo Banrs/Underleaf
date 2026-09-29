@@ -4,12 +4,13 @@ import test from 'node:test';
 
 globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
-const { mathModeAt } = await import('../web/src/editor.js');
+const { mathModeAt, mathAt } = await import('../web/src/editor.js');
+const { Text } = await import('@codemirror/state');
 
 // Shared with the core's port (crates/texlocal-syntax/tests/editing.rs):
 // each case's `|` marks the position asked about.
 const fixture = new URL('../crates/texlocal-syntax/tests/fixtures/editing.json', import.meta.url);
-const { mathMode } = JSON.parse(readFileSync(fixture, 'utf8'));
+const { mathMode, mathAt: previews } = JSON.parse(readFileSync(fixture, 'utf8'));
 
 test('each shared case: $, $$, \\( \\[, environments, text in maths, escapes, comments, verbatim, blank lines', () => {
   for (const [source, expected, note] of mathMode) {
@@ -30,4 +31,14 @@ test('works at any position of a longer text', () => {
   assert.equal(mathModeAt(doc, 6), false);
   assert.equal(mathModeAt(doc, 12), true);
   assert.equal(mathModeAt(doc), false);
+});
+
+test('the maths to preview at a position, the core\'s cases', () => {
+  for (const [source, expected] of previews) {
+    const pos = source.indexOf('|');
+    const doc = Text.of(source.replace('|', '').split('\n'));
+    const found = mathAt(doc, pos);
+    // The web's tooltip shows nothing for maths with no TeX.
+    assert.deepEqual(found?.tex ? { start: found.from, tex: found.tex, display: found.display } : null, expected, source);
+  }
 });

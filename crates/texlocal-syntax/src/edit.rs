@@ -1,7 +1,10 @@
 //! The editing commands, as web/src/editor.js has them: comment toggling,
-//! heading levels, blocks, and whether a position is in maths.
+//! heading levels, blocks, whether a position is in maths, and the maths
+//! to preview at the caret.
 
 use std::collections::BTreeSet;
+
+use serde::Serialize;
 
 use crate::highlight::space;
 use crate::{catalog, Insertion, Text, TextEdit, TextRange};
@@ -479,4 +482,160 @@ pub fn math_mode_at(src: &[u16]) -> bool {
         }
     }
     math(&stack)
+}
+
+/// Maths to preview: where it starts, its TeX as KaTeX reads it, and
+/// whether it's displayed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MathPreview {
+    pub start: u32,
+    pub tex: String,
+    pub display: bool,
+}
+
+const PREVIEW_ENVIRONMENTS: [&str; 9] = [
+    "equation", "align", "gather", "multline", "eqnarray", "alignat", "flalign", "cases", "split",
+];
+
+/// The maths the caret is in or just after, as web/src/editor.js
+/// `mathAt` finds one: a maths environment, $$…$$ or \[…\] (the first that
+/// holds the caret, in that order), else $…$ on the caret's line. Only
+/// 20,000 units either side are read. None when it holds no TeX.
+pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
+    let pos = caret as usize;
+    let from = pos.saturating_sub(20_000);
+    let window = &text.units[from..(pos + 20_000).min(text.units.len())];
+    let rel = pos - from;
+    let found = |start: usize, tex: String, display: bool| {
+        (!tex.is_empty()).then_some(MathPreview {
+            start: start as u32,
+            tex,
+            display,
+        })
+    };
+    let finders: [Finder; 3] = [
+        next_environment,
+        |w, i| next_pair(w, i, "$$", "$$"),
+        |w, i| next_pair(w, i, "\\[", "\\]"),
+    ];
+    for next in finders {
+        let mut i = 0;
+        while let Some((start, end, tex)) = next(window, i) {
+            if start > rel {
+                break;
+            }
+            if rel <= end {
+                return found(from + start, tex, true);
+            }
+            i = end;
+        }
+    }
+    // Inline: single, unescaped dollars on the caret's line, paired in order.
+    let index = text.line_index(caret);
+    let line = text.line(index);
+    let at = |i: usize| line.get(i).copied();
+    let dollars: Vec<usize> = (0..line.len())
+        .filter(|&i| {
+            let before = i.checked_sub(1).and_then(at);
+            is(line[i], '$')
+                && ![Some('\\' as u16), Some('$' as u16)].contains(&before)
+                && at(i + 1) != Some('$' as u16)
+        })
+        .collect();
+    let column = pos - text.lines[index] as usize;
+    dollars
+        .chunks_exact(2)
+        .find(|pair| column > pair[0] && column <= pair[1])
+        .and_then(|pair| {
+            let tex = preview_tex(None, &line[pair[0] + 1..pair[1]]);
+            found(text.lines[index] as usize + pair[0], tex, false)
+        })
+}
+
+/// Finds the next block from a position: its start, end and TeX.
+type Finder = fn(&[u16], usize) -> Option<(usize, usize, String)>;
+
+/// The next maths environment from `from` that's closed: its start, end and TeX.
+fn next_environment(src: &[u16], from: usize) -> Option<(usize, usize, String)> {
+    let begin = units("\\begin{");
+    let mut i = from;
+    while let Some(start) = find(src, i, &begin) {
+        i = start + 1;
+        let name_start = start + begin.len();
+        let Some(close) = src[name_start..].iter().position(|&u| is(u, '}')) else {
+            continue;
+        };
+        let full = String::from_utf16_lossy(&src[name_start..name_start + close]);
+        let name = full.strip_suffix('*').unwrap_or(&full);
+        if !PREVIEW_ENVIRONMENTS.contains(&name) {
+            continue;
+        }
+        let body = name_start + close + 1;
+        let end = units(&format!("\\end{{{full}}}"));
+        if let Some(at) = find(src, body, &end) {
+            return Some((
+                start,
+                at + end.len(),
+                preview_tex(Some(name), &src[body..at]),
+            ));
+        }
+    }
+    None
+}
+
+/// The next `open`…`close` from `from`: its start, end and TeX.
+fn next_pair(src: &[u16], from: usize, open: &str, close: &str) -> Option<(usize, usize, String)> {
+    let (open, close) = (units(open), units(close));
+    let start = find(src, from, &open)?;
+    let at = find(src, start + open.len(), &close)?;
+    Some((
+        start,
+        at + close.len(),
+        preview_tex(None, &src[start + open.len()..at]),
+    ))
+}
+
+/// What KaTeX shows of maths: no labels or numbering, and an environment's
+/// body as the aligned or cases block it can render.
+fn preview_tex(environment: Option<&str>, body: &[u16]) -> String {
+    let body = String::from_utf16_lossy(body);
+    let body = remove_commands(&body, &["label", "tag"], true);
+    let body = remove_commands(&body, &["nonumber", "notag"], false);
+    let clean = body.trim();
+    match environment {
+        None | Some("equation" | "multline") => clean.to_string(),
+        Some("cases") => format!("\\begin{{cases}}{clean}\\end{{cases}}"),
+        Some("gather") => format!("\\begin{{gathered}}{clean}\\end{{gathered}}"),
+        Some(_) => format!("\\begin{{aligned}}{clean}\\end{{aligned}}"),
+    }
+}
+
+/// `text` without the commands `names`: with their braced argument (no
+/// nested braces), or as whole words.
+fn remove_commands(text: &str, names: &[&str], argument: bool) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let skip = names.iter().find_map(|name| {
+            let tail = after.strip_prefix(name)?;
+            if argument {
+                let close = tail.strip_prefix('{')?.find('}')?;
+                Some(name.len() + close + 2)
+            } else {
+                let next = tail.chars().next();
+                (!next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(name.len())
+            }
+        });
+        match skip {
+            Some(skip) => rest = &after[skip..],
+            None => {
+                out.push('\\');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }

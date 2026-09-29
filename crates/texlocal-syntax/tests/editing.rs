@@ -2,13 +2,21 @@
 //! (fixtures/editing.json; test/mathmode.test.js and test/editor.test.js).
 
 use serde::Deserialize;
-use texlocal_syntax::{math_mode_at, SourceDocument, TextEdit, TextRange};
+use texlocal_syntax::{math_mode_at, MathPreview, SourceDocument, TextEdit, TextRange};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Fixture {
     math_mode: Vec<(String, bool, String)>,
     headings: Vec<(String, String, String, u32)>,
+    math_at: Vec<(String, Option<Preview>)>,
+}
+
+#[derive(Deserialize)]
+struct Preview {
+    start: u32,
+    tex: String,
+    display: bool,
 }
 
 fn fixture() -> Fixture {
@@ -29,6 +37,24 @@ fn math_mode_matches_the_web() {
     // \verb's delimiter is the fixture's marker, so these are here.
     assert!(!math_mode_at(&units("\\verb|$| x")));
     assert!(!math_mode_at(&units("\\verb|$")), "inside \\verb");
+}
+
+#[test]
+fn the_maths_to_preview_matches_the_web() {
+    for (source, expected) in fixture().math_at {
+        let at = source.find('|').unwrap();
+        let doc = SourceDocument::new(&source.replace('|', ""));
+        let expected = expected.map(|p| MathPreview {
+            start: p.start,
+            tex: p.tex,
+            display: p.display,
+        });
+        assert_eq!(
+            doc.math_at(units(&source[..at]).len() as u32),
+            expected,
+            "{source}"
+        );
+    }
 }
 
 #[test]

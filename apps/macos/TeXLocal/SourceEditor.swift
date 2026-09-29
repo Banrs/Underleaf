@@ -154,6 +154,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// The first line at least half showing below the toolbar.
     @objc private func scrolled() {
+        textView.previewMath()
         guard let manager = textView.textLayoutManager, let font = textView.font else { return }
         let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
             + font.boundingRectForFont.height / 2

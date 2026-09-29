@@ -272,6 +272,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
         brackets = matchBrackets()
+        previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
@@ -281,13 +282,62 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     }
 
     override func becomeFirstResponder() -> Bool {
-        defer { recolour() }
+        defer {
+            recolour()
+            // Once the window has made it first responder.
+            DispatchQueue.main.async { self.previewMath() }
+        }
         return super.becomeFirstResponder()
     }
 
     override func resignFirstResponder() -> Bool {
-        defer { recolour() }
+        defer {
+            recolour()
+            mathPopover?.close()
+        }
         return super.resignFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        guard let window else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: window)
+        }
+    }
+
+    @objc private func keyChanged() {
+        previewMath()
+    }
+
+    // MARK: the maths preview
+
+    private var mathPopover: MathPopover?
+
+    /// The maths at the caret, typeset over where it starts, while the text
+    /// has the keyboard and that place shows (the web's preview).
+    func previewMath() {
+        guard let window, window.isKeyWindow, window.firstResponder === self, !loading,
+              let maths = document.mathAt(caret: selectedRange().location),
+              let clip = enclosingScrollView?.contentView else {
+            mathPopover?.close()
+            return
+        }
+        let screen = firstRect(forCharacterRange: NSRange(location: maths.start, length: 1), actualRange: nil)
+        let rect = convert(window.convertFromScreen(screen), from: nil)
+        // Below the toolbar and the find bar, and above the scroll view's foot.
+        let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
+        var shown = convert(clip.bounds, from: clip)
+        shown.origin.y += insets.top
+        shown.size.height -= insets.top + insets.bottom
+        guard shown.contains(NSPoint(x: rect.minX, y: rect.midY)) else {
+            mathPopover?.close()
+            return
+        }
+        if mathPopover == nil { mathPopover = MathPopover() }
+        mathPopover?.show(maths, size: font?.pointSize ?? NSFont.systemFontSize, at: rect, of: self)
     }
 
     /// CodeMirror's bracketMatching: before the caret, then after it, within 10,000 units.

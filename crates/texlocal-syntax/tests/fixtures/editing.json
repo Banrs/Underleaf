@@ -96,5 +96,22 @@
     ["\\subsection{Unclosed {title","section","\\section{Unclosed {title}",24],
     ["   ","section","   \\section{}",12],
     ["\\sectionmark{x} words","chapter","\\chapter{\\sectionmark{x} words}",30]
+  ],
+  "mathAt": [
+    ["Let $x|+1$ be",{"start":4,"tex":"x+1","display":false}],
+    ["\\$5 and $x|$",{"start":8,"tex":"x","display":false}],
+    ["text |$x$",null],
+    ["$x$|",null],
+    ["$$ a |+ b $$",{"start":0,"tex":"a + b","display":true}],
+    ["$$x$$|",{"start":0,"tex":"x","display":true}],
+    ["$$ |$$",null],
+    ["\\[ x \\label{eq:1} |\\]",{"start":0,"tex":"x","display":true}],
+    ["see\n\\begin{equation*}\n  E = mc^2 \\tag{1} |\n\\end{equation*}",{"start":4,"tex":"E = mc^2","display":true}],
+    ["\\begin{align}\n  a &= b \\nonumber\\\\\n  c &|= d\n\\end{align}",{"start":0,"tex":"\\begin{aligned}a &= b \\\\\n  c &= d\\end{aligned}","display":true}],
+    ["\\begin{gather}\n  a |\n\\end{gather}",{"start":0,"tex":"\\begin{gathered}a\\end{gathered}","display":true}],
+    ["\\begin{cases} a |\\end{cases}",{"start":0,"tex":"\\begin{cases}a\\end{cases}","display":true}],
+    ["\\begin{itemize} |x \\end{itemize}",null],
+    ["\\begin{equation} a |",null],
+    ["$a\n|b$",null]
   ]
 }

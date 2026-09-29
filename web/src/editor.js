@@ -157,13 +157,15 @@ function texForPreview(env, body) {
   return `\\begin{aligned}${clean}\\end{aligned}`;
 }
 
-function mathAtCursor(state) {
-  const pos = state.selection.main.head;
+// The maths a position of `doc` (a CodeMirror Text) is in, or just after:
+// { from, tex, display }. The core has a port (crates/texlocal-syntax
+// `math_at`), which the fixture in test/mathmode.test.js holds to the same answers.
+export function mathAt(doc, pos) {
   // Only scan a window around the cursor, not the whole document — the cost per
   // cursor move is bounded by the window, not by document size.
   const WIN = 20000;
   const from = Math.max(0, pos - WIN);
-  const text = state.doc.sliceString(from, Math.min(state.doc.length, pos + WIN));
+  const text = doc.sliceString(from, Math.min(doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
   for (const [re, tex] of BLOCKS) {
@@ -177,7 +179,7 @@ function mathAtCursor(state) {
   }
 
   // Inline $…$ on the cursor's line (unescaped, non-$$ delimiters).
-  const line = state.doc.lineAt(pos);
+  const line = doc.lineAt(pos);
   const spans = [];
   let start = -1;
   for (let i = 0; i < line.text.length; i++) {
@@ -195,7 +197,7 @@ function mathAtCursor(state) {
 }
 
 function mathTooltip(state, prev = null) {
-  const m = mathAtCursor(state);
+  const m = mathAt(state.doc, state.selection.main.head);
   if (!m?.tex) return null;
   // The tooltip manager keys its views by `create`, so a fresh object rebuilds
   // the DOM and reruns KaTeX. Moving within an unchanged equation keeps it.

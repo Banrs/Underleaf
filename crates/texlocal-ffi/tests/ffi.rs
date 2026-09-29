@@ -307,6 +307,8 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
             symbol,
             Some(json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8 }))
         );
+        let maths = call("math_at", json!({ "caret": 1 }));
+        assert_eq!(maths, Some(Value::Null), "é isn't maths");
         assert_eq!(call("unknown", json!({})), None);
         tl_source_free(source);
     }

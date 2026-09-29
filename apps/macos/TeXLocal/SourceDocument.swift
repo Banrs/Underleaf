@@ -69,6 +69,11 @@ final class SourceDocument {
         call("insert_symbol", ["command": command, "selection": Self.json(selection)])
     }
 
+    /// The maths the caret is in or just after, to preview.
+    func mathAt(caret: Int) -> MathPreview? {
+        call("math_at", ["caret": caret])
+    }
+
     /// The text as the mirror has it.
     var text: String {
         call("text", [:]) ?? ""
@@ -121,6 +126,13 @@ nonisolated struct Completion: Decodable {
     /// What goes in, with its fields' defaults.
     var text: String
     var fields: [SnippetField]
+}
+
+/// Maths to preview: where it starts, its TeX as KaTeX reads it, and whether it's displayed.
+nonisolated struct MathPreview: Decodable, Equatable {
+    var start: Int
+    var tex: String
+    var display: Bool
 }
 
 /// A place to type in a completion's text, from its start. Fields with the

@@ -47,7 +47,7 @@ uint32_t *tl_source_highlights(TlSource *source, uint32_t start, uint32_t length
 void tl_source_free_runs(uint32_t *runs, size_t count);
 
 /* "completions", "toggle_comment", "set_heading", "insert_block",
- * "insert_symbol" or "text", with a JSON object of arguments. Returns the
+ * "insert_symbol", "math_at" or "text", with a JSON object of arguments. Returns the
  * result's JSON, or NULL for an unknown command; free it with tl_free. */
 char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
 

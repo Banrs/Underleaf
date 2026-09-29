@@ -16,7 +16,7 @@ mod highlight;
 use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, Completions, SnippetField};
-pub use edit::math_mode_at;
+pub use edit::{math_mode_at, MathPreview};
 pub use highlight::{Highlight, HighlightKind};
 
 /// A range of the text, in UTF-16 units.
@@ -181,6 +181,11 @@ impl SourceDocument {
     /// and keeps its title, a line of text becomes the title.
     pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
         edit::set_heading(&self.text, caret.min(self.text.len()), command)
+    }
+
+    /// The maths to preview at the caret, if it's in some.
+    pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
+        edit::math_at(&self.text, caret.min(self.text.len()))
     }
 
     /// A block by its id (the catalog's `blocks`) in place of the selection,
