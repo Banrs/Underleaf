@@ -7,7 +7,7 @@
   - `crates/texlocal-syntax`: the LaTeX editing logic every editor can share (highlighting, completion with snippets, maths mode, comments, headings, blocks, symbols), ported from the web's editor and CodeMirror's stex mode, over a UTF-16 mirror of the text.
   - The Mac's editor is native: an `NSTextView` on TextKit 2 (`SourceTextView`, `SourceEditor`), which asks the core through UniFFI bindings (`apps/macos/TeXLocalSyntax`). The Mac embeds no web page any more.
   - The web and Windows keep CodeMirror; the web reads the core's catalog (`catalog.json`), and shared fixtures hold the JS and the Rust to the same answers.
-- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 56 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono.
+- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono.
 - **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
 
 ## Layout
@@ -153,7 +153,9 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - It passes `performFindPanelAction:` on (`FindPassingTextView`) to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`); the find bars' fields get the same class as their field editor, through `windowWillReturnFieldEditor`.
   - The rest is the system's: the caret, the context menu, Services, dictation, drag and drop of text, the completion list, and the find indicator for the outline's jumps and each find match.
   - Edit › Undo and Redo are the system's `undo:`/`redo:`, answered by the file's own undo manager (`SourceEditor.undoManager(for:)`); the core's edits go in as one named step each.
-  - No spelling, grammar or substitutions: every command would be underlined, and smart dashes and quotes would rewrite LaTeX (the owner's call).
+  - Spelling is underlined in the prose only: the delegate drops misspellings in what the core colours (commands, technical arguments such as labels and packages, maths); comments are prose. Check Spelling While Typing is kept as a setting (`EditorPrefs.spellCheck`, on at first). No grammar checking or substitutions: smart dashes and quotes would rewrite LaTeX.
+  - Lines are the web's 1.45 × the size, the text in the middle (`SourceEditor.lineStyle`).
+  - The completion list is the system's (`complete:`), so it lists words only, without the web's descriptions ("sectioning"): native over custom (the owner, 2026-09-29).
   - A drag with files opens them (`SourceTextView.fileDrop`), the project's own in the editor and a project from elsewhere as from the Dock; a text drag stays the text view's.
   - JetBrains Mono is the web's WOFF2, registered with CoreText on first use.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
@@ -240,11 +242,8 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The native editor (2026-09-29), not done:**
   - The web's maths preview (a KaTeX tooltip over maths at the caret) has no native counterpart yet.
   - The web still runs CodeMirror's stex and its own completion; it could run `texlocal-syntax` through wasm and drop its copies (the fixtures keep them equal meanwhile).
-  - With several selections (⌘-drag, ⌥-drag) typing works, but brackets, snippets and completion act only with one.
+  - Multiple carets are a new feature on the Mac, not a gap: the text view keeps one caret, and typing over several selections (⌘-drag, ⌥-drag) replaces the first. CodeMirror has them.
   - Quotes aren't paired, where CodeMirror pairs `"` and `'`: LaTeX opens a quotation with two backticks and closes it with two apostrophes.
-  - Lines take the font's own height; the web's are 1.45 × the size.
-  - The system's completion list shows labels only: the web's detail ("sectioning", "math") and kind icons have no place in it.
-  - Spelling could underline prose and skip commands and arguments (the core knows which is which); it's off for now.
   - The session (open files, undo, saves) stays in each host; the core takes it when a second native host would share it.
 - **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Outline.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
   - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
@@ -343,6 +342,8 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The text storage's edited range runs past the change** to the paragraph's end, taking in the attributes it fixed. The core's mirror takes the whole range (right either way); snippet fields and stepped-over brackets follow the range `shouldChangeText(inRanges:)` passed (`SourceTextView.changing`), or a field typed in would end its snippet.
 - **The system's completion list closes on a typed key** with `NSTextMovement.other` and `isFinal`: that key is the user's text, not a choice, so `insertCompletion` takes only Return, Tab or a click, and the list opens again, narrowed, after the key goes in.
 - **The selection draws over rendering attributes' backgrounds,** so the current find match is the selection, shown by the find indicator as it's reached; the other matches are tinted.
+- **A taller line keeps its extra room above the text,** and a positive baseline offset shrinks the line rather than raising the text. `lineStyle` gives the line half the extra and line spacing the rest; TextKit lays that spacing out at the top of the next paragraph's fragment, so the current line's fill takes it from there.
+- **Spell checking's results count from the start of the range checked** (`textView(_:didCheckTextIn:…)`, 27.2), not the document's.
 - **`ATSApplicationFontsPath` doesn't load a WOFF2,** which CoreText registers from a URL (`EditorFont.registerJetBrains`).
 - **In a test, a file's undo steps are one group:** `groupsByEvent` closes a group only as the run loop turns. Check one step per opened file.
 

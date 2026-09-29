@@ -183,9 +183,13 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         }
         let current = entry?.offset
         if let entry {
-            let frame = entry.fragment.layoutFragmentFrame
+            // Its lines and the spacing under the last, which TextKit lays
+            // out at the top of the next paragraph.
+            let frame = entry.fragment.layoutFragmentFrame, lines = entry.fragment.textLineFragments
+            let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
+            let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + (defaultParagraphStyle?.lineSpacing ?? 0)
             NSColor.quaternarySystemFill.setFill()
-            NSRect(x: 0, y: origin.y + frame.minY, width: bounds.width, height: frame.height).fill(using: .sourceOver)
+            NSRect(x: 0, y: origin.y + top, width: bounds.width, height: bottom - top).fill(using: .sourceOver)
         }
         let font = numberFont
         for (offset, fragment) in fragments {
@@ -438,6 +442,12 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
             return spaces == 0 ? nil : TextEdit(start: UInt32(start), length: UInt32(spaces), text: "")
         }
         apply(edits, named: direction > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
+    }
+
+    /// Kept for the next file and launch, as a setting.
+    override func toggleContinuousSpellChecking(_ sender: Any?) {
+        super.toggleContinuousSpellChecking(sender)
+        EditorPrefs.spellCheck = isContinuousSpellCheckingEnabled
     }
 
     override func cancelOperation(_ sender: Any?) {

@@ -120,6 +120,29 @@ struct SourceEditorTests {
         #expect(text.document.text() == text.string)
     }
 
+    /// Misspellings count in the prose and comments, not in commands, labels
+    /// or maths; the results are relative to the range checked.
+    @Test func spellingIsTheProses() {
+        let line = "x \\emph{wrod} \\label{sec:wrod} $wrod$ % wrod"
+        open(line)
+        let checked = NSRange(location: 2, length: (line as NSString).length - 2)
+        let text = line as NSString
+        let misspelt = ["emph", "wrod"].flatMap { word in
+            var ranges: [NSRange] = [], from = checked.location
+            while case let r = text.range(of: word, range: NSRange(location: from, length: text.length - from)), r.location != NSNotFound {
+                ranges.append(NSRange(location: r.location - checked.location, length: r.length))
+                from = NSMaxRange(r)
+            }
+            return ranges
+        }
+        let results = misspelt.map { NSTextCheckingResult.spellCheckingResult(range: $0) }
+        let kept = editor.textView(self.text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
+                                   orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: 6)
+        // The emphasised word and the comment's.
+        #expect(kept.map { text.substring(with: NSRange(location: $0.range.location + checked.location, length: $0.range.length)) } == ["wrod", "wrod"])
+        #expect(kept.map { $0.range.location + checked.location } == [8, 40])
+    }
+
     @Test func findSelectsAsYouTypeAndReplaces() {
         var reported = FindMatches()
         editor.onFindMatches = { reported = $0 }

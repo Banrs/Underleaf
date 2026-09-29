@@ -45,10 +45,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.importsGraphics = false
         text.usesFontPanel = false
         text.allowsUndo = true
-        // A code editor's: nothing underlined, where every command would be
-        // a misspelling, and nothing corrected: smart dashes and quotes
-        // would rewrite the LaTeX (-- became an em dash).
-        text.isContinuousSpellCheckingEnabled = false
+        // Spelling underlined in the prose only (below), and nothing
+        // corrected: smart dashes and quotes would rewrite the LaTeX (--
+        // became an em dash).
+        text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
         text.isAutomaticQuoteSubstitutionEnabled = false
@@ -175,6 +175,21 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         refreshFind()
         onChanged()
+    }
+
+    /// Misspellings in the prose only: not in a command, a technical
+    /// argument (a label, package or environment) or maths, which the core
+    /// colours; comments are prose.
+    func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
+                  options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
+                  orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
+        // The results count from the start of the range checked (27.2).
+        let code = textView.document.highlights(start: UInt32(range.location), length: UInt32(range.length))
+            .filter { $0.kind != .comment }
+            .map { NSRange(location: Int($0.start) - range.location, length: Int($0.length)) }
+        return results.filter { result in
+            result.resultType != .spelling || !code.contains { NSIntersectionRange($0, result.range).length > 0 }
+        }
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
@@ -327,11 +342,29 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// Settings' palette, font and size.
     func setAppearance(_ appearance: EditorAppearance) {
         let font = appearance.font.font(ofSize: CGFloat(appearance.size)), color = appearance.palette.textColor
+        let lines = Self.lineStyle(for: font)
         textView.font = font
         textView.textColor = color
-        textView.typingAttributes = [.font: font, .foregroundColor: color]
+        textView.defaultParagraphStyle = lines
+        textView.typingAttributes = [.font: font, .foregroundColor: color, .paragraphStyle: lines]
+        if let storage = textView.textStorage {
+            storage.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: storage.length))
+        }
         textView.palette = appearance.palette
         textView.updateGutterWidth()
+    }
+
+    /// The web's line height, 1.45 × the size, with the text in the middle
+    /// of it as CSS puts it. TextKit puts a taller line's extra room above
+    /// the text, so the line takes half of it and line spacing, below, the rest.
+    private static func lineStyle(for font: NSFont) -> NSParagraphStyle {
+        let natural = NSLayoutManager().defaultLineHeight(for: font)
+        let extra = max(0, font.pointSize * 1.45 - natural)
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = natural + extra / 2
+        style.maximumLineHeight = natural + extra / 2
+        style.lineSpacing = extra / 2
+        return style
     }
 }
 
@@ -415,9 +448,16 @@ enum EditorFont: String, CaseIterable, Identifiable {
 /// The keys and defaults Settings and the editor share.
 enum EditorPrefs {
     static let paletteKey = "editorPalette", fontKey = "editorFont", fontSizeKey = "editorFontSize"
+    static let spellCheckKey = "editorSpellCheck"
     static let palette = EditorPalette.standard
     static let font = EditorFont.system
     static let fontSize = Int(NSFont.systemFontSize)
+
+    /// Edit › Spelling and Grammar › Check Spelling While Typing, as last set; on at first.
+    static var spellCheck: Bool {
+        get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: spellCheckKey) }
+    }
 }
 
 /// The source's search, as CodeMirror's `SearchQuery` reads it: outside a
