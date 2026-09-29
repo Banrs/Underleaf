@@ -23,9 +23,10 @@ const PINCH_MAX = 2.5;
 // How long the pane's width must hold still before a resize re-renders.
 const RESIZE_SETTLE_MS = 150;
 
-// A forward search's flash, in PDF points: a line's height when SyncTeX
-// gives none, the narrowest box, and the margin around it. The Mac draws the
-// same box (apps/macos/TeXLocal/SyncTeXGeometry.swift); change both.
+// A forward search's flash: a line's height when SyncTeX gives none, in PDF
+// points; the narrowest box and the margin around it, in screen pixels. The
+// Mac takes the same values, all three in page points
+// (apps/macos/TeXLocal/SyncTeXGeometry.swift).
 const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));

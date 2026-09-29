@@ -192,13 +192,13 @@ async fn terminate_pid_tree(pid: u32) {
 /// `program` by its full path on `path_env`. With PATH set for the child, std
 /// spawns a bare name by fork and exec rather than posix_spawn, and a forked
 /// child of a multithreaded process (the Mac app, a debugger's) can crash
-/// before its exec. Not found is the error a spawn of it would give.
+/// before its exec. Not found, naming the program, when no PATH entry has it.
 #[cfg(unix)]
 fn program_path(program: &str, path_env: &str) -> std::io::Result<PathBuf> {
     std::env::split_paths(path_env)
         .map(|dir| dir.join(program))
         .find(|path| path.is_file())
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{program} is not on the PATH")))
 }
 
 /// Windows has no fork: CreateProcess searches the child's PATH itself.
