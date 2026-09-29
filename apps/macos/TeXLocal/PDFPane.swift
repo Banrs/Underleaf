@@ -17,10 +17,6 @@ struct PDFPane: View {
         pages
             .onChange(of: controller.page) { _, page in project.pdfPage = page }
             .onChange(of: controller.pageCount) { _, count in project.pdfPageCount = count }
-            // A new PDF leaves every match behind; the web closes the bar too.
-            .onChange(of: project.pdfVersion) { _, _ in
-                if controller.finding { controller.closeFind() }
-            }
             // Keyed on hasPDF too: the URL can arrive after the version.
             .task(id: project.hasPDF ? project.pdfVersion : 0) {
                 let version = project.pdfVersion

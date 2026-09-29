@@ -93,22 +93,24 @@ final class PDFController {
         view.scaleFactor = heightScale(view)
     }
 
-    func find(_ value: String) {
+    /// Keeping place: a rebuilt PDF's matches, the current one kept where it still
+    /// is, and the pages left where they are (a build follows every pause in typing).
+    func find(_ value: String, keepingPlace: Bool = false) {
         guard let view, let document = view.document else { return }
         query = PDFFind.normalize(value)
         let all = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
         matches = Array(all.prefix(PDFFind.maxMatches))
         limited = all.count > matches.count
-        matchIndex = 0
+        if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
         view.clearSelection()
-        show()
+        show(scrolling: !keepingPlace)
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
     /// highlights with it. The keyboard goes back to the pages only from the bar:
-    /// a new build closes it while the editor may have the keyboard.
+    /// its close button can be clicked while the editor has the keyboard.
     func closeFind() {
         let fromBar = findField.hasFocus
         finding = false
@@ -126,6 +128,7 @@ final class PDFController {
     }
 
     func documentShown() {
+        if finding { find(findText, keepingPlace: true) }
         let run = pending
         pending = []
         run.forEach { $0() }
@@ -137,10 +140,10 @@ final class PDFController {
         show()
     }
 
-    private func show() {
+    private func show(scrolling: Bool = true) {
         guard let view, matches.indices.contains(matchIndex) else { return }
-        view.setCurrentSelection(matches[matchIndex], animate: true)
-        view.scrollSelectionToVisible(nil)
+        view.setCurrentSelection(matches[matchIndex], animate: scrolling)
+        if scrolling { view.scrollSelectionToVisible(nil) }
     }
 
     /// A SyncTeX point on a line of text: SyncTeX resolves only points on a glyph

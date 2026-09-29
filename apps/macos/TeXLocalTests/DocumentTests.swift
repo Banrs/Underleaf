@@ -130,3 +130,46 @@ struct PDFFitTests {
         }
     }
 }
+
+/// Find in PDF across a rebuild, off screen.
+@MainActor
+struct PDFFindTests {
+    /// Each page's text drawn as text, so PDFKit finds it.
+    private func document(_ pages: [String]) throws -> PDFDocument {
+        let document = PDFDocument()
+        for text in pages {
+            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+            view.string = text
+            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
+            document.insert(page, at: document.pageCount)
+        }
+        return document
+    }
+
+    /// The bar stays: its matches are the new PDF's, the current one is kept,
+    /// and the pages don't move.
+    @Test func aRebuildFindsAgainInPlace() throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.displayMode = .singlePageContinuous
+        view.document = try document(["needle", "filler", "needle", "needle"])
+        let controller = PDFController()
+        controller.view = view
+        controller.finding = true
+        controller.findText = "needle"
+        controller.find(controller.findText)
+        controller.step(1)
+
+        let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
+        view.document = rebuilt
+        view.layoutDocumentView()
+        let place = try #require(view.documentView).visibleRect
+        controller.documentShown()
+
+        #expect(controller.finding)
+        #expect(controller.matches.count == 4)
+        #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
+        #expect(controller.matchIndex == 1)
+        #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
+        #expect(try #require(view.documentView).visibleRect == place)
+    }
+}
