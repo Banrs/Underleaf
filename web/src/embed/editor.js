@@ -62,7 +62,8 @@ document.addEventListener('contextmenu', (event) => {
     return;
   }
   const selection = getSelection();
-  if (!selection.isCollapsed && !selection.toString().trim()) selection.collapseToEnd();
+  // A line break, and the spaces round it: a deliberate run of spaces stays.
+  if (/^[ \t]*\n[ \t]*$/.test(selection.toString())) selection.collapseToEnd();
 });
 
 // ---------- the host's find bar ----------
