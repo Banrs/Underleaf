@@ -4,7 +4,7 @@
 //! before left; those states are kept, so an edit re-reads only from its
 //! line, and only as far as asked.
 
-use crate::Text;
+use crate::{letter, space, Text};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -321,10 +321,6 @@ fn one_of(u: u16, ascii: &str) -> bool {
     u < 128 && ascii.as_bytes().contains(&(u as u8))
 }
 
-fn letter(u: u16) -> bool {
-    u < 128 && (u as u8).is_ascii_alphabetic()
-}
-
 fn is_digit(u: u16) -> bool {
     u < 128 && (u as u8).is_ascii_digit()
 }
@@ -339,71 +335,51 @@ fn command_letter(u: u16) -> bool {
     letter(u) || u == b'@' as u16 || (0xc0..=0x1fff).contains(&u) || u >= 0x2060
 }
 
-/// JavaScript's \s and the no-break space.
-pub(crate) fn space(u: u16) -> bool {
-    matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::HighlightKind::*;
     use crate::SourceDocument;
 
-    /// The runs as (text, kind) pairs.
-    fn runs(source: &str) -> Vec<(String, super::HighlightKind)> {
-        let mut doc = SourceDocument::new(source);
+    /// The runs as "text Kind" pairs.
+    fn runs(source: &str) -> Vec<String> {
         let units: Vec<u16> = source.encode_utf16().collect();
-        doc.highlights(0, units.len() as u32)
-            .into_iter()
-            .map(|h| {
-                (
-                    String::from_utf16_lossy(
-                        &units[h.start as usize..(h.start + h.length) as usize],
-                    ),
-                    h.kind,
-                )
-            })
+        let runs = SourceDocument::new(source).highlights(0, units.len() as u32);
+        let text = |h: &super::Highlight| {
+            String::from_utf16_lossy(&units[h.start as usize..(h.start + h.length) as usize])
+        };
+        runs.iter()
+            .map(|h| format!("{} {:?}", text(h), h.kind))
             .collect()
     }
-
-    use super::HighlightKind::*;
 
     #[test]
     fn commands_arguments_and_comments() {
         assert_eq!(
             runs("\\begin{itemize} % list"),
-            [
-                ("\\begin".into(), Command),
-                ("itemize".into(), Argument),
-                ("% list".into(), Comment)
-            ]
+            ["\\begin Command", "itemize Argument", "% list Comment"]
         );
         assert_eq!(
             runs("\\documentclass[a4paper]{article}")[1..],
-            [("article".into(), Argument)]
+            ["article Argument"]
         );
-        assert_eq!(runs("\\textbf{bold}"), [("\\textbf".into(), Command)]);
-        assert_eq!(
-            runs("50\\% off"),
-            [("50".into(), Argument), ("\\%".into(), Command)]
-        );
-        assert_eq!(runs("}"), [("}".into(), Invalid)]);
+        assert_eq!(runs("\\textbf{bold}"), ["\\textbf Command"]);
+        assert_eq!(runs("50\\% off"), ["50 Argument", "\\% Command"]);
+        assert_eq!(runs("}"), ["} Invalid"]);
     }
 
     #[test]
     fn maths() {
-        assert_eq!(
-            runs("$x^2 + \\alpha$"),
-            [
-                ("$".into(), MathDelimiter),
-                ("x".into(), MathIdentifier),
-                ("^".into(), Command),
-                ("2".into(), Number),
-                ("\\alpha".into(), Command),
-                ("$".into(), MathDelimiter)
-            ]
-        );
+        let expected = [
+            "$ MathDelimiter",
+            "x MathIdentifier",
+            "^ Command",
+            "2 Number",
+            "\\alpha Command",
+            "$ MathDelimiter",
+        ];
+        assert_eq!(runs("$x^2 + \\alpha$"), expected);
         // stex's own reading: a line break in \[ \] is an error.
-        assert_eq!(runs("\\[ a \\\\ \\]")[2], ("\\".into(), Invalid));
+        assert_eq!(runs("\\[ a \\\\ \\]")[2], "\\ Invalid");
     }
 
     #[test]
@@ -414,8 +390,9 @@ mod tests {
             .into_iter()
             .map(|h| (h.start, h.kind))
             .collect();
-        assert_eq!(kinds, [(0, MathDelimiter), (3, MathIdentifier)]); // y, after the blank line, is text
-                                                                      // An edit re-reads from its line: closing the maths makes the rest text.
+        // y, after the blank line, is text.
+        assert_eq!(kinds, [(0, MathDelimiter), (3, MathIdentifier)]);
+        // An edit re-reads from its line: closing the maths makes the rest text.
         doc.edit(0, 0, "$$"); // "$$$$\nx…": opened and closed on line 1
         assert_eq!(doc.highlights(5, 1).len(), 0);
     }

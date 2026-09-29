@@ -1,4 +1,4 @@
-//! The editing commands against the cases the web's tests also check
+//! The editing logic against the cases the web's tests also check
 //! (fixtures/editing.json; test/mathmode.test.js and test/editor.test.js).
 
 use serde::Deserialize;
@@ -10,6 +10,8 @@ struct Fixture {
     math_mode: Vec<(String, bool, String)>,
     headings: Vec<(String, String, String, u32)>,
     math_at: Vec<(String, Option<Preview>)>,
+    completions: Vec<(String, bool, Option<u32>, Option<String>)>,
+    blocks: Vec<(String, String, String, u32)>,
 }
 
 #[derive(Deserialize)]
@@ -23,37 +25,58 @@ fn fixture() -> Fixture {
     serde_json::from_str(include_str!("fixtures/editing.json")).unwrap()
 }
 
-fn units(s: &str) -> Vec<u16> {
-    s.encode_utf16().collect()
+fn units(s: &str) -> u32 {
+    s.encode_utf16().count() as u32
+}
+
+fn range(start: u32, length: u32) -> TextRange {
+    TextRange { start, length }
+}
+
+/// The document without the "|" that marks a position, and that position.
+fn marked(source: &str) -> (SourceDocument, u32) {
+    let at = units(&source[..source.find('|').unwrap()]);
+    (SourceDocument::new(&source.replacen('|', "", 1)), at)
 }
 
 #[test]
 fn math_mode_matches_the_web() {
     for (source, expected, note) in fixture().math_mode {
-        let at = source.find('|').unwrap();
-        let before = units(&source[..at]);
+        let before: Vec<u16> = source[..source.find('|').unwrap()].encode_utf16().collect();
         assert_eq!(math_mode_at(&before), expected, "{source} {note}");
     }
     // \verb's delimiter is the fixture's marker, so these are here.
-    assert!(!math_mode_at(&units("\\verb|$| x")));
-    assert!(!math_mode_at(&units("\\verb|$")), "inside \\verb");
+    let verb: Vec<u16> = "\\verb|$| x".encode_utf16().collect();
+    assert!(!math_mode_at(&verb));
+    assert!(!math_mode_at(&verb[..7]), "inside \\verb");
 }
 
 #[test]
 fn the_maths_to_preview_matches_the_web() {
     for (source, expected) in fixture().math_at {
-        let at = source.find('|').unwrap();
-        let doc = SourceDocument::new(&source.replace('|', ""));
+        let (doc, at) = marked(&source);
         let expected = expected.map(|p| MathPreview {
             start: p.start,
             tex: p.tex,
             display: p.display,
         });
-        assert_eq!(
-            doc.math_at(units(&source[..at]).len() as u32),
-            expected,
-            "{source}"
-        );
+        assert_eq!(doc.math_at(at), expected, "{source}");
+    }
+}
+
+#[test]
+fn completions_match_the_web() {
+    let (labels, citations) = (["sec:intro".to_string()], ["knuth84".to_string()]);
+    for (before, explicit, start, offered) in fixture().completions {
+        let doc = SourceDocument::new(&before);
+        let found = doc.completions(units(&before), explicit, &labels, &citations);
+        assert_eq!(found.as_ref().map(|c| c.start), start, "{before}");
+        let labels: Vec<_> = found
+            .iter()
+            .flat_map(|c| &c.items)
+            .map(|i| &i.label)
+            .collect();
+        assert!(offered.is_none_or(|o| labels.contains(&&o)), "{before}");
     }
 }
 
@@ -62,103 +85,75 @@ fn headings_match_the_web() {
     for (line, command, text, cursor) in fixture().headings {
         let doc = SourceDocument::new(&format!("above\n{line}\nbelow"));
         let insertion = doc.set_heading(7, &command);
-        assert_eq!(insertion.edit.text, text, "{line} as {command}");
         assert_eq!(
-            (insertion.edit.start, insertion.edit.length),
-            (6, units(&line).len() as u32)
+            insertion.edit,
+            TextEdit {
+                start: 6,
+                length: units(&line),
+                text
+            },
+            "{line} as {command}"
         );
         assert_eq!(insertion.caret, 6 + cursor, "{line} as {command}");
     }
 }
 
 #[test]
-fn a_block_starts_a_line_of_its_own() {
-    let doc = SourceDocument::new("Some text");
-    let at_end = TextRange {
-        start: 9,
-        length: 0,
-    };
-    let block = doc.insert_block("equation", at_end).unwrap();
-    assert_eq!(
-        block.edit.text,
-        "\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n"
-    );
-    assert_eq!(block.caret, 9 + "\n\\begin{equation}\n  ".len() as u32);
-    // At a line's start (or after its indentation) it goes straight in.
-    let doc = SourceDocument::new("  ");
-    let block = doc
-        .insert_block(
-            "itemize",
-            TextRange {
-                start: 2,
-                length: 0,
-            },
-        )
-        .unwrap();
-    assert!(block.edit.text.starts_with("\\begin{itemize}"));
-    assert!(doc.insert_block("nothing", at_end).is_none());
+fn blocks_match_the_web() {
+    for (before, id, text, cursor) in fixture().blocks {
+        let doc = SourceDocument::new(&before);
+        let end = units(&before);
+        let block = doc.insert_block(&id, range(end, 0)).unwrap();
+        assert_eq!(
+            (block.edit.text, block.caret),
+            (text, end + cursor),
+            "{id} after {before:?}"
+        );
+    }
+    assert!(SourceDocument::new("")
+        .insert_block("nothing", range(0, 0))
+        .is_none());
 }
 
 #[test]
-fn comments_toggle_by_line() {
-    let doc = SourceDocument::new("a\n  b\n\nc");
-    let all = TextRange {
-        start: 0,
-        length: 8,
-    };
-    let on = doc.toggle_comment(&[all]);
-    let insert = |start| TextEdit {
-        start,
-        length: 0,
-        text: "% ".into(),
-    };
-    assert_eq!(
-        on,
-        [insert(0), insert(2), insert(7)],
-        "blank lines stay as they are"
-    );
-    let doc = SourceDocument::new("% a\n  %b\n");
-    let off = doc.toggle_comment(&[TextRange {
-        start: 0,
-        length: 9,
-    }]);
-    let delete = |start, length| TextEdit {
+fn comments_and_indentation_go_by_line() {
+    let edit = |start, length, text: &str| TextEdit {
         start,
         length,
-        text: String::new(),
+        text: text.into(),
     };
-    assert_eq!(off, [delete(0, 2), delete(6, 1)]);
-    // A selection that ends at a line's start leaves that line alone.
-    let doc = SourceDocument::new("a\nb");
+    let on = SourceDocument::new("a\n  b\n\nc").toggle_comment(&[range(0, 8)]);
     assert_eq!(
-        doc.toggle_comment(&[TextRange {
-            start: 0,
-            length: 2
-        }]),
-        [insert(0)]
+        on,
+        [edit(0, 0, "% "), edit(2, 0, "% "), edit(7, 0, "% ")],
+        "blank lines stay as they are"
+    );
+    let off = SourceDocument::new("% a\n  %b\n").toggle_comment(&[range(0, 9)]);
+    assert_eq!(off, [edit(0, 2, ""), edit(6, 1, "")]);
+    let indented = SourceDocument::new("a\n b\n").indent(&[range(0, 3), range(5, 0)], true);
+    assert_eq!(
+        indented,
+        [edit(0, 0, "  "), edit(2, 0, "  "), edit(5, 0, "  ")]
+    );
+    let outdented = SourceDocument::new("   a\nb").indent(&[range(0, 6)], false);
+    assert_eq!(outdented, [edit(0, 2, "")]);
+    // A selection that ends at a line's start leaves that line alone.
+    assert_eq!(
+        SourceDocument::new("a\nb").toggle_comment(&[range(0, 2)]),
+        [edit(0, 0, "% ")]
     );
 }
 
 #[test]
 fn symbols_go_in_as_maths() {
     let doc = SourceDocument::new("text $x$ and $");
-    let in_text = doc.insert_symbol(
-        "\\alpha",
-        TextRange {
-            start: 5,
-            length: 0,
-        },
-    );
+    let in_text = doc.insert_symbol("\\alpha", range(5, 0));
     assert_eq!(
         (in_text.edit.text.as_str(), in_text.caret),
         ("$\\alpha$", 13)
     );
-    let in_maths = doc.insert_symbol(
-        "\\alpha",
-        TextRange {
-            start: 14,
-            length: 0,
-        },
+    assert_eq!(
+        doc.insert_symbol("\\alpha", range(14, 0)).edit.text,
+        "\\alpha"
     );
-    assert_eq!(in_maths.edit.text, "\\alpha");
 }

@@ -113,5 +113,25 @@
     ["\\begin{itemize} |x \\end{itemize}",null],
     ["\\begin{equation} a |",null],
     ["$a\n|b$",null]
+  ],
+  "completions": [
+    ["\\footnote{see \\cite{kn",false,20,"knuth84"],
+    ["\\section{Proof of \\ref{",false,23,"sec:intro"],
+    ["\\cite[p.~5]{kn",false,12,"knuth84"],
+    ["\\cite[a[b]{kn",false,11,"knuth84"],
+    ["\\cite{a,kn",false,8,"knuth84"],
+    ["\\begin{ite",false,7,"itemize"],
+    ["\\emph{x",false,null,null],
+    ["\\frac{\\al",false,6,"\\alpha"],
+    ["x \\",false,null,null],
+    ["\\",true,0,"\\alpha"],
+    ["\\{",false,null,null],
+    ["@inp",false,0,"@inproceedings"],
+    ["  @inp",false,2,"@inproceedings"]
+  ],
+  "blocks": [
+    ["Some text","equation","\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n",20],
+    ["","figure","\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n",71],
+    ["  ","itemize","\\begin{itemize}\n  \\item \n\\end{itemize}\n",24]
   ]
 }

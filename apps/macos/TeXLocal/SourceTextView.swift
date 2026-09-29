@@ -340,20 +340,23 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         mathPopover?.show(maths, size: font?.pointSize ?? NSFont.systemFontSize, at: rect, of: self)
     }
 
+    /// The character at a UTF-16 offset, if there's one there.
+    private func character(at i: Int) -> Character? {
+        let text = string as NSString
+        guard i >= 0, i < text.length, let scalar = Unicode.Scalar(text.character(at: i)) else { return nil }
+        return Character(scalar)
+    }
+
     /// CodeMirror's bracketMatching: before the caret, then after it, within 10,000 units.
     private func matchBrackets() -> [(NSRange, Bool)] {
-        let text = string as NSString, caret = selectedRange().location
+        let caret = selectedRange().location
         let opens = Array(Self.pairs.keys), closes = Array(Self.pairs.values)
-        func char(_ i: Int) -> Character? {
-            guard i >= 0, i < text.length, let scalar = Unicode.Scalar(text.character(at: i)) else { return nil }
-            return Character(scalar)
-        }
         for at in [caret - 1, caret] {
-            guard let c = char(at), opens.contains(c) || closes.contains(c) else { continue }
+            guard let c = character(at: at), opens.contains(c) || closes.contains(c) else { continue }
             let forward = opens.contains(c)
             let partner = forward ? Self.pairs[c]! : Self.pairs.first { $0.value == c }!.key
             var depth = 0, i = at
-            while abs(i - at) <= 10_000, let d = char(i) {
+            while abs(i - at) <= 10_000, let d = character(at: i) {
                 if d == c { depth += 1 } else if d == partner { depth -= 1 }
                 if depth == 0 { return [(NSRange(location: at, length: 1), true), (NSRange(location: i, length: 1), true)] }
                 i += forward ? 1 : -1
@@ -378,7 +381,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         }
         let selection = selectedRange()
         let text = self.string as NSString
-        let next = selection.location < text.length ? Character(Unicode.Scalar(text.character(at: selection.location)) ?? " ") : nil
+        let next = character(at: selection.location)
         if selection.length == 0, Self.pairs.values.contains(c), next == c, closers.contains(selection.location) {
             closers.remove(selection.location)
             setSelectedRange(NSRange(location: selection.location + 1, length: 0))
@@ -392,7 +395,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
                 setSelectedRange(NSRange(location: selection.location + 1, length: selection.length))
                 return
             }
-            if next == nil || next!.isWhitespace || Self.closeBefore.contains(next!) {
+            if next.map({ $0.isWhitespace || Self.closeBefore.contains($0) }) ?? true {
                 super.insertText("\(c)\(close)", replacementRange: selection)
                 closers.insert(selection.location + 1)
                 setSelectedRange(NSRange(location: selection.location + 1, length: 0))
@@ -410,9 +413,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let selection = selectedRange(), text = string as NSString
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
-        let before = Unicode.Scalar(text.character(at: caret - 1)).map(Character.init)
-        let after = caret < text.length ? Unicode.Scalar(text.character(at: caret)).map(Character.init) : nil
-        if let before, let close = Self.pairs[before], after == close {
+        if let before = character(at: caret - 1), let close = Self.pairs[before], character(at: caret) == close {
             insertText("", replacementRange: NSRange(location: caret - 1, length: 2))
             return
         }
@@ -464,27 +465,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         indent(by: -1)
     }
 
-    /// Two spaces more or fewer at the start of each line the selection
-    /// touches (CodeMirror's indentMore and indentLess).
     private func indent(by direction: Int) {
-        let text = string as NSString
-        var starts: [Int] = []
-        for range in selectedRanges.map(\.rangeValue) {
-            // A selection ending at a line's start leaves that line alone.
-            let end = range.length > 0 ? NSMaxRange(range) - 1 : range.location
-            var line = text.lineRange(for: NSRange(location: range.location, length: 0))
-            while true {
-                if starts.last != line.location { starts.append(line.location) }
-                guard NSMaxRange(line) <= end, NSMaxRange(line) < text.length else { break }
-                line = text.lineRange(for: NSRange(location: NSMaxRange(line), length: 0))
-            }
-        }
-        let edits: [TextEdit] = starts.compactMap { start in
-            if direction > 0 { return TextEdit(NSRange(location: start, length: 0), "  ") }
-            var spaces = 0
-            while spaces < 2, start + spaces < text.length, text.character(at: start + spaces) == 0x20 { spaces += 1 }
-            return spaces == 0 ? nil : TextEdit(NSRange(location: start, length: spaces), "")
-        }
+        let edits = document.indent(selectedRanges.map(\.rangeValue), more: direction > 0)
         apply(edits, named: direction > 0 ? String(localized: "Indent") : String(localized: "Outdent"))
     }
 
@@ -669,64 +651,14 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 
     // MARK: offsets
 
-    private var storage: NSTextContentStorage? { textContentStorage }
-
     func offset(_ location: any NSTextLocation) -> Int {
-        guard let storage else { return 0 }
+        guard let storage = textContentStorage else { return 0 }
         return storage.offset(from: storage.documentRange.location, to: location)
     }
 
     func textRange(_ range: NSRange) -> NSTextRange? {
-        guard let storage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
+        guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
-    }
-}
-
-extension EditorPalette {
-    /// A kind's colour: the web editor's, CodeMirror's own in light and One
-    /// Dark in dark for the default, Xcode's for Xcode (web/src/editor.js).
-    /// Nil leaves the text's colour.
-    func color(_ kind: HighlightKind) -> NSColor? {
-        if self == .xcode, kind == .invalid { return .systemRed }
-        let (light, dark): (UInt32?, UInt32?) = switch (self, kind) {
-        case (.standard, .command): (0x008855, 0xe5c07b)
-        case (.standard, .argument): (0x221199, 0xd19a66)
-        case (.standard, .mathDelimiter): (0x770088, 0xc678dd)
-        case (.standard, .mathIdentifier): (0x225566, 0xd19a66)
-        case (.standard, .number): (0x116644, 0xe5c07b)
-        case (.standard, .comment): (0x994400, 0x7d8799)
-        case (.standard, .invalid): (0xff0000, 0xffffff)
-        case (.standard, .stringLiteral): (0xaa1111, 0x98c379)
-        case (.standard, .builtin): (nil, 0xd19a66)
-        case (.xcode, .command): (0x9b2393, 0xfc5fa3)
-        case (.xcode, .argument): (0x1c464a, 0x9ef1dd)
-        case (.xcode, .mathDelimiter): (0x643820, 0xfd8f3f)
-        case (.xcode, .mathIdentifier), (.xcode, .builtin): (0x326d74, 0x67b7a4)
-        case (.xcode, .number): (0x1c00cf, 0xd0bf69)
-        case (.xcode, .comment): (0x5d6c79, 0x6c7986)
-        case (.xcode, .stringLiteral): (0xc41a16, 0xfc6a5d)
-        case (.xcode, .invalid): (nil, nil)
-        }
-        guard light != nil || dark != nil else { return nil }
-        return NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return (isDark ? dark : light).map(NSColor.init(hex:)) ?? .textColor
-        }
-    }
-
-    /// The text's own colour: One Dark's in dark for the default, the system's otherwise.
-    var textColor: NSColor {
-        guard self == .standard else { return .textColor }
-        return NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(hex: 0xabb2bf) : .textColor
-        }
-    }
-}
-
-private extension NSColor {
-    convenience init(hex: UInt32) {
-        self.init(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255,
-                  blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 }

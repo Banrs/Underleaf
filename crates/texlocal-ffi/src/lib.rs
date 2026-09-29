@@ -263,10 +263,11 @@ struct SourceArgs {
     id: String,
     selection: TextRange,
     selections: Vec<TextRange>,
+    more: bool,
 }
 
 /// The editing commands, as `texlocal_syntax::SourceDocument` has them:
-/// "completions", "toggle_comment", "set_heading", "insert_block",
+/// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
 /// "insert_symbol", "math_at" and "text". Returns the result's JSON (free it with
 /// `tl_free`), or null for an unknown command or arguments.
 ///
@@ -286,6 +287,7 @@ pub unsafe extern "C" fn tl_source_call(
     let result = match str_arg(command).unwrap_or_default() {
         "completions" => json!(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
         "toggle_comment" => json!(doc.toggle_comment(&a.selections)),
+        "indent" => json!(doc.indent(&a.selections, a.more)),
         "set_heading" => json!(doc.set_heading(a.caret, &a.command)),
         "insert_block" => json!(doc.insert_block(&a.id, a.selection)),
         "insert_symbol" => json!(doc.insert_symbol(&a.command, a.selection)),

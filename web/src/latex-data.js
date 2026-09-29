@@ -15,3 +15,11 @@ export const ENVIRONMENTS = catalog.environments;
 export const COMMANDS = catalog.commands;
 
 export const BIB_ENTRY_TYPES = catalog.bibEntryTypes;
+
+// What the editor recognises: sectioning, citation and reference commands;
+// maths, verbatim and preview environments; commands whose argument is text.
+export const {
+  sections: SECTIONS, citeCommands: CITE_COMMANDS, refCommands: REF_COMMANDS,
+  mathEnvironments: MATH_ENVIRONMENT_NAMES, verbatimEnvironments: VERBATIM_ENVIRONMENT_NAMES,
+  textCommands: TEXT_COMMAND_NAMES, previewEnvironments: PREVIEW_ENVIRONMENTS,
+} = catalog;

@@ -12,12 +12,13 @@ mod catalog;
 mod complete;
 mod edit;
 mod highlight;
+mod maths;
 
 use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, Completions, SnippetField};
-pub use edit::{math_mode_at, MathPreview};
 pub use highlight::{Highlight, HighlightKind};
+pub use maths::{math_mode_at, MathPreview};
 
 /// A range of the text, in UTF-16 units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +177,12 @@ impl SourceDocument {
         edit::toggle_comment(&self.text, selections)
     }
 
+    /// Two spaces more, or up to two fewer, at the start of each line the
+    /// selections touch.
+    pub fn indent(&self, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
+        edit::indent(&self.text, selections, more)
+    }
+
     /// The caret's line as a heading of `command` ("section"), or as plain
     /// text given none, as a paragraph style does: a heading changes level
     /// and keeps its title, a line of text becomes the title.
@@ -185,7 +192,7 @@ impl SourceDocument {
 
     /// The maths to preview at the caret, if it's in some.
     pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
-        edit::math_at(&self.text, caret.min(self.text.len()))
+        maths::math_at(&self.text, caret.min(self.text.len()))
     }
 
     /// A block by its id (the catalog's `blocks`) in place of the selection,
@@ -204,7 +211,7 @@ impl SourceDocument {
         } else {
             format!("${command}$")
         };
-        let caret = selection.start + text.encode_utf16().count() as u32;
+        let caret = selection.start + utf16(&text) as u32;
         Insertion {
             edit: TextEdit {
                 start: selection.start,
@@ -214,6 +221,23 @@ impl SourceDocument {
             caret,
         }
     }
+}
+
+fn is(u: u16, c: char) -> bool {
+    u == c as u16
+}
+
+fn letter(u: u16) -> bool {
+    u < 128 && (u as u8).is_ascii_alphabetic()
+}
+
+/// JavaScript's \s and the no-break space.
+fn space(u: u16) -> bool {
+    matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+}
+
+fn utf16(s: &str) -> usize {
+    s.encode_utf16().count()
 }
 
 fn clamp(range: TextRange, len: u32) -> TextRange {

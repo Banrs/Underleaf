@@ -54,6 +54,11 @@ final class SourceDocument {
         call("toggle_comment", ["selections": selections.map(Self.json)]) ?? []
     }
 
+    /// Two spaces more, or up to two fewer, at the start of each line the selections touch.
+    func indent(_ selections: [NSRange], more: Bool) -> [TextEdit] {
+        call("indent", ["selections": selections.map(Self.json), "more": more]) ?? []
+    }
+
     /// The caret's line as a heading of `command` ("section"), or as text given "".
     func setHeading(caret: Int, command: String) -> Insertion? {
         call("set_heading", ["caret": caret, "command": command])

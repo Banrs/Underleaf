@@ -4,10 +4,9 @@
 
 - **`main`** has the Mac app's rewrite and polish (PR #12, `claude/macos-polish`): AppKit owns the window, split and toolbar, SwiftUI draws the panes; one window with a back button and an inspector; tests in Swift Testing.
 - **`claude/native-editor`** (from `main`) is the native frontend study's first phase (the study: https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm):
-  - `crates/texlocal-syntax`: the LaTeX editing logic every editor can share (highlighting, completion with snippets, maths mode, comments, headings, blocks, symbols), ported from the web's editor and CodeMirror's stex mode, over a UTF-16 mirror of the text.
-  - The Mac's editor is native: an `NSTextView` on TextKit 2 (`SourceTextView`, `SourceEditor`), which asks the core through `texlocal-ffi`'s `tl_source_*` (`SourceDocument.swift`). The Mac embeds no web page any more.
-  - The web and Windows keep CodeMirror; the web reads the core's catalog (`catalog.json`), and shared fixtures hold the JS and the Rust to the same answers.
-- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (80) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono, the maths preview (inline, `\[`, `align`; typing in it; closed outside maths and when the app deactivates).
+  - `crates/texlocal-syntax`: the LaTeX editing logic, ported from the web's editor and CodeMirror's stex mode.
+  - The Mac's editor is a native `NSTextView` over it; the Mac embeds no web page any more. The web and Windows keep CodeMirror.
+- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono, the maths preview (inline, `\[`, `align`; typing in it; closed outside maths and when the app deactivates).
 - **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
 
 ## Layout
@@ -35,10 +34,9 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
   - Tauri forwards to one `call` command;
   - `serve.rs` serves `__pdf` / `__raw`.
 - **`texlocal-syntax`** (`crates/texlocal-syntax`): the editing logic, pure Rust with no I/O.
-  - A `SourceDocument` mirrors the editor's text through its edits (`edit`) and answers in UTF-16 offsets: `highlights` (per-line state cached, forgotten from the first line an edit moves), `completions`, `toggle_comment`, `set_heading`, `insert_block`, `insert_symbol`, `math_at` (the maths to preview). The editor owns the text, its undo and its drawing, and applies the edits it gets back.
-  - A port of CodeMirror's stex mode (the web's highlighter, token for token on the test library and 1,500 fuzzed documents) and of `web/src/editor.js` (completion, snippets, `mathModeAt`, headings, blocks). `tests/fixtures/editing.json` is checked by `cargo test` and by `test/mathmode.test.js` and `test/editor.test.js`.
-  - `src/catalog.json` is the one catalog of commands, environments, blocks and entry types; `web/src/latex-data.js` reads it.
-  - `texlocal-ffi` exposes it as `tl_source_*` beside `tl_call` (`include/texlocal.h`): the per-frame calls (edits, lines, highlights as a flat array of start, length and kind) are plain C; the editing commands are JSON, as `tl_call`'s are, so Windows could P/Invoke the same functions. A hand-written ABI rather than UniFFI: the generated Swift was 2,400 lines and a build tool for a dozen functions.
+  - A `SourceDocument` mirrors the editor's text through its edits and answers in UTF-16 offsets: highlights (`highlight.rs`, CodeMirror's stex mode token for token, per-line states cached), completions with snippet fields (`complete.rs`), comments, indentation, headings and blocks (`edit.rs`), maths mode and the maths to preview (`maths.rs`). The editor owns the text, its undo and its drawing, and applies the edits it gets back.
+  - The ports follow `web/src/editor.js`, regex for regex. `src/catalog.json` holds what both recognise and insert (commands, environments, blocks, sectioning), and `web/src/latex-data.js` reads it; `tests/fixtures/editing.json` holds both to the same answers (`cargo test`, `test/mathmode.test.js`, `test/editor.test.js`).
+  - `texlocal-ffi` exposes it as `tl_source_*` beside `tl_call` (`include/texlocal.h`): edits, lines and highlights as plain C, the commands as JSON, which Windows could P/Invoke too. Hand-written: UniFFI generated 2,400 lines for a dozen functions.
 - **`analyze`** (`analyze.rs`): outline, words and lines.
   - Ported from the web's `analyzeDoc` (`web/src/state.js`), which stays the source of truth.
   - `crates/texlocal-core/tests/fixtures/analyze.json` is checked by both `cargo test` and `test/analyze.test.js`.
@@ -116,8 +114,8 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - `InspectorView`: a grouped `Form` with the project's settings, the open file's facts and the build's.
 - `SourceColumn`: the source column (the editor, a file preview or no file) and `SourceFindBar`.
 - `StatusBar`: the status bar and its build-panel toggle.
-- `SourceEditor`: a project's editor. One `SourceTextView` for its text files, each file's text, undo manager and selection kept while another shows (back only while its text is unchanged); the find bar's search (`FindQuery`, CodeMirror's `SearchQuery` semantics, and `FindMatches`); the formatting commands; `EditorView` (its scroll view in SwiftUI); the appearance and prefs.
-- `SourceTextView`: the text view. It forwards every edit to the core's `SourceDocument` (`SourceDocument.swift`, the Swift side of `tl_source_*`), draws the line numbers and the current line in `drawBackground` (from the viewport's layout fragments), colours what shows with TextKit 2 rendering attributes (syntax, selection matches, find matches, brackets), and edits as the web's editor does: brackets close and are stepped over, new lines keep their indentation, Tab indents or moves between snippet fields, completion offers the core's items in the system's list as you type, a chosen one goes in as its snippet with linked fields.
+- `SourceEditor`: a project's editor: one `SourceTextView` for its files, each file's undo and selection kept while its text is unchanged; the find bar's search (`FindQuery`, CodeMirror's semantics); the formatting commands; `EditorView`; the palettes, fonts and prefs.
+- `SourceTextView`: the text view: it tells the core (`SourceDocument.swift`) every edit, draws the gutter and current line in `drawBackground`, colours what shows with TextKit 2 rendering attributes, and types as the web's editor does (closing brackets, indentation, completion with linked snippet fields).
 - `MathPopover`: the maths preview's popover and the KaTeX page it shows.
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
@@ -148,16 +146,13 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The status bar's ends:** constraints to the corner-adapted safe area's layout guide (`layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))`) put the content 16 pt from the window's edge where there's a corner, as Xcode's bottom bars have it, and at the bar's own 8 pt elsewhere. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
 - **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one. Their content sits under their lines, and the header's title is raised the 1.5 pt the list puts it low (`titleDrop`), so both bars' words are centred and level, as in Xcode.
-- **An `NSTextView` (TextKit 2) for the source.** SwiftUI's `TextEditor` has no gutter, no hook into the viewport's layout to colour only what shows, no completion list, and one undo manager for the view rather than one per file.
-  - It passes `performFindPanelAction:` on (`FindPassingTextView`) to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`); the find bars' fields get the same class as their field editor, through `windowWillReturnFieldEditor`.
-  - The rest is the system's: the caret, the context menu, Services, dictation, drag and drop of text, the completion list, and the find indicator for the outline's jumps and each find match.
-  - Edit › Undo and Redo are the system's `undo:`/`redo:`, answered by the file's own undo manager (`SourceEditor.undoManager(for:)`); the core's edits go in as one named step each.
-  - Spelling is underlined in the prose only: the delegate drops misspellings in what the core colours (commands, technical arguments such as labels and packages, maths); comments are prose. Check Spelling While Typing is kept as a setting (`EditorPrefs.spellCheck`, on at first). No grammar checking or substitutions: smart dashes and quotes would rewrite LaTeX.
-  - Lines are the web's 1.45 × the size, the text in the middle (`SourceEditor.lineStyle`).
-  - The completion list is the system's (`complete:`), so it lists words only, without the web's descriptions ("sectioning"): native over custom (the owner, 2026-09-29).
-  - A drag with files opens them (`SourceTextView.fileDrop`), the project's own in the editor and a project from elsewhere as from the Dock; a text drag stays the text view's.
-  - JetBrains Mono is the web's WOFF2, registered with CoreText on first use.
-  - The maths preview (`MathPopover`) is the web's: while the caret is in maths and the text has the keyboard, the core's `math_at` typeset by KaTeX (the web's build) in the system's popover, above where the maths starts. A web view that takes no clicks or keys draws it: there's no system maths typesetter. It closes when the caret leaves maths, the text loses the keyboard, the window resigns key, or its start scrolls out of view.
+- **An `NSTextView` (TextKit 2) for the source.** SwiftUI's `TextEditor` has no gutter, no viewport hook to colour only what shows, no completion list, and one undo manager rather than one per file.
+  - The caret, context menu, Services, dictation, text drags, completion list, find indicator and Undo are the system's; each file has its own undo manager (`SourceEditor.undoManager(for:)`), and the core's edits go in as one named step each.
+  - Edit › Find's items pass on (`FindPassingTextView`) to `MainWindowController`, which sends them to the pane with the keyboard; the find bars' field editor is the same class.
+  - Spelling is underlined in the prose only (the delegate drops what the core colours; comments are prose), a kept setting (`EditorPrefs.spellCheck`). No substitutions: smart dashes and quotes would rewrite LaTeX.
+  - The completion list is the system's, words only (native over custom, the owner's call).
+  - A drag with files opens them (`fileDrop`). JetBrains Mono is the web's WOFF2, registered with CoreText on first use.
+  - The maths preview (`MathPopover`): the core's `math_at`, typeset by the web's KaTeX in the system's popover over where the maths starts, while the caret is in it and the text has the keyboard. A web view that takes no clicks or keys draws it: there's no system maths typesetter.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
   - The title is the system font, 12 pt from the ends, as an item's title is (by glyph width: medium read wider and bolder).
@@ -241,8 +236,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 
 - **The native editor (2026-09-29), not done:**
   - The web still runs CodeMirror's stex and its own completion; it could run `texlocal-syntax` through wasm and drop its copies (the fixtures keep them equal meanwhile).
-  - Multiple carets are a new feature on the Mac, not a gap: the text view keeps one caret, and typing over several selections (⌘-drag, ⌥-drag) replaces the first. CodeMirror has them.
-  - Quotes aren't paired, where CodeMirror pairs `"` and `'`: LaTeX opens a quotation with two backticks and closes it with two apostrophes.
+  - One caret: typing over several selections replaces the first (CodeMirror has multiple carets). Quotes aren't paired (LaTeX's are two backticks and two apostrophes).
   - The session (open files, undo, saves) stays in each host; the core takes it when a second native host would share it.
 - **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Outline.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
   - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
@@ -343,7 +337,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The selection draws over rendering attributes' backgrounds,** so the current find match is the selection, shown by the find indicator as it's reached; the other matches are tinted.
 - **A taller line keeps its extra room above the text,** and a positive baseline offset shrinks the line rather than raising the text. `lineStyle` gives the line half the extra and line spacing the rest; TextKit lays that spacing out at the top of the next paragraph's fragment, so the current line's fill takes it from there.
 - **Spell checking's results count from the start of the range checked** (`textView(_:didCheckTextIn:…)`, 27.2), not the document's.
-- **The maths preview's web view:** WebKit has no public way to draw a page transparently, so it sets `drawsBackground` by key-value coding: `underPageBackgroundColor` doesn't do it (a snapshot's corner stays opaque). The size is measured after `document.fonts.ready`, behind a layout that starts KaTeX's fonts loading; measured before, it's the fallback font's and the popover cuts the maths short. `NSPopover.positioningRect` raises ("window must exist") until the popover shows.
+- **The maths preview's web view** is transparent only through `drawsBackground` by key-value coding (`underPageBackgroundColor` isn't enough). Its size is measured after a layout and `document.fonts.ready`, or it's the fallback font's and the maths is cut short. `NSPopover.positioningRect` raises ("window must exist") until the popover shows.
 - **`ATSApplicationFontsPath` doesn't load a WOFF2,** which CoreText registers from a URL (`EditorFont.registerJetBrains`).
 - **In a test, a file's undo steps are one group:** `groupsByEvent` closes a group only as the run loop turns. Check one step per opened file.
 

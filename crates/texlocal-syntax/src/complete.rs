@@ -3,9 +3,12 @@
 //! type, or a command. Commands are snippets, expanded here as CodeMirror's
 //! `snippet()` expands them, so an editor only places the text and its fields.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, Text};
+use crate::{catalog, utf16, Text};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -34,26 +37,13 @@ pub struct Completions {
     pub items: Vec<Completion>,
 }
 
-const CITE: [&str; 8] = [
-    "cite",
-    "citep",
-    "citet",
-    "citeauthor",
-    "citeyear",
-    "textcite",
-    "parencite",
-    "autocite",
-];
-const REF: [&str; 7] = ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "vref"];
-
-fn is(u: u16, c: char) -> bool {
-    u == c as u16
-}
-
-/// JavaScript's \w.
-fn word(u: u16) -> bool {
-    u < 128 && ((u as u8).is_ascii_alphanumeric() || u == b'_' as u16)
-}
+/// The innermost open argument's command. Its tail has no braces or
+/// backslashes, so `\footnote{see \cite{` is \cite's and `\frac{\al` none's.
+static ARGUMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\([0-9A-Za-z_]+)\*?(\[[^\]]*\])?\{[^{}\\]*$").unwrap());
+static ENTRY_TYPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]*$").unwrap());
+static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$").unwrap());
+static FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#\{([^}]*)\}").unwrap());
 
 pub fn completions(
     text: &Text,
@@ -65,79 +55,45 @@ pub fn completions(
     let line = text.line_index(caret);
     // As CodeMirror's matchBefore: the caret's line, at most 250 units back.
     let from = text.lines[line].max(caret.saturating_sub(250));
-    let before = &text.units[from as usize..caret as usize];
-    let typed_from = |start: usize| String::from_utf16_lossy(&before[start..]);
+    let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
+    let catalog = catalog::get();
     let offer = |start: usize, items: Vec<Completion>| {
         (!items.is_empty()).then(|| Completions {
-            start: from + start as u32,
+            start: from + utf16(&before[..start]) as u32,
             items,
         })
     };
+    let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
 
-    // \cite{…}, \ref{…}, \begin{…}: the innermost open argument's names.
-    if let Some(command) = argument(before) {
-        let start = before.len()
-            - before
-                .iter()
-                .rev()
-                .take_while(|&&u| !is(u, '{') && !is(u, ','))
-                .count();
-        let catalog = catalog::get();
-        let names: &[String] = match command.as_str() {
-            c if CITE.contains(&c) => citations,
-            c if REF.contains(&c) => labels,
+    if let Some(c) = ARGUMENT.captures(&before) {
+        let names = match &c[1] {
+            c if listed(&catalog.cite_commands, c) => citations,
+            c if listed(&catalog.ref_commands, c) => labels,
             "begin" | "end" => &catalog.environments,
             _ => return None,
         };
-        let items = matching(names, &typed_from(start), |n| n)
-            .into_iter()
-            .map(|name| Completion {
-                label: name.clone(),
-                text: name.clone(),
-                fields: vec![],
-            })
-            .collect();
-        return offer(start, items);
+        let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
+        return offer(start, words(matching(names, &before[start..], |n| n)));
     }
-
-    let trailing = before.iter().rev().take_while(|&&u| word(u)).count();
-    let start = before.len() - trailing;
-    let lead = start.checked_sub(1).map(|i| before[i]);
-
     // @article and the like, in a .bib file.
-    if lead.is_some_and(|u| is(u, '@')) {
-        let types = catalog::get()
+    if let Some(m) = ENTRY_TYPE.find(&before) {
+        let types: Vec<String> = catalog
             .bib_entry_types
             .iter()
             .map(|t| format!("@{t}"))
-            .collect::<Vec<_>>();
-        let items = matching(&types, &typed_from(start - 1), |t| t)
-            .into_iter()
-            .map(|t| Completion {
-                label: t.clone(),
-                text: t.clone(),
-                fields: vec![],
-            })
             .collect();
-        return offer(start - 1, items);
+        return offer(m.start(), words(matching(&types, m.as_str(), |t| t)));
     }
-
     // \command, once a letter follows the backslash.
-    if lead.is_some_and(|u| is(u, '\\')) && (trailing > 0 || explicit) {
-        let indentation: Vec<u16> = text
-            .line(line)
-            .iter()
-            .copied()
-            .take_while(|&u| is(u, ' ') || is(u, '\t'))
-            .collect();
-        let items = matching(
-            &catalog::get().commands,
-            &typed_from(start - 1),
-            |(name, _, _)| name,
-        )
+    let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
+    let indentation: String = String::from_utf16_lossy(text.line(line))
+        .chars()
+        .take_while(|&c| c == ' ' || c == '\t')
+        .collect();
+    let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
         .into_iter()
         .map(|(name, _, snippet)| {
-            let (text, fields) = expand(snippet, &String::from_utf16_lossy(&indentation));
+            let (text, fields) = expand(snippet, &indentation);
             Completion {
                 label: name.clone(),
                 text,
@@ -145,54 +101,28 @@ pub fn completions(
             }
         })
         .collect();
-        return offer(start - 1, items);
-    }
-    None
+    offer(m.start(), items)
 }
 
-/// `\\(\w+)\*?(\[[^\]]*\])?\{[^{}\\]*$`: the command whose argument the text
-/// ends in, if it ends in one.
-fn argument(before: &[u16]) -> Option<String> {
-    let tail = before
-        .iter()
-        .rev()
-        .take_while(|&&u| !is(u, '{') && !is(u, '}') && !is(u, '\\'))
-        .count();
-    let brace = before.len().checked_sub(tail + 1)?;
-    if !is(before[brace], '{') {
-        return None;
-    }
-    let command = |mut end: usize| {
-        if end > 0 && is(before[end - 1], '*') {
-            end -= 1;
-        }
-        let name = before[..end].iter().rev().take_while(|&&u| word(u)).count();
-        let start = end - name;
-        (name > 0 && start > 0 && is(before[start - 1], '\\'))
-            .then(|| String::from_utf16_lossy(&before[start..end]))
-    };
-    if brace == 0 || !is(before[brace - 1], ']') {
-        return command(brace);
-    }
-    // An optional argument: any "[" back to the last "]" before it.
-    (0..brace - 1)
-        .rev()
-        .take_while(|&i| !is(before[i], ']'))
-        .filter(|&i| is(before[i], '['))
-        .find_map(command)
+/// Names that go in as they are.
+fn words(names: Vec<&String>) -> Vec<Completion> {
+    names
+        .into_iter()
+        .map(|name| Completion {
+            label: name.clone(),
+            text: name.clone(),
+            fields: vec![],
+        })
+        .collect()
 }
 
-/// The names that start with what's typed, those with its case first.
-fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &str) -> Vec<&'a T> {
+/// The items whose names start with what's typed, those with its case first.
+fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) -> Vec<&'a T> {
     let lower = typed.to_lowercase();
-    let (mut exact, mut folded) = (Vec::new(), Vec::new());
-    for item in items {
-        if name(item).starts_with(typed) {
-            exact.push(item);
-        } else if name(item).to_lowercase().starts_with(&lower) {
-            folded.push(item);
-        }
-    }
+    let (mut exact, folded): (Vec<_>, Vec<_>) = items
+        .iter()
+        .filter(|i| name(i).to_lowercase().starts_with(&lower))
+        .partition(|i| name(i).starts_with(typed));
     exact.extend(folded);
     exact
 }
@@ -202,105 +132,58 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &str) -> Ve
 /// takes the caret line's indentation, and each leading tab one more level
 /// (two spaces, the editor's indent unit).
 fn expand(snippet: &str, indentation: &str) -> (String, Vec<SnippetField>) {
-    let mut names: Vec<String> = Vec::new();
-    let mut fields = Vec::new();
-    let mut text = String::new();
+    let (mut text, mut fields, mut names) = (String::new(), Vec::new(), Vec::<&str>::new());
     for (n, line) in snippet.split('\n').enumerate() {
-        let mut line = line;
+        let tabs = if n == 0 {
+            0
+        } else {
+            line.len() - line.trim_start_matches('\t').len()
+        };
         if n > 0 {
-            text.push('\n');
-            text.push_str(indentation);
-            let tabs = line.len() - line.trim_start_matches('\t').len();
-            text.push_str(&"  ".repeat(tabs));
-            line = &line[tabs..];
+            text += &format!("\n{indentation}{}", "  ".repeat(tabs));
         }
-        let mut rest = line;
-        while let Some(open) = rest.find("#{") {
-            let Some(close) = rest[open..].find('}').map(|c| open + c) else {
-                break;
-            };
-            text.push_str(&rest[..open]);
-            let name = &rest[open + 2..close];
+        let line = &line[tabs..];
+        let mut last = 0;
+        for c in FIELD.captures_iter(line) {
+            let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
+            text += &line[last..whole.start()];
             // Unnamed fields are each their own.
-            let index = match names.iter().position(|n| !name.is_empty() && n == name) {
+            let index = match names.iter().position(|&n| !name.is_empty() && n == name) {
                 Some(index) => index,
                 None => {
-                    names.push(name.to_string());
+                    names.push(name);
                     names.len() - 1
                 }
             };
-            let start = text.encode_utf16().count() as u32;
             fields.push(SnippetField {
-                start,
-                length: name.encode_utf16().count() as u32,
+                start: utf16(&text) as u32,
+                length: utf16(name) as u32,
                 index: index as u32,
             });
-            text.push_str(name);
-            rest = &rest[close + 1..];
+            text += name;
+            last = whole.end();
         }
-        text.push_str(rest);
+        text += &line[last..];
     }
     (text, fields)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::SourceDocument;
 
-    fn complete(before: &str) -> Option<Completions> {
+    fn complete(before: &str) -> crate::Completion {
         let doc = SourceDocument::new(before);
-        doc.completions(
-            before.encode_utf16().count() as u32,
-            false,
-            &["sec:intro".into()],
-            &["knuth84".into()],
-        )
-    }
-
-    fn labels(before: &str) -> Vec<String> {
-        complete(before)
-            .map(|c| c.items.into_iter().map(|i| i.label).collect())
-            .unwrap_or_default()
-    }
-
-    // test/editor.test.js's cases.
-    #[test]
-    fn argument_completion_targets_the_innermost_open_argument() {
-        assert_eq!(labels("\\footnote{see \\cite{kn"), ["knuth84"]);
-        assert_eq!(labels("\\section{Proof of \\ref{"), ["sec:intro"]);
-        assert_eq!(labels("\\cite[p.~5]{kn"), ["knuth84"]);
-        assert_eq!(labels("\\cite[a[b]{kn"), ["knuth84"]);
-        assert_eq!(labels("\\cite{a,kn"), ["knuth84"]);
-        assert_eq!(
-            complete("\\cite{a,kn").unwrap().start,
-            "\\cite{a,".len() as u32
-        );
-        assert!(labels("\\begin{ite").contains(&"itemize".to_string()));
-        // Another command's argument offers nothing, not even commands.
-        assert!(complete("\\emph{x").is_none());
-    }
-
-    #[test]
-    fn command_completion_works_inside_another_commands_argument() {
-        let result = complete("\\frac{\\al").unwrap();
-        assert_eq!(result.start, "\\frac{".len() as u32);
-        assert!(result.items.iter().any(|i| i.label == "\\alpha"));
-        // A bare backslash waits for a letter, unless asked.
-        assert!(complete("x \\").is_none());
-        let doc = SourceDocument::new("\\");
-        assert!(doc.completions(1, true, &[], &[]).is_some());
-    }
-
-    #[test]
-    fn entry_types_after_an_at_sign() {
-        assert_eq!(labels("@inp"), ["@inproceedings"]);
-        assert_eq!(complete("  @inp").unwrap().start, 2);
+        let caret = before.encode_utf16().count() as u32;
+        doc.completions(caret, false, &[], &[])
+            .unwrap()
+            .items
+            .remove(0)
     }
 
     #[test]
     fn snippets_expand_with_their_fields() {
-        let begin = complete("  \\beg").unwrap().items.remove(0);
+        let begin = complete("  \\beg");
         assert_eq!(begin.text, "\\begin{env}\n    \n  \\end{env}");
         let places: Vec<_> = begin
             .fields
@@ -309,27 +192,32 @@ mod tests {
             .collect();
         // env twice (one field), then the body; the body's line is indented a level.
         assert_eq!(places, [(7, 3, 0), (16, 0, 1), (24, 3, 0)]);
-        let section = complete("\\sub").unwrap().items.remove(0);
+        let section = complete("\\sub");
         assert_eq!(
             (section.label.as_str(), section.text.as_str()),
             ("\\subsection", "\\subsection{}")
         );
         assert_eq!(
-            section.fields,
-            [SnippetField {
-                start: 12,
-                length: 0,
-                index: 0
-            }]
+            section
+                .fields
+                .iter()
+                .map(|f| (f.start, f.length))
+                .collect::<Vec<_>>(),
+            [(12, 0)]
         );
-        let brace = complete("\\{").map(|c| c.items.len());
-        assert_eq!(brace, None, "a symbol escape isn't a command name");
     }
 
     #[test]
     fn case_matches_come_first() {
-        let names = labels("\\s");
+        let doc = SourceDocument::new("\\s");
+        let names: Vec<_> = doc
+            .completions(2, false, &[], &[])
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|i| i.label)
+            .collect();
         let upper = names.iter().position(|n| n == "\\Sigma").unwrap();
-        assert!(names.iter().take_while(|n| n.starts_with("\\s")).count() <= upper);
+        assert!(names[..upper].iter().all(|n| n.starts_with("\\s")));
     }
 }

@@ -3908,6 +3908,7 @@ dependencies = [
 name = "texlocal-syntax"
 version = "0.2.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
 ]

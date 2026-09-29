@@ -312,12 +312,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     private func next(from location: Int) -> NSRange? {
         let text = textView.string as NSString
-        return query.firstMatch(in: text, from: location) ?? query.firstMatch(in: text, from: 0)
+        let after = NSRange(location: location, length: text.length - location)
+        return query.matches(in: text, range: after, limit: 1).ranges.first ?? query.matches(in: text, limit: 1).ranges.first
     }
 
     private func previous(before location: Int) -> NSRange? {
         let text = textView.string as NSString
-        return query.lastMatch(in: text, before: location) ?? query.lastMatch(in: text, before: text.length)
+        let before = query.matches(in: text, range: NSRange(location: 0, length: location), limit: .max).ranges
+        return before.last ?? query.matches(in: text, limit: .max).ranges.last
     }
 
     /// The matches again, after the text or query changed.
@@ -409,6 +411,45 @@ enum EditorPalette: String, CaseIterable, Identifiable {
         case .xcode: "Xcode"
         }
     }
+
+    /// A kind's colour: the web editor's, CodeMirror's own in light and One
+    /// Dark in dark for the default, Xcode's for Xcode (web/src/editor.js).
+    /// Nil leaves the text's colour.
+    func color(_ kind: HighlightKind) -> NSColor? {
+        if self == .xcode, kind == .invalid { return .systemRed }
+        let (light, dark): (UInt32?, UInt32?) = switch (self, kind) {
+        case (.standard, .command): (0x008855, 0xe5c07b)
+        case (.standard, .argument): (0x221199, 0xd19a66)
+        case (.standard, .mathDelimiter): (0x770088, 0xc678dd)
+        case (.standard, .mathIdentifier): (0x225566, 0xd19a66)
+        case (.standard, .number): (0x116644, 0xe5c07b)
+        case (.standard, .comment): (0x994400, 0x7d8799)
+        case (.standard, .invalid): (0xff0000, 0xffffff)
+        case (.standard, .stringLiteral): (0xaa1111, 0x98c379)
+        case (.standard, .builtin): (nil, 0xd19a66)
+        case (.xcode, .command): (0x9b2393, 0xfc5fa3)
+        case (.xcode, .argument): (0x1c464a, 0x9ef1dd)
+        case (.xcode, .mathDelimiter): (0x643820, 0xfd8f3f)
+        case (.xcode, .mathIdentifier), (.xcode, .builtin): (0x326d74, 0x67b7a4)
+        case (.xcode, .number): (0x1c00cf, 0xd0bf69)
+        case (.xcode, .comment): (0x5d6c79, 0x6c7986)
+        case (.xcode, .stringLiteral): (0xc41a16, 0xfc6a5d)
+        case (.xcode, .invalid): (nil, nil)
+        }
+        guard light != nil || dark != nil else { return nil }
+        return NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return (isDark ? dark : light).map(NSColor.init(hex:)) ?? .textColor
+        }
+    }
+
+    /// The text's own colour: One Dark's in dark for the default, the system's otherwise.
+    var textColor: NSColor {
+        guard self == .standard else { return .textColor }
+        return NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(hex: 0xabb2bf) : .textColor
+        }
+    }
 }
 
 enum EditorFont: String, CaseIterable, Identifiable {
@@ -469,15 +510,7 @@ nonisolated struct FindQuery: Equatable {
     var isValid: Bool { expression != nil }
 
     private static func unquote(_ text: String) -> String {
-        guard let escapes = try? NSRegularExpression(pattern: #"\\([nrt\\])"#) else { return text }
-        let ns = text as NSString
-        var out = "", last = 0
-        for match in escapes.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            out += ns.substring(with: NSRange(location: last, length: match.range.location - last))
-            out += ["n": "\n", "r": "\r", "t": "\t", "\\": "\\"][ns.substring(with: match.range(at: 1))]!
-            last = NSMaxRange(match.range)
-        }
-        return out + ns.substring(from: last)
+        text.replacing(/\\([nrt\\])/) { ["n": "\n", "r": "\r", "t": "\t"][$0.1] ?? "\\" }
     }
 
     private var expression: NSRegularExpression? {
@@ -497,73 +530,34 @@ nonisolated struct FindQuery: Equatable {
         return (!word(start - 1) || !word(start)) && (!word(end) || !word(end - 1))
     }
 
-    private func each(in text: NSString, range: NSRange, _ body: (NSRange, inout Bool) -> Void) {
-        guard let expression else { return }
-        expression.enumerateMatches(in: text as String, range: range) { result, _, stop in
-            guard let r = result?.range, r.length > 0, isWhole(r, in: text) else { return }
-            var halt = false
-            body(r, &halt)
-            if halt { stop.pointee = true }
-        }
-    }
-
-    /// In order, at most `limit`, and whether there were more.
-    func matches(in text: NSString, limit: Int) -> (ranges: [NSRange], limited: Bool) {
+    /// In order within `range` (the whole text by default), at most `limit`,
+    /// and whether there were more.
+    func matches(in text: NSString, range: NSRange? = nil, limit: Int) -> (ranges: [NSRange], limited: Bool) {
         var ranges: [NSRange] = [], limited = false
-        each(in: text, range: NSRange(location: 0, length: text.length)) { r, stop in
-            if ranges.count == limit {
-                limited = true
-                stop = true
-            } else {
-                ranges.append(r)
-            }
+        expression?.enumerateMatches(in: text as String, range: range ?? NSRange(location: 0, length: text.length)) { result, _, stop in
+            guard let r = result?.range, r.length > 0, isWhole(r, in: text) else { return }
+            limited = ranges.count == limit
+            if limited { stop.pointee = true } else { ranges.append(r) }
         }
         return (ranges, limited)
-    }
-
-    func firstMatch(in text: NSString, from location: Int) -> NSRange? {
-        var found: NSRange?
-        each(in: text, range: NSRange(location: location, length: text.length - location)) { r, stop in
-            found = r
-            stop = true
-        }
-        return found
-    }
-
-    func lastMatch(in text: NSString, before location: Int) -> NSRange? {
-        var found: NSRange?
-        each(in: text, range: NSRange(location: 0, length: location)) { r, _ in found = r }
-        return found
     }
 
     /// What replaces a match: in a regular expression, $& is the match,
     /// $1… its groups and $$ a dollar sign (JavaScript's).
     func replacement(for range: NSRange, in text: NSString) -> String {
         let replace = Self.unquote(self.replace)
-        guard regexp, let expression,
-              let match = expression.firstMatch(in: text as String, options: .anchored, range: range),
-              let references = try? NSRegularExpression(pattern: #"\$([$&]|\d+)"#) else { return replace }
-        let ns = replace as NSString
-        var out = "", last = 0
-        for reference in references.matches(in: replace, range: NSRange(location: 0, length: ns.length)) {
-            out += ns.substring(with: NSRange(location: last, length: reference.range.location - last))
-            last = NSMaxRange(reference.range)
-            let name = ns.substring(with: reference.range(at: 1))
-            if name == "&" {
-                out += text.substring(with: match.range)
-            } else if name == "$" {
-                out += "$"
-            } else if let group = (1...name.count).reversed().first(where: { n in
+        guard regexp, let match = expression?.firstMatch(in: text as String, options: .anchored, range: range) else { return replace }
+        return replace.replacing(/\$([$&]|\d+)/) { reference in
+            let name = reference.1
+            if name == "&" { return text.substring(with: match.range) }
+            if name == "$" { return "$" }
+            // The longest group number there is, the rest of the digits as they are.
+            guard let digits = (1...name.count).reversed().first(where: { n in
                 Int(name.prefix(n)).map { $0 > 0 && $0 < match.numberOfRanges } ?? false
-            }) {
-                // The longest group number there is, the rest of the digits as they are.
-                let captured = match.range(at: Int(name.prefix(group))!)
-                out += (captured.location == NSNotFound ? "" : text.substring(with: captured)) + name.dropFirst(group)
-            } else {
-                out += ns.substring(with: reference.range)
-            }
+            }) else { return String(reference.0) }
+            let captured = match.range(at: Int(name.prefix(digits))!)
+            return (captured.location == NSNotFound ? "" : text.substring(with: captured)) + name.dropFirst(digits)
         }
-        return out + ns.substring(from: last)
     }
 }
 
@@ -582,5 +576,12 @@ struct FindMatches: Equatable {
         if index > 0 { return String(localized: "\(index) of \(count)") }
         if limited { return String(localized: "\(count) matches") }
         return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
+    }
+}
+
+private extension NSColor {
+    convenience init(hex: UInt32) {
+        self.init(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255,
+                  blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 }
