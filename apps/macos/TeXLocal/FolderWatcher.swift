@@ -46,7 +46,7 @@ final class FolderWatcher {
 
     /// Resolved as FSEvents resolves it. `resolvingSymlinksInPath` would take
     /// /private off /private/var and /private/tmp, which FSEvents keeps.
-    private static func realPath(_ url: URL) -> String {
+    static func realPath(_ url: URL) -> String {
         let path = url.path(percentEncoded: false)
         guard let resolved = realpath(path, nil) else { return path }
         defer { free(resolved) }

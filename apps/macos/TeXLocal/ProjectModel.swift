@@ -181,6 +181,7 @@ final class ProjectModel {
             if let self, dirty || readingText { lostEdits = true }
         }
         editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
+        editor.webView.fileDrop = { [weak self] in self?.dropped($0) }
         await editor.setHostKeys(MenuCommand.editorHostKeys)
         await editor.useHostFind()
         do {
@@ -264,6 +265,17 @@ final class ProjectModel {
             }
         }
         if let line, editsText, generation == openGeneration, !closed { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+    }
+
+    /// A file dropped on the source: the project's own opens in the editor, and a
+    /// project from elsewhere opens as it would from the Dock.
+    private func dropped(_ url: URL) -> (() -> Void)? {
+        if let path = folderWatcher?.relativePath(FolderWatcher.realPath(url)) {
+            guard tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) else { return nil }
+            return { [weak self] in Task { await self?.open(path) } }
+        }
+        guard AppModel.canOpen(url) else { return nil }
+        return { [weak app] in app?.pendingImport = url }
     }
 
     func showInFinder(_ path: String) {

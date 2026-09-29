@@ -221,4 +221,26 @@ final class ProjectFlowTests {
         #expect(try String(contentsOf: notes, encoding: .utf8).contains("\\textbf{}"))
         await app.close()
     }
+
+    /// A file dropped on the source opens: the project's own in the editor, a
+    /// .tex from elsewhere as the Dock opens it, and an image from elsewhere not at all.
+    @Test(.timeLimit(.minutes(1)))
+    func aDroppedFileOpens() async throws {
+        let (project, folder) = try await opened()
+        let notes = folder.appending(path: "notes.tex")
+        try "notes".write(to: notes, atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
+        let drop = project.editor.webView.fileDrop
+
+        let openNotes = try #require(drop(notes))
+        openNotes()
+        try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
+        let outside = files.temporaryDirectory.appending(path: "outside.tex")
+        let openOutside = try #require(drop(outside))
+        openOutside()
+        #expect(app.pendingImport == outside)
+        app.pendingImport = nil
+        #expect(drop(files.temporaryDirectory.appending(path: "figure.png")) == nil)
+        await app.close()
+    }
 }

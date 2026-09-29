@@ -4,6 +4,39 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+/// A file dragged over the source opens when dropped, as in other editors,
+/// rather than reaching CodeMirror, which pastes a text file's contents in.
+final class EditorWebView: WKWebView {
+    /// What dropping the file does, or nil to refuse it.
+    var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
+
+    private func files(_ info: any NSDraggingInfo) -> [URL] {
+        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    /// Nil for a drag without files, which is WebKit's.
+    private func fileOperation(_ info: any NSDraggingInfo) -> NSDragOperation? {
+        let files = files(info)
+        return files.isEmpty ? nil : files.contains { fileDrop($0) != nil } ? .generic : []
+    }
+
+    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation {
+        fileOperation(info) ?? super.draggingEntered(info)
+    }
+
+    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation {
+        fileOperation(info) ?? super.draggingUpdated(info)
+    }
+
+    override func performDragOperation(_ info: any NSDraggingInfo) -> Bool {
+        let files = files(info)
+        guard !files.isEmpty else { return super.performDragOperation(info) }
+        guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
+        drop()
+        return true
+    }
+}
+
 /// A project's CodeMirror editor page; the protocol is web/src/embed/editor.js.
 /// A plain `WKWebView`, not SwiftUI's `WebView`: that one's adapter answers Edit ›
 /// Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn,
@@ -12,7 +45,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     static let scheme = "texlocal-app"
 
     /// Made once per project and moved between hosts as SwiftUI rebuilds them.
-    let webView: WKWebView
+    let webView: EditorWebView
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
@@ -57,7 +90,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(WebFiles(), forURLScheme: Self.scheme)
         config.userContentController = controller
-        webView = WKWebView(frame: .zero, configuration: config)
+        webView = EditorWebView(frame: .zero, configuration: config)
         super.init()
         controller.add(self, name: "texlocal")
         webView.navigationDelegate = self
