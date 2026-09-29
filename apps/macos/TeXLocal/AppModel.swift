@@ -136,7 +136,7 @@ final class AppModel {
     /// Shows the PDF column too, so the action happens now rather than when
     /// the column next appears. The workspace takes each request once.
     func requestPDF(_ action: PDFAction) {
-        if action.showsPDF { project?.showPDF = true }
+        project?.showPDF = true
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }

@@ -452,11 +452,10 @@ final class WorkspaceController: DetentSplitViewController {
     private func takePDFRequest() {
         guard let action = app.pdfRequest?.action else { return }
         app.pdfRequest = nil
-        guard action.showsPDF else { return perform(action) }
         setPDFShown(true) { [weak self] in
             guard let self, project.pdfVersion > 0 else { return }
             switch action {
-            case .find, .share: perform(action)
+            case .find: perform(action)
             default: pdf.whenShown { [weak self] in self?.perform(action) }
             }
         }
@@ -472,23 +471,11 @@ final class WorkspaceController: DetentSplitViewController {
         case .goToPage(let page): pdf.go(toPage: page)
         case .find: showPDFFind()
         case .print: pdf.view?.print(with: .shared, autoRotate: true)
-        case .share: sharePDF()
         case .inverseFromView:
             if case let (page, point)? = pdf.sourcePoint() {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
-    }
-
-    /// File › Share…: the share picker under the top of the PDF, or the source while
-    /// the PDF is hidden. AppKit: SwiftUI opens a share picker only from a `ShareLink`.
-    private func sharePDF() {
-        guard project.pdfVersion > 0, let url = project.pdfURL else { return }
-        let column = (pdfItem.isCollapsed ? sourceItem : pdfItem).viewController.view
-        let area = column.safeAreaRect
-        let top = NSRect(x: area.midX, y: column.isFlipped ? area.minY : area.maxY - 1, width: 1, height: 1)
-        NSSharingServicePicker(items: [url]).show(relativeTo: top, of: column,
-                                                   preferredEdge: column.isFlipped ? .maxY : .minY)
     }
 }
 

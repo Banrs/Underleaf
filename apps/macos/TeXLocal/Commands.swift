@@ -187,12 +187,7 @@ enum Prompt: String, Identifiable {
 
 /// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print, share
-
-    /// Share… works on the file, whether or not the PDF shows.
-    var showsPDF: Bool {
-        if case .share = self { false } else { true }
-    }
+    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
 }
 
 extension AppModel {
@@ -338,9 +333,12 @@ struct AppCommands: Commands {
             item(.pdfSave)
             item(.projectExport)
             Divider()
-            // Not a MenuCommand: the web has no command id for it.
-            Button("Share…") { app.requestPDF(.share) }
-                .disabled(!(project?.hasPDF ?? false))
+            // The system's Share… item. Not a MenuCommand: the web has no command id for it.
+            if let project, project.hasPDF, let url = project.pdfURL {
+                ShareLink(item: url)
+            } else {
+                Button("Share…") {}.disabled(true)
+            }
         }
         CommandGroup(replacing: .printItem) {
             item(.filePageSetup)
