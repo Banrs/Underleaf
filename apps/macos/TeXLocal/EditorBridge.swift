@@ -31,6 +31,15 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private(set) var failed = false
 
     private var ready = false
+    /// Whether the column shows the editor rather than a preview or placeholder.
+    /// Hidden, the web view hands the keyboard on and leaves the key view loop;
+    /// shown while nothing has the keyboard (as the project opens), it takes it.
+    var shown = false {
+        didSet {
+            webView.isHidden = !(shown && ready)
+            if shown, !oldValue, let window = webView.window, window.firstResponder === window { focus() }
+        }
+    }
     private var restarting = false
     private var whenReady: [CheckedContinuation<Void, Never>] = []
     /// Calls whose effect the page holds, made again after a crash.
@@ -53,10 +62,6 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         super.init()
         controller.add(self, name: "texlocal")
         webView.navigationDelegate = self
-        // A text editor: no page zoom, history swipes or link previews.
-        webView.allowsMagnification = false
-        webView.allowsBackForwardNavigationGestures = false
-        webView.allowsLinkPreview = false
         webView.setAccessibilityLabel("Source")
         // Until the page draws its own surface: a web view paints white before then.
         webView.isHidden = true
@@ -89,6 +94,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         restarting = true
         crashes += 1
         onCrash()
+        // Until the page draws its surface again, as at first.
+        webView.isHidden = true
         webView.reload()
     }
 
@@ -96,13 +103,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         fail(error)
     }
 
-    /// Links never navigate the editor page; web and mail links open in their apps.
+    /// Nothing navigates the editor page off the app's own files.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-        if action.request.url?.scheme == Self.scheme { return .allow }
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme) {
-            NSWorkspace.shared.open(url)
-        }
-        return .cancel
+        action.request.url?.scheme == Self.scheme ? .allow : .cancel
     }
 
     private func fail(_ error: any Error) {
@@ -116,14 +119,6 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private enum PageMethod: String {
         case open, getDocument, currentLine, reveal, command, forget, rename
         case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance
-    }
-
-    /// `return texlocal.<method>(<names>)`, the names bound to their values.
-    private static func script(_ method: PageMethod, _ args: KeyValuePairs<String, Any>)
-        -> (body: String, arguments: [String: Any]) {
-        let names = args.map(\.key).joined(separator: ", ")
-        return ("return texlocal.\(method.rawValue)(\(names))",
-                Dictionary(args.map { ($0.key, $0.value) }, uniquingKeysWith: { $1 }))
     }
 
     private func untilReady() async {
@@ -140,9 +135,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     @discardableResult
     private func run(_ method: PageMethod, _ args: KeyValuePairs<String, Any>) async -> Any? {
-        let (body, arguments) = Self.script(method, args)
+        // `return texlocal.<method>(<names>)`, the names bound to their values.
+        let names = args.map(\.key).joined(separator: ", ")
         do {
-            return try await webView.callAsyncJavaScript(body, arguments: arguments, contentWorld: .page)
+            return try await webView.callAsyncJavaScript("return texlocal.\(method.rawValue)(\(names))",
+                                                         arguments: Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) }),
+                                                         contentWorld: .page)
         } catch {
             #if DEBUG
             Self.log.debug("texlocal.\(method.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -185,9 +183,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     func rename(from: String, to: String) async {
-        if let path = openPath, path == from || path.hasPrefix(from + "/") {
-            openPath = to + path.dropFirst(from.count)
-        }
+        openPath = openPath.map { remapPath($0, from: from, to: to) }
         await call(.rename, ["from": from, "to": to])
     }
 
@@ -271,12 +267,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
               let type = (body["type"] as? String).flatMap(PageMessage.init) else { return }
-        switch type {
-        case .changed, .cursor, .scroll:
-            if let path = body["path"] as? String, path != openPath { return }
-        default:
-            break
-        }
+        if [.changed, .cursor, .scroll].contains(type), let path = body["path"] as? String, path != openPath { return }
         switch type {
         case .ready:
             guard restarting else {
@@ -312,7 +303,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     private func becomeReady() {
         ready = true
-        webView.isHidden = false
+        webView.isHidden = !shown
         whenReady.forEach { $0.resume() }
         whenReady.removeAll()
     }

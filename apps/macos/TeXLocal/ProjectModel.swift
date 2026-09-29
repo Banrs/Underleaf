@@ -90,7 +90,11 @@ final class ProjectModel {
     var importClash: ImportClash?
 
     var searchQuery = "" { didSet { scheduleSearch() } }
-    var searchHits: [SearchHit] = []
+    /// The sidebar shows search results for a query that isn't only spaces.
+    var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// The latest finished search's hits: nil until the first for a query ends,
+    /// so its results pane doesn't read No Results while it runs.
+    var searchHits: [SearchHit]?
 
     /// Per project: one editor web view, which the source column shows.
     let editor = EditorBridge()
@@ -764,8 +768,8 @@ final class ProjectModel {
     private func scheduleSearch() {
         searchTask?.cancel()
         let query = searchQuery
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
-            searchHits = []
+        guard isSearching else {
+            searchHits = nil
             return
         }
         searchTask = Task { [weak self] in

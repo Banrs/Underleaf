@@ -5,10 +5,13 @@ import WebKit
 /// this wrapper, which only hosts it.
 struct EditorView: NSViewRepresentable {
     let bridge: EditorBridge
+    let shown: Bool
 
     func makeNSView(context: Context) -> WKWebView { bridge.webView }
 
-    func updateNSView(_ view: WKWebView, context: Context) {}
+    func updateNSView(_ view: WKWebView, context: Context) {
+        if bridge.shown != shown { bridge.shown = shown }
+    }
 }
 
 /// The source column: the editor, or a preview or placeholder over it. It
@@ -28,10 +31,7 @@ struct SourceColumn: View {
         let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
         ZStack {
-            EditorView(bridge: project.editor)
-                .opacity(editing ? 1 : 0)
-                .allowsHitTesting(editing)
-                .accessibilityHidden(!editing)
+            EditorView(bridge: project.editor, shown: editing)
             if project.openPath != nil, !project.editsText, let url = project.openURL {
                 FilePreview(url: url)
                     .background(.background)

@@ -234,13 +234,7 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// Search results take the whole sidebar; only LaTeX has an outline.
-    private var showsOutline: Bool { project.searchQuery.isEmpty && project.isLaTeX }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
-        // The editor has the keyboard as the project opens.
-        if let window = view.window, window.firstResponder === window { project.editor.focus() }
-    }
+    private var showsOutline: Bool { !project.isSearching && project.isLaTeX }
 
     // ---------- the models drive the panes ----------
 
@@ -251,7 +245,7 @@ final class WorkspaceController: DetentSplitViewController {
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
             track({ project.showPDF }) { [weak self] in self?.setPDFShown($0) },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
-            track({ OutlineState(shown: project.searchQuery.isEmpty && project.isLaTeX,
+            track({ OutlineState(shown: !project.isSearching && project.isLaTeX,
                                    collapsed: app.outlineCollapsed) }) { [weak self] state in
                 guard let self else { return }
                 setCollapsed(outlineItem, !state.shown || state.collapsed)

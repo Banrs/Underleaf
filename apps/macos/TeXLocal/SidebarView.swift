@@ -24,16 +24,13 @@ struct SidebarSearch: View {
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
-    /// A sidebar section header's row, and the room a sidebar list leaves over it
-    /// (measured, 27.2).
+    /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    private static let listTopRoom: CGFloat = 10
     /// How far under the middle of the status bar's height the list puts the title
     /// (measured, 27.2): it's raised so the two bars' words are level and centred.
     private static let titleDrop: CGFloat = 1.5
 
     var body: some View {
-        let collapsed = app.outlineCollapsed
         List {
             Section(isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
             } header: {
@@ -44,10 +41,19 @@ struct OutlineHeader: View {
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
+        // The list as tall as its content, its room under the header too, so a drag
+        // from the header has nothing to scroll (scrollDisabled doesn't stop a
+        // drag's autoscroll); the bar shows its top.
+        .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
         .offset(y: -Self.titleDrop)
-        .frame(height: collapsed ? BarMetrics.secondaryBarHeight : Self.listTopRoom + Self.headerRow)
+        .frame(height: app.outlineCollapsed ? BarMetrics.secondaryBarHeight : sidebarListRoom + Self.headerRow,
+               alignment: .top)
     }
 }
+
+/// The room a sidebar list leaves over its first row and under its last, inside
+/// its table (measured, 27.2).
+private let sidebarListRoom: CGFloat = 10
 
 /// The project's files, or the project search's results while there is a
 /// query.
@@ -68,7 +74,7 @@ struct FilesList: View {
         // Two lists: one list diffed from the tree to grouped hits and back
         // kept stale rows.
         Group {
-            if project.searchQuery.isEmpty { files } else { results }
+            if project.isSearching { results } else { files }
         }
         .trashConfirmation($deleting, name: { ($0 as NSString).lastPathComponent }) { path in
             Task { await project.deleteEntry(path) }
@@ -99,9 +105,18 @@ struct FilesList: View {
         .fileDrop(targeted: { listTargeted = $0 }) { urls in
             Task { await project.importFiles(urls) }
         }
-        // The list's own menu on its empty space.
+        // The clicked row's menu, which leaves the selection (and the open file) as
+        // it is; on the list's empty space, the list's own.
         .contextMenu(forSelectionType: String.self) { paths in
-            if paths.isEmpty {
+            if let path = paths.first, let node = project.tree.flattened.first(where: { $0.path == path }) {
+                if !node.isDirectory && node.path.hasSuffix(".tex") {
+                    Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
+                    Divider()
+                }
+                ItemMenuItems(rename: { rename.begin(node.path, name: node.name) },
+                              showInFinder: { project.showInFinder(node.path) },
+                              moveToTrash: { deleting = node.path })
+            } else {
                 Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
                 Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
                 Divider()
@@ -122,24 +137,27 @@ struct FilesList: View {
         .onDeleteCommand { if let selection { deleting = selection } }
     }
 
-    /// Choosing a hit opens it.
+    /// Choosing a hit opens it; double-clicking or Return opens the chosen one again.
     private var results: some View {
         List(selection: $hit) { searchResults }
             .listStyle(.sidebar)
-            .onChange(of: hit) { _, id in
-                if let found = project.searchHits.first(where: { $0.id == id }) {
-                    Task { await project.open(found.file, line: found.line) }
-                }
-            }
+            .onChange(of: hit) { _, id in open(id) }
+            .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first) }
             .overlay {
-                if project.searchHits.isEmpty { ContentUnavailableView.search(text: project.searchQuery) }
+                if project.searchHits?.isEmpty == true { ContentUnavailableView.search(text: project.searchQuery) }
             }
+    }
+
+    private func open(_ id: SearchHit.ID?) {
+        if let found = project.searchHits?.first(where: { $0.id == id }) {
+            Task { await project.open(found.file, line: found.line) }
+        }
     }
 
     /// Hits grouped by file, each line with its match picked out.
     @ViewBuilder
     private var searchResults: some View {
-        let groups = Dictionary(grouping: project.searchHits, by: \.file).sorted { $0.key < $1.key }
+        let groups = Dictionary(grouping: project.searchHits ?? [], by: \.file).sorted { $0.key < $1.key }
         ForEach(groups, id: \.key) { file, hits in
             Section("\(file) — \(hits.count)") {
                 ForEach(hits) { hit in
@@ -193,15 +211,6 @@ struct FilesList: View {
         }) { urls in
             let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
             Task { await project.importFiles(urls, into: folder) }
-        }
-        .contextMenu {
-            if !node.isDirectory && node.path.hasSuffix(".tex") {
-                Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
-                Divider()
-            }
-            ItemMenuItems(rename: { rename.begin(node.path, name: node.name) },
-                          showInFinder: { project.showInFinder(node.path) },
-                          moveToTrash: { deleting = node.path })
         }
     }
 
@@ -338,16 +347,8 @@ struct OutlineList: View {
     /// changed last.
     @State private var line = 1
 
-    /// A sidebar list's room over its first row, inside its table (measured, 27.2).
-    private static let listTopRoom: CGFloat = 10
-
     /// A step under the files' rows: a table of contents under a list.
-    private var outlineRowSize: SidebarRowSize {
-        switch rowSize {
-        case .large: .medium
-        default: .small
-        }
-    }
+    private var outlineRowSize: SidebarRowSize { rowSize == .large ? .medium : .small }
 
     private var prefix: String { "\(project.id)/\(project.openPath ?? "")\t" }
 
@@ -360,16 +361,16 @@ struct OutlineList: View {
                 if outline.isEmpty {
                     Text("No Sections").foregroundStyle(.secondary)
                 } else {
-                    OutlineRows(nodes: Outline.tree(outline), context: OutlineRows.Context(
-                        project: project, current: current, keys: keys), folded: $folded)
+                    OutlineRows(nodes: Outline.tree(outline), project: project, current: current, keys: keys,
+                                folded: $folded)
                 }
             }
             .listStyle(.sidebar)
             // The header over it stands where a section's would, so the room a
             // sidebar list leaves over its first row goes; the scroller keeps to
             // what shows.
-            .contentMargins(.top, Self.listTopRoom, for: .scrollIndicators)
-            .padding(.top, -Self.listTopRoom)
+            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
+            .padding(.top, -sidebarListRoom)
             .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
@@ -395,21 +396,17 @@ struct OutlineList: View {
 
 /// The headings nested, each fold remembered by `Outline.foldKeys`.
 private struct OutlineRows: View {
-    struct Context {
-        let project: ProjectModel
-        let current: Int?
-        let keys: [String]
-    }
-
     let nodes: [OutlineNode]
-    let context: Context
+    let project: ProjectModel
+    let current: Int?
+    let keys: [String]
     @Binding var folded: Set<String>
 
     var body: some View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node.item)) {
-                    OutlineRows(nodes: children, context: context, folded: $folded)
+                    OutlineRows(nodes: children, project: project, current: current, keys: keys, folded: $folded)
                 } label: {
                     row(node.item)
                 }
@@ -420,13 +417,13 @@ private struct OutlineRows: View {
     }
 
     private func row(_ item: OutlineItem) -> some View {
-        HeadingRow(project: context.project, item: item, isCurrent: item.id == context.current)
+        HeadingRow(project: project, item: item, isCurrent: item.id == current)
             .equatable()
             .id(item.id)
     }
 
     private func expansion(_ item: OutlineItem) -> Binding<Bool> {
-        let key = context.keys[item.id]
+        let key = keys[item.id]
         return Binding(
             get: { !folded.contains(key) },
             set: { open in
