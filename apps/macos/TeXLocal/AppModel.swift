@@ -240,6 +240,7 @@ final class AppModel {
         opensUnderWay += 1
         defer { opensUnderWay -= 1 }
         guard await leave(generation) else { return }
+        dropRequests()
         recentProjects = Array(([id] + recentProjects.filter { $0 != id })
             .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
         let model = ProjectModel(id: id, app: self)
@@ -255,12 +256,17 @@ final class AppModel {
         // False too when an open took over while this saved: its project stays.
         guard await leave(openGeneration) else { return false }
         project = nil
+        dropRequests()
+        await refresh()
+        return true
+    }
+
+    /// The project's own requests, which the next project mustn't present.
+    private func dropRequests() {
         pdfRequest = nil
         prompt = nil
         addingFiles = false
         exporting = nil
-        await refresh()
-        return true
     }
 
     /// Unless a later open or close took over while this saved; that one leaves it.

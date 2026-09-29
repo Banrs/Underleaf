@@ -109,6 +109,8 @@ final class ProjectModel {
     /// Bumped by each `open`, so an earlier one still in flight stands down.
     private var openGeneration = 0
     private var compileQueued = false
+    /// Stop while the build's save runs, before the core has a build to stop.
+    private var stopRequested = false
     /// A build still running when the project closes reports nothing.
     private var closed = false
     private var readingText = false
@@ -378,6 +380,8 @@ final class ProjectModel {
         // The disk matches the PDF unless a save has landed since it was built.
         if pdfFreshness == .edited, writes == builtWrites { pdfFreshness = nil }
         await open(path)
+        // The new page has no search; the bar still shows one.
+        if findShown { await editor.setFind(findQuery) }
         if lost {
             app?.alert = AppAlert("Unsaved Changes Were Lost",
                                   "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost.")
@@ -438,9 +442,11 @@ final class ProjectModel {
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
-                // The folder itself: moved, or FSEvents lost count of it.
+                // The folder itself: moved, or FSEvents lost count of it, so the
+                // open file may have changed unseen too.
                 let folder = change.path == watcher.folder || change.path == watcher.folder + "/"
                 treeChanged = treeChanged || change.structural && folder
+                openFileChanged = openFileChanged || change.structural && folder && openPath != nil
                 continue
             }
             // A folder moves as one change, not one for each file in it.
@@ -473,8 +479,11 @@ final class ProjectModel {
             fileGone(path)
             return
         }
-        guard editsText,
-              let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
+        guard editsText else { return }
+        // A save of ours under way: until it lands, the disk still has the text
+        // before it, which would read as another app's change.
+        if saving { _ = await lastSave?.value }
+        guard let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
               path == openPath, !closed, file.text != diskText
         else { return }
         diskText = file.text
@@ -538,7 +547,9 @@ final class ProjectModel {
     /// The next save writes these edits over the other app's.
     func keepEdits() {
         diskConflict = nil
-        // The autosave was cancelled while asking.
+        // The autosave was cancelled while asking, or the edits were already saved
+        // before the other app's change: either way they're written again.
+        dirty = true
         Task { await saveEdits() }
     }
 
@@ -555,9 +566,10 @@ final class ProjectModel {
         }
         // Before the save, so a second request queues instead of racing this one.
         compiling = true
+        stopRequested = false
         let saved = await flush()
         let built = writes
-        if saved {
+        if saved, !stopRequested {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
                 if closed {
@@ -619,6 +631,7 @@ final class ProjectModel {
     func stopCompile() {
         guard compiling else { return }
         compileQueued = false
+        stopRequested = true
         Task { try? await core.perform("stop_compile", ["id": id]) }
     }
 
@@ -703,8 +716,15 @@ final class ProjectModel {
             // text; only the save path changes, so the old path can't return.
             let wasOpen = openPath
             openPath = openPath.map { remapPath($0, from: result.from, to: result.to) }
-            if let openPath, openPath != wasOpen {
-                openURL = await fileURL(openPath)
+            if let openPath, let wasOpen, openPath != wasOpen {
+                // Text or not, LaTeX or not, changed: it opens afresh, as the editor
+                // holds the last text file opened, and the outline is only .tex's.
+                if isTextFile(openPath) != isTextFile(wasOpen) || openPath.hasSuffix(".tex") != wasOpen.hasSuffix(".tex") {
+                    clearOpenFile()
+                    await open(openPath, focus: false)
+                } else {
+                    openURL = await fileURL(openPath)
+                }
             }
             let main = settings?.mainFile
             settings = try? await core.call("get_settings", ["id": id], as: ProjectSettings.self)
