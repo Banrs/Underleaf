@@ -15,6 +15,7 @@ struct PDFPane: View {
 
     var body: some View {
         pages
+            .columnSurface(.underPageBackgroundColor)
             .onChange(of: controller.page) { _, page in project.pdfPage = page }
             .onChange(of: controller.pageCount) { _, count in project.pdfPageCount = count }
             // Keyed on hasPDF too: the URL can arrive after the version.
@@ -47,7 +48,6 @@ struct PDFPane: View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .ignoresSafeArea(.container, edges: .top)
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

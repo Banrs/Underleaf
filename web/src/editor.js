@@ -522,21 +522,15 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
   // an outline follows where you are reading, as Overleaf's does. The first
   // line at least half showing: a jump to a heading leaves a sliver of the
   // line above it in view, and that line would name the section before.
-  // The Mac scrolls the page instead of the editor (embed/editor.html), so the
-  // view's top is the scroller's or the page's, whichever is lower.
-  let stopWatching = () => {};
   if (onScroll) {
     let frame = 0;
     const report = () => {
       frame = 0;
       if (!view.dom.isConnected) return;
-      const top = Math.max(view.scrollDOM.getBoundingClientRect().top, 0) - view.documentTop;
+      const top = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
       onScroll(view.state.doc.lineAt(view.lineBlockAtHeight(top + view.defaultLineHeight / 2).from).number);
     };
-    const scrolled = () => { frame ||= requestAnimationFrame(report); };
-    view.scrollDOM.addEventListener('scroll', scrolled, { passive: true });
-    window.addEventListener('scroll', scrolled, { passive: true });
-    stopWatching = () => window.removeEventListener('scroll', scrolled);
+    view.scrollDOM.addEventListener('scroll', () => { frame ||= requestAnimationFrame(report); }, { passive: true });
     frame = requestAnimationFrame(report);
   }
 
@@ -625,6 +619,6 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
     findNext: () => findNext(view),
     findPrevious: () => findPrevious(view),
     focus: () => view.focus(),
-    destroy: () => { stopWatching(); view.destroy(); },
+    destroy: () => view.destroy(),
   };
 }

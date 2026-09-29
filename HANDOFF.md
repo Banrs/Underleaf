@@ -114,12 +114,12 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `MenuItems`: `SectionLevelItems`, `SymbolItems` and `InsertMenuItems`, shared by the menu bar and the toolbar. `ScaleMenuItems` is in `PDFPane`.
 - `WorkspaceModals`: the project's sheets and alerts (`workspaceModals`), New File or Folder, Go to Line and Go to Page.
 - `InspectorView`: a grouped `Form` with the project's settings, the open file's facts and the build's.
-- `SourceColumn`: the source column (the editor, a file preview or no file), `EditorView` (the editor's web view in SwiftUI, under the toolbar and find bar with WebKit's `obscuredContentInsets`) and `SourceFindBar`.
+- `SourceColumn`: the source column (the editor, a file preview or no file), `EditorView` (the editor's web view in SwiftUI) and `SourceFindBar`.
 - `StatusBar`: the status bar and its build-panel toggle.
 - `EditorBridge`: a project's editor, `EditorWebView` (a plain `WKWebView` that takes file drops and answers Edit › Undo and Redo); the editor's commands, appearance and prefs; `FindQuery` and `FindMatches`.
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
-- `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. The PDF runs on under the toolbar with the system's scroll edge effect; Fit Height, the sync point and forward search measure the part that shows (`shownHeight`).
+- `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. Dark paper inverts the pages only (`documentView`'s filters), so the view's background and scrollers stay the window's.
 - `SidebarView`: the sidebar's search, the File Outline's header, the files and the outline.
   - Files: rows drag out as the file (copied by other apps, opened by the editor) and move within the tree onto a folder, a file's folder or the Files header (the top level), as in Finder; files from elsewhere are copied in.
   - Outline: headings are native list rows, the current heading the selection; choosing one (click anywhere on the row, or the arrow keys) scrolls the source to it and leaves the keyboard in the list. A click on the current row goes back to its heading, which an unchanged selection wouldn't.
@@ -151,7 +151,6 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
   - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
   - Its context menu is WebKit's text menu, as a text view's: none on the line numbers, where WebKit offered only Reload (which would reload the page and lose unsaved edits), and no Look Up “” in blank space, where WebKit selects the line break (and the spaces round it); a deliberate selection of spaces keeps Cut and Copy (`web/src/embed/editor.js`, with a host's chrome only). WebKit's Font, Paragraph Direction and Selection Direction stay: they have no public identifiers, and Safari's text areas show them too.
-  - Its page scrolls as a whole on the Mac (`editor.html`, `:root[data-host]`), not CodeMirror's scroller, so the text passes under the toolbar and find bar, where WebKit draws the system's scroll edge effect (`obscuredContentInsets`, the top safe area SwiftUI reports). WebKit paints nothing of a page pulled up into its obscured area, so the inner scroller couldn't. `createEditor` reads the top line from whichever of the two scrolls.
   - No spellcheck in the source (`hostAttributes`, editor.js): WebKit's smart dashes and quotes would rewrite LaTeX.
   - Edit › Undo and Redo are the system's: `undo:`/`redo:` go to whatever has the keyboard, a text field's own undo manager with its titles, or `EditorWebView`, which steps CodeMirror's history (WebKit's undo manager never sees it) and enables them from a Mac-only page message (`history`).
   - `EditorWebView` takes a drag with files before WebKit does: a dropped file opens, the project's own in the editor and a project from elsewhere as from the Dock, as other editors open one. CodeMirror would paste a text file's contents in.
@@ -287,6 +286,9 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
+- **The source's and the PDF's content stop at the toolbar, their colours run on under it** (`columnSurface`, a SwiftUI scroll view). The toolbar is adaptive, as Mail's: while each section holds its tools, each column's part is its own; when a section can't (about 370 pt for the PDF's), AppKit joins them into one band with one line. It draws and joins a column's part only from a scroll view there (measured on 27.2 with the view tree).
+  - A web view under the toolbar draws WebKit's own edge effect instead: hard, in the page's colour, lined even with nothing under it, and never joined, so the editor's part clashed with the PDF's and the joined band's line stopped at the PDF.
+  - The PDF keeps below the toolbar with the source: under it, its soft effect showed the page grey in the joined band.
 - **The PDF column doesn't collapse on a drag**, AppKit's default for a plain item, kept on purpose: collapsed at the window's trailing edge, its divider would sit under the window's resize edge, so a drag back would resize the window instead of opening the PDF.
 - **Sidebars fold on a window resize, inspectors don't** (`canCollapseFromWindowResize`: YES for sidebars, NO for inspectors).
   - The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 144 pt, folds it, and brings it back when there's room.

@@ -51,11 +51,11 @@ final class PDFController {
         }
     }
 
-    /// The page and its page-break margins, which scale with it, the height it shows in.
+    /// The page and its page-break margins, which scale with it, the view's height.
     private func heightScale(_ view: PDFView) -> CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
         let margins = view.pageBreakMargins
-        return view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
+        return view.bounds.height / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
     }
 
     func setScale(_ scale: CGFloat) {
@@ -151,7 +151,7 @@ final class PDFController {
     func sourcePoint() -> (Int, CGPoint)? {
         guard let view, let document = view.document else { return nil }
         // "The text you are looking at": the first line at or below a fifth of the way down.
-        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
+        let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.bounds.height * 0.2)
         guard let page = view.page(for: probe, nearest: true) else { return nil }
         let bounds = page.bounds(for: view.displayBox)
         var point = view.convert(probe, to: page)
@@ -180,23 +180,24 @@ final class SyncPDFView: PDFView {
     }
 
     /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
-    /// colour wheel so figures keep their hues. The view keeps the light appearance,
-    /// whose background and scrollers the inversion turns dark.
+    /// colour wheel so figures keep their hues. Only the pages, so the view's
+    /// background and scrollers stay the window's.
     var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
-            wantsLayer = true
-            layerUsesCoreImageFilters = true
-            appearance = darkPaper ? NSAppearance(named: .aqua) : nil
-            // The tinted under-page colour would invert to olive; a neutral near-white
-            // inverts to dark mode's under-page grey (Core Image inverts in linear light).
-            backgroundColor = darkPaper ? NSColor(srgbRed: 0.99, green: 0.99, blue: 0.99, alpha: 1)
-                                        : .underPageBackgroundColor
             pageShadowsEnabled = !darkPaper
-            let hue = CIFilter.hueAdjust()
-            hue.angle = .pi
-            contentFilters = darkPaper ? [CIFilter.colorInvert(), hue] : []
+            paintPages()
         }
+    }
+
+    /// Again for each document, whose pages PDFKit may put in a new view.
+    func paintPages() {
+        guard let pages = documentView else { return }
+        pages.wantsLayer = true
+        pages.layerUsesCoreImageFilters = true
+        let hue = CIFilter.hueAdjust()
+        hue.angle = .pi
+        pages.contentFilters = darkPaper ? [CIFilter.colorInvert(), hue] : []
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -291,6 +292,7 @@ struct PDFRepresentable: NSViewRepresentable {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
+        view.paintPages()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         // A reopened project's first PDF opens at the page it was left at.
         let restore = project.restorePDFPage
@@ -313,19 +315,12 @@ struct PDFRepresentable: NSViewRepresentable {
         let mark = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
         mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
         page.addAnnotation(mark)
-        // A third of the way down the pages: a destination goes to the top of
-        // what shows, below the toolbar, where a rect went under it.
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
+        // A third of the view above and below it, in page points.
+        view.go(to: rect.insetBy(dx: 0, dy: -view.bounds.height / 3 / view.scaleFactor), on: page)
         Task {
             // web/styles.css .sync-flash
             try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)
         }
     }
-}
-
-private extension PDFView {
-    /// The height the pages show in: the view runs on under the toolbar and the
-    /// find bar, which the system's scroll edge effect covers.
-    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top }
 }

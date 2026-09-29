@@ -28,6 +28,20 @@ enum Typography {
 }
 
 extension View {
+    /// A column's colour under the toolbar, in a scroll view: AppKit draws a column's
+    /// scroll edge effect only from one, and joins the columns' into one band where
+    /// the toolbar's sections meet. The content keeps below the toolbar, the PDF's as
+    /// the source's must: a web view under it draws WebKit's own effect, in the
+    /// page's colour, which never joins.
+    func columnSurface(_ color: NSColor) -> some View {
+        background {
+            ScrollView {}
+                .background(Color(nsColor: color))
+                .accessibilityHidden(true)
+                .ignoresSafeArea(.container, edges: .top)
+        }
+    }
+
     /// An accessory bar's controls, inset from the pane's edges.
     func paneBarControls() -> some View {
         lineLimit(1)
