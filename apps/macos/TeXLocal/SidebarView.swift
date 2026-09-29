@@ -63,6 +63,7 @@ struct FilesList: View {
     @State private var selection: String?
     @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
+    @FocusState private var listFocused: Bool
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
     /// Files dragged over the list's empty space, or over a row.
@@ -90,8 +91,9 @@ struct FilesList: View {
                 }
             } header: {
                 // The project's top level, marked while a drop would go there, as a
-                // row takes a drop into its folder. The list's own drop never sees
-                // its empty space. Search results aren't the tree, so they take none.
+                // row takes a drop into its folder. A List hands a drop on its empty
+                // space to neither dropDestination nor onDrop (27.2). Search results
+                // aren't the tree, so they take none.
                 Text("Files")
                     .headerDropHighlight(dropFolder == "")
                     .contentShape(.rect)
@@ -130,7 +132,8 @@ struct FilesList: View {
             }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
-        .offersToTrash(rename.id == nil ? selection.map(TrashItem.file) : nil)
+        .focused($listFocused)
+        .offersToTrash(listFocused && rename.id == nil ? selection.map(TrashItem.file) : nil)
     }
 
     /// Choosing a hit opens it; double-clicking or Return opens the chosen one again.
@@ -179,7 +182,11 @@ struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name, isFile: !node.isDirectory) { commitRename(node) } cancel: { rename.cancel() }
+                    RenameField(text: $rename.name, isFile: !node.isDirectory, ended: { listFocused = true }) {
+                        commitRename(node)
+                    } cancel: {
+                        rename.cancel()
+                    }
                 } else {
                     Text(node.name)
                 }
@@ -351,9 +358,11 @@ struct OutlineList: View {
     @Environment(\.sidebarRowSize) private var rowSize
     /// Folded headings, by file and `Outline.foldKeys`.
     @State private var folded = Set(UserDefaults.standard.stringArray(forKey: DefaultsKey.outlineFolded) ?? [])
-    /// The line the highlight follows: the caret's or the top line, whichever
+    /// The line the selection follows: the caret's or the top line, whichever
     /// changed last.
     @State private var line = 1
+    /// A heading chosen in the list, shown selected until the source reaches it.
+    @State private var chosen: Int?
 
     /// A step under the files' rows: a table of contents under a list.
     private var outlineRowSize: SidebarRowSize { rowSize == .large ? .medium : .small }
@@ -364,13 +373,20 @@ struct OutlineList: View {
         let outline = project.outline
         let current = Outline.chain(outline, at: line).last?.id
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
+        // The current heading is the selection; choosing one, by click or arrow
+        // key, scrolls the source to it and leaves the keyboard where it was.
+        let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
+            guard let id, id != current, let item = outline.first(where: { $0.id == id }) else { return }
+            chosen = id
+            project.reveal(item)
+        })
         ScrollViewReader { proxy in
-            List {
+            List(selection: selection) {
                 if outline.isEmpty {
                     Text("No Sections").foregroundStyle(.secondary)
+                        .selectionDisabled()
                 } else {
-                    OutlineRows(nodes: Outline.tree(outline), project: project, current: current, keys: keys,
-                                folded: $folded)
+                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded)
                 }
             }
             .listStyle(.sidebar)
@@ -386,6 +402,7 @@ struct OutlineList: View {
             // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in
+                chosen = nil
                 let chain = Outline.chain(outline, at: line).dropLast()
                 let opened = folded.subtracting(chain.map { keys[$0.id] })
                 if opened != folded { folded = opened }
@@ -406,7 +423,6 @@ struct OutlineList: View {
 private struct OutlineRows: View {
     let nodes: [OutlineNode]
     let project: ProjectModel
-    let current: Int?
     let keys: [String]
     @Binding var folded: Set<String>
 
@@ -414,7 +430,7 @@ private struct OutlineRows: View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node.item)) {
-                    OutlineRows(nodes: children, project: project, current: current, keys: keys, folded: $folded)
+                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded)
                 } label: {
                     row(node.item)
                 }
@@ -425,9 +441,10 @@ private struct OutlineRows: View {
     }
 
     private func row(_ item: OutlineItem) -> some View {
-        HeadingRow(project: project, item: item, isCurrent: item.id == current)
+        HeadingRow(project: project, item: item)
             .equatable()
             .id(item.id)
+            .tag(item.id)
     }
 
     private func expansion(_ item: OutlineItem) -> Binding<Bool> {
@@ -441,41 +458,30 @@ private struct OutlineRows: View {
     }
 }
 
-/// A heading, the current one tinted and semibold rather than selected;
-/// choosing one scrolls the source and leaves focus where it was.
+/// A heading. A click takes the source to it even when it's the current one,
+/// which a selection that doesn't change wouldn't.
 private struct HeadingRow: View, Equatable {
     let project: ProjectModel
     let item: OutlineItem
-    let isCurrent: Bool
 
     static func == (a: Self, b: Self) -> Bool {
-        a.project === b.project && a.item == b.item && a.isCurrent == b.isCurrent
+        a.project === b.project && a.item == b.item
     }
 
     var body: some View {
         let title = Outline.displayTitle(item)
-        Button {
-            guard let path = project.openPath else { return }
-            Task { await project.open(path, line: item.line, atTop: true, focus: false) }
-        } label: {
-            // The whole title as a tooltip only where it's cut short.
-            ViewThatFits(in: .horizontal) {
-                Text(title).fixedSize()
-                Text(title).help(title)
-            }
-            .lineLimit(1)
-            .fontWeight(isCurrent ? .semibold : .regular)
-            .foregroundStyle(isCurrent ? AnyShapeStyle(.tint)
-                             : item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-            // Its focus ring in the row's shape, not the title's rectangle.
-            .contentShape(.focusEffect, SidebarRowShape())
+        // The whole title as a tooltip only where it's cut short.
+        ViewThatFits(in: .horizontal) {
+            Text(title).fixedSize()
+            Text(title).help(title)
         }
-        .buttonStyle(.plain)
+        .lineLimit(1)
+        .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+        .simultaneousGesture(TapGesture().onEnded { project.reveal(item) })
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
         .accessibilityValue(item.kind)
-        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

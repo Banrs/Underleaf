@@ -306,7 +306,8 @@ struct ItemMenuItems: View {
 }
 
 /// What File › Move to Trash (⌘⌫) moves: the chosen item of the list with the
-/// keyboard, and none while its name is edited, where ⌘⌫ edits the name.
+/// keyboard (the list's to say), and none while its name is edited, where ⌘⌫
+/// edits the name.
 enum TrashItem: Hashable {
     case project(ProjectInfo.ID)
     case file(String)
@@ -323,12 +324,10 @@ extension View {
 private struct TrashOffer: ViewModifier {
     @Environment(AppModel.self) private var app
     let item: TrashItem?
-    @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         content
-            .focused($focused)
-            .onChange(of: focused ? item : nil, initial: true) { _, item in app.trashItem = item }
+            .onChange(of: item, initial: true) { _, item in app.trashItem = item }
             .onDisappear { app.trashItem = nil }
     }
 }
@@ -339,6 +338,8 @@ private struct TrashOffer: ViewModifier {
 struct RenameField: View {
     @Binding var text: String
     var isFile = false
+    /// Return or Escape ended it: the list takes the keyboard back, as Finder's does.
+    var ended: () -> Void = {}
     let commit: () -> Void
     let cancel: () -> Void
     @FocusState private var focused: Bool
@@ -348,8 +349,8 @@ struct RenameField: View {
         TextField("Name", text: $text, selection: $selection)
             .labelsHidden()
             .focused($focused)
-            .onSubmit(commit)
-            .onExitCommand(perform: cancel)
+            .onSubmit { commit(); ended() }
+            .onExitCommand { cancel(); ended() }
             .onChange(of: focused) { was, now in
                 if now, isFile { selection = .baseName(of: text) }
                 if was, !now { commit() }

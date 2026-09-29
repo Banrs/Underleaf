@@ -867,6 +867,12 @@ final class ProjectModel {
         }
     }
 
+    /// An outline heading at the top of the source; the keyboard stays where it is.
+    func reveal(_ item: OutlineItem) {
+        guard let path = openPath else { return }
+        Task { await open(path, line: item.line, atTop: true, focus: false) }
+    }
+
     func reveal(line: Int) {
         Task { await editor.reveal(line: line) }
     }

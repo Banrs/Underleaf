@@ -6,6 +6,7 @@ struct HomeView: View {
     /// Single selection: every action here acts on one project.
     @State private var selection: ProjectInfo.ID?
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
+    @FocusState private var listFocused: Bool
     @State private var query = ""
     @State private var dropTargeted = false
 
@@ -57,7 +58,7 @@ struct HomeView: View {
             Section {
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
-                    ProjectRow(project: project, rename: rename) { commitRename(project) }
+                    ProjectRow(project: project, rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
                 if shown.isEmpty { empty.selectionDisabled() }
             } header: {
@@ -78,7 +79,8 @@ struct HomeView: View {
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
-        .offersToTrash(rename.id == nil ? selection.map(TrashItem.project) : nil)
+        .focused($listFocused)
+        .offersToTrash(listFocused && rename.id == nil ? selection.map(TrashItem.project) : nil)
     }
 
     private var templates: some View {
@@ -137,13 +139,14 @@ struct HomeView: View {
 private struct ProjectRow: View {
     let project: ProjectInfo
     let rename: InPlaceRename<ProjectInfo.ID>
+    let ended: () -> Void
     let commit: () -> Void
 
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
                 if rename.id == project.id {
-                    RenameField(text: Bindable(rename).name, commit: commit) { rename.cancel() }
+                    RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
                 } else {
                     Text(project.name).font(Typography.itemTitle)
                 }
@@ -329,7 +332,7 @@ struct NewProjectSheet: View {
     List {
         ProjectRow(project: ProjectInfo(id: "thesis", name: "Thesis", mtime: Date.now.timeIntervalSince1970 * 1000 - 3_600_000,
                                         mainFile: "main.tex"),
-                   rename: InPlaceRename()) {}
+                   rename: InPlaceRename(), ended: {}) {}
     }
     .listStyle(.inset)
 }
