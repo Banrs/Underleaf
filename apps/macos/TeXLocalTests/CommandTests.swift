@@ -91,14 +91,14 @@ struct MenuStructureTests {
     /// The system's, which whatever has the keyboard answers: a text field from
     /// its undo manager, the editor from CodeMirror's history.
     @Test func undoAndRedoAreTheSystems() throws {
-        #expect(try item("z").action == Selector(("undo:")))
-        #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
+        #expect(try item("z").action == #selector(EditorWebView.undo(_:)))
+        #expect(try item("z", [.command, .shift]).action == #selector(EditorWebView.redo(_:)))
     }
 
     @Test func theEditorAnswersUndoFromItsHistory() {
         let view = EditorWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        let undo = NSMenuItem(title: "Undo Typing", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        let undo = NSMenuItem(title: "Undo Typing", action: #selector(EditorWebView.undo(_:)), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: #selector(EditorWebView.redo(_:)), keyEquivalent: "Z")
         #expect(!view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))
         view.history = (undo: true, redo: false)
         #expect(view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))

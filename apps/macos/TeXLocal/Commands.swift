@@ -199,9 +199,7 @@ extension AppModel {
     /// `project` is nil on the projects screen or while Settings is in front.
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
-        // Undo and redo also serve text fields outside the editor.
-        case .projectNew, .projectOpen, .filePageSetup, .editUndo, .editRedo: true
-        case .editFindAndReplace: project?.findAction(.showReplaceInterface) != nil
+        case .projectNew, .projectOpen, .filePageSetup: true
         case .fileSave, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
@@ -258,11 +256,6 @@ extension AppModel {
         case .filePageSetup: NSApp.runPageLayout(nil)
         // The PDF, not the first responder (usually the editor's web view).
         case .filePrint: requestPDF(.print)
-        // The system's items: whatever has the keyboard answers, the editor too.
-        case .editUndo: sendUndo(redo: false)
-        case .editRedo: sendUndo(redo: true)
-        // A chord from the editor page.
-        case .editFindAndReplace: project?.findAction(.showReplaceInterface)?()
         case .editBold: project?.format(.bold)
         case .editItalic: project?.format(.italic)
         case .editMath: project?.format(.math)
@@ -282,17 +275,14 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
-        // A Toggle bound to `autoCompile` in the menu. Find, Find Next and Find
-        // Previous are the system's items, which reach the window
-        // (`MainWindowController.performFindPanelAction`); the page keeps their chords.
-        case .compileToggleAuto, .editFind, .editFindNext, .editFindPrevious: break
+        // A Toggle bound to `autoCompile` in the menu. Undo, Redo and the Find items
+        // are the system's, which reach whatever has the keyboard (the editor's web
+        // view, `MainWindowController.performFindPanelAction`); the page keeps their chords.
+        case .compileToggleAuto, .editUndo, .editRedo, .editFind, .editFindAndReplace, .editFindNext, .editFindPrevious:
+            break
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }
-    }
-
-    private func sendUndo(redo: Bool) {
-        _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
 }
 
@@ -318,7 +308,7 @@ struct AppCommands: Commands {
                     Button {
                         Task { await app.open(recent.id) }
                     } label: {
-                        Label(recent.name, systemImage: "doc.text")
+                        Label(recent.name, systemImage: "text.document")
                     }
                     // An object rather than an action, so it keeps its icon
                     // (HIG, Menus); macOS 27 hides menu images otherwise.

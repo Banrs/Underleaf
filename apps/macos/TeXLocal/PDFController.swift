@@ -231,9 +231,6 @@ struct PDFRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> SyncPDFView {
         let view = SyncPDFView()
         view.displayMode = .singlePageContinuous
-        // PDFKit's own margins round the pages: with others set, it scrolls the
-        // pages as the column resizes, and the scroller shows on every step.
-        view.displaysPageBreaks = true
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
         view.onInverse = { [project] page, point in

@@ -42,7 +42,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
-    private var drags: [any NSObjectProtocol] = []
+    private var drags: [NotificationCenter.ObservationToken] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
@@ -122,8 +122,6 @@ final class WorkspaceController: DetentSplitViewController {
         pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
 
-        columns.splitView.isVertical = true
-        columns.splitView.dividerStyle = .thin
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
 
@@ -134,7 +132,6 @@ final class WorkspaceController: DetentSplitViewController {
         panelItem.isCollapsed = !project.showLogs
 
         area.splitView.isVertical = false
-        area.splitView.dividerStyle = .thin
         let columnsItem = NSSplitViewItem(viewController: columns)
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
@@ -265,13 +262,10 @@ final class WorkspaceController: DetentSplitViewController {
             follow(inspectorItem) { [app] visible in if app.inspectorVisible != visible { app.inspectorVisible = visible } },
         ]
         // Sizes as they're dragged to, not as a resized window squeezes them or a
-        // collapse passes through them. At once, while the drag is the current event.
+        // collapse passes through them.
         drags = [splitView, sidebar.splitView, columns.splitView, area.splitView].map { split in
-            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split,
-                                                   queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    if NSApp.currentEvent?.type == .leftMouseDragged { self?.saveSizes() }
-                }
+            NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { [weak self] message in
+                if message.userResize { self?.saveSizes() }
             }
         }
     }
@@ -396,7 +390,6 @@ final class WorkspaceController: DetentSplitViewController {
     /// Keeps the shown panes' sizes, for this launch's collapses and the next launch:
     /// the sizes they're dragged to, not those a narrowing window squeezes them to.
     private func saveSizes() {
-        guard let window = view.window, !window.inLiveResize else { return }
         let sidebarWidth = sidebarItem.viewController.view.frame.width
         if !sidebarItem.isCollapsed, sidebarWidth >= sidebarItem.minimumThickness {
             PaneSize.sidebar.store(sidebarWidth)
