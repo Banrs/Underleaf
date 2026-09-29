@@ -11,12 +11,9 @@ struct HomeView: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if app.tex?.available == false {
-                texMissing
-                Divider()
-            }
-            list
+        // Over the list, which runs on under it and the toolbar with one edge effect.
+        list.safeAreaBar(edge: .top) {
+            if app.tex?.available == false { texMissing }
         }
         // Copied in, as the Open panel says; anything else is refused.
         .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
