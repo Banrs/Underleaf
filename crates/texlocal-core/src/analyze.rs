@@ -35,6 +35,9 @@ static COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(^|[^\\])%[^\n\r\x{2028}\x{2029}]*$").unwrap());
 static COMMAND: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?").unwrap());
+// What separates words: JavaScript's `\s` and TeX's special characters.
+static WORD_BREAK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"[{JS_SPACE}{{}}$&_^~\\%]")).unwrap());
 
 /// A sectioning command: its depth (0 for \part to 5 for \paragraph), its
 /// title ("(untitled)" when empty) and its 1-based line.
@@ -95,14 +98,8 @@ fn line_words(line: &str) -> usize {
         Some(m) => &line[..m.get(1).unwrap().end()],
         None => line,
     };
-    let is_space = |c: char| {
-        "\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}{}$&_^~\\%"
-            .contains(c)
-            || ('\u{2000}'..='\u{200A}').contains(&c)
-    };
-    COMMAND
-        .replace_all(line, " ")
-        .split(is_space)
+    WORD_BREAK
+        .split(&COMMAND.replace_all(line, " "))
         .filter(|w| {
             w.chars()
                 .any(|c| c.is_ascii_alphabetic() || ('À'..='ž').contains(&c))

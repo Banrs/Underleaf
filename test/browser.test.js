@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 const { httpBridge, takeToken, attachmentName } = await import('../web/src/bridge.js');
 const { matchesAccel } = await import('../web/src/commands.js');
 
@@ -9,13 +8,7 @@ function fakeFetch(status, body) {
   const requests = [];
   const impl = async (url, init) => {
     requests.push({ url, ...init });
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      statusText: 'status',
-      json: async () => body,
-      blob: async () => new Blob([JSON.stringify(body)]),
-    };
+    return Response.json(body, { status });
   };
   return { impl, requests };
 }

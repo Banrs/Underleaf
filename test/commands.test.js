@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
 const { registerCommands, runCommand } = await import('../web/src/commands.js');
 

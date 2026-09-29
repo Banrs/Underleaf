@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 const { childPath } = await import('../web/src/texfolder.js');
 
 // The host lists names; the chooser builds the next path itself, so it must

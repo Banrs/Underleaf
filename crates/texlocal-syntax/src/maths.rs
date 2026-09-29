@@ -22,7 +22,7 @@ static ENVIRONMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\{([^{}]
 /// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
 /// pair, the caret between) is maths.
 pub fn math_mode_at(src: &[u16]) -> bool {
-    let catalog = catalog::get();
+    let catalog = &*catalog::CATALOG;
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
     // Open groups, innermost last: whether they're maths, and what closes
     // them: "$", "$$", "\)", "\]", "}" or "env:<name>".
@@ -164,7 +164,7 @@ pub struct MathPreview {
 }
 
 static BEGIN: LazyLock<Regex> = LazyLock::new(|| {
-    let names = catalog::alternation(&catalog::get().preview_environments);
+    let names = catalog::alternation(&catalog::CATALOG.preview_environments);
     Regex::new(&format!(r"\\begin\{{({names})(\*?)\}}")).unwrap()
 });
 static DOLLARS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\$\$(.*?)\$\$").unwrap());

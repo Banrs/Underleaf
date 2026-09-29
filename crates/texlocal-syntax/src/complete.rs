@@ -56,7 +56,7 @@ pub fn completions(
     // As CodeMirror's matchBefore: the caret's line, at most 250 units back.
     let from = text.lines[line].max(caret.saturating_sub(250));
     let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
-    let catalog = catalog::get();
+    let catalog = &*catalog::CATALOG;
     let offer = |start: usize, items: Vec<Completion>| {
         (!items.is_empty()).then(|| Completions {
             start: from + utf16(&before[..start]) as u32,
