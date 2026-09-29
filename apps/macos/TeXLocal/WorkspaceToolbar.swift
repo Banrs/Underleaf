@@ -107,12 +107,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Before the title (HIG, Toolbars: back leads). One level, no history to go forward.
             item.isNavigational = true
         case .undo:
-            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", Selector(("undo:")))
+            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", #selector(EditorWebView.undo(_:)))
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
             item.target = nil
             item.visibilityPriority = .low
         case .redo:
-            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", Selector(("redo:")))
+            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", #selector(EditorWebView.redo(_:)))
             item.target = nil
             item.visibilityPriority = .low
         case .sectionLevel:
