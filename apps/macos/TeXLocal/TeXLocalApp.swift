@@ -35,11 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.shared = self
     }
 
-    /// Before the first window, so it never shows in the other appearance.
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        AppAppearance.saved.apply()
-    }
-
     /// After state restoration, which may have made the window already.
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindow.start()

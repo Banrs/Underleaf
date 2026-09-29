@@ -15,7 +15,6 @@ enum DefaultsKey {
     static let outlineCollapsed = "OutlineCollapsed"
     static let outlineFolded = "OutlineFolded"
     static let settingsTab = "settingsTab"
-    static let appearance = "appearance"
     /// Pane sizes set by dragging a divider (`PaneSize`).
     static let paneSizes = "PaneSizes"
 

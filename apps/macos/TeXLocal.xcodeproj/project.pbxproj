@@ -27,7 +27,6 @@
 		7CBC5DAE1B5E4EE49FBA64BD /* FolderWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */; };
 		9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31AE196AE79CB996B7DD97A2 /* AppModel.swift */; };
 		A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */; };
-		E402DBA52A99400978308743 /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BF217D21DDAF57E995AFB91 /* SettingsTests.swift */; };
 		1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */; };
 		9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC97CE33D77103C192FEB167 /* CommandTests.swift */; };
 		817D9BB52A230F994AF7C259 /* WorkspaceLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */; };
@@ -84,7 +83,6 @@
 		BB64852D001BF573F24FB9C8 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CE1B774F61877030414C0844 /* BuildPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildPanel.swift; sourceTree = "<group>"; };
 		DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalTests.swift; sourceTree = "<group>"; };
-		3BF217D21DDAF57E995AFB91 /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
 		C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectTests.swift; sourceTree = "<group>"; };
 		DC97CE33D77103C192FEB167 /* CommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTests.swift; sourceTree = "<group>"; };
 		1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLayoutTests.swift; sourceTree = "<group>"; };
@@ -116,7 +114,6 @@
 			isa = PBXGroup;
 			children = (
 				DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */,
-				3BF217D21DDAF57E995AFB91 /* SettingsTests.swift */,
 				C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */,
 				DC97CE33D77103C192FEB167 /* CommandTests.swift */,
 				1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */,
@@ -327,7 +324,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */,
-				E402DBA52A99400978308743 /* SettingsTests.swift in Sources */,
 				1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */,
 				9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */,
 				817D9BB52A230F994AF7C259 /* WorkspaceLayoutTests.swift in Sources */,
