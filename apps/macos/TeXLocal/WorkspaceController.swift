@@ -96,8 +96,6 @@ final class WorkspaceController: DetentSplitViewController {
         sidebar.view.frame.size.width = PaneSize.sidebar.value ?? ColumnMetrics.sidebarIdeal
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = ColumnMetrics.sidebarWidth.lowerBound
-        sidebarItem.maximumThickness = ColumnMetrics.sidebarWidth.upperBound
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SidebarSearch(project: project, field: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -568,7 +566,6 @@ private nonisolated struct OutlineState: Equatable {
 /// system's to fit, its tools crossing a divider or going into its overflow menu
 /// near the window's minimum.
 enum ColumnMetrics {
-    static let sidebarWidth: ClosedRange<CGFloat> = 200...400
     /// AppKit's inspector width (NSSplitViewItem.h), so the side columns open alike.
     static let sidebarIdeal: CGFloat = 270
     /// About 40 columns of the editor's default font, and a page still legible
