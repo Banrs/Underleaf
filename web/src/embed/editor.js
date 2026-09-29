@@ -9,6 +9,7 @@
 
 import { EditorView, keymap } from '@codemirror/view';
 import { Prec, StateEffect } from '@codemirror/state';
+import { undoDepth, redoDepth } from '@codemirror/commands';
 import {
   search, SearchQuery, getSearchQuery, setSearchQuery, searchPanelOpen, openSearchPanel, closeSearchPanel,
   findNext, findPrevious, replaceNext, replaceAll,
@@ -156,6 +157,18 @@ const hostFindExtension = [
 // dash). Highest precedence: the shared editor turns spellcheck on.
 const hostAttributes = Prec.highest(EditorView.contentAttributes.of({ 'aria-label': 'Source', spellcheck: 'false' }));
 
+// The Mac's Edit › Undo and Redo, enabled while the document has a step to take:
+// its history is CodeMirror's, which WebKit's undo manager doesn't see.
+let history = '';
+function reportHistory(state) {
+  const undo = undoDepth(state) > 0;
+  const redo = redoDepth(state) > 0;
+  if (`${undo}${redo}` === history) return;
+  history = `${undo}${redo}`;
+  post({ type: 'history', path, undo, redo });
+}
+const hostHistory = EditorView.updateListener.of((u) => reportHistory(u.state));
+
 // A new editor (a file opened) takes the host's search as it stands. The
 // caller keeps the stand-in quiet meanwhile.
 function attachHostFind(view) {
@@ -274,7 +287,9 @@ window.texlocal = {
     if ('host' in document.documentElement.dataset) {
       // The page scrolls on the Mac (editor.html), and it outlives the file.
       document.scrollingElement.scrollTop = scrollTop;
-      currentView()?.dispatch({ effects: StateEffect.appendConfig.of(hostAttributes) });
+      currentView()?.dispatch({ effects: StateEffect.appendConfig.of([hostAttributes, hostHistory]) });
+      history = '';
+      reportHistory(currentView().state);
     }
     attachHostFind(currentView());
     quiet = false;

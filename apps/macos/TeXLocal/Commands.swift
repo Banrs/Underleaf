@@ -258,8 +258,9 @@ extension AppModel {
         case .filePageSetup: NSApp.runPageLayout(nil)
         // The PDF, not the first responder (usually the editor's web view).
         case .filePrint: requestPDF(.print)
-        case .editUndo: undo(redo: false, project)
-        case .editRedo: undo(redo: true, project)
+        // The system's items: whatever has the keyboard answers, the editor too.
+        case .editUndo: sendUndo(redo: false)
+        case .editRedo: sendUndo(redo: true)
         // A chord from the editor page.
         case .editFindAndReplace: project?.findAction(.showReplaceInterface)?()
         case .editBold: project?.format(.bold)
@@ -290,23 +291,6 @@ extension AppModel {
         }
     }
 
-    /// A native text field keeps its own undo; otherwise CodeMirror's history,
-    /// since WebKit's undo manager never sees CodeMirror's own changes.
-    private func undo(redo: Bool, _ project: ProjectModel?) {
-        // Every native field edits in an NSText field editor; SwiftUI has no
-        // focused value that covers them all.
-        let nativeText = NSApp.keyWindow?.firstResponder is NSText
-        guard !nativeText, let project, project.editsText else { sendUndo(redo: redo); return }
-        Task {
-            // The page declines while one of its own fields has focus.
-            if await project.editor.command(redo ? .redo : .undo) {
-                project.editor.focus()
-            } else {
-                sendUndo(redo: redo)
-            }
-        }
-    }
-
     private func sendUndo(redo: Bool) {
         _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
@@ -326,10 +310,6 @@ struct AppCommands: Commands {
     }
 
     var body: some Commands {
-        CommandGroup(replacing: .undoRedo) {
-            item(.editUndo)
-            item(.editRedo)
-        }
         CommandGroup(replacing: .newItem) {
             item(.projectNew)
             item(.projectOpen)

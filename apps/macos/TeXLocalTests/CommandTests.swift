@@ -1,5 +1,6 @@
 import SwiftUI
 import Testing
+import WebKit
 @testable import TeXLocal
 
 /// The commands' chords: the shared table's (web/src/shortcuts.json) and the
@@ -87,10 +88,26 @@ struct MenuStructureTests {
         }, "\(modifiers) \(key)")
     }
 
-    @Test func undoAndRedoAreTheAppsOwn() throws {
-        // Not the standard undo:/redo:, which ask WebKit's undo manager.
-        #expect(try item("z").action != Selector(("undo:")))
-        #expect(try item("z", [.command, .shift]).action != Selector(("redo:")))
+    /// The system's, which whatever has the keyboard answers: a text field from
+    /// its undo manager, the editor from CodeMirror's history.
+    @Test func undoAndRedoAreTheSystems() throws {
+        #expect(try item("z").action == Selector(("undo:")))
+        #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
+    }
+
+    @Test func theEditorAnswersUndoFromItsHistory() {
+        let view = EditorWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let undo = NSMenuItem(title: "Undo Typing", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        #expect(!view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))
+        view.history = (undo: true, redo: false)
+        #expect(view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))
+        #expect(undo.title == "Undo")
+        var steps: [Bool] = []
+        view.step = { steps.append($0) }
+        view.undo(nil)
+        view.redo(nil)
+        #expect(steps == [false, true])
     }
 
     @Test func findNextAndPreviousAreCommandG() throws {

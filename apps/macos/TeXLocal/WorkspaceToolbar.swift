@@ -107,10 +107,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Before the title (HIG, Toolbars: back leads). One level, no history to go forward.
             item.isNavigational = true
         case .undo:
-            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", #selector(undo))
+            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", Selector(("undo:")))
+            // Whatever has the keyboard, as the menu's Undo: it validates them too.
+            item.target = nil
             item.visibilityPriority = .low
         case .redo:
-            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", #selector(redo))
+            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", Selector(("redo:")))
+            item.target = nil
             item.visibilityPriority = .low
         case .sectionLevel:
             item = sectionLevelItem()
@@ -366,7 +369,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
-        case .undo, .redo: project.openPath == nil || project.editsText
         case .bold, .italic: project.isLaTeX
         default: item.action != #selector(insertTemplate(_:)) || project.isLaTeX
         }
@@ -384,10 +386,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func back() { perform(.projectClose) }
-
-    @objc private func undo() { perform(.editUndo) }
-
-    @objc private func redo() { perform(.editRedo) }
 
     @objc private func bold() { perform(.editBold) }
 

@@ -9,6 +9,28 @@ import WebKit
 final class EditorWebView: WKWebView {
     /// What dropping the file does, or nil to refuse it.
     var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
+    /// Whether CodeMirror's history has a step back and a step forward, which
+    /// Edit › Undo and Redo (the system's) take here.
+    var history = (undo: false, redo: false)
+    var step: (_ redo: Bool) -> Void = { _ in }
+
+    @objc func undo(_ sender: Any?) { step(false) }
+
+    @objc func redo(_ sender: Any?) { step(true) }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        // Titled as they come: a text view's last action names them.
+        case #selector(undo(_:)):
+            (item as? NSMenuItem)?.title = String(localized: "Undo")
+            return history.undo
+        case #selector(redo(_:)):
+            (item as? NSMenuItem)?.title = String(localized: "Redo")
+            return history.redo
+        default:
+            return super.validateUserInterfaceItem(item)
+        }
+    }
 
     private func files(_ info: any NSDraggingInfo) -> [URL] {
         info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -96,6 +118,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         super.init()
         controller.add(self, name: "texlocal")
         webView.navigationDelegate = self
+        webView.step = { [weak self] redo in Task { _ = await self?.command(redo ? .redo : .undo) } }
         webView.setAccessibilityLabel("Source")
         // Until the page draws its own surface: a web view paints white before then.
         webView.isHidden = true
@@ -127,6 +150,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         ready = false
         restarting = true
         crashes += 1
+        self.webView.history = (false, false)
         onCrash()
         // Until the page draws its surface again, as at first.
         webView.isHidden = true
@@ -295,13 +319,13 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     // ---------- page → host ----------
 
     private enum PageMessage: String {
-        case ready, changed, cursor, scroll, findOpen, findClosed, findMatches
+        case ready, changed, cursor, scroll, findOpen, findClosed, findMatches, history
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
               let type = (body["type"] as? String).flatMap(PageMessage.init) else { return }
-        if [.changed, .cursor, .scroll].contains(type), let path = body["path"] as? String, path != openPath { return }
+        if [.changed, .cursor, .scroll, .history].contains(type), let path = body["path"] as? String, path != openPath { return }
         switch type {
         case .ready:
             guard restarting else {
@@ -330,6 +354,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         case .findMatches:
             onFindMatches(FindMatches(index: body["index"] as? Int ?? 0, total: body["total"] as? Int ?? 0,
                                       limited: body["limited"] as? Bool ?? false))
+        case .history:
+            webView.history = (body["undo"] as? Bool ?? false, body["redo"] as? Bool ?? false)
         }
     }
 
