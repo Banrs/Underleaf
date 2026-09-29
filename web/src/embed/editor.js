@@ -150,8 +150,11 @@ const hostFindExtension = [
   Prec.highest(keymap.of([{ key: 'Mod-f', run: openFind, scope: 'editor search-panel' }])),
 ];
 
-// The text's own name for VoiceOver on the Mac, not only the web view's round it.
-const hostLabel = EditorView.contentAttributes.of({ 'aria-label': 'Source' });
+// On the Mac: the text's own name for VoiceOver, not only the web view's round
+// it, and no spellcheck, as in code editors. With it on, WebKit lets the system's
+// smart dashes, quotes and text replacements rewrite LaTeX (-- became an em
+// dash). Highest precedence: the shared editor turns spellcheck on.
+const hostAttributes = Prec.highest(EditorView.contentAttributes.of({ 'aria-label': 'Source', spellcheck: 'false' }));
 
 // A new editor (a file opened) takes the host's search as it stands. The
 // caller keeps the stand-in quiet meanwhile.
@@ -269,7 +272,7 @@ window.texlocal = {
     });
     editor.setScrollTop(scrollTop);
     if ('host' in document.documentElement.dataset) {
-      currentView()?.dispatch({ effects: StateEffect.appendConfig.of(hostLabel) });
+      currentView()?.dispatch({ effects: StateEffect.appendConfig.of(hostAttributes) });
     }
     attachHostFind(currentView());
     quiet = false;
