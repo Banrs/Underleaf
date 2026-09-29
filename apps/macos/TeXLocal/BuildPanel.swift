@@ -34,8 +34,12 @@ struct BuildPanel: View {
     /// status bar's.
     @ViewBuilder
     private var header: some View {
-        TabsControl(selection: $project.panelTab)
-            .fixedSize()
+        Picker("Build Panel", selection: $project.panelTab) {
+            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
+        }
+        .pickerStyle(.tabs)
+        .labelsHidden()
+        .fixedSize()
             .layoutPriority(1)
         Spacer(minLength: 0)
         if project.panelTab == .issues {

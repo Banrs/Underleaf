@@ -36,37 +36,6 @@ extension View {
     }
 }
 
-/// The build panel's tabs: NSSegmentedControl (.tabs role), as SwiftUI's tabs
-/// picker moved its thumb on hover (27.2).
-struct TabsControl: NSViewRepresentable {
-    @Binding var selection: PanelTab
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: PanelTab.allCases.map(\.rawValue), trackingMode: .selectOne,
-                                         target: context.coordinator, action: #selector(Coordinator.changed(_:)))
-        control.role = .tabs
-        control.setAccessibilityLabel("Build Panel")
-        return control
-    }
-
-    func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.select = { index in selection = PanelTab.allCases[index] }
-        if let index = PanelTab.allCases.firstIndex(of: selection), control.selectedSegment != index {
-            control.selectedSegment = index
-        }
-    }
-
-    final class Coordinator: NSObject {
-        var select: (Int) -> Void = { _ in }
-
-        @objc func changed(_ control: NSSegmentedControl) {
-            select(control.selectedSegment)
-        }
-    }
-}
-
 /// The source's and the PDF's find bar, with the source's replace row under it.
 /// Return and Shift-Return step, Escape closes. It lives in its pane's top
 /// accessory, which keeps it in the window while hidden, so `field` can take the
