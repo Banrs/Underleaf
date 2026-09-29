@@ -1,19 +1,13 @@
-// The LaTeX editor as a page of its own, for the native apps to embed as
-// content inside their native chrome (WKWebView on macOS, WebView2 on
-// Windows). The same createEditor the browser UI uses — completions, math
-// preview, find — so the editor exists once.
+// The LaTeX editor as a page of its own, for the Windows app to embed as
+// content inside its native chrome (WebView2). The same createEditor the
+// browser UI uses — completions, math preview, find — so the editor exists
+// once on the web's side. (The Mac's editor is native, apps/macos, over the
+// same logic in crates/texlocal-syntax.)
 //
-// Host → page: call methods on window.texlocal (evaluateJavaScript /
-// ExecuteScriptAsync); their return values come back as the script result.
-// Page → host: postMessage of { type, ... } through whichever channel exists.
+// Host → page: call methods on window.texlocal (ExecuteScriptAsync); their
+// return values come back as the script result. Page → host: postMessage of
+// { type, ... } (channel.js).
 
-import { EditorView, keymap } from '@codemirror/view';
-import { Prec, StateEffect } from '@codemirror/state';
-import { undoDepth, redoDepth } from '@codemirror/commands';
-import {
-  search, SearchQuery, getSearchQuery, setSearchQuery, searchPanelOpen, openSearchPanel, closeSearchPanel,
-  findNext, findPrevious, replaceNext, replaceAll,
-} from '@codemirror/search';
 import { createEditor } from '../editor.js';
 import { prefs } from '../prefs.js';
 import { post, forwardHostKeys } from './channel.js';
@@ -25,215 +19,9 @@ let path = null;
 let symbols = { labels: [], citations: [] };
 let dark = matchMedia('(prefers-color-scheme: dark)').matches;
 
-// ---------- resizing ----------
-// Marks the page data-resizing while its size changes and briefly after, so a
-// host's chrome hides the overlay scroller (editor.html); not a scroller that
-// takes room, which would re-wrap the text.
-
-const RESIZE_SETTLE_MS = 400;
-let resizeTimer = 0;
-let lastSize = null;
-new ResizeObserver(([entry]) => {
-  const size = `${entry.contentRect.width}×${entry.contentRect.height}`;
-  const first = lastSize === null;
-  if (size === lastSize) return;
-  lastSize = size;
-  const scroller = parent.querySelector('.cm-scroller');
-  if (first || !scroller || scroller.offsetWidth > scroller.clientWidth) return;
-  const root = document.documentElement;
-  root.dataset.resizing = '';
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { delete root.dataset.resizing; }, RESIZE_SETTLE_MS);
-}).observe(parent);
-
-// ---------- the context menu ----------
-// In a host's own chrome (the Mac's), a text view's: none outside the text
-// (the line numbers), where the web view's offers to reload the page. A
-// right-click in blank space, where WebKit selects the line break as the
-// nearest word, leaves a caret there instead, so the menu doesn't offer to
-// look up or share nothing.
-
-document.addEventListener('contextmenu', (event) => {
-  if (!('host' in document.documentElement.dataset)) return;
-  if (!event.target.closest?.('.cm-content')) {
-    event.preventDefault();
-    return;
-  }
-  const selection = getSelection();
-  // A line break, and the spaces round it: a deliberate run of spaces stays.
-  if (/^[ \t]*\n[ \t]*$/.test(selection.toString())) selection.collapseToEnd();
-});
-
-// ---------- the host's find bar ----------
-// A host that draws its own find bar (the Mac's) drives CodeMirror's search
-// from it: the page keeps the query, the matches and their highlighting;
-// CodeMirror's panel is an empty stand-in, so its opening and closing (⌘F,
-// Escape) reach the host. Other hosts keep CodeMirror's panel.
-
-let hostFind = false;
-let findShown = false;      // the host's bar is showing
-let findSpec = null;        // its query, carried across file switches
-let quiet = false;          // a file switch: the stand-in's comings and goings aren't the user's
-let lastMatches = '';
-
-const specOf = (q) => ({
-  search: q.search, replace: q.replace, caseSensitive: q.caseSensitive, regexp: q.regexp, wholeWord: q.wholeWord,
-});
-const currentView = () => EditorView.findFromDOM(parent.querySelector('.cm-editor'));
-
-// How many matches, and which one the selection is (from 1; 0 for none).
-const MAX_MATCHES = 1000;
-function matches(state) {
-  const query = getSearchQuery(state);
-  if (!query.valid) return { index: 0, total: 0, limited: false };
-  const { from, to } = state.selection.main;
-  let total = 0;
-  let index = 0;
-  for (const cursor = query.getCursor(state); !cursor.next().done;) {
-    if (total === MAX_MATCHES) return { index, total, limited: true };
-    total += 1;
-    if (cursor.value.from === from && cursor.value.to === to) index = total;
-  }
-  return { index, total, limited: false };
-}
-
-function postMatches(state) {
-  const m = matches(state);
-  const key = `${m.index}/${m.total}/${m.limited}`;
-  if (key === lastMatches) return;
-  lastMatches = key;
-  post({ type: 'findMatches', ...m });
-}
-
-function standInPanel(view) {
-  return {
-    dom: document.createElement('div'),
-    top: true,
-    mount() {
-      lastMatches = '';
-      if (!quiet) {
-        findShown = true;
-        findSpec = specOf(getSearchQuery(view.state));
-        post({ type: 'findOpen', query: findSpec });
-      }
-      postMatches(view.state);
-    },
-    update(u) {
-      if (u.docChanged || u.selectionSet || getSearchQuery(u.state) !== getSearchQuery(u.startState)) postMatches(u.state);
-    },
-    destroy() {
-      if (!quiet) {
-        findShown = false;
-        post({ type: 'findClosed' });
-      }
-    },
-  };
-}
-
-// ⌘F: open the search, or, open already, take the selection as the query
-// and hand the host's field focus again.
-function openFind(view) {
-  if (!searchPanelOpen(view.state)) return openSearchPanel(view);
-  const { from, to } = view.state.selection.main;
-  if (to > from && to - from <= 100) {
-    const text = view.state.sliceDoc(from, to).replace(/\n/g, '\\n');
-    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ ...specOf(getSearchQuery(view.state)), search: text })) });
-  }
-  findSpec = specOf(getSearchQuery(view.state));
-  post({ type: 'findOpen', query: findSpec });
-  return true;
-}
-
-// One instance, so adding it again to a restored state adds nothing.
-const hostFindExtension = [
-  search({ top: true, createPanel: standInPanel }),
-  Prec.highest(keymap.of([{ key: 'Mod-f', run: openFind, scope: 'editor search-panel' }])),
-];
-
-// On the Mac: the text's own name for VoiceOver, not only the web view's round
-// it, and no spellcheck, as in code editors. With it on, WebKit lets the system's
-// smart dashes, quotes and text replacements rewrite LaTeX (-- became an em
-// dash). Highest precedence: the shared editor turns spellcheck on.
-const hostAttributes = Prec.highest(EditorView.contentAttributes.of({ 'aria-label': 'Source', spellcheck: 'false' }));
-
-// The Mac's Edit › Undo and Redo, enabled while the document has a step to take:
-// its history is CodeMirror's, which WebKit's undo manager doesn't see.
-let history = '';
-function reportHistory(state) {
-  const undo = undoDepth(state) > 0;
-  const redo = redoDepth(state) > 0;
-  if (`${undo}${redo}` === history) return;
-  history = `${undo}${redo}`;
-  post({ type: 'history', path, undo, redo });
-}
-const hostHistory = EditorView.updateListener.of((u) => reportHistory(u.state));
-
-// The Mac's text runs on under its toolbar and find bar, where the host draws
-// the system's edge effect over it: the first line starts below them
-// (editor.html), and a line scrolled to stays below them.
-let topInset = 0;
-const hostInset = EditorView.scrollMargins.of(() => ({ top: topInset }));
-
-// A new editor (a file opened) takes the host's search as it stands. The
-// caller keeps the stand-in quiet meanwhile.
-function attachHostFind(view) {
-  if (!hostFind || !view) return;
-  view.dispatch({ effects: StateEffect.appendConfig.of(hostFindExtension) });
-  if (findShown && findSpec) {
-    if (!searchPanelOpen(view.state)) openSearchPanel(view);
-    view.dispatch({ effects: setSearchQuery.of(new SearchQuery(findSpec)) });
-  } else if (searchPanelOpen(view.state)) {
-    closeSearchPanel(view);
-  }
-}
-
-// The query from the host's fields. A changed search selects the first
-// match from the selection on, as you type, as a Mac find bar does.
-function setFind(spec) {
-  const view = currentView();
-  if (!view) return;
-  const searchChanged = spec.search !== findSpec?.search;
-  findShown = true;
-  findSpec = spec;
-  if (!searchPanelOpen(view.state)) {
-    quiet = true;
-    openSearchPanel(view);
-    quiet = false;
-  }
-  const query = new SearchQuery(spec);
-  view.dispatch({ effects: setSearchQuery.of(query) });
-  if (!searchChanged || !query.valid) return;
-  const start = view.state.selection.main.from;
-  let hit = query.getCursor(view.state, start).next();
-  if (hit.done) hit = query.getCursor(view.state, 0, start).next();
-  if (!hit.done) {
-    const { from, to } = hit.value;
-    view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) });
-  }
-}
-
-function closeFind() {
-  const view = currentView();
-  findShown = false;
-  if (!view) return;
-  quiet = true;
-  closeSearchPanel(view);
-  quiet = false;
-}
-
-// Next and previous from the host; with nothing to find, the host's bar
-// opens instead of stepping.
-function step(run) {
-  const view = currentView();
-  if (!view) return false;
-  if (!getSearchQuery(view.state).valid) return openFind(view);
-  run(view);
-  return true;
-}
-
 // texlocal.command's names, each given the command's argument. Only undo,
 // redo and block say whether they ran: false hands the key back to the host.
-// The native apps' copies of these names are checked against this table
+// Windows' copies of these names are checked against this table
 // (test/protocol.test.js).
 const COMMANDS = {
   bold: () => { editor.wrapSelection('\\textbf{', '}'); },
@@ -245,11 +33,9 @@ const COMMANDS = {
   undo: () => historyStep('undo'),
   redo: () => historyStep('redo'),
   comment: () => { editor.toggleComment(); },
-  find: () => { if (hostFind) openFind(currentView()); else editor.openSearch(); },
-  findNext: () => { if (hostFind) step(findNext); else editor.findNext(); },
-  findPrevious: () => { if (hostFind) step(findPrevious); else editor.findPrevious(); },
-  replaceNext: () => { step(replaceNext); },
-  replaceAll: () => { step(replaceAll); },
+  find: () => { editor.openSearch(); },
+  findNext: () => { editor.findNext(); },
+  findPrevious: () => { editor.findPrevious(); },
   block: (id) => editor.insertBlock(id),
   heading: (command) => { editor.setHeading(command ?? ''); },
   text: (text) => { editor.insertText(text ?? ''); },
@@ -272,9 +58,6 @@ window.texlocal = {
   // native sidebar does.
   open(nextPath, text, scrollTop = 0, focus = true) {
     if (editor && path) cached.set(path, editor.getState());
-    // A restored state may have had its search open: switching files isn't
-    // the user opening or closing it.
-    quiet = true;
     editor?.destroy();
     const prior = cached.get(nextPath);
     path = nextPath;
@@ -289,13 +72,6 @@ window.texlocal = {
       onScroll: (line) => post({ type: 'scroll', path, line }),
     });
     editor.setScrollTop(scrollTop);
-    if ('host' in document.documentElement.dataset) {
-      currentView()?.dispatch({ effects: StateEffect.appendConfig.of([hostAttributes, hostHistory, hostInset]) });
-      history = '';
-      reportHistory(currentView().state);
-    }
-    attachHostFind(currentView());
-    quiet = false;
     if (focus) editor.focus();
     return true;
   },
@@ -312,32 +88,12 @@ window.texlocal = {
     if (path) path = moved(path);
   },
   getText: () => editor?.getContent() ?? null,
-  // The text with the file it belongs to, so a save can't write one file's
-  // text to another that opened meanwhile.
-  getDocument: () => (editor ? { path, text: editor.getContent() } : null),
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
   setHostKeys: forwardHostKeys(),
-  // The host draws the find bar (see "the host's find bar" above).
-  setHostFind() {
-    hostFind = true;
-    quiet = true;
-    attachHostFind(currentView());
-    quiet = false;
-  },
-  setFind,
-  closeFind,
-  setTopInset(px) {
-    topInset = px;
-    document.documentElement.style.setProperty('--host-top-inset', `${px}px`);
-    currentView()?.requestMeasure();
-  },
   // `accent` is the host system's accent colour; without it the page keeps its own.
-  // `host` holds the host's own colours for the text's surface, the selection and
-  // the editor's chrome (the Mac's), as CSS; the page then matches the native
-  // chrome around it (editor.html, :root[data-host]).
-  setAppearance({ theme, palette, font, fontSize, accent, host }) {
+  setAppearance({ theme, palette, font, fontSize, accent }) {
     const root = document.documentElement;
     dark = theme === 'dark';
     root.dataset.theme = theme;
@@ -345,10 +101,6 @@ window.texlocal = {
     if (font) root.style.setProperty('--editor-font', font === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
     if (fontSize) root.style.setProperty('--editor-fs', `${fontSize}px`);
     if (accent) root.style.setProperty('--accent', accent);
-    if (host) {
-      for (const [name, value] of Object.entries(host)) root.style.setProperty(`--host-${name}`, value);
-      root.dataset.host = '';
-    }
     editor?.setTheme(dark);
   },
   command(name, arg) {
