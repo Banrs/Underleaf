@@ -239,6 +239,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The build panel's issue list clears its selection whenever the filter or Warnings change what shows (rows by position, as LaTeX repeats identical warnings).
   - The Mac works out the library folder itself (`Core.libraryFolder`, the core's rule repeated), where Windows lets the core choose (`tl_open(null)`). The core as its only source needs a small FFI getter for the path the Mac shows when it can't open it.
   - An empty-space drop on the Files list does nothing (see `SidebarView`); the Files header takes the top level.
+- **From the HIG review (2026-09-29):** the app icon is a flat PNG set (`AppIcon.appiconset`). macOS 27's layered icon with dark, clear and tinted looks needs an `AppIcon.icon` made in Icon Composer: new artwork, the owner's to make.
 - **Decided by the owner (2026-09-29):** the sidebar keeps two panes, files over the outline (one list with sections declined: the outline would scroll away under a long file list); `QLPreviewView` for file previews declined (it draws hyperref's link boxes, which no LaTeX editor shows). The rest of the review's design questions are built: see the file list and AppKit notes above.
 
 - **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Analysis.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
