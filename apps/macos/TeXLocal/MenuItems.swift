@@ -12,7 +12,6 @@ struct SectionLevelItems: View {
     }
 }
 
-/// The symbols by kind, each kind a submenu.
 struct SymbolItems: View {
     let project: ProjectModel?
 

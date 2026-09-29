@@ -37,7 +37,7 @@ extension NSToolbarItem.Identifier {
 /// A line divides only a segmented control's parts, the two whose middle or end is
 /// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSMenuItemValidation {
+                              NSToolbarItemValidation, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
@@ -171,10 +171,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, template.title, symbolName, #selector(insertTemplate(_:)))
             item.visibilityPriority = .low
         }
-        // Their state is the models' (`apply`), not validation's, which would turn
-        // on any item whose target answers its action.
-        item.autovalidates = false
-        (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
+        // Plain buttons are validated (`validateToolbarItem`), and so are their copies
+        // in the overflow menu; the rest take their state from the models (`apply`).
+        if item.target !== self || item.view != nil {
+            item.autovalidates = false
+            (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
+        }
         if flag { configure(item, state) }
         return item
     }
@@ -242,12 +244,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             return subitem
         }
         group.view = control
-        // In the overflow menu: a Zoom submenu.
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
         form.image = symbol("plus.magnifyingglass", "Zoom")
-        form.submenu = NSHostingMenu(rootView: Group { [pdf] in
-            Button("Zoom In") { pdf.zoom(in: true) }
-            Button("Zoom Out") { pdf.zoom(in: false) }
+        form.submenu = NSHostingMenu(rootView: Group { [app, project, pdf] in
+            // The menu bar's items carry the shortcuts.
+            ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
+                Button(command.title) { app.perform(command, on: project) }
+                    .disabled(!app.isEnabled(command, on: project))
+            }
             Divider()
             ScaleMenuItems(pdf: pdf)
         })
@@ -258,8 +262,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// The caret line's section level; choosing one makes the line that heading.
     private func sectionLevelItem() -> NSToolbarItem {
         let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        for level in HeadingLevel.all {
+        for (index, level) in HeadingLevel.all.enumerated() {
             popUp.addItem(withTitle: level.title)
+            popUp.lastItem?.tag = index
             if level == .normalText { popUp.menu?.addItem(.separator()) }
         }
         popUp.target = self
@@ -284,9 +289,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// What the items show, read from the models; a change redraws them.
     private nonisolated struct State: Equatable {
-        var editsText = false
         var isLaTeX = false
-        var canUndo = false
         var sectionLevel = 0
         var hasPDF = false
         var showsPDF = true
@@ -300,9 +303,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var state: State {
         var state = State()
-        state.editsText = project.editsText
         state.isLaTeX = project.isLaTeX
-        state.canUndo = project.openPath == nil || project.editsText
         let current = project.outline.first { $0.line == project.cursorLine }
             .flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
         state.sectionLevel = HeadingLevel.all.firstIndex(of: current) ?? 0
@@ -312,7 +313,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         state.canZoomIn = pdf.canZoomIn
         state.canZoomOut = pdf.canZoomOut
         state.compiling = project.compiling
-        state.canCompile = app.isEnabled(.compileRun, on: project)
+        state.canCompile = canCompile
         state.pdfTitle = app.title(.viewTogglePdf, on: project)
         return state
     }
@@ -323,18 +324,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func configure(_ item: NSToolbarItem, _ state: State) {
         switch item.itemIdentifier {
-        case .undo, .redo:
-            item.isEnabled = state.canUndo
-        case .bold, .italic, .insert:
+        case .insert:
             item.isEnabled = state.isLaTeX
         case .math:
-            enable(item, state.isLaTeX)
+            item.isEnabled = state.isLaTeX
+            (item as? NSToolbarItemGroup)?.subitems.forEach { $0.isEnabled = state.isLaTeX }
             (item.view as? NSSegmentedControl)?.isEnabled = state.isLaTeX
         case .sectionLevel:
             let popUp = item.view as? NSPopUpButton
             popUp?.isEnabled = state.isLaTeX
-            // Past the separator, the menu's items are one further on.
-            popUp?.selectItem(at: state.sectionLevel == 0 ? 0 : state.sectionLevel + 1)
+            popUp?.selectItem(withTag: state.sectionLevel)
             item.isEnabled = state.isLaTeX
         case .zoom:
             let control = item.view as? NSSegmentedControl
@@ -355,20 +354,27 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.toolTip = title
             item.menuFormRepresentation?.title = title
             item.backgroundTintColor = state.compiling ? .clear : nil
-            item.isEnabled = state.compiling || state.canCompile
+            item.isEnabled = state.canCompile
             (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
         case .togglePDF:
             item.label = state.pdfTitle
             item.toolTip = state.pdfTitle
         default:
-            // A template's button.
-            if item.action == #selector(insertTemplate(_:)) { item.isEnabled = state.isLaTeX }
+            break
         }
     }
 
-    private func enable(_ item: NSToolbarItem, _ enabled: Bool) {
-        item.isEnabled = enabled
-        (item as? NSToolbarItemGroup)?.subitems.forEach { $0.isEnabled = enabled }
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.itemIdentifier {
+        case .undo, .redo: project.openPath == nil || project.editsText
+        case .bold, .italic: project.isLaTeX
+        default: item.action != #selector(insertTemplate(_:)) || project.isLaTeX
+        }
+    }
+
+    /// Compile, or Stop while a build runs.
+    private var canCompile: Bool {
+        project.compiling || app.isEnabled(.compileRun, on: project)
     }
 
     // ---------- actions ----------
@@ -419,10 +425,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func sectionLevel(_ popUp: NSPopUpButton) {
-        let index = popUp.indexOfSelectedItem
-        let levels = HeadingLevel.all
-        let level = index == 0 ? levels[0] : levels[min(index - 1, levels.count - 1)]
-        project.format(.heading, level.command)
+        project.format(.heading, HeadingLevel.all[popUp.selectedTag()].command)
     }
 
     @objc private func compile() {
@@ -430,7 +433,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, enabled: state.compiling || state.canCompile) { [weak self] in
+        CompileButton(compiling: state.compiling, enabled: state.canCompile) { [weak self] in
             self?.compile()
         }
     }
@@ -438,7 +441,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// The overflow menu's Compile, which the item's own view doesn't enable.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard menuItem.action == #selector(compile) else { return true }
-        return project.compiling || app.isEnabled(.compileRun, on: project)
+        return canCompile
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -456,11 +459,6 @@ private struct CompileButton: View {
     let enabled: Bool
     let action: () -> Void
 
-    /// Measured on macOS 27: a toolbar item's glass is 36 pt high, and its title is
-    /// the system font, 12 pt from the ends.
-    private static let height: CGFloat = 36
-    private static let padding: CGFloat = 12
-
     var body: some View {
         Button(action: action) {
             ZStack {
@@ -475,8 +473,10 @@ private struct CompileButton: View {
                 }
                 .opacity(compiling ? 1 : 0)
             }
-            .padding(.horizontal, Self.padding)
-            .frame(height: Self.height)
+            // A toolbar item's glass, measured on macOS 27: 36 pt high, its title the
+            // system font, 12 pt from the ends.
+            .padding(.horizontal, 12)
+            .frame(height: 36)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
