@@ -167,8 +167,8 @@ struct MenuStructureTests {
     @Test func formatStylesAndInsertInserts() throws {
         let format = try menu("Format"), insert = try menu("Insert")
         #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
-        #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Symbols", "Reference"]))
-        #expect(titles(insert).contains("Figure"))
+        #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
+        #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
     }
 
     /// The Mac-only commands have their HIG chords (HIG, Keyboards).
@@ -182,6 +182,9 @@ struct MenuStructureTests {
         let inspector = try #require(view.items.first { $0.title.hasSuffix("Inspector") })
         #expect(inspector.keyEquivalent == "i" && inspector.keyEquivalentModifierMask == [.command, .option])
         #expect(try item("Stop", in: compile).keyEquivalent == ".")
+        #expect(try item("w", [.command, .shift]).title == MenuCommand.projectClose.title)
+        #expect(try item("e", [.command, .option]).title == MenuCommand.editMath.title)
+        #expect(try item("j", [.command, .option]).title == MenuCommand.syncForward.title)
     }
 
     /// Share… as the HIG names it, there even with nothing to share.

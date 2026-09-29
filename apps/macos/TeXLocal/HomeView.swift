@@ -69,15 +69,21 @@ struct HomeView: View {
             if let project = app.projects.first(where: { ids.contains($0.id) }) {
                 Button("Open") { Task { await app.open(project.id) } }
                 Divider()
-                ItemMenuItems(rename: { rename.begin(project.id, name: project.name) },
-                              showInFinder: { app.revealProject(project) },
-                              moveToTrash: { Task { await app.delete(project) } })
+                ItemMenuItems(actions: actions(project))
             }
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
         .focused($listFocused)
-        .offersToTrash(listFocused && rename.id == nil ? selection.map(TrashItem.project) : nil)
+        .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in
+            app.projects.first { $0.id == id }.map(actions)
+        }
+    }
+
+    private func actions(_ project: ProjectInfo) -> ItemActions {
+        ItemActions(rename: { rename.begin(project.id, name: project.name) },
+                    showInFinder: { app.revealProject(project) },
+                    moveToTrash: { Task { await app.delete(project) } })
     }
 
     private var templates: some View {
@@ -152,9 +158,10 @@ private struct ProjectRow: View {
                     .foregroundStyle(.secondary)
             }
         } icon: {
+            // Grey, as the subtitle: the hierarchical style would tint it the accent.
             Image(systemName: "text.document")
                 .font(.title2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
         }
     }
 }

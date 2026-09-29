@@ -200,15 +200,33 @@ final class SyncPDFView: PDFView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, let document else {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, document != nil else {
             super.mouseDown(with: event)
             return
         }
-        let location = convert(event.locationInWindow, from: nil)
-        guard let page = page(for: location, nearest: true) else { return }
+        goToSource(at: convert(event.locationInWindow, from: nil))
+    }
+
+    /// Go to Source Position for the clicked point, above PDFKit's own items.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        guard let menu, document != nil else { return menu }
+        let item = NSMenuItem(title: MenuCommand.syncInverse.title, action: #selector(goToSource(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = convert(event.locationInWindow, from: nil)
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func goToSource(_ item: NSMenuItem) {
+        if let location = item.representedObject as? CGPoint { goToSource(at: location) }
+    }
+
+    private func goToSource(at location: CGPoint) {
+        guard let document, let page = page(for: location, nearest: true) else { return }
         let point = convert(location, to: page)
-        let synctex = SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox))
-        onInverse(document.index(for: page) + 1, synctex)
+        onInverse(document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)))
     }
 }
 

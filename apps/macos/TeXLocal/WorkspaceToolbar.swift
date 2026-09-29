@@ -219,7 +219,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let form = NSMenuItem(title: "Math", action: nil, keyEquivalent: "")
         form.submenu = NSHostingMenu(rootView: Group { [project, inlineMath] in
             inlineMath
-            Menu("Symbols") { SymbolItems(project: project) }
+            Section("Symbols") { SymbolItems(project: project) }
         })
         group.menuFormRepresentation = form
         return group
@@ -307,9 +307,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var state: State {
         var state = State()
         state.isLaTeX = project.isLaTeX
-        let current = project.outline.first { $0.line == project.cursorLine }
-            .flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
-        state.sectionLevel = HeadingLevel.all.firstIndex(of: current) ?? 0
+        state.sectionLevel = HeadingLevel.all.firstIndex(of: project.headingLevel) ?? 0
         state.hasPDF = project.hasPDF
         state.showsPDF = project.showPDF
         state.zoomLabel = pdf.zoomLabel

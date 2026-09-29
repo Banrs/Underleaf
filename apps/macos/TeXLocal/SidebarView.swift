@@ -107,13 +107,15 @@ struct FilesList: View {
         // it is; on the list's empty space, the list's own.
         .contextMenu(forSelectionType: String.self) { paths in
             if let path = paths.first, let node = project.tree.flattened.first(where: { $0.path == path }) {
-                if !node.isDirectory && node.path.hasSuffix(".tex") {
+                if node.isDirectory {
+                    Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
+                    Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
+                    Divider()
+                } else if node.path.hasSuffix(".tex") {
                     Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                     Divider()
                 }
-                ItemMenuItems(rename: { rename.begin(node.path, name: node.name) },
-                              showInFinder: { project.showInFinder(node.path) },
-                              moveToTrash: { Task { await project.deleteEntry(node.path) } })
+                ItemMenuItems(actions: actions(node))
             } else {
                 Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
                 Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
@@ -133,7 +135,15 @@ struct FilesList: View {
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
         .focused($listFocused)
-        .offersToTrash(listFocused && rename.id == nil ? selection.map(TrashItem.file) : nil)
+        .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
+            project.tree.flattened.first { $0.path == path }.map(actions)
+        }
+    }
+
+    private func actions(_ node: TreeNode) -> ItemActions {
+        ItemActions(rename: { rename.begin(node.path, name: node.name) },
+                    showInFinder: { project.showInFinder(node.path) },
+                    moveToTrash: { Task { await project.deleteEntry(node.path) } })
     }
 
     /// Choosing a hit opens it; double-clicking or Return opens the chosen one again.

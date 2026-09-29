@@ -20,12 +20,15 @@ extension ProjectModel {
     }
 }
 
-/// Blocks: web/src/sourcebar.js `INSERT_TEMPLATES`.
+/// Blocks: web/src/sourcebar.js `INSERT_TEMPLATES`, the maths ones apart.
+let mathTemplates = [
+    Template(title: "Equation", body: "equation"),
+    Template(title: "Aligned Equations", body: "align"),
+]
+
 let insertTemplates = [
     Template(title: "Figure", body: "figure", symbol: "photo"),
     Template(title: "Table", body: "table", symbol: "tablecells"),
-    Template(title: "Equation", body: "equation"),
-    Template(title: "Aligned Equations", body: "align"),
     Template(title: "Code Block", body: "code"),
 ]
 

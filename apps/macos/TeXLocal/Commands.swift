@@ -109,7 +109,9 @@ enum MenuCommand: String, CaseIterable {
     }()
 
     /// Mac chords where HIG-reserved keys differ from the shared table (HIG,
-    /// Keyboards): ⌃⌘S sidebar, ⌘0 actual size, ⌥⌘F find and replace, ⌘. stop.
+    /// Keyboards): ⌃⌘S sidebar, ⌘0 actual size, ⌥⌘F find and replace, ⌘. stop,
+    /// ⇧⌘W close project (a file and its windows). Sync and Inline Math leave the
+    /// table's Control and ⇧⌘M (Minimize plus Shift) chords.
     var macAccel: String? {
         switch self {
         case .projectOpen: "CmdOrCtrl+O"
@@ -122,6 +124,12 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitWidth: "CmdOrCtrl+9"
         case .viewFitHeight: "CmdOrCtrl+Alt+9"
         case .compileStop: "CmdOrCtrl+."
+        case .projectClose: "CmdOrCtrl+Shift+W"
+        // Pages' Insert › Equation.
+        case .editMath: "CmdOrCtrl+Alt+E"
+        // As the Mac's VS Code LaTeX extension; the PDF answers ⌘-click for the other way.
+        case .syncForward: "CmdOrCtrl+Alt+J"
+        case .syncInverse: nil
         // ⌘L is Go to Line; ⌥⌘G is Go to Page in the Mac's PDF readers, the
         // chord people know.
         case .pdfGotoPage: "CmdOrCtrl+Alt+G"
@@ -179,10 +187,11 @@ enum MenuCommand: String, CaseIterable {
 }
 
 /// A sheet the workspace asks for a value with.
-enum Prompt: String, Identifiable {
-    case newFile, newFolder, gotoLine, gotoPage
+enum Prompt: Identifiable, Hashable {
+    /// In the folder given, or the open file's.
+    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
 
-    var id: String { rawValue }
+    var id: Self { self }
 }
 
 /// What the menus ask of the PDF pane (`AppModel.requestPDF`).
@@ -239,8 +248,8 @@ extension AppModel {
         case .projectSearch:
             sidebarVisible = true
             searchFocusToken += 1
-        case .fileNew: prompt = .newFile
-        case .fileNewFolder: prompt = .newFolder
+        case .fileNew: prompt = .newFile()
+        case .fileNewFolder: prompt = .newFolder()
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
         case .pdfSave:
@@ -318,10 +327,17 @@ struct AppCommands: Commands {
             item(.fileNewFolder)
             item(.fileUpload)
             Divider()
-            // Not a MenuCommand: the web has no command id for it.
-            Button("Move to Trash") { if let item = app.trashItem { app.moveToTrash(item) } }
+            // Not MenuCommands: the web has no command ids for them. They act on the
+            // chosen item of the list with the keyboard.
+            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
+            Button("Rename") { chosen?.rename() }
+                .disabled(chosen == nil)
+            Button("Show in Finder") { chosen?.showInFinder() }
+                .disabled(chosen == nil)
+            Divider()
+            Button("Move to Trash") { chosen?.moveToTrash() }
                 .keyboardShortcut(.delete)
-                .disabled(!app.mainWindowIsKey || app.trashItem == nil)
+                .disabled(chosen == nil)
         }
         // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
@@ -400,6 +416,11 @@ struct AppCommands: Commands {
                 ForEach(texEngines, id: \.0) { id, title in Text(title).tag(Optional(id)) }
             }
             .disabled(project == nil)
+            // The open file; the files' context menu has it for any .tex file.
+            Button("Set as Main File") {
+                if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
+            }
+            .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
             Divider()
             item(.syncForward)
             item(.syncInverse)

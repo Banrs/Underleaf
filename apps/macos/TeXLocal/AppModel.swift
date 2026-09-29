@@ -105,8 +105,8 @@ final class AppModel {
     var mainWindowIsKey = false
     /// The project the menus act on.
     var commandProject: ProjectModel? { mainWindowIsKey ? project : nil }
-    /// Offered by the list with the keyboard (`offersToTrash`).
-    var trashItem: TrashItem?
+    /// Offered by the list with the keyboard (`offersActions`).
+    var chosenItem: ItemActions?
     /// Newest first, by id.
     var recentProjects: [String] {
         didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
@@ -211,15 +211,6 @@ final class AppModel {
     }
 
     /// Without asking, as in Finder: the Trash gives the item back (HIG, Alerts).
-    func moveToTrash(_ item: TrashItem) {
-        switch item {
-        case .project(let id):
-            if let info = projects.first(where: { $0.id == id }) { Task { await delete(info) } }
-        case .file(let path):
-            if let project { Task { await project.deleteEntry(path) } }
-        }
-    }
-
     func delete(_ project: ProjectInfo) async {
         do {
             try await core.perform("delete_project", ["id": project.id])

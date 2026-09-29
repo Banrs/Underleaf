@@ -289,44 +289,44 @@ final class InPlaceRename<ID: Hashable> {
     }
 }
 
-/// An item's own actions; Move to Trash apart from the rest.
-struct ItemMenuItems: View {
+/// A project's or a file's own actions: its context menu's, and File's for the
+/// chosen item of the list with the keyboard (`offersActions`).
+struct ItemActions {
     let rename: () -> Void
     let showInFinder: () -> Void
     let moveToTrash: () -> Void
-
-    var body: some View {
-        RenameButton().renameAction(rename)
-        Button("Show in Finder", action: showInFinder)
-        Divider()
-        Button("Move to Trash", action: moveToTrash)
-    }
 }
 
-/// What File › Move to Trash (⌘⌫) moves: the chosen item of the list with the
-/// keyboard (the list's to say), and none while its name is edited, where ⌘⌫
-/// edits the name.
-enum TrashItem: Hashable {
-    case project(ProjectInfo.ID)
-    case file(String)
+/// Move to Trash apart from the rest.
+struct ItemMenuItems: View {
+    let actions: ItemActions
+
+    var body: some View {
+        RenameButton().renameAction(actions.rename)
+        Button("Show in Finder", action: actions.showInFinder)
+        Divider()
+        Button("Move to Trash", action: actions.moveToTrash)
+    }
 }
 
 extension View {
-    /// Through `AppModel`: a focused value doesn't reach the menus from an
-    /// AppKit window's hosting views.
-    func offersToTrash(_ item: TrashItem?) -> some View {
-        modifier(TrashOffer(item: item))
+    /// The chosen item's actions for File's items, none while its name is edited
+    /// (where ⌘⌫ edits the name). Through `AppModel`: a focused value doesn't
+    /// reach the menus from an AppKit window's hosting views.
+    func offersActions<ID: Hashable>(for id: ID?, _ actions: @escaping (ID) -> ItemActions?) -> some View {
+        modifier(ActionsOffer(id: id, actions: actions))
     }
 }
 
-private struct TrashOffer: ViewModifier {
+private struct ActionsOffer<ID: Hashable>: ViewModifier {
     @Environment(AppModel.self) private var app
-    let item: TrashItem?
+    let id: ID?
+    let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: item, initial: true) { _, item in app.trashItem = item }
-            .onDisappear { app.trashItem = nil }
+            .onChange(of: id, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
+            .onDisappear { app.chosenItem = nil }
     }
 }
 

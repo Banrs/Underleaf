@@ -132,9 +132,10 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `Commands`: menus and shortcuts.
   - Every item is a `MenuCommand`, which also lists the chords the editor page keeps from CodeMirror; WebKit hands them on to the menu, which matches them by character and validates them (the page posts them only on Windows).
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
-  - File › Move to Trash (⌘⌫, without asking, as in Finder) and Share… aren't `MenuCommand`s: the web has no ids for them. Move to Trash acts on the chosen item of the list with the keyboard, which the list passes to `AppModel.trashItem` (`offersToTrash`): a SwiftUI focused value doesn't reach the menus from an AppKit window's hosting views. A bare ⌫ does nothing.
-  - Insert sits between View and Window. Format keeps Bold, Italic, the section level and Comment.
-- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `DialogSheet`, the rename pieces, and `TrashItem` (`offersToTrash`).
+  - File › Rename, Show in Finder, Move to Trash (⌘⌫, without asking, as in Finder) and Share… aren't `MenuCommand`s: the web has no ids for them. The first three act on the chosen item of the list with the keyboard, whose actions (`ItemActions`, also its context menu's) the list passes to `AppModel.chosenItem` (`offersActions`): a SwiftUI focused value doesn't reach the menus from an AppKit window's hosting views. A bare ⌫ does nothing. Share… is a `ShareLink`, the system's item.
+  - Insert sits between View and Window, its symbols one submenu down (a section). Format keeps Bold, Italic, the section level (the caret line's ticked) and Comment.
+  - Mac chords that leave the shared table (`macAccel`): ⇧⌘W Close Project, ⌥⌘E Inline Math (Pages' Insert › Equation), ⌥⌘J Go to PDF Position; Go to Source Position has none (⌘-click, or the PDF's context menu).
+- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `DialogSheet`, the rename pieces, and `ItemActions` (`offersActions`).
 - `SyncTeXGeometry`.
 - Leaf views have `#Preview`s that need no Rust core.
 
@@ -294,7 +295,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The window's minimum is the source and PDF's, so a narrowing window squeezes the sidebar to 144 pt, folds it, and brings it back when there's room.
   - Tiling folds it too. `setContentSize` doesn't, so the minimum test hides the sidebar first.
 - **A sidebar squeezes before it folds**, down to its minimum, and grows back as the window widens (AppKit's default). Scripted resizes (AppleScript, Return to Previous Size) don't grow it back; a drag does.
-- **Pane sizes are saved as a divider's drag resizes them,** from a synchronous `didResizeSubviews` observer while `NSApp.currentEvent` is `.leftMouseDragged`: never from a window resized in code, a collapse, a close or a quit. A live window resize is a drag too, so `saveSizes` skips `inLiveResize`. The notification's userInfo can't tell (it has a divider index on resizes and animations too), and an async notifications loop runs after the event has moved on.
+- **Pane sizes are saved as a divider's drag resizes them,** on macOS 27's `didResizeSubviews` message with `userResize`: never from a window resized in code or live, a collapse, a close or a quit.
 - **AppKit's inspector is fixed (270 pt minimum and maximum), yet its divider shows a resize cursor.** `WorkspaceController` overrides `splitView(_:effectiveRect:forDrawnRect:ofDividerAt:)` to give that divider no hit area.
 - **The inspector item is made before the area**, which opens in the room both side columns leave. Sized past the sidebar alone, the area pushed the sidebar to its minimum.
 - **The nested split view controllers answer `toggleSidebar:` and `toggleInspector:` before the window's split**, and they have neither. `WorkspaceToolbar.toolbarWillAddItem` points the system's toggles at the `WorkspaceController`.

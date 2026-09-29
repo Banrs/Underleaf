@@ -131,6 +131,10 @@ final class ProjectModel {
 
     /// Only LaTeX has an outline, counts and the LaTeX tools.
     var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+    /// The caret line's section level.
+    var headingLevel: HeadingLevel {
+        outline.first { $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
+    }
     /// The open file is in the editor rather than a preview.
     var editsText: Bool { openPath.map(isTextFile) ?? false }
     var hasUnsavedText: Bool { dirty && editsText }

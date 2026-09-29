@@ -42,8 +42,8 @@ private struct WorkspaceModals: ViewModifier {
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
-                case .newFile: NewEntrySheet(project: project, directory: false)
-                case .newFolder: NewEntrySheet(project: project, directory: true)
+                case .newFile(let folder): NewEntrySheet(project: project, directory: false, folder: folder)
+                case .newFolder(let folder): NewEntrySheet(project: project, directory: true, folder: folder)
                 case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.reveal(line: $0) }
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { project.pdfPageCount > 0 ? project.pdfPageCount : nil }) {
@@ -88,11 +88,11 @@ private struct NewEntrySheet: View {
     @FocusState private var nameFocused: Bool
     @State private var selection: TextSelection?
 
-    init(project: ProjectModel, directory: Bool) {
+    init(project: ProjectModel, directory: Bool, folder: String?) {
         self.project = project
         self.directory = directory
         _name = State(initialValue: directory ? "untitled folder" : "untitled.tex")
-        _folder = State(initialValue: (project.openPath.map { ($0 as NSString).deletingLastPathComponent }) ?? "")
+        _folder = State(initialValue: folder ?? project.openPath.map { ($0 as NSString).deletingLastPathComponent } ?? "")
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
