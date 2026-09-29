@@ -58,6 +58,10 @@ WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 - Profile before changing: long-document text-layer rendering, re-renders
   while resizing, and whole-body CSS zoom for the interface scale.
 - A light variant of One Dark for Syntax Colors.
+- The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
+  WebKit that also lets the system's smart dashes and quotes rewrite LaTeX
+  (`--` became an em dash in the Mac app, which turns it off in its embed
+  page). Check Safari with Substitutions on before keeping it.
 
 ## Parked
 
