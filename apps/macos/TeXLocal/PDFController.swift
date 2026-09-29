@@ -128,7 +128,8 @@ final class PDFController {
     }
 
     func documentShown() {
-        if finding { find(findText, keepingPlace: true) }
+        // The query last searched: text still being typed gets a search of its own.
+        if finding { find(query, keepingPlace: true) }
         let run = pending
         pending = []
         run.forEach { $0() }
@@ -175,8 +176,21 @@ final class SyncPDFView: PDFView {
     var onResize: () -> Void = {}
 
     override func setFrameSize(_ newSize: NSSize) {
+        // PDFKit keeps the point at the view's top, which runs on under the
+        // toolbar: at the start of the document, a new scale slid the first page
+        // under it. There it stays at the start.
+        let atStart = atDocumentStart
         super.setFrameSize(newSize)
         onResize()
+        if atStart, let page = document?.page(at: 0) {
+            go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
+        }
+    }
+
+    private var atDocumentStart: Bool {
+        guard let documentView, let scroll = documentView.enclosingScrollView else { return false }
+        let shown = scroll.contentView.bounds, inset = scroll.contentInsets.top
+        return documentView.isFlipped ? shown.minY <= -inset + 1 : shown.maxY >= documentView.frame.maxY + inset - 1
     }
 
     /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
@@ -201,7 +215,8 @@ final class SyncPDFView: PDFView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, document != nil else {
+        // Command alone of the keys held, Caps Lock aside.
+        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, document != nil else {
             super.mouseDown(with: event)
             return
         }
