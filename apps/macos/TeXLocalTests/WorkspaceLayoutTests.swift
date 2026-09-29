@@ -107,17 +107,38 @@ final class WorkspaceLayoutTests {
         try await waitUntil { isClose(self.height(workspace.panelItem), 210, within: 1) }
     }
 
-    /// A divider moved by hand is kept for the next launch.
-    @Test func aMovedDividerIsKept() async throws {
+    /// A divider dragged is kept for the next launch.
+    @Test func aDraggedDividerIsKept() async throws {
         let workspace = open()
-        // Once the panes have appeared at the sizes they were made with.
         try await waitUntil { self.width(workspace.pdfItem) > 0 }
-        try await Task.sleep(for: .milliseconds(50))
-        let split = workspace.columns.splitView
-        split.setPosition(split.bounds.width * 0.7, ofDividerAt: 0)
-        split.layoutSubtreeIfNeeded()
+        let split = workspace.columns.splitView, window = try #require(window)
+        let start = split.convert(NSPoint(x: width(workspace.sourceItem) + 0.5, y: split.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType, _ dx: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: start.x + dx, y: start.y), modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        for dx in stride(from: 10.0, through: 100, by: 10) { NSApp.postEvent(event(.leftMouseDragged, dx), atStart: false) }
+        NSApp.postEvent(event(.leftMouseUp, 100), atStart: false)
+        split.mouseDown(with: event(.leftMouseDown, 0))
         let share = width(workspace.pdfItem) / (width(workspace.sourceItem) + width(workspace.pdfItem))
-        try await waitUntil { isClose(PaneSize.pdfShare.value ?? 0, share, within: 0.01) }
+        #expect(share < 0.45)
+        #expect(isClose(PaneSize.pdfShare.value ?? 0, share, within: 0.01))
+    }
+
+    /// A window resized in code squeezes a pane, and closing it then keeps the
+    /// size the pane was dragged to, not the squeeze.
+    @Test func aSqueezedPaneKeepsItsSize() async throws {
+        PaneSize.panel.store(250)
+        let workspace = open()
+        workspace.project.showLogs = true
+        // Its minimum is its height until it's back.
+        try await waitUntil { workspace.panelItem.minimumThickness == ColumnMetrics.panelMinimum }
+        #expect(isClose(height(workspace.panelItem), 250, within: 1))
+        window?.setContentSize(NSSize(width: Self.size.width, height: 400))
+        try await waitUntil { self.height(workspace.panelItem) < 240 }
+        workspace.close()
+        #expect(PaneSize.panel.value == 250)
     }
 
     /// A divider dragged near its detent stops there: the sidebar at its opening
@@ -142,8 +163,7 @@ final class WorkspaceLayoutTests {
     }
 
     /// The File Outline's header stays at the files' foot, folded or not. Open, the
-    /// line over it takes the divider's drags, and the divider under it none; folded,
-    /// nothing does.
+    /// line over it takes the divider's drags; folded, nothing does.
     @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
         let workspace = open()
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
@@ -157,16 +177,16 @@ final class WorkspaceLayoutTests {
 
         let frame = header.view.convert(header.view.bounds, to: split)
         let line = split.isFlipped ? frame.minY : frame.maxY
-        let drag = try #require(delegate.splitView?(split, additionalEffectiveRectOfDividerAt: 0))
-        #expect(isClose(drag.midY, line), "\(drag) for the line at \(line)")
-        #expect(drag.height > 0 && isClose(drag.width, frame.width))
         let divider = NSRect(x: 0, y: frame.maxY, width: split.bounds.width, height: split.dividerThickness)
-        #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
+        let drag = try #require(delegate.splitView?(split, effectiveRect: divider.insetBy(dx: 0, dy: -2),
+                                                    forDrawnRect: divider, ofDividerAt: 0))
+        #expect(isClose(drag.midY, line, within: 1), "\(drag) for the line at \(line)")
+        #expect(drag.height > 0 && isClose(drag.width, frame.width))
 
         workspace.app.outlineCollapsed = true
         try await waitUntil { outline.isCollapsed }
         #expect(!header.isHidden)
-        #expect(delegate.splitView?(split, additionalEffectiveRectOfDividerAt: 0) == .zero)
+        #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
     }
 
     /// No pane's content raises the window's minimum: it goes down to the app's own,

@@ -41,12 +41,8 @@ final class WorkspaceController: DetentSplitViewController {
     private let searchField = FieldHandle()
 
     private var watches: [Task<Void, Never>] = []
-    private var resizes: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
-    /// Collapses and shows under way: the sizes they pass through aren't kept.
-    private var animating = 0
-    /// Sizes are kept once the panes have appeared at their own.
-    private var keepsSizes = false
+    private var drags: [any NSObjectProtocol] = []
 
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
@@ -124,9 +120,6 @@ final class WorkspaceController: DetentSplitViewController {
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project, controller: pdf), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-        // Hide PDF alone collapses it, never a drag (the default for a plain item):
-        // collapsed at the window's edge, its divider would sit under the resize edge.
-        pdfItem.canCollapse = false
         pdfItem.isCollapsed = !project.showPDF
         pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
@@ -174,10 +167,9 @@ final class WorkspaceController: DetentSplitViewController {
     /// The fixed inspector's divider takes no drag, so it shows no resize cursor.
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
-                                   ofDividerAt: dividerIndex)
-        let inspectorDivider = splitViewItems.firstIndex { $0 === inspectorItem }.map { $0 - 1 }
-        return splitView === self.splitView && dividerIndex == inspectorDivider ? .zero : rect
+        guard dividerIndex != splitViewItems.firstIndex(of: inspectorItem)! - 1 else { return .zero }
+        return super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                               ofDividerAt: dividerIndex)
     }
 
     /// A pane: SwiftUI whose sizes stay out of Auto Layout, so the split item's
@@ -227,6 +219,7 @@ final class WorkspaceController: DetentSplitViewController {
         // The bars inset their controls by the UI kit's 8 pt themselves.
         accessory.automaticallyAppliesContentInsets = false
         accessory.isHidden = hidden
+        accessory.view.isHidden = hidden
         return accessory
     }
 
@@ -237,8 +230,6 @@ final class WorkspaceController: DetentSplitViewController {
         super.viewDidAppear()
         // The editor has the keyboard as the project opens.
         if let window = view.window, window.firstResponder === window { project.editor.focus() }
-        // After this turn: the first layout places the panes at the sizes they were made with.
-        Task { [weak self] in self?.keepsSizes = true }
     }
 
     // ---------- the models drive the panes ----------
@@ -246,42 +237,24 @@ final class WorkspaceController: DetentSplitViewController {
     private func watch() {
         let app = app, project = project, pdf = pdf
         watches = [
-            track({ app.sidebarVisible }) { [weak self] visible in
-                guard let self else { return }
-                setCollapsed(sidebarItem, !visible)
-            },
-            track({ app.inspectorVisible }) { [weak self] visible in
-                guard let self else { return }
-                setCollapsed(inspectorItem, !visible)
-            },
-            track({ project.showPDF }) { [weak self] shown in
-                guard let self else { return }
-                setPDFShown(shown)
-            },
-            track({ project.showLogs }) { [weak self] shown in
-                guard let self else { return }
-                setPanelShown(shown)
-            },
+            track({ app.sidebarVisible }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
+            track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
+            track({ project.showPDF }) { [weak self] in self?.setPDFShown($0) },
+            track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ OutlineState(shown: project.searchQuery.isEmpty && project.isLaTeX,
                                    collapsed: app.outlineCollapsed) }) { [weak self] state in
                 guard let self else { return }
                 setCollapsed(outlineItem, !state.shown || state.collapsed)
                 setHidden(outlineBar, !state.shown)
             },
-            track({ project.findShown }) { [weak self] shown in
-                guard let self else { return }
-                setHidden(sourceFind, !shown)
-            },
+            track({ project.findShown }) { [weak self] shown in if let self { setHidden(sourceFind, !shown) } },
             // ⌘F, or Find and Replace…, again while the bar shows: back to its field.
             track({ project.findFocus }) { [weak self] focus in
                 guard let self, focus > 0 else { return }
                 setHidden(sourceFind, false)
                 focusField(sourceFindField, in: sourceFind)
             },
-            track({ pdf.finding }) { [weak self] finding in
-                guard let self else { return }
-                setHidden(pdfFind, !finding)
-            },
+            track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.pdfRequest?.token }) { [weak self] _ in self?.takePDFRequest() },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
         ]
@@ -289,14 +262,15 @@ final class WorkspaceController: DetentSplitViewController {
             follow(sidebarItem) { [app] visible in if app.sidebarVisible != visible { app.sidebarVisible = visible } },
             follow(inspectorItem) { [app] visible in if app.inspectorVisible != visible { app.inspectorVisible = visible } },
         ]
-        for split in [splitView, sidebar.splitView, columns.splitView, area.splitView] {
-            resizes.append(Task { [weak self] in
-                for await _ in NotificationCenter.default.notifications(named: NSSplitView.didResizeSubviewsNotification,
-                                                                        object: split) {
-                    guard let self else { return }
-                    if keepsSizes, animating == 0 { saveSizes() }
+        // Sizes as they're dragged to, not as a resized window squeezes them or a
+        // collapse passes through them. At once, while the drag is the current event.
+        drags = [splitView, sidebar.splitView, columns.splitView, area.splitView].map { split in
+            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split,
+                                                   queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    if NSApp.currentEvent?.type == .leftMouseDragged { self?.saveSizes() }
                 }
-            })
+            }
         }
     }
 
@@ -312,34 +286,36 @@ final class WorkspaceController: DetentSplitViewController {
     /// With AppKit's collapse animation, unless the window isn't on screen or
     /// Reduce Motion is on. `done` runs once the pane is at its size.
     private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: (@MainActor () -> Void)? = nil) {
-        guard item.isCollapsed != collapsed, animates else {
+        guard item.isCollapsed != collapsed else { return done?() ?? () }
+        guard animates else {
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
             done?()
             return
         }
-        animating += 1
         NSAnimationContext.runAnimationGroup { _ in
             item.animator().isCollapsed = collapsed
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                self?.animating -= 1
-                done?()
-            }
+        } completionHandler: {
+            MainActor.assumeIsolated { done?() }
         }
     }
 
+    /// The bar's view hides too: a hidden accessory only folds to no height, and its
+    /// controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
         guard accessory.isHidden != hidden else { return }
+        if !hidden { accessory.view.isHidden = false }
         guard animates else {
             accessory.isHidden = hidden
+            accessory.view.isHidden = hidden
             return
         }
-        animating += 1
         NSAnimationContext.runAnimationGroup { _ in
             accessory.animator().isHidden = hidden
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated { self?.animating -= 1 }
+        } completionHandler: {
+            MainActor.assumeIsolated {
+                if hidden, accessory.isHidden { accessory.view.isHidden = true }
+            }
         }
     }
 
@@ -377,7 +353,8 @@ final class WorkspaceController: DetentSplitViewController {
         view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    /// A field in an accessory: always in the window, so it takes the keyboard at once.
+    /// A field in an accessory: in the window as soon as its bar shows, so it takes
+    /// the keyboard at once.
     private func focusField(_ field: FieldHandle, in accessory: NSSplitViewItemAccessoryViewController) {
         if field.field == nil { accessory.view.layoutSubtreeIfNeeded() }
         field.focus()
@@ -403,7 +380,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// Keeps the shown panes' sizes, for this launch's collapses and the next launch:
     /// the sizes they're dragged to, not those a narrowing window squeezes them to.
-    func saveSizes() {
+    private func saveSizes() {
         guard let window = view.window, !window.inLiveResize else { return }
         let sidebarWidth = sidebarItem.viewController.view.frame.width
         if !sidebarItem.isCollapsed, sidebarWidth >= sidebarItem.minimumThickness {
@@ -419,9 +396,8 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// The window is leaving the project: nothing more to watch.
     func close() {
-        saveSizes()
         watches.forEach { $0.cancel() }
-        resizes.forEach { $0.cancel() }
+        drags.forEach(NotificationCenter.default.removeObserver)
         collapses = []
         toolbar.close()
     }
@@ -520,7 +496,7 @@ class DetentSplitViewController: NSSplitViewController {
     /// there's no super to call.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
-        guard splitView === self.splitView, let detent = detent(dividerIndex),
+        guard let detent = detent(dividerIndex),
               abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
         // Once, as the divider arrives: not on each step of a drag held there.
         let pane = splitView.arrangedSubviews[dividerIndex].frame
@@ -533,7 +509,7 @@ class DetentSplitViewController: NSSplitViewController {
 
 /// Files over the File Outline, whose header sits at the files' foot, so the
 /// divider runs under the header. The header's line, over it, stands for the
-/// divider and takes its drags; the divider itself draws nothing and takes none.
+/// divider: the divider draws nothing, and its drags are taken on the line.
 private final class OutlineSplitViewController: NSSplitViewController {
     /// The outline's header, whose line takes the drags while the outline shows.
     weak var header: NSSplitViewItemAccessoryViewController?
@@ -545,21 +521,13 @@ private final class OutlineSplitViewController: NSSplitViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The divider's own reach, moved up onto the header's line.
     override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
                             forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        _ = super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
-                            ofDividerAt: dividerIndex)
-        return .zero
-    }
-
-    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
-        let rect = super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex)
-        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return rect }
+        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
         let frame = header.view.convert(header.view.bounds, to: splitView)
         let line = splitView.isFlipped ? frame.minY : frame.maxY
-        // As much either side of the line as a thin divider takes.
-        return NSRect(x: frame.minX, y: line - ColumnMetrics.dividerReach, width: frame.width,
-                      height: 2 * ColumnMetrics.dividerReach)
+        return proposedEffectiveRect.offsetBy(dx: 0, dy: line - drawnRect.minY)
     }
 }
 
@@ -633,8 +601,6 @@ enum ColumnMetrics {
     /// How near a dragged divider comes to its detent before it stops there:
     /// enough to catch a drag aimed at it, little enough to drag straight past.
     static let detentReach: CGFloat = 8
-    /// How far either side of a thin divider's line a drag takes it.
-    static let dividerReach: CGFloat = 3
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
     /// The build panel: a header and a few issues; a quarter of the window at first.

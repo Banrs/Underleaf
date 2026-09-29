@@ -70,7 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        mainWindow.workspace?.saveSizes()
         // Compiles run in their own process groups; nothing else stops them.
         Core.shared.killAll()
     }
