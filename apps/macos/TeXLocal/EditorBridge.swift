@@ -300,8 +300,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         return "rgb(\(rgb.joined(separator: " ")) / \(c.alphaComponent))"
     }
 
-    /// Keyboard focus to the text, once the web view is in a window.
+    /// Keyboard focus to the text, once the web view is in a window; never while
+    /// it's hidden under a preview, whose keys would edit a file that isn't shown.
     func focus() {
+        guard shown else { return }
         webView.window?.makeFirstResponder(webView)
     }
 

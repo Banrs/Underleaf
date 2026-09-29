@@ -392,15 +392,17 @@ struct AppCommands: Commands {
             item(.compileRun)
             item(.compileStop)
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
-            Picker("Engine", selection: Binding<String?>(
-                get: { project?.settings?.engine },
-                set: { engine in
-                    if let project, let engine { Task { await project.setEngine(engine) } }
+            // Only with a project's settings, and their engine always a choice: a
+            // selection no tag matches, nil included, is a SwiftUI fault.
+            if let project, let engine = project.settings?.engine {
+                Picker("Engine", selection: Binding(get: { engine }, set: { new in Task { await project.setEngine(new) } })) {
+                    ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
+                    if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
                 }
-            )) {
-                ForEach(texEngines, id: \.0) { id, title in Text(title).tag(Optional(id)) }
+            } else {
+                Menu("Engine") {}
+                    .disabled(true)
             }
-            .disabled(project == nil)
             // The open file; the files' context menu has it for any .tex file.
             Button("Set as Main File") {
                 if let project, let path = project.openPath { Task { await project.setMainFile(path) } }

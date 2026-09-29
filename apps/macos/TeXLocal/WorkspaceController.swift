@@ -107,7 +107,8 @@ final class WorkspaceController: DetentSplitViewController {
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
-        sourceFind = accessory(SourceFindBar(project: project, field: sourceFindField), hidden: !project.findShown)
+        sourceFind = accessory(SourceFindBar(project: project, field: sourceFindField),
+                               hidden: !(project.findShown && project.editsText))
         sourceItem.addTopAlignedAccessoryViewController(sourceFind)
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project, controller: pdf), width: pdfWidth))
@@ -139,10 +140,11 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// The PDF's kept share of `panes` (source and PDF, less the divider), leaving
-    /// both their minimums.
+    /// both their minimums; never under its own, when the source alone had less
+    /// room than both need (the side columns then make it).
     private func keptPDFWidth(in panes: CGFloat) -> CGFloat {
         let share = (panes * (PaneSize.pdfShare.value ?? ColumnMetrics.pdfShare)).rounded()
-        return min(max(share, ColumnMetrics.pdfMinimum), panes - ColumnMetrics.sourceMinimum)
+        return max(min(max(share, ColumnMetrics.pdfMinimum), panes - ColumnMetrics.sourceMinimum), ColumnMetrics.pdfMinimum)
     }
 
     /// The project's settings and facts, at AppKit's fixed inspector width: a column
@@ -241,10 +243,12 @@ final class WorkspaceController: DetentSplitViewController {
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ project.isSearching || !project.isLaTeX }) { [weak self] _ in self?.updateOutline() },
             track({ app.outlineCollapsed }) { [weak self] _ in self?.updateOutline() },
-            track({ project.findShown }) { [weak self] shown in if let self { setHidden(sourceFind, !shown) } },
+            // Only over the text: over a preview or No File Open, it would search and
+            // replace in the hidden editor, whose edits aren't saved.
+            track({ project.findShown && project.editsText }) { [weak self] shown in if let self { setHidden(sourceFind, !shown) } },
             // ⌘F, or Find and Replace…, again while the bar shows: back to its field.
             track({ project.findFocus }) { [weak self] focus in
-                guard let self, focus > 0 else { return }
+                guard let self, focus > 0, project.editsText else { return }
                 setHidden(sourceFind, false)
                 focusField(sourceFindField, in: sourceFind)
             },

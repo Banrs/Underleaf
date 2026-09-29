@@ -167,9 +167,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, template.title, symbolName, #selector(insertTemplate(_:)))
             item.visibilityPriority = .low
         }
-        // Plain buttons are validated (`validateToolbarItem`), and so are their copies
-        // in the overflow menu; the rest take their state from the models (`apply`).
-        if item.target !== self || item.view != nil {
+        // Plain buttons are validated (`validateToolbarItem`, or for Undo and Redo the
+        // responder that takes their action), and so are their copies in the overflow
+        // menu; the rest take their state from the models (`apply`).
+        if (item.target !== self && ![.undo, .redo].contains(id)) || item.view != nil {
             item.autovalidates = false
             (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
         }

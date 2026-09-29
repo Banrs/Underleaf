@@ -322,8 +322,11 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     let actions: (ID) -> ItemActions?
 
     func body(content: Content) -> some View {
+        // Only while its item exists: one trashed or renamed away, here or by
+        // another app, takes its actions with it.
+        let present = id.flatMap { actions($0) == nil ? nil : $0 }
         content
-            .onChange(of: id, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
+            .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
             .onDisappear { app.chosenItem = nil }
     }
 }

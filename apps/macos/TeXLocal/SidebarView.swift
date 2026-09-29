@@ -111,7 +111,11 @@ struct FilesList: View {
         .onChange(of: selection) { _, path in
             if let path, path != project.openPath,
                project.tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) {
-                Task { await project.open(path, focus: false) }
+                Task {
+                    await project.open(path, focus: false)
+                    // It didn't open (reported): the file on screen stays chosen.
+                    if project.openPath != path, selection == path { selection = project.openPath }
+                }
             }
         }
         .onChange(of: project.openPath, initial: true) { _, path in selection = path }
