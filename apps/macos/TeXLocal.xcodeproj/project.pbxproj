@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5E1A0C0DE0000000000000A1 /* TeXLocalSyntax in Frameworks */ = {isa = PBXBuildFile; productRef = 5E1A0C0DE0000000000000A2 /* TeXLocalSyntax */; };
 		14906C82983B6895CDF14DC3 /* PDFPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378CDE594945FFCE3DBAD8D1 /* PDFPane.swift */; };
 		191D9AEFC97A04F87B0D8229 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92DFFB06FAB61A26B9807116 /* HomeView.swift */; };
 		26B6DB4317B0759E315F3E89 /* Outline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A947A0ACCBDB707B2BE2099 /* Outline.swift */; };
@@ -18,6 +19,8 @@
 		7D71DA4678CDD55C2526532E /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0F16D19E664BB5F8D928B2 /* ProjectModel.swift */; };
 		8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939F94A0F5465E021016E2B5 /* SidebarView.swift */; };
 		91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */; };
+		0335995C2B4DF282647C9536 /* SourceTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356BB713C127DF296C9F10F0 /* SourceTextView.swift */; };
+		40F746CE8E08541D6AB1E6CB /* SourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDEA1BCC9CEB16941926B639 /* SourceEditor.swift */; };
 		2C3091BA46BEAE050953DE1B /* StatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07BE4F6D15D1DCD5E91C724 /* StatusBar.swift */; };
 		F3A286A59E6E2E9391EF8319 /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2374FF95D72BBC4F306832AE /* InspectorView.swift */; };
 		BE504B7DF0CA9BBC5EB485FA /* WorkspaceToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4127A381F70BDB0FD65BD78C /* WorkspaceToolbar.swift */; };
@@ -27,6 +30,7 @@
 		7CBC5DAE1B5E4EE49FBA64BD /* FolderWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */; };
 		9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31AE196AE79CB996B7DD97A2 /* AppModel.swift */; };
 		A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */; };
+		18953E23CA8DE183E31658D9 /* SourceEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92DD06306EE03BDB0ECAECFA /* SourceEditorTests.swift */; };
 		1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */; };
 		9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC97CE33D77103C192FEB167 /* CommandTests.swift */; };
 		817D9BB52A230F994AF7C259 /* WorkspaceLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */; };
@@ -36,7 +40,6 @@
 		B9BF8EBB439CAEEFB9B1B028 /* SourceColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 158D7A52185B6F0E80D9FCE5 /* SourceColumn.swift */; };
 		C0DE5A1E0000000000000B01 /* PaneBars.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5A1E0000000000000B02 /* PaneBars.swift */; };
 		C0DE5A1E0000000000000C01 /* MenuItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5A1E0000000000000C02 /* MenuItems.swift */; };
-		BA8ED02AC38A333937229C03 /* EditorBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898AA6334E9C879C8C0A855E /* EditorBridge.swift */; };
 		BB2498A6412AF35FA6A971E9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB64852D001BF573F24FB9C8 /* Models.swift */; };
 		FF0C4B2E0DA826554AC37833 /* Core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D6C8EACCE460267B2C9DA6 /* Core.swift */; };
 		A1C0FFEE0A55E7500000B001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0A55E7500000B002 /* Assets.xcassets */; };
@@ -68,6 +71,8 @@
 		D39583A134CAD40376A4A3DB /* LaTeX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeX.swift; sourceTree = "<group>"; };
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTeXGeometry.swift; sourceTree = "<group>"; };
+		356BB713C127DF296C9F10F0 /* SourceTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceTextView.swift; sourceTree = "<group>"; };
+		BDEA1BCC9CEB16941926B639 /* SourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditor.swift; sourceTree = "<group>"; };
 		D07BE4F6D15D1DCD5E91C724 /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		2374FF95D72BBC4F306832AE /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
 		4127A381F70BDB0FD65BD78C /* WorkspaceToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceToolbar.swift; sourceTree = "<group>"; };
@@ -75,7 +80,6 @@
 		2A29E56E5EC70944B38E83F9 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
 		26FB10CFB16722447155C1AE /* PDFController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFController.swift; sourceTree = "<group>"; };
 		80EBBE6C61F0AB85E7C885DC /* FolderWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderWatcher.swift; sourceTree = "<group>"; };
-		898AA6334E9C879C8C0A855E /* EditorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorBridge.swift; sourceTree = "<group>"; };
 		92DFFB06FAB61A26B9807116 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		939F94A0F5465E021016E2B5 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		B11F66D3B533CFDC0A8F7EFF /* WorkspaceModals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceModals.swift; sourceTree = "<group>"; };
@@ -83,6 +87,7 @@
 		BB64852D001BF573F24FB9C8 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CE1B774F61877030414C0844 /* BuildPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildPanel.swift; sourceTree = "<group>"; };
 		DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXLocalTests.swift; sourceTree = "<group>"; };
+		92DD06306EE03BDB0ECAECFA /* SourceEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditorTests.swift; sourceTree = "<group>"; };
 		C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectTests.swift; sourceTree = "<group>"; };
 		DC97CE33D77103C192FEB167 /* CommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTests.swift; sourceTree = "<group>"; };
 		1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLayoutTests.swift; sourceTree = "<group>"; };
@@ -114,6 +119,7 @@
 			isa = PBXGroup;
 			children = (
 				DCCBBF6F6FC3F87698A76E3E /* TeXLocalTests.swift */,
+				92DD06306EE03BDB0ECAECFA /* SourceEditorTests.swift */,
 				C1BE887A58F8F64C41E785B2 /* ProjectTests.swift */,
 				DC97CE33D77103C192FEB167 /* CommandTests.swift */,
 				1F9870709B705F916733F3C7 /* WorkspaceLayoutTests.swift */,
@@ -130,7 +136,6 @@
 				A1C0FFEE0A55E7500000B002 /* Assets.xcassets */,
 				67C8D90033DCF0BC03B38114 /* Commands.swift */,
 				16D6C8EACCE460267B2C9DA6 /* Core.swift */,
-				898AA6334E9C879C8C0A855E /* EditorBridge.swift */,
 				158D7A52185B6F0E80D9FCE5 /* SourceColumn.swift */,
 				C0DE5A1E0000000000000B02 /* PaneBars.swift */,
 				C0DE5A1E0000000000000C02 /* MenuItems.swift */,
@@ -145,6 +150,8 @@
 				4AA2F926379249A44F9F564D /* SettingsView.swift */,
 				939F94A0F5465E021016E2B5 /* SidebarView.swift */,
 				80EC31553F1584E4F9F21DDE /* SyncTeXGeometry.swift */,
+				356BB713C127DF296C9F10F0 /* SourceTextView.swift */,
+				BDEA1BCC9CEB16941926B639 /* SourceEditor.swift */,
 				D07BE4F6D15D1DCD5E91C724 /* StatusBar.swift */,
 				2374FF95D72BBC4F306832AE /* InspectorView.swift */,
 				4127A381F70BDB0FD65BD78C /* WorkspaceToolbar.swift */,
@@ -185,7 +192,8 @@
 			buildPhases = (
 				D0BFDCD8EC49557EEE2F31DA /* Build Rust core */,
 				4DB01B4638613538B369BFF0 /* Sources */,
-				848787D0905848F69BE833D8 /* Copy editor page */,
+				5E1A0C0DE0000000000000A3 /* Frameworks */,
+				848787D0905848F69BE833D8 /* Copy shared resources */,
 				A1C0FFEE0A55E7500000B003 /* Resources */,
 			);
 			buildRules = (
@@ -194,6 +202,7 @@
 			);
 			name = TeXLocal;
 			packageProductDependencies = (
+				5E1A0C0DE0000000000000A2 /* TeXLocalSyntax */,
 			);
 			productName = TeXLocal;
 			productReference = 6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */;
@@ -223,6 +232,9 @@
 			mainGroup = 22F53F21D7EBE15800D0EC64;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				5E1A0C0DE0000000000000A4 /* XCLocalSwiftPackageReference "TeXLocalSyntax" */,
+			);
 			productRefGroup = 4AACD0AA9786B91F34A573C0 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -245,7 +257,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		848787D0905848F69BE833D8 /* Copy editor page */ = {
+		848787D0905848F69BE833D8 /* Copy shared resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -255,14 +267,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Copy editor page";
+			name = "Copy shared resources";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/sh\n# Xcode build step: the embedded editor page and what it loads, into the app's\n# Resources/web — only the embed files, not the browser UI.\nset -e\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nnpm run build --silent\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/web\"\nrm -rf \"$DEST\"\nmkdir -p \"$DEST/dist\" \"$DEST/embed\"\ncp web/styles.css web/src/shortcuts.json \"$DEST/\"\ncp web/embed/editor.html \"$DEST/embed/\"\ncp web/dist/embed-editor.js web/dist/katex.min.css \"$DEST/dist/\"\ncp -R web/dist/fonts web/dist/fonts-jbm \"$DEST/dist/\"\n";
+			shellScript = "#!/bin/sh\n# Xcode build step: what the app shares with the web version, into its\n# Resources: the menu's chords (web/src/shortcuts.json) and the editor's\n# JetBrains Mono, which Info.plist's ATSApplicationFontsPath registers.\nset -e\ncd \"$SRCROOT/../..\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\ncp web/src/shortcuts.json \"$DEST/\"\nmkdir -p \"$DEST/Fonts\"\ncp node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2 node_modules/@fontsource/jetbrains-mono/LICENSE \"$DEST/Fonts/\"\n";
 		};
 		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -285,6 +297,17 @@
 		};
 /* End PBXShellScriptBuildPhase section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		5E1A0C0DE0000000000000A3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5E1A0C0DE0000000000000A1 /* TeXLocalSyntax in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		4DB01B4638613538B369BFF0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -293,7 +316,6 @@
 				9E54EF45C05E94350EC70AF4 /* AppModel.swift in Sources */,
 				568D8E6CB9EAE830FB20FCA4 /* Commands.swift in Sources */,
 				FF0C4B2E0DA826554AC37833 /* Core.swift in Sources */,
-				BA8ED02AC38A333937229C03 /* EditorBridge.swift in Sources */,
 				B9BF8EBB439CAEEFB9B1B028 /* SourceColumn.swift in Sources */,
 				C0DE5A1E0000000000000B01 /* PaneBars.swift in Sources */,
 				C0DE5A1E0000000000000C01 /* MenuItems.swift in Sources */,
@@ -307,6 +329,8 @@
 				4C7433C91108513A006DD93F /* SettingsView.swift in Sources */,
 				8016CB5F63C24E2607AF3778 /* SidebarView.swift in Sources */,
 				91F51F45B7E965746B28FD11 /* SyncTeXGeometry.swift in Sources */,
+				0335995C2B4DF282647C9536 /* SourceTextView.swift in Sources */,
+				40F746CE8E08541D6AB1E6CB /* SourceEditor.swift in Sources */,
 				2C3091BA46BEAE050953DE1B /* StatusBar.swift in Sources */,
 				F3A286A59E6E2E9391EF8319 /* InspectorView.swift in Sources */,
 				BE504B7DF0CA9BBC5EB485FA /* WorkspaceToolbar.swift in Sources */,
@@ -324,6 +348,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A427CC1D843ACB521F231D69 /* TeXLocalTests.swift in Sources */,
+				18953E23CA8DE183E31658D9 /* SourceEditorTests.swift in Sources */,
 				1BF72D2928EC7938CB10871D /* ProjectTests.swift in Sources */,
 				9E2FE8D68E0A2DCD5D81CE98 /* CommandTests.swift in Sources */,
 				817D9BB52A230F994AF7C259 /* WorkspaceLayoutTests.swift in Sources */,
@@ -595,6 +620,21 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		5E1A0C0DE0000000000000A4 /* XCLocalSwiftPackageReference "TeXLocalSyntax" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = TeXLocalSyntax;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5E1A0C0DE0000000000000A2 /* TeXLocalSyntax */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5E1A0C0DE0000000000000A4 /* XCLocalSwiftPackageReference "TeXLocalSyntax" */;
+			productName = TeXLocalSyntax;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AB534688020F730799B070D9 /* Project object */;
 }

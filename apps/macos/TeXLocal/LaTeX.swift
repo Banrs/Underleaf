@@ -3,8 +3,8 @@ import Foundation
 // The LaTeX the toolbar and the Insert and Format menus write. Titles are
 // menu items, so title case without the web's parentheticals.
 
-/// A snippet at the cursor: a block named by its id in the editor page's
-/// table (web/src/latex-data.js `BLOCK_TEMPLATES`), or an inline command
+/// A snippet at the cursor: a block named by its id in the core's catalog
+/// (crates/texlocal-syntax/src/catalog.json `blocks`), or an inline command
 /// with "$0" where the selection goes. With a `symbol`, Customize Toolbar
 /// offers it as a button; all are in the Insert menu.
 struct Template {
@@ -39,7 +39,8 @@ let listTemplates = [
     Template(title: "Description List", body: "description"),
 ]
 
-/// Cross-references, citations and links; each opens completion in its braces.
+/// Cross-references, citations and links; with nothing selected, a
+/// reference or citation offers what can go in its braces.
 let referenceTemplates = [
     Template(title: "Reference", body: "\\ref{$0}", symbol: "number.sign", inline: true),
     Template(title: "Equation Reference", body: "\\eqref{$0}", inline: true),

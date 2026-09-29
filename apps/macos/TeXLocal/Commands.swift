@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
-/// and its accelerators. One accelerator string drives both the menu's key
-/// equivalent and the chords the editor page hands back.
+/// and its accelerators, which drive the menu's key equivalents.
 enum MenuCommand: String, CaseIterable {
     case projectNew = "project.new"
     case projectOpen = "project.open"
@@ -97,7 +96,7 @@ enum MenuCommand: String, CaseIterable {
     var accel: String? { Self.sharedAccels[rawValue] }
 
     private static let sharedAccels: [String: String] = {
-        guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json", subdirectory: "web"),
+        guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json"),
               let data = try? Data(contentsOf: url) else { return [:] }
         return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
     }()
@@ -158,16 +157,6 @@ enum MenuCommand: String, CaseIterable {
             equivalent = KeyEquivalent(c)
         }
         return KeyboardShortcut(equivalent, modifiers: modifiers)
-    }
-
-    /// Chords the editor page gives back to the menu, so none is lost to the page;
-    /// it handles `pageKeeps` itself.
-    static var editorHostKeys: [(id: String, accel: String)] {
-        let pageKeeps: [MenuCommand] = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
-        return allCases.compactMap { c in
-            guard !pageKeeps.contains(c), let accel = c.macAccel else { return nil }
-            return (c.rawValue, accel)
-        }
     }
 }
 
@@ -243,7 +232,7 @@ extension AppModel {
             }
         // AppKit: SwiftUI has no page setup panel.
         case .filePageSetup: NSApp.runPageLayout(nil)
-        // The PDF, not the first responder (usually the editor's web view).
+        // The PDF, not the first responder (usually the source).
         case .filePrint: requestPDF(.print)
         case .editBold: project?.format(.bold)
         case .editItalic: project?.format(.italic)
@@ -265,8 +254,8 @@ extension AppModel {
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         // A Toggle bound to `autoCompile` in the menu. Undo, Redo and the Find items
-        // are the system's, which reach whatever has the keyboard (the editor's web
-        // view, `MainWindowController.performFindPanelAction`); the page keeps their chords.
+        // are the system's, which reach whatever has the keyboard (the source's
+        // text view, `MainWindowController.performFindPanelAction`).
         case .compileToggleAuto, .editUndo, .editRedo, .editFind, .editFindAndReplace, .editFindNext, .editFindPrevious:
             break
         case .syncForward: Task { await project?.forwardSync() }

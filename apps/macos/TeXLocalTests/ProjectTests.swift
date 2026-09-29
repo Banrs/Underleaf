@@ -155,23 +155,22 @@ final class ProjectFlowTests {
     @Test(.timeLimit(.minutes(1)))
     func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info
-        // Started in this order on the main actor, each waiting on the core
-        // and the editor's page in turn.
+        // Started in this order on the main actor, each waiting on the core in turn.
         let opens = [Task { await app.open(first.id) }, Task { await app.open(second.id) }]
         for open in opens { await open.value }
 
         #expect(app.project?.id == second.id)
-        let document = await app.project?.editor.document()
+        let document = app.project?.editor.document
         #expect(document?.path == second.mainFile)
         #expect(document?.text == "second")
         await app.close()
     }
 
-    /// A save writes the page's text to the file the page says it belongs to.
+    /// A save writes the editor's text to the file it belongs to.
     @Test(.timeLimit(.minutes(1)))
     func anEditReachesTheDisk() async throws {
         let (project, folder) = try await opened()
-        #expect(await project.editor.command(.bold))
+        #expect(project.editor.perform(.bold))
         try await waitUntil { project.hasUnsavedText }
         #expect(await project.save())
         let saved = try String(contentsOf: folder.appending(path: try #require(project.openPath)), encoding: .utf8)
@@ -211,7 +210,7 @@ final class ProjectFlowTests {
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
         await project.open("notes.tex")
         try files.removeItem(at: notes)
-        #expect(await project.editor.command(.bold))
+        #expect(project.editor.perform(.bold))
         try await waitUntil(timeout: .seconds(5)) { project.missingFile == "notes.tex" }
         // Past the autosave, which would have made the file again.
         try await Task.sleep(for: .seconds(1))
@@ -230,7 +229,7 @@ final class ProjectFlowTests {
         let notes = folder.appending(path: "notes.tex")
         try "notes".write(to: notes, atomically: false, encoding: .utf8)
         try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
-        let drop = project.editor.webView.fileDrop
+        let drop = project.editor.textView.fileDrop
 
         let openNotes = try #require(drop(notes))
         openNotes()

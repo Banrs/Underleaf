@@ -1,0 +1,4 @@
+module texlocal_syntaxFFI {
+    header "texlocal_syntaxFFI.h"
+    export *
+}

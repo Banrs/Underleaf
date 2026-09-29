@@ -22,6 +22,9 @@ server.log
 # Xcode's per-user state
 xcuserdata/
 *.xcuserstate
+# SwiftPM's, for a local package built on its own
+apps/macos/TeXLocalSyntax/.build/
+apps/macos/TeXLocalSyntax/.swiftpm/
 
 # Editor/IDE / tooling
 .vscode/

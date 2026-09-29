@@ -50,7 +50,13 @@ jobs:
         with:
           workspaces: . -> target
           key: macos-app-27.0
+      # The app copies the editor's font from node_modules.
       - run: npm ci
+      # The committed Swift bindings are what the core's editor API generates.
+      - name: Swift bindings current
+        run: |
+          apps/macos/scripts/generate-bindings.sh
+          git diff --exit-code apps/macos/TeXLocalSyntax
       - name: Build
         working-directory: apps/macos
         run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' build-for-testing

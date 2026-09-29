@@ -1,55 +1,21 @@
 import SwiftUI
-import WebKit
-
-/// The project's editor page, one web view the bridge keeps; SwiftUI may rebuild
-/// this wrapper, which only hosts it. It runs on under the toolbar and the find
-/// bar with no inset of WebKit's own: WebKit's edge effect is Safari's, hard and
-/// never joined with the other columns'; AppKit's is drawn over it instead.
-struct EditorView: NSViewRepresentable {
-    let bridge: EditorBridge
-    let shown: Bool
-    /// The toolbar's and find bar's height over the text.
-    let topInset: CGFloat
-
-    func makeNSView(context: Context) -> WKWebView { bridge.webView }
-
-    func updateNSView(_ view: WKWebView, context: Context) {
-        if bridge.shown != shown { bridge.shown = shown }
-        // WebKit takes the safe area for its own inset as it lays out.
-        if view.obscuredContentInsets.top != 0 { view.obscuredContentInsets = NSEdgeInsetsZero }
-        Task { await bridge.setTopInset(topInset) }
-    }
-}
 
 /// The source column: the editor, or a preview or placeholder over it. It
 /// carries the workspace's sheets and alerts, being the one pane always shown.
 struct SourceColumn: View {
     let project: ProjectModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font: EditorFont = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-    @State private var topInset: CGFloat = 0
 
     var body: some View {
-        // The editor stays mounted under a preview or the placeholder, so its
-        // page keeps the text and its place.
-        let editing = project.editsText
-        let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
-                                          palette: palette, font: font, fontSize: fontSize)
+        // The editor stays under a preview or the placeholder, keeping the
+        // text and its place.
         ZStack {
-            EditorView(bridge: project.editor, shown: editing, topInset: topInset)
+            // On under the toolbar and the find bar, where AppKit draws its
+            // edge effect over the text.
+            EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: .top)
-                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topInset = $0 }
-                // The system's edge effect over the text: AppKit draws a column's
-                // only from a scroll view, and this empty one lets clicks through.
-                .overlay {
-                    ScrollView {}
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                        .ignoresSafeArea(.container, edges: .top)
-                }
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
@@ -60,7 +26,9 @@ struct SourceColumn: View {
                     .background(.background)
             }
         }
-        .task(id: appearance) { await project.editor.setAppearance(appearance) }
+        .onChange(of: EditorAppearance(palette: palette, font: font, size: fontSize), initial: true) { _, appearance in
+            project.editor.setAppearance(appearance)
+        }
         .workspaceModals(project)
         .windowModals()
     }
@@ -120,7 +88,7 @@ private struct FilePreview: View {
     }
 }
 
-/// Find and replace in the source; CodeMirror searches, its own panel hidden.
+/// Find and replace in the source (`SourceEditor`'s search).
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
     let field: FieldHandle
