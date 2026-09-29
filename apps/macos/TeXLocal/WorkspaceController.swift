@@ -336,10 +336,12 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// Show Build Panel brings it back at its kept height. Left to AppKit, it came
-    /// back a status bar's height shorter each time (27.2), so it has that height
-    /// as its frame. It rises from and sinks under the status bar, whose glass
-    /// showed its header: faded in slowly and out quickly, it's clear by then.
+    /// Show Build Panel brings it back at its kept height, its frame. On macOS 27.2
+    /// that's enough, and lowering a minimum raised for it jumped the panel a status
+    /// bar's height for a frame; 27.0 uncollapses to the minimum, so there it holds
+    /// the height as its minimum until it's back, as the PDF does its width. It rises
+    /// from and sinks under the status bar, whose glass showed its header: faded in
+    /// slowly and out quickly, it's clear by then.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let panel = panelItem.viewController.view
@@ -353,8 +355,13 @@ final class WorkspaceController: DetentSplitViewController {
         guard shown else { return setCollapsed(panelItem, true) { panel.alphaValue = 1 } }
         let split = area.splitView
         let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
-        panel.frame.size.height = min(PaneSize.panel.value ?? split.bounds.height * ColumnMetrics.panelShare, room)
-        setCollapsed(panelItem, false)
+        let height = min(PaneSize.panel.value ?? split.bounds.height * ColumnMetrics.panelShare, room)
+        panel.frame.size.height = height
+        if #available(macOS 27.2, *) { return setCollapsed(panelItem, false) }
+        panelItem.minimumThickness = max(height, ColumnMetrics.panelMinimum)
+        setCollapsed(panelItem, false) { [weak self] in
+            self?.panelItem.minimumThickness = ColumnMetrics.panelMinimum
+        }
     }
 
     private var animates: Bool {
