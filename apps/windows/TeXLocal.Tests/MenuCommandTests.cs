@@ -1,16 +1,20 @@
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using Windows.System;
 
 namespace TeXLocal.Tests;
 
-public sealed partial class MenuCommandTests
+public sealed class MenuCommandTests
 {
-    [GeneratedRegex(@"\{ id: '([^']+)'.*?accel: '((?:[^'\\]|\\.)+)'")]
-    private static partial Regex CommandDef();
-
-    /// <summary>Every (id, accel) pair in web/src/workspace.js commandDefs, read from the source so they cannot drift.</summary>
-    private static List<(string Id, string Accel)> CommandDefs() =>
-        CommandDef().Matches(WebSource.Read("workspace.js")).Select(m => (m.Groups[1].Value, Regex.Unescape(m.Groups[2].Value))).ToList();
+    /// <summary>
+    /// Every (id, accel) pair in the shared table (web/src/shortcuts.json),
+    /// which the browser version and the Mac read, so the two cannot drift.
+    /// </summary>
+    private static List<(string Id, string Accel)> CommandDefs()
+    {
+        var table = JsonSerializer.Deserialize<Dictionary<string, string>>(WebSource.Read("shortcuts.json"));
+        Assert.NotNull(table);
+        return table.Select(pair => (pair.Key, pair.Value)).ToList();
+    }
 
     [Fact]
     public void EveryCommandDefsAcceleratorParses()

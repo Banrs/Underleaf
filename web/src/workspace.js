@@ -8,7 +8,7 @@ import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
 import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
-import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar } from './commands.js';
+import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
 import { chooseTexFolder } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
@@ -359,49 +359,51 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
+// Their accelerators are the shared table's (shortcuts.json), which the
+// native apps read too.
 function commandDefs() {
   return [
-    { id: 'project.new', title: 'New Project…', accel: 'CmdOrCtrl+Shift+N', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
+    { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
     { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
     { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
-    { id: 'project.search', title: 'Find in Project', accel: 'CmdOrCtrl+Shift+F', run: focusSearch, enabled: hasProject },
+    { id: 'project.search', title: 'Find in Project', run: focusSearch, enabled: hasProject },
 
-    { id: 'file.new', title: 'New File…', accel: 'CmdOrCtrl+N', run: newFileFlow, enabled: hasProject },
-    { id: 'file.newFolder', title: 'New Folder…', accel: 'CmdOrCtrl+Shift+Alt+N', run: newFolderFlow, enabled: hasProject },
+    { id: 'file.new', title: 'New File…', run: newFileFlow, enabled: hasProject },
+    { id: 'file.newFolder', title: 'New Folder…', run: newFolderFlow, enabled: hasProject },
     { id: 'file.upload', title: 'Add Files…', run: uploadFlow, enabled: hasProject },
-    { id: 'file.save', title: 'Save', accel: 'CmdOrCtrl+S', run: () => saveCurrent(), enabled: hasEditor },
-    { id: 'pdf.save', title: 'Save PDF As…', accel: 'CmdOrCtrl+Shift+S', run: savePdf, enabled: hasPdf },
+    { id: 'file.save', title: 'Save', run: () => saveCurrent(), enabled: hasEditor },
+    { id: 'pdf.save', title: 'Save PDF As…', run: savePdf, enabled: hasPdf },
 
-    { id: 'edit.undo', title: 'Undo', accel: 'CmdOrCtrl+Z', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
-    { id: 'edit.redo', title: 'Redo', accel: 'CmdOrCtrl+Shift+Z', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
-    { id: 'edit.find', title: 'Find & Replace', accel: 'CmdOrCtrl+F', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
-    { id: 'edit.findNext', title: 'Find Next', accel: 'CmdOrCtrl+G', nativeOnly: true, run: () => findAgain(1), enabled: hasEditor },
-    { id: 'edit.findPrevious', title: 'Find Previous', accel: 'CmdOrCtrl+Shift+G', nativeOnly: true, run: () => findAgain(-1), enabled: hasEditor },
-    { id: 'edit.bold', title: 'Bold', accel: 'CmdOrCtrl+B', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
-    { id: 'edit.italic', title: 'Italic', accel: 'CmdOrCtrl+I', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
-    { id: 'edit.math', title: 'Inline Math', accel: 'CmdOrCtrl+Shift+M', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
-    { id: 'edit.comment', title: 'Toggle Comment', accel: 'CmdOrCtrl+/', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
-    { id: 'edit.gotoLine', title: 'Go to Line…', accel: 'CmdOrCtrl+L', run: gotoLineFlow, enabled: hasEditor },
-    { id: 'pdf.find', title: 'Find in PDF…', accel: 'CmdOrCtrl+Alt+F', run: openPdfFind, enabled: hasPdf },
+    { id: 'edit.undo', title: 'Undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
+    { id: 'edit.redo', title: 'Redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
+    { id: 'edit.find', title: 'Find & Replace', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasEditor },
+    { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasEditor },
+    { id: 'edit.bold', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
+    { id: 'edit.italic', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
+    { id: 'edit.math', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
+    { id: 'edit.comment', title: 'Toggle Comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
+    { id: 'edit.gotoLine', title: 'Go to Line…', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'pdf.find', title: 'Find in PDF…', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
-    { id: 'view.toggleSidebar', title: () => (prefs.sidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar'), accel: 'CmdOrCtrl+\\', run: toggleSidebar },
-    { id: 'view.togglePdf', title: () => (prefs.pdfCollapsed ? 'Show PDF' : 'Hide PDF'), accel: 'CmdOrCtrl+Shift+\\', run: togglePdf, enabled: hasProject },
-    { id: 'view.toggleLogs', title: 'Compile Log', accel: 'CmdOrCtrl+Shift+L', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
-    { id: 'view.zoomIn', title: 'Zoom In', accel: 'CmdOrCtrl+Plus', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
-    { id: 'view.zoomOut', title: 'Zoom Out', accel: 'CmdOrCtrl+Minus', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
-    { id: 'view.fitWidth', title: 'Fit Width', accel: 'CmdOrCtrl+0', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
-    { id: 'view.fitHeight', title: 'Fit Height', accel: 'CmdOrCtrl+Alt+0', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
-    { id: 'view.uiScaleUp', title: 'Increase Interface Size', accel: 'CmdOrCtrl+Alt+Plus', run: () => stepUiScale(1) },
-    { id: 'view.uiScaleDown', title: 'Decrease Interface Size', accel: 'CmdOrCtrl+Alt+Minus', run: () => stepUiScale(-1) },
+    { id: 'view.toggleSidebar', title: () => (prefs.sidebarCollapsed ? 'Show Sidebar' : 'Hide Sidebar'), run: toggleSidebar },
+    { id: 'view.togglePdf', title: () => (prefs.pdfCollapsed ? 'Show PDF' : 'Hide PDF'), run: togglePdf, enabled: hasProject },
+    { id: 'view.toggleLogs', title: 'Compile Log', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
+    { id: 'view.zoomIn', title: 'Zoom In', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
+    { id: 'view.zoomOut', title: 'Zoom Out', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
+    { id: 'view.fitWidth', title: 'Fit Width', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
+    { id: 'view.fitHeight', title: 'Fit Height', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
+    { id: 'view.uiScaleUp', title: 'Increase Interface Size', run: () => stepUiScale(1) },
+    { id: 'view.uiScaleDown', title: 'Decrease Interface Size', run: () => stepUiScale(-1) },
 
-    { id: 'compile.run', title: 'Compile', accel: 'CmdOrCtrl+Return', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
+    { id: 'compile.run', title: 'Compile', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
     { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
-    { id: 'sync.forward', title: 'Go to PDF Position', accel: 'Ctrl+Return', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
-    { id: 'sync.inverse', title: 'Go to Source Position', accel: 'Ctrl+Shift+Return', run: inverseSync, enabled: hasPdf },
+    { id: 'sync.forward', title: 'Go to PDF Position', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
+    { id: 'sync.inverse', title: 'Go to Source Position', run: inverseSync, enabled: hasPdf },
 
-    { id: 'app.settings', title: 'Settings…', accel: 'CmdOrCtrl+,', run: openProjectSettings },
-  ];
+    { id: 'app.settings', title: 'Settings…', run: openProjectSettings },
+  ].map((d) => ({ accel: SHORTCUTS[d.id], ...d }));
 }
 
 // A new engine only means something once a build uses it, so switching

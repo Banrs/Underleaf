@@ -6,6 +6,12 @@
 
 import { bridge as ipc, isMac } from './bridge.js';
 
+// Every command's accelerator, one table the browser UI and the native apps
+// (their menus' shared chords) all read.
+import SHORTCUTS from './shortcuts.json' with { type: 'json' };
+
+export { SHORTCUTS };
+
 const registry = new Map();
 
 // The menu bar's shape. `id` entries resolve against the registry; `role`

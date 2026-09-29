@@ -189,8 +189,30 @@ async fn terminate_pid_tree(pid: u32) {
     let _ = tokio::process::Command::from(taskkill(pid)).status().await;
 }
 
-fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::process::Command {
-    let mut std_cmd = std::process::Command::new(program);
+/// `program` by its full path on `path_env`. With PATH set for the child, std
+/// spawns a bare name by fork and exec rather than posix_spawn, and a forked
+/// child of a multithreaded process (the Mac app, a debugger's) can crash
+/// before its exec. Not found, naming the program, when no PATH entry has it.
+#[cfg(unix)]
+fn program_path(program: &str, path_env: &str) -> std::io::Result<PathBuf> {
+    std::env::split_paths(path_env)
+        .map(|dir| dir.join(program))
+        .find(|path| path.is_file())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{program} is not on the PATH")))
+}
+
+/// Windows has no fork: CreateProcess searches the child's PATH itself.
+#[cfg(windows)]
+fn program_path(program: &str, _path_env: &str) -> std::io::Result<PathBuf> {
+    Ok(PathBuf::from(program))
+}
+
+fn base_command(
+    program: &str,
+    cwd: Option<&Path>,
+    path_env: &str,
+) -> std::io::Result<tokio::process::Command> {
+    let mut std_cmd = std::process::Command::new(program_path(program, path_env)?);
     // TeX Live's engines read texmf.cnf's variables from the environment
     // first. Unwrapped, the log keeps each message and path on one line;
     // wrapped at the default 79 columns, words and paths split mid-way.
@@ -213,7 +235,7 @@ fn base_command(program: &str, cwd: Option<&Path>, path_env: &str) -> tokio::pro
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    cmd
+    Ok(cmd)
 }
 
 /// Drain a child stream to EOF into `kept`, keeping at most `cap` bytes.
@@ -254,7 +276,9 @@ pub(crate) async fn run(
     timeout: Duration,
     path_env: &str,
 ) -> (i32, String) {
-    let mut cmd = base_command(program, cwd, path_env);
+    let Ok(mut cmd) = base_command(program, cwd, path_env) else {
+        return (-1, String::new());
+    };
     cmd.args(args);
     let Ok(mut child) = cmd.spawn() else {
         return (-1, String::new());
@@ -685,16 +709,19 @@ impl CompileManager {
             .collect();
 
         let mut cmd = base_command("latexmk", Some(root), &self.path(tex_dir));
-        cmd.args(&args);
+        if let Ok(cmd) = &mut cmd {
+            cmd.args(&args);
+        }
         let spawned = {
             // Hold the registry lock across synchronous spawn + PID publication.
             // A successor or Stop therefore sees either no child or the actual
             // PID, never an unkillable gap between the two.
             let mut running = self.running();
             match running.get_mut(root) {
-                Some(entry) if entry.token == registration.token && !entry.stopped => {
-                    Some(cmd.spawn().inspect(|child| entry.pid = child.id()))
-                }
+                Some(entry) if entry.token == registration.token && !entry.stopped => Some(
+                    cmd.and_then(|mut cmd| cmd.spawn())
+                        .inspect(|child| entry.pid = child.id()),
+                ),
                 _ => None,
             }
         };

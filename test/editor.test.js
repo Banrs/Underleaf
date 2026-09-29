@@ -5,7 +5,7 @@ import { CompletionContext } from '@codemirror/autocomplete';
 
 globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
-const { latexCompletions, mathPreviewField, headingLine } = await import('../web/src/editor.js');
+const { latexCompletions, mathPreviewField, headingLine, blockInsertion } = await import('../web/src/editor.js');
 
 const complete = (doc) => {
   const source = latexCompletions(() => ({ citations: ['knuth84'], labels: ['sec:intro'] }));
@@ -43,4 +43,15 @@ test('a heading changes level wherever the outline finds it', () => {
   assert.equal(as('  \\section*{A {b} c} % note', 'part'), '  \\part*{A {b} c} % note');
   assert.equal(as('  Plain words', 'section'), '  \\section{Plain words}');
   assert.deepEqual(headingLine('\\section[S]{T} x', 'paragraph'), { text: '\\paragraph[S]{T} x', cursor: '\\paragraph[S]{T'.length });
+});
+
+test('a block starts a line of its own, with no blank line before it', () => {
+  const block = '\\begin{figure}\n  $0\n\\end{figure}\n';
+  // At the start of a line, or after only indentation: straight in.
+  assert.deepEqual(blockInsertion('', block), { text: '\\begin{figure}\n  \n\\end{figure}\n', cursor: 17 });
+  assert.equal(blockInsertion('  ', block).text.startsWith('\\begin'), true);
+  // After text on the line: a new line first.
+  assert.deepEqual(blockInsertion('Some text', block), { text: '\n\\begin{figure}\n  \n\\end{figure}\n', cursor: 18 });
+  // Without "$0" the caret goes after the block.
+  assert.equal(blockInsertion('', 'x\n').cursor, 2);
 });

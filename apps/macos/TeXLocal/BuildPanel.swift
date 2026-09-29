@@ -5,18 +5,20 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log"
 }
 
-/// The build panel below the editors: the build's issues, or its whole log
-/// (web/src/logs.js `renderLogs`). The status bar's toggle and View › Hide
-/// Build Panel close it, as Xcode's debug area has no close button of its own.
-struct PanelView: View {
+/// The build panel below the editors: the build's issues, or its whole log.
+/// No close button: the status bar's toggle and View › Hide Build Panel close it.
+struct BuildPanel: View {
     @Bindable var project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneBar { header }
-            Divider()
+            HStack { header }
+                .padding(.vertical, BarMetrics.inset)
+                .paneBarControls()
+                .buttonStyle(.accessoryBar)
+                .labelStyle(.iconOnly)
             Group {
                 switch project.panelTab {
                 case .issues: issues
@@ -24,44 +26,41 @@ struct PanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Content, on the text's surface as the source is.
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
 
-    /// The tabs, then what acts on the one showing. The build's summary is
-    /// the status bar's, directly below, so it isn't repeated here.
+    /// The tabs, then what acts on the one showing; the build's summary is the
+    /// status bar's.
+    @ViewBuilder
     private var header: some View {
-        Group {
-            Picker("Build Panel", selection: $project.panelTab) {
-                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .layoutPriority(1)
-            Spacer(minLength: 0)
-            if project.panelTab == .issues {
-                // Only when there are warnings to hide.
-                if project.warningCount > 0 {
-                    Toggle(isOn: $showWarnings) {
-                        Label("Warnings", systemImage: "exclamationmark.triangle")
-                    }
-                    .toggleStyle(.button)
-                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-                }
-            } else {
-                Button("Copy Log", systemImage: "document.on.document") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
-                }
-                .help("Copy Log")
-                .disabled(project.result?.log.isEmpty ?? true)
-            }
-            SearchField(text: $filter, prompt: "Filter")
-                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
+        Picker("Build Panel", selection: $project.panelTab) {
+            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
         }
-        .labelStyle(.iconOnly)
+        .pickerStyle(.tabs)
+        .labelsHidden()
+        .fixedSize()
+            .layoutPriority(1)
+        Spacer(minLength: 0)
+        if project.panelTab == .issues {
+            if project.warningCount > 0 {
+                Toggle(isOn: $showWarnings) {
+                    Label("Warnings", systemImage: "exclamationmark.triangle")
+                }
+                .toggleStyle(.button)
+                .symbolVariant(showWarnings ? .fill : .none)
+                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
+            }
+        } else {
+            Button("Copy Log", systemImage: "document.on.document") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+            }
+            .help("Copy Log")
+            .disabled(project.result?.log.isEmpty ?? true)
+        }
+        SearchField(text: $filter, prompt: "Filter")
+            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
     private var items: [LogItem] {
@@ -73,8 +72,7 @@ struct PanelView: View {
         }
     }
 
-    /// Before any build, as after a clean one, just "No Issues": the status
-    /// bar below says whether a build has run, and Compile is the PDF bar's.
+    /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         if !items.isEmpty {
@@ -96,25 +94,22 @@ struct PanelView: View {
                     .joined(separator: "\n")
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
         } else {
-            ContentUnavailableView("No Log", systemImage: "doc.plaintext",
+            ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
         }
     }
 }
 
-/// The errors and warnings as a list with the system's selection: a click
-/// selects, a double-click or Return opens the line. The core names the file
-/// TeX had open; an issue it can't place has no location.
+/// The errors and warnings; a double-click or Return opens the line.
 private struct IssueList: View {
     let items: [LogItem]
     let project: ProjectModel
     @State private var selection: Int?
 
     var body: some View {
-        // By position: LaTeX repeats identical warnings, which would share
-        // an id built from their contents.
+        // By position: LaTeX repeats identical warnings.
         List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
-            IssueRow(item: item, location: location(of: item))
+            IssueRow(item: item)
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
@@ -131,33 +126,25 @@ private struct IssueList: View {
         } primaryAction: { rows in
             if let row = rows.first { open(items[row]) }
         }
-        // Edit › Copy (⌘C) copies the selected issue, as Xcode's issue
-        // navigator does.
+        // Edit › Copy copies the selected issue.
         .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
-        .onChange(of: items.count) { _, _ in selection = nil }
+        .onChange(of: items) { selection = nil }
     }
 
     private func open(_ item: LogItem) {
         if let file = item.file { Task { await project.open(file, line: item.line) } }
     }
-
-    /// Where a row opens, so every row that goes somewhere says where.
-    private func location(of item: LogItem) -> String? {
-        item.file.map { file in item.line.map { "\(file):\($0)" } ?? file }
-    }
 }
 
-/// An error or warning: its message, and where it is when the log says.
+/// An error or warning: its message, and its location when the log names one.
 private struct IssueRow: View {
     let item: LogItem
-    /// "file:line", or the file alone; nil when the log names none.
-    let location: String?
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
                 Text(item.message).lineLimit(3)
-                if let location {
+                if let location = location(line: ":") {
                     Text(location)
                         .font(Typography.secondary)
                         .foregroundStyle(.secondary)
@@ -165,16 +152,22 @@ private struct IssueRow: View {
             }
         } icon: {
             Image(systemName: item.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(item.isError ? .red : .orange)
+                .symbolRenderingMode(.multicolor)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message)")
+        // Spoken as words: "main.tex, line 12", not "main.tex colon 12".
+        .accessibilityValue(location(line: ", line ") ?? "")
+    }
+
+    /// The file, and its line after `line`; nil when the log names none.
+    private func location(line: String) -> String? {
+        item.file.map { file in item.line.map { "\(file)\(line)\($0)" } ?? file }
     }
 }
 
-/// The build log in AppKit's text view: native scrolling and selection, the
-/// system find bar (⌘F), and fast with the megabyte logs LaTeX writes, which
-/// a SwiftUI Text laid out whole on every change.
+/// The build log in NSTextView: a SwiftUI Text laid out LaTeX's megabyte logs
+/// whole on every change.
 private struct LogTextView: NSViewRepresentable {
     let text: String
     /// Unfiltered, the log opens at its end, where the error usually is.
@@ -189,12 +182,14 @@ private struct LogTextView: NSViewRepresentable {
         view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        // The bars' inset, so the log's text lines up with the header's controls.
-        // No line fragment padding either: its 5 pt put the text past them.
+        // Lines the text up with the header's controls; the fragment padding
+        // would put it past them.
         view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
         view.textContainer?.lineFragmentPadding = 0
-        view.font = Typography.secondaryMono
-        view.textColor = .labelColor
+        view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
+                                          weight: .regular)
+        // A text view has no title of its own for VoiceOver.
+        view.setAccessibilityLabel("Build Log")
         return scroll
     }
 
@@ -204,4 +199,20 @@ private struct LogTextView: NSViewRepresentable {
         view.string = text
         if scrollsToEnd { view.scrollToEndOfDocument(nil) } else { view.scrollToBeginningOfDocument(nil) }
     }
+}
+
+#Preview("Issues") {
+    List {
+        IssueRow(item: LogItem(type: "error", file: "chapters/intro.tex", line: 42, message: "Undefined control sequence."))
+        IssueRow(item: LogItem(type: "warning", file: "main.tex", line: nil, message: "Citation `knuth84' undefined."))
+        IssueRow(item: LogItem(type: "warning", file: nil, line: nil, message: "There were undefined references."))
+    }
+    .listStyle(.inset)
+    .frame(width: 480, height: 200)
+}
+
+#Preview("Build log") {
+    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).",
+                scrollsToEnd: false)
+        .frame(width: 480, height: 160)
 }

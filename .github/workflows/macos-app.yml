@@ -49,7 +49,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: macos-app-26.0
+          key: macos-app-27.0
       - run: npm ci
       - name: Build
         working-directory: apps/macos

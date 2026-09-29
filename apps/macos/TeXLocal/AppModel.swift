@@ -2,8 +2,23 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// What went wrong, as the HIG shapes an alert: a short, specific title
-/// (at most two lines) and the detail in the message.
+/// The app's user-defaults keys.
+enum DefaultsKey {
+    static let sidebarVisible = "sidebarVisible"
+    static let inspectorVisible = "inspectorVisible"
+    static let autoCompile = "autoCompile"
+    static let showWordCount = "showWordCount"
+    static let recentProjects = "recentProjects"
+    static let showPDF = "showPDF"
+    static let openProject = "openProject"
+    static let outlineCollapsed = "OutlineCollapsed"
+    static let outlineFolded = "OutlineFolded"
+    static let settingsTab = "settingsTab"
+    /// Pane sizes set by dragging a divider (`PaneSize`).
+    static let paneSizes = "PaneSizes"
+}
+
+/// An alert: a short, specific title and the detail in the message (HIG, Alerts).
 struct AppAlert: Sendable {
     let title: String
     let message: String
@@ -18,9 +33,8 @@ struct AppAlert: Sendable {
     }
 }
 
-/// A file Save PDF As… or Export Project as ZIP… writes where the save
-/// panel says (`fileExporter`): made once the panel is done, then copied
-/// there by the system.
+/// What Save PDF As… or Export Project as ZIP… writes (`fileExporter`),
+/// made only once the panel is done.
 struct ExportFile: Transferable {
     let name: String
     let type: UTType
@@ -35,67 +49,87 @@ struct ExportFile: Transferable {
 }
 
 /// The library: projects on disk, TeX availability, and the open project.
-@MainActor @Observable
+@Observable
 final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
     var project: ProjectModel?
     var alert: AppAlert?
 
-    // Requests from commands to the views that own the matching UI.
-    /// The new-project sheet, on the template it starts with.
+    // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
-    /// File › Open…'s panel (RootView), Add Files…' (WorkspaceView).
     var openingProject = false
     var addingFiles = false
-    /// Save PDF As… or Export Project as ZIP…, while its panel shows.
+    /// An item Finder or the Dock handed the app, while the window asks
+    /// before copying it in.
+    var pendingImport: URL?
     var exporting: ExportFile?
+    /// Bumped by Find in Project…, to focus the sidebar's search field.
     var searchFocusToken = 0
+    /// The token lets the same action be asked for twice in a row.
     var pdfRequest: (action: PDFAction, token: Int)?
     private var pdfToken = 0
 
-    // Settings the menus and models read, remembered across launches; held
-    // here so they are observed. Settings the views alone read are
-    // @AppStorage where they are used.
-    var sidebarVisible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
+    // Stored here rather than as @AppStorage so the menus and models observe them.
+    var sidebarVisible: Bool {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
     }
-    var autoCompile = UserDefaults.standard.object(forKey: "autoCompile") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(autoCompile, forKey: "autoCompile") }
+    /// The inspector: the project's settings and facts, the window's trailing column.
+    var inspectorVisible: Bool {
+        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
     }
-    /// The status bar's word and line counts (View › Show Word Count).
-    var showWordCount = UserDefaults.standard.object(forKey: "showWordCount") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(showWordCount, forKey: "showWordCount") }
+    var autoCompile: Bool {
+        didSet { UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile) }
     }
-    var showInspector = UserDefaults.standard.bool(forKey: "showInspector") {
-        didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
+    var showWordCount: Bool {
+        didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
-    /// File › Open Recent: the projects last opened, newest first, by id.
-    var recentProjects = UserDefaults.standard.stringArray(forKey: "recentProjects") ?? [] {
-        didSet { UserDefaults.standard.set(recentProjects, forKey: "recentProjects") }
+    /// The sidebar's File Outline folded to its header.
+    var outlineCollapsed: Bool {
+        didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
     }
-    /// How far the project window's rounded corners reach into its detail
-    /// (SwiftUI's `containerCornerInsets`), for the views inside the split's
-    /// panes, which SwiftUI gives none: each pane is hosted on its own.
-    var windowCorners = RectangleCornerInsets()
+    /// Set by the window: the menus act on the project only while its window
+    /// is key, not behind Settings or a sheet.
+    var mainWindowIsKey = false
+    /// The project the menus act on.
+    var commandProject: ProjectModel? { mainWindowIsKey ? project : nil }
+    /// Offered by the list with the keyboard (`offersActions`).
+    var chosenItem: ItemActions?
+    /// Newest first, by id.
+    var recentProjects: [String] {
+        didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
+    }
+    /// The recent projects still in the library. Filtered, not pruned on refresh:
+    /// a library that lists empty (another TEXLOCAL_DATA, a missing folder) would wipe them.
+    var recents: [ProjectInfo] {
+        recentProjects.compactMap { id in projects.first { $0.id == id } }
+    }
 
-    /// ⌘N on the home screen, or a template's card.
+    init() {
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
+                                     DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
+        sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
+        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
+        autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
+        showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
+        recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
+        launchProject = defaults.string(forKey: DefaultsKey.openProject)
+    }
+
     func newProject(_ template: String = "article") {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
 
-    /// Ask the PDF pane for something, showing the pane so it is done now
-    /// rather than whenever the pane next appears. Find in PDF is a bar
-    /// over the pages that leaves the build panel open.
+    /// Shows the PDF column too, so the action happens now rather than when
+    /// the column next appears. The workspace takes each request once.
     func requestPDF(_ action: PDFAction) {
         project?.showPDF = true
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
-
-    /// One editor for the app's lifetime, handed from project to project.
-    let editor = EditorBridge()
 
     private let core = Core.shared
 
@@ -109,16 +143,16 @@ final class AppModel {
         tex = try? await core.call("status", as: TexStatus.self)
     }
 
-    /// While TeX is missing, look again now and then.
+    /// Polls while TeX is missing, so installing it needs no relaunch.
     func watchForTeX() async {
-        while !(tex?.available ?? true), !Task.isCancelled {
+        while tex?.available == false, !Task.isCancelled {
+            // Each look runs `status`, which searches the disk for latexmk.
             try? await Task.sleep(for: .seconds(10))
             tex = try? await core.call("status", as: TexStatus.self)
         }
     }
 
-    /// Settings' TeX folder: one the user chose, or nil to find TeX
-    /// automatically. The core refuses a folder without latexmk.
+    /// Nil finds TeX automatically. The core refuses a folder without latexmk.
     func setTeXFolder(_ path: String?) async throws {
         tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
@@ -133,18 +167,17 @@ final class AppModel {
         }
     }
 
-    /// What File › Open… opens: a folder, a .tex file or a .zip.
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
 
-    /// Whether Open… takes an item dropped or handed to the app.
     static func canOpen(_ url: URL) -> Bool {
-        url.isFileURL && (url.hasDirectoryPath || ["tex", "zip"].contains(url.pathExtension.lowercased()))
+        guard url.isFileURL else { return false }
+        if url.hasDirectoryPath { return true }
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// File › Open…: a folder, a .tex file or a .zip from anywhere, made a
-    /// project in the library and opened. The original stays where it is.
-    /// The core copies it in (off the main actor, as every core call runs)
-    /// and removes a project it couldn't finish, so a bad zip leaves none.
+    /// Copies a folder, .tex file or .zip into the library and opens it. The
+    /// core removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL) async {
         do {
             let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
@@ -165,16 +198,17 @@ final class AppModel {
         await refresh()
     }
 
+    /// Without asking, as in Finder: the Trash gives the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
         do {
             try await core.perform("delete_project", ["id": project.id])
+            recentProjects.removeAll { $0 == project.id }
         } catch {
             alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
         }
         await refresh()
     }
 
-    /// Select the project's folder in Finder.
     func revealProject(_ project: ProjectInfo) {
         Task {
             guard let root = try? await core.call("project_root", ["id": project.id], as: String.self) else { return }
@@ -182,25 +216,64 @@ final class AppModel {
         }
     }
 
-    /// Open a project; reopening at launch, where it was left.
+    /// Bumped by each `open` and `close`, so only the latest carries on: the
+    /// restored project and an Open With import can overlap at launch.
+    @ObservationIgnored private var openGeneration = 0
+    @ObservationIgnored private var opensUnderWay = 0
+    /// True while a project loads, before `project` may name it.
+    var isOpening: Bool { opensUnderWay > 0 }
+
+    /// `--args -openProject <id>`: the argument domain holds it for this run only.
+    @ObservationIgnored private var launchProject: String?
+
+    func takeLaunchProject() -> String? {
+        defer { launchProject = nil }
+        return launchProject
+    }
+
+    /// Saves and leaves the open project first. `project` goes straight from
+    /// one to the next, never nil between, so the window keeps the workspace.
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
-        guard project?.id != id, await close() else { return }
-        recentProjects = [id] + recentProjects.filter { $0 != id }.prefix(9)
-        let model = ProjectModel(id: id, editor: editor, app: self)
+        openGeneration += 1
+        let generation = openGeneration
+        guard project?.id != id else { return }
+        opensUnderWay += 1
+        defer { opensUnderWay -= 1 }
+        guard await leave(generation) else { return }
+        dropRequests()
+        recentProjects = Array(([id] + recentProjects.filter { $0 != id })
+            .prefix(NSDocumentController.shared.maximumRecentDocumentCount))
+        let model = ProjectModel(id: id, app: self)
         project = model
         await model.load(restoring: saved?.project == id ? saved : nil)
     }
 
-    /// Save, then leave the project. Returns false — and stays — when the save
-    /// fails, rather than dropping the only copy of the edits.
+    /// False, staying, when the save fails: the editor holds the only copy.
     @discardableResult
     func close() async -> Bool {
-        guard let project else { return true }
-        guard await project.flush() else { return false }
-        project.close()
-        self.project = nil
-        pdfRequest = nil
+        openGeneration += 1
+        guard project != nil else { return true }
+        // False too when an open took over while this saved: its project stays.
+        guard await leave(openGeneration) else { return false }
+        project = nil
+        dropRequests()
         await refresh()
+        return true
+    }
+
+    /// The project's own requests, which the next project mustn't present.
+    private func dropRequests() {
+        pdfRequest = nil
+        prompt = nil
+        addingFiles = false
+        exporting = nil
+    }
+
+    /// Unless a later open or close took over while this saved; that one leaves it.
+    private func leave(_ generation: Int) async -> Bool {
+        guard let project else { return true }
+        guard await project.flush(), generation == openGeneration else { return false }
+        project.close()
         return true
     }
 }

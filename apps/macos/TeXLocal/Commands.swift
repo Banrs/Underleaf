@@ -1,15 +1,12 @@
 import AppKit
-import PDFKit
 import SwiftUI
-import UniformTypeIdentifiers
-import WebKit
 
-/// The app's commands, with the browser version's ids and accelerators
-/// (web/src/workspace.js `commandDefs`). The accelerator string is the one
-/// source for both the menu's key equivalent and the chords the embedded
-/// editor hands back to the menu.
+/// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
+/// and its accelerators. One accelerator string drives both the menu's key
+/// equivalent and the chords the editor page hands back.
 enum MenuCommand: String, CaseIterable {
     case projectNew = "project.new"
+    case projectOpen = "project.open"
     case projectClose = "project.close"
     case projectExport = "project.export"
     case projectSearch = "project.search"
@@ -18,9 +15,12 @@ enum MenuCommand: String, CaseIterable {
     case fileUpload = "file.upload"
     case fileSave = "file.save"
     case pdfSave = "pdf.save"
+    case filePageSetup = "file.pageSetup"
+    case filePrint = "file.print"
     case editUndo = "edit.undo"
     case editRedo = "edit.redo"
     case editFind = "edit.find"
+    case editFindAndReplace = "edit.findAndReplace"
     case editFindNext = "edit.findNext"
     case editFindPrevious = "edit.findPrevious"
     case editBold = "edit.bold"
@@ -29,14 +29,21 @@ enum MenuCommand: String, CaseIterable {
     case editComment = "edit.comment"
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
+    /// Mac only: the web's viewer has no page field to go to.
+    case pdfGotoPage = "pdf.gotoPage"
     case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
+    /// The web's id, which predates the name.
+    case viewToggleInspector = "view.toggleInspector"
     case viewToggleLogs = "view.toggleLogs"
+    case viewToggleWordCount = "view.toggleWordCount"
     case viewZoomIn = "view.zoomIn"
     case viewZoomOut = "view.zoomOut"
+    case viewActualSize = "view.actualSize"
     case viewFitWidth = "view.fitWidth"
     case viewFitHeight = "view.fitHeight"
     case compileRun = "compile.run"
+    case compileStop = "compile.stop"
     case compileToggleAuto = "compile.toggleAuto"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
@@ -44,6 +51,7 @@ enum MenuCommand: String, CaseIterable {
     var title: String {
         switch self {
         case .projectNew: "New Project…"
+        case .projectOpen: "Open…"
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
         case .projectSearch: "Find in Project…"
@@ -52,9 +60,12 @@ enum MenuCommand: String, CaseIterable {
         case .fileUpload: "Add Files…"
         case .fileSave: "Save"
         case .pdfSave: "Save PDF As…"
+        case .filePageSetup: "Page Setup…"
+        case .filePrint: "Print…"
         case .editUndo: "Undo"
         case .editRedo: "Redo"
         case .editFind: "Find…"
+        case .editFindAndReplace: "Find and Replace…"
         case .editFindNext: "Find Next"
         case .editFindPrevious: "Find Previous"
         case .editBold: "Bold"
@@ -63,73 +74,61 @@ enum MenuCommand: String, CaseIterable {
         case .editComment: "Comment Selection"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
+        case .pdfGotoPage: "Go to Page…"
         case .viewToggleSidebar: "Hide Sidebar"
         case .viewTogglePdf: "Hide PDF"
+        case .viewToggleInspector: "Hide Inspector"
         case .viewToggleLogs: "Build Panel"
+        case .viewToggleWordCount: "Hide Word Count"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
+        case .viewActualSize: "Actual Size"
         case .viewFitWidth: "Fit Width"
         case .viewFitHeight: "Fit Height"
         case .compileRun: "Compile"
+        case .compileStop: "Stop"
         case .compileToggleAuto: "Compile Automatically"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
         }
     }
 
-    var accel: String? {
-        switch self {
-        case .projectNew: "CmdOrCtrl+Shift+N"
-        case .projectSearch: "CmdOrCtrl+Shift+F"
-        case .fileNew: "CmdOrCtrl+N"
-        case .fileNewFolder: "CmdOrCtrl+Shift+Alt+N"
-        case .fileSave: "CmdOrCtrl+S"
-        case .pdfSave: "CmdOrCtrl+Shift+S"
-        case .editUndo: "CmdOrCtrl+Z"
-        case .editRedo: "CmdOrCtrl+Shift+Z"
-        case .editFind: "CmdOrCtrl+F"
-        case .editFindNext: "CmdOrCtrl+G"
-        case .editFindPrevious: "CmdOrCtrl+Shift+G"
-        case .editBold: "CmdOrCtrl+B"
-        case .editItalic: "CmdOrCtrl+I"
-        case .editMath: "CmdOrCtrl+Shift+M"
-        case .editComment: "CmdOrCtrl+/"
-        case .editGotoLine: "CmdOrCtrl+L"
-        case .pdfFind: "CmdOrCtrl+Alt+F"
-        case .viewToggleSidebar: "CmdOrCtrl+\\"
-        case .viewTogglePdf: "CmdOrCtrl+Shift+\\"
-        case .viewToggleLogs: "CmdOrCtrl+Shift+L"
-        case .viewZoomIn: "CmdOrCtrl+Plus"
-        case .viewZoomOut: "CmdOrCtrl+Minus"
-        case .viewFitWidth: "CmdOrCtrl+0"
-        case .viewFitHeight: "CmdOrCtrl+Alt+0"
-        case .compileRun: "CmdOrCtrl+Return"
-        case .syncForward: "Ctrl+Return"
-        case .syncInverse: "Ctrl+Shift+Return"
-        default: nil
-        }
-    }
+    /// The shared accelerator (web/src/shortcuts.json, which the build copies into the app).
+    var accel: String? { Self.sharedAccels[rawValue] }
 
-    /// The chord on the Mac: Apple's own where the shared table's differs,
-    /// as Windows and the browser keep theirs. ⌃⌘S shows and hides the
-    /// sidebar (HIG, The menu bar: View menu); ⌘0 is Actual Size, as in
-    /// Preview, Safari and Pages, so fitting takes Preview's Zoom to Fit
-    /// chord, ⌘9 (⌥⌘9 for the height, as ⌥ paired them before). ⌥⌘F is
-    /// Find and Replace…, as in TextEdit and Xcode, so Find in PDF… has no
-    /// chord: ⌘F finds in the PDF when it has the keyboard.
+    private static let sharedAccels: [String: String] = {
+        guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json", subdirectory: "web"),
+              let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }()
+
+    /// Departs from the shared table where the HIG reserves its key (HIG, Keyboards); Sync
+    /// and Inline Math leave the table's Control and ⇧⌘M (Minimize plus Shift) chords.
     var macAccel: String? {
         switch self {
+        case .projectOpen: "CmdOrCtrl+O"
+        case .filePageSetup: "CmdOrCtrl+Shift+P"
+        case .filePrint: "CmdOrCtrl+P"
+        case .editFindAndReplace: "CmdOrCtrl+Alt+F"
         case .viewToggleSidebar: "Ctrl+CmdOrCtrl+S"
+        case .viewToggleInspector: "CmdOrCtrl+Alt+I"
+        case .viewActualSize: "CmdOrCtrl+0"
         case .viewFitWidth: "CmdOrCtrl+9"
         case .viewFitHeight: "CmdOrCtrl+Alt+9"
+        case .compileStop: "CmdOrCtrl+."
+        case .projectClose: "CmdOrCtrl+Shift+W"
+        // Pages' Insert › Equation.
+        case .editMath: "CmdOrCtrl+Alt+E"
+        // As the Mac's VS Code LaTeX extension; the PDF answers ⌘-click for the other way.
+        case .syncForward: "CmdOrCtrl+Alt+J"
+        case .syncInverse: nil
+        // ⌥⌘G is Go to Page in the Mac's PDF readers; ⌘L is Go to Line.
+        case .pdfGotoPage: "CmdOrCtrl+Alt+G"
+        // ⌘F finds in the PDF when it has the keyboard.
         case .pdfFind: nil
         default: accel
         }
     }
-
-    /// Edit › Find › Find and Replace…: the Mac's own, so not in the shared
-    /// table, which has one Find.
-    static let findAndReplace = (id: "edit.findAndReplace", accel: "CmdOrCtrl+Alt+F")
 
     var shortcut: KeyboardShortcut? {
         macAccel.flatMap(Self.shortcut(for:))
@@ -161,321 +160,254 @@ enum MenuCommand: String, CaseIterable {
         return KeyboardShortcut(equivalent, modifiers: modifiers)
     }
 
-    /// Chords the editor page gives back to the menu. Undo, redo, find and
-    /// comment stay with the editor, which implements them itself.
+    /// Chords the editor page gives back to the menu, so none is lost to the page;
+    /// it handles `pageKeeps` itself.
     static var editorHostKeys: [(id: String, accel: String)] {
-        let editorOwned: Set<MenuCommand> = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
+        let pageKeeps: [MenuCommand] = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
         return allCases.compactMap { c in
-            guard !editorOwned.contains(c), let accel = c.macAccel else { return nil }
+            guard !pageKeeps.contains(c), let accel = c.macAccel else { return nil }
             return (c.rawValue, accel)
-        } + [findAndReplace]
+        }
     }
 }
 
 /// A sheet the workspace asks for a value with.
-enum Prompt: String, Identifiable {
-    case newFile, newFolder, gotoLine
+enum Prompt: Identifiable, Hashable {
+    /// In the folder given, or the open file's.
+    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
 
-    var id: String { rawValue }
+    var id: Self { self }
 }
 
+/// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
 }
 
 extension AppModel {
-    func isEnabled(_ command: MenuCommand) -> Bool {
+    /// `project` is nil on the projects screen or while Settings is in front.
+    func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
-        // Undo and redo also serve text fields outside the editor.
-        case .projectNew, .editUndo, .editRedo, .compileToggleAuto: true
-        case .editFind: project.map { $0.editsText || $0.pdfVersion > 0 } ?? false
-        case .fileSave, .editFindNext, .editFindPrevious, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .projectNew, .projectOpen, .filePageSetup: true
+        case .fileSave, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
-        case .pdfSave, .pdfFind, .viewZoomIn, .viewZoomOut, .viewFitWidth, .viewFitHeight, .syncInverse:
-            project?.pdfVersion ?? 0 > 0
-        case .syncForward: (project?.pdfVersion ?? 0) > 0 && project?.editsText == true
+        case .compileStop: project?.compiling == true
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight,
+             .syncInverse:
+            project?.hasPDF == true
+        case .syncForward: project.map { $0.hasPDF && $0.editsText } ?? false
         default: project != nil
         }
     }
 
-    /// Titles flip like native View-menu items, as the web's do.
-    func title(_ command: MenuCommand) -> String {
+    /// View-menu titles say what the item will do (HIG, The menu bar).
+    func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         switch command {
         case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
+        case .viewToggleInspector: inspectorVisible ? "Hide Inspector" : "Show Inspector"
         case .viewToggleLogs: project?.showLogs == true ? "Hide Build Panel" : "Show Build Panel"
+        case .viewToggleWordCount: showWordCount ? "Hide Word Count" : "Show Word Count"
         default: command.title
         }
     }
 
-    /// On the home screen, with no files to make, ⌘N makes a project, as the
-    /// web's home screen does (home.js).
-    func shortcut(_ command: MenuCommand) -> KeyboardShortcut? {
+    /// With no project there's no file to make, so ⌘N makes a project (home.js).
+    func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
         switch (command, project) {
-        case (.projectNew, nil): MenuCommand.shortcut(for: "CmdOrCtrl+N")
+        case (.projectNew, nil): MenuCommand.fileNew.shortcut
         case (.fileNew, nil): nil
         default: command.shortcut
         }
     }
 
-    func perform(_ command: MenuCommand) {
-        guard isEnabled(command) else { return }
+    func perform(_ command: MenuCommand, on project: ProjectModel?) {
+        guard isEnabled(command, on: project) else { return }
         switch command {
         case .projectNew: newProject()
+        case .projectOpen: openingProject = true
         case .projectClose: Task { await close() }
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
         case .projectSearch:
             sidebarVisible = true
             searchFocusToken += 1
-        case .fileNew: prompt = .newFile
-        case .fileNewFolder: prompt = .newFolder
+        case .fileNew: prompt = .newFile()
+        case .fileNewFolder: prompt = .newFolder()
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
         case .pdfSave:
             if let project, let url = project.pdfURL {
                 exporting = ExportFile(name: "\(project.id).pdf", type: .pdf) { url }
             }
-        case .editUndo: undo(redo: false)
-        case .editRedo: undo(redo: true)
-        case .editFind:
-            // Find goes to the pane with the keyboard, as Apple's Find goes
-            // to the first responder; the editor takes its own ⌘F first.
-            if project?.editsText == true, !pdfHasFocus { project?.format("find") } else { requestPDF(.find) }
-        case .editFindNext: findAgain(1)
-        case .editFindPrevious: findAgain(-1)
-        case .editBold: project?.format("bold")
-        case .editItalic: project?.format("italic")
-        case .editMath: project?.format("math")
-        case .editComment: project?.format("comment")
+        // AppKit: SwiftUI has no page setup panel.
+        case .filePageSetup: NSApp.runPageLayout(nil)
+        // The PDF, not the first responder (usually the editor's web view).
+        case .filePrint: requestPDF(.print)
+        case .editBold: project?.format(.bold)
+        case .editItalic: project?.format(.italic)
+        case .editMath: project?.format(.math)
+        case .editComment: project?.format(.comment)
         case .editGotoLine: prompt = .gotoLine
+        case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
         case .viewTogglePdf: project?.showPDF.toggle()
+        case .viewToggleInspector: inspectorVisible.toggle()
         case .viewToggleLogs: project?.showLogs.toggle()
+        case .viewToggleWordCount: showWordCount.toggle()
         case .viewZoomIn: requestPDF(.zoomIn)
         case .viewZoomOut: requestPDF(.zoomOut)
+        case .viewActualSize: requestPDF(.actualSize)
         case .viewFitWidth: requestPDF(.fitWidth)
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project?.compile() }
-        case .compileToggleAuto: autoCompile.toggle()
+        case .compileStop: project?.stopCompile()
+        // A Toggle bound to `autoCompile` in the menu. Undo, Redo and the Find items
+        // are the system's, which reach whatever has the keyboard (the editor's web
+        // view, `MainWindowController.performFindPanelAction`); the page keeps their chords.
+        case .compileToggleAuto, .editUndo, .editRedo, .editFind, .editFindAndReplace, .editFindNext, .editFindPrevious:
+            break
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }
-    }
-
-    /// Whether the keyboard is in the PDF pane: its pages or its find bar.
-    /// The nearest view around the first responder that holds either
-    /// pane's content (each pane is hosted on its own) says which.
-    private var pdfHasFocus: Bool {
-        guard let view = NSApp.keyWindow?.firstResponder as? NSView else { return false }
-        func holds<T: NSView>(_ type: T.Type, _ view: NSView) -> Bool {
-            view is T || view.subviews.contains { holds(type, $0) }
-        }
-        for ancestor in sequence(first: view, next: \.superview) {
-            let pdf = holds(PDFView.self, ancestor), web = holds(WKWebView.self, ancestor)
-            if pdf || web { return pdf && !web }
-        }
-        return false
-    }
-
-    /// The first responder when it is a native text field's editor (the find
-    /// field, a rename, the project search, the build log), not the editor's.
-    private var nativeText: NSText? {
-        guard let text = NSApp.keyWindow?.firstResponder as? NSText,
-              !sequence(first: text as NSView, next: \.superview).contains(where: { $0 is WKWebView }) else { return nil }
-        return text
-    }
-
-    /// A native text field keeps its own undo. Anything else — the editor, or
-    /// a click on a toolbar button, which can take first responder from
-    /// the web view — goes to CodeMirror's history: the standard undo: would
-    /// reach WebKit's undo manager, which never sees CodeMirror's own changes
-    /// (formatting, completions) and reverted half of an insertion.
-    private func undo(redo: Bool) {
-        guard nativeText == nil, project?.editsText == true else { sendUndo(redo: redo); return }
-        Task {
-            // The page declines while one of its own fields, such as the
-            // find panel's, has focus; that field's native undo takes it.
-            if await editor.command(redo ? "redo" : "undo") {
-                editor.focus()
-            } else {
-                sendUndo(redo: redo)
-            }
-        }
-    }
-
-    /// ⌘G steps the search being typed in. Other fields don't take the chord,
-    /// so the menu gets it: a native one steps its own matches (Find in PDF,
-    /// the build log's find bar) or leaves it be, rather than moving the
-    /// editor's search behind it.
-    private func findAgain(_ delta: Int) {
-        if let text = nativeText {
-            let owner = text.delegate as? NSView ?? text
-            if let field = (owner as? NSTextField)?.delegate as? SearchField.Coordinator {
-                field.field.step?(delta)
-            } else if let log = findBarText(around: owner) {
-                let sender = NSMenuItem()
-                sender.tag = (delta > 0 ? NSTextFinder.Action.nextMatch : .previousMatch).rawValue
-                log.performTextFinderAction(sender)
-            }
-            return
-        }
-        project?.format(delta > 0 ? "findNext" : "findPrevious")
-    }
-
-    /// The text view whose find bar a view is part of, or is: the log's, as
-    /// its find bar sits in its scroll view.
-    private func findBarText(around view: NSView) -> NSTextView? {
-        sequence(first: view, next: \.superview).lazy
-            .compactMap { ($0 as? NSScrollView)?.documentView as? NSTextView }
-            .first { $0.usesFindBar }
-    }
-
-    private func sendUndo(redo: Bool) {
-        _ = NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
     }
 }
 
 struct AppCommands: Commands {
     let app: AppModel
-    @AppStorage(NavigatorView.outlineCollapsedKey) private var outlineCollapsed = false
+    /// Nil on the projects screen, and while Settings or a sheet is key, which
+    /// turns the project items off.
+    private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
-        Button(app.title(command)) { app.perform(command) }
-            .keyboardShortcut(app.shortcut(command))
-            .disabled(!app.isEnabled(command))
-    }
-
-    private func send(_ action: Selector) {
-        NSApp.sendAction(action, to: nil, from: nil)
+        Button(app.title(command, on: project)) { app.perform(command, on: project) }
+        // ⌘N follows whether a project is open, not which window is key.
+        .keyboardShortcut(app.shortcut(command, on: app.project))
+        .disabled(!app.isEnabled(command, on: project))
     }
 
     var body: some Commands {
-        CommandGroup(replacing: .undoRedo) {
-            item(.editUndo)
-            item(.editRedo)
-        }
         CommandGroup(replacing: .newItem) {
             item(.projectNew)
-            // Mac only: the browser can't read a folder from disk.
-            Button("Open…") { app.openingProject = true }
-                .keyboardShortcut("o")
+            item(.projectOpen)
             Menu("Open Recent") {
-                ForEach(app.recentProjects.compactMap { id in app.projects.first { $0.id == id } }) { project in
-                    Button(project.name) { Task { await app.open(project.id) } }
+                ForEach(app.recents) { recent in
+                    Button {
+                        Task { await app.open(recent.id) }
+                    } label: {
+                        Label(recent.name, systemImage: "text.document")
+                    }
+                    // An object rather than an action, so it keeps its icon
+                    // (HIG, Menus); macOS 27 hides menu images otherwise.
+                    .labelStyle(.titleAndIcon)
                 }
                 Divider()
                 Button("Clear Menu") { app.recentProjects = [] }
-                    .disabled(app.recentProjects.isEmpty)
+                    .disabled(app.recents.isEmpty)
             }
             Divider()
             item(.fileNew)
             item(.fileNewFolder)
             item(.fileUpload)
+            Divider()
+            // Not MenuCommands: the web has no command ids for them. They act on the
+            // chosen item of the list with the keyboard.
+            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
+            Button("Rename") { chosen?.rename() }
+                .disabled(chosen == nil)
+            Button("Show in Finder") { chosen?.showInFinder() }
+                .disabled(chosen == nil)
+            Divider()
+            Button("Move to Trash") { chosen?.moveToTrash() }
+                .keyboardShortcut(.delete)
+                .disabled(chosen == nil)
         }
-        // After the system's Close, as Apple's File menus order them.
+        // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
             item(.fileSave)
             Divider()
             item(.projectClose)
             Divider()
-            // What makes a copy, then Share on its own, as Mac File menus
-            // group them.
+            // Always shown, disabled while there's no PDF.
             item(.pdfSave)
             item(.projectExport)
             Divider()
-            if let project = app.project, let url = project.pdfURL, project.pdfVersion > 0 {
-                ShareLink("Share PDF", item: url)
+            // The system's Share… item. Not a MenuCommand: the web has no command id for it.
+            if let project, project.hasPDF, let url = project.pdfURL {
+                ShareLink(item: url)
             } else {
-                Button("Share PDF") {}.disabled(true)
+                Button("Share…") {}.disabled(true)
             }
         }
-        // The standard Print would go to the first responder, usually the
-        // editor's web view, and print the page rather than the PDF.
         CommandGroup(replacing: .printItem) {
-            Button("Page Setup…") { NSApp.runPageLayout(nil) }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
-            Button("Print…") { app.requestPDF(.print) }
-                .keyboardShortcut("p")
-                .disabled(app.project?.pdfVersion ?? 0 == 0)
+            item(.filePageSetup)
+            item(.filePrint)
         }
-        CommandGroup(replacing: .textEditing) {
-            // TextEdit's and Xcode's Find menu, then the searches of their own.
-            Menu("Find") {
-                item(.editFind)
-                Button("Find and Replace…") { app.project?.findAndReplace() }
-                    .keyboardShortcut(MenuCommand.shortcut(for: MenuCommand.findAndReplace.accel))
-                    .disabled(app.project?.editsText != true)
-                item(.editFindNext)
-                item(.editFindPrevious)
-                Divider()
-                item(.projectSearch)
-                item(.pdfFind)
-            }
+        // The system's own, answered by whatever has the keyboard; a
+        // replacement group loses the spelling and substitution checkmarks.
+        TextEditingCommands()
+        CommandGroup(before: .textEditing) {
             item(.editGotoLine)
-            // Replacing the group dropped the standard spelling items, which
-            // the editor's native WebKit spell checking answers to. They go
-            // down the responder chain, as AppKit's own do.
-            Menu("Spelling and Grammar") {
-                Button("Show Spelling and Grammar") { send(#selector(NSText.showGuessPanel(_:))) }
-                    .keyboardShortcut(":", modifiers: .command)
-                Button("Check Document Now") { send(#selector(NSText.checkSpelling(_:))) }
-                    .keyboardShortcut(";", modifiers: .command)
-            }
+            item(.pdfGotoPage)
+            Divider()
+            item(.projectSearch)
+            item(.pdfFind)
         }
-        // Where Mac text apps keep styling (TextEdit, Pages): the source
-        // bar's formatting group, and what its Insert menu holds.
         CommandGroup(replacing: .textFormatting) {
             item(.editBold)
             item(.editItalic)
             Divider()
-            // Inline Math beside Display Math, after the line's level.
-            InsertMenuItems(project: app.project, inlineMath: item(.editMath))
-                .disabled(app.project?.isLaTeX != true)
+            Menu("Section Level") { SectionLevelItems(project: project) }
+                .disabled(project?.isLaTeX != true)
             Divider()
             item(.editComment)
         }
-        // The panes left to right, then the build panel below them.
+        // The columns left to right, then the build panel below them.
         CommandGroup(after: .sidebar) {
             item(.viewToggleSidebar)
-            // The sidebar's outline section, folded from its header too; here
-            // it is a keyboard's and VoiceOver's way to it.
-            Button(outlineCollapsed ? "Show File Outline" : "Hide File Outline") { outlineCollapsed.toggle() }
-                .disabled(app.project?.isLaTeX != true || !app.sidebarVisible)
+            // Not a MenuCommand: the web has no command id for it. The keyboard's
+            // and VoiceOver's way to the sidebar header's fold.
+            Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
+                .disabled(project?.isLaTeX != true || !app.sidebarVisible)
             item(.viewTogglePdf)
-            Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .disabled(app.project == nil)
+            item(.viewToggleInspector)
             item(.viewToggleLogs)
-            Button(app.showWordCount ? "Hide Word Count" : "Show Word Count") { app.showWordCount.toggle() }
-                .disabled(app.project == nil)
+            item(.viewToggleWordCount)
             Divider()
             item(.viewZoomIn)
             item(.viewZoomOut)
-            Button("Actual Size") { app.requestPDF(.actualSize) }
-                .keyboardShortcut("0")
-                .disabled(!app.isEnabled(.viewZoomIn))
+            item(.viewActualSize)
             item(.viewFitWidth)
             item(.viewFitHeight)
             Divider()
         }
+        // The app's own menus go between View and Window (HIG, The menu bar).
+        CommandMenu("Insert") {
+            InsertMenuItems(project: project, inlineMath: item(.editMath))
+                .disabled(project?.isLaTeX != true)
+        }
         CommandMenu("Compile") {
             item(.compileRun)
-            Button("Stop") { app.project?.stopCompile() }
-                .keyboardShortcut(".", modifiers: .command)
-                .disabled(app.project?.compiling != true)
+            item(.compileStop)
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
-            Picker("Engine", selection: Binding(
-                get: { app.project?.settings?.engine ?? "pdflatex" },
-                set: { engine in
-                    if let project = app.project { Task { await project.setEngine(engine) } }
+            // Only with a project's settings, and their engine always a choice: a
+            // selection no tag matches, nil included, is a SwiftUI fault.
+            if let project, let engine = project.settings?.engine {
+                Picker("Engine", selection: Binding(get: { engine }, set: { new in Task { await project.setEngine(new) } })) {
+                    ForEach(texEngines, id: \.0) { id, title in Text(title).tag(id) }
+                    if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
                 }
-            )) {
-                ForEach(texEngines, id: \.0) { Text($0.1).tag($0.0) }
+            } else {
+                Menu("Engine") {}
+                    .disabled(true)
             }
-            .disabled(app.project == nil)
+            // The open file; the files' context menu has it for any .tex file.
+            Button("Set as Main File") {
+                if let project, let path = project.openPath { Task { await project.setMainFile(path) } }
+            }
+            .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
             Divider()
             item(.syncForward)
             item(.syncInverse)

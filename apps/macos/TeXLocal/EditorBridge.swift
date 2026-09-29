@@ -1,198 +1,304 @@
 import AppKit
-import Observation
+import os
+import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
-/// The CodeMirror editor (web/embed/editor.html) in a SwiftUI `WebPage`:
-/// content in native chrome. Host → page calls go through
-/// `window.texlocal`; the page posts `changed` / `cursor` / `command`
-/// messages back.
-@MainActor
-@Observable
-final class EditorBridge: NSObject, WKScriptMessageHandler {
-    static let scheme = "texlocal-app"
+/// A file dragged over the source opens when dropped, as in other editors,
+/// rather than reaching CodeMirror, which pastes a text file's contents in.
+final class EditorWebView: WKWebView {
+    /// What dropping the file does, or nil to refuse it.
+    var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
+    /// Whether CodeMirror's history has a step back and a step forward, which
+    /// Edit › Undo and Redo (the system's) take here.
+    var history = (undo: false, redo: false)
+    var step: (_ redo: Bool) -> Void = { _ in }
 
-    /// The page, shown by `EditorView`'s `WebView`; it outlives any one
-    /// view, moving between projects.
-    let page: WebPage
-    /// Bumped to ask the editor's view to take keyboard focus.
-    private(set) var focusRequest = 0
-    @ObservationIgnored var onChanged: () -> Void = {}
-    @ObservationIgnored var onCursor: (Int) -> Void = { _ in }
-    /// The line at the top of the view, as it scrolls.
-    @ObservationIgnored var onScroll: (Int) -> Void = { _ in }
-    @ObservationIgnored var onCommand: (String) -> Void = { _ in }
-    /// The page opened its search (⌘F, or Find Next with nothing to find),
-    /// with the query it starts from: the find bar is the host's.
-    @ObservationIgnored var onFind: (FindQuery) -> Void = { _ in }
-    /// The page closed its search (Escape in the text).
-    @ObservationIgnored var onFindClosed: () -> Void = {}
-    /// Where the selection is among the search's matches, as it changes.
-    @ObservationIgnored var onFindMatches: (FindMatches) -> Void = { _ in }
-    /// The page's web process died, taking the editor's text with it.
-    @ObservationIgnored var onCrash: () -> Void = {}
-    /// The page is back, empty, after its web process died.
-    @ObservationIgnored var onRestart: () -> Void = {}
-    /// How many times the web process has died.
-    @ObservationIgnored private(set) var crashes = 0
+    @objc func undo(_ sender: Any?) { step(false) }
 
-    @ObservationIgnored private var ready = false
-    @ObservationIgnored private var restarting = false
-    @ObservationIgnored private var whenReady: [CheckedContinuation<Void, Never>] = []
-    /// The latest host keys, symbols and appearance, sent again to a page
-    /// reloaded after its web process died.
-    @ObservationIgnored private var kept: [String: (body: String, args: [String: Any])] = [:]
-    /// The last appearance from Settings, sent again with fresh system
-    /// colours when the user changes the accent or highlight colour.
-    @ObservationIgnored private var appearance: EditorAppearance?
+    @objc func redo(_ sender: Any?) { step(true) }
 
-    override init() {
-        var config = WebPage.Configuration()
-        config.urlSchemeHandlers[URLScheme(Self.scheme)!] = WebFiles()
-        let controller = WKUserContentController()
-        config.userContentController = controller
-        page = WebPage(configuration: config, navigationDecider: Links())
-        super.init()
-        controller.add(self, name: "texlocal")
-        #if DEBUG
-        // Safari's Web Inspector, for the embed's styling.
-        page.isInspectable = true
-        #endif
-        NotificationCenter.default.addObserver(
-            forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let appearance = self.appearance else { return }
-                Task { await self.setAppearance(appearance) }
-            }
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        // Titled as they come: a text view's last action names them.
+        case #selector(undo(_:)):
+            (item as? NSMenuItem)?.title = String(localized: "Undo")
+            return history.undo
+        case #selector(redo(_:)):
+            (item as? NSMenuItem)?.title = String(localized: "Redo")
+            return history.redo
+        default:
+            return super.validateUserInterfaceItem(item)
         }
-        page.load(URL(string: "\(Self.scheme)://app/embed/editor.html")!)
-        Task { await watchForCrashes() }
     }
 
-    /// The page's web process died: load the page again, and let `ready`
-    /// restore what it held.
-    private func watchForCrashes() async {
-        while true {
-            do {
-                for try await _ in page.navigations {}
-            } catch WebPage.NavigationError.webContentProcessTerminated {
-                ready = false
-                restarting = true
-                crashes += 1
-                onCrash()
-                page.reload()
-            } catch {}
+    private func files(_ info: any NSDraggingInfo) -> [URL] {
+        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    /// Nil for a drag without files, which is WebKit's.
+    private func fileOperation(_ info: any NSDraggingInfo) -> NSDragOperation? {
+        let files = files(info)
+        guard !files.isEmpty else { return nil }
+        guard files.contains(where: { fileDrop($0) != nil }) else { return [] }
+        return info.draggingSourceOperationMask.contains(.generic) ? .generic : .copy
+    }
+
+    override func draggingEntered(_ info: any NSDraggingInfo) -> NSDragOperation {
+        fileOperation(info) ?? super.draggingEntered(info)
+    }
+
+    override func draggingUpdated(_ info: any NSDraggingInfo) -> NSDragOperation {
+        fileOperation(info) ?? super.draggingUpdated(info)
+    }
+
+    override func performDragOperation(_ info: any NSDraggingInfo) -> Bool {
+        let files = files(info)
+        guard !files.isEmpty else { return super.performDragOperation(info) }
+        guard let drop = files.lazy.compactMap(fileDrop).first else { return false }
+        drop()
+        return true
+    }
+}
+
+/// A project's CodeMirror editor page; the protocol is web/src/embed/editor.js.
+/// A plain `WKWebView`, not SwiftUI's `WebView`: that one's adapter answers Edit ›
+/// Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn,
+/// where a plain web view passes the menu's find items on to the window.
+final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    static let scheme = "texlocal-app"
+
+    /// Made once per project and moved between hosts as SwiftUI rebuilds them.
+    let webView: EditorWebView
+    var onChanged: () -> Void = {}
+    var onCursor: (Int) -> Void = { _ in }
+    /// The line at the top of the view.
+    var onScroll: (Int) -> Void = { _ in }
+    /// The page opened its search, with the query it starts from; the find bar is the host's.
+    var onFind: (FindQuery) -> Void = { _ in }
+    var onFindClosed: () -> Void = {}
+    var onFindMatches: (FindMatches) -> Void = { _ in }
+    /// The web process died, taking the editor's text with it.
+    var onCrash: () -> Void = {}
+    /// The page is back, empty, after its web process died.
+    var onRestart: () -> Void = {}
+    private(set) var crashes = 0
+    /// The page never loaded; every call answers nil.
+    private var failed = false
+
+    private var ready = false
+    /// Whether the column shows the editor rather than a preview or placeholder.
+    /// Hidden, the web view hands the keyboard on and leaves the key view loop;
+    /// shown while nothing has the keyboard (as the project opens), it takes it.
+    var shown = false {
+        didSet {
+            webView.isHidden = !(shown && ready)
+            if shown, !oldValue, let window = webView.window, window.firstResponder === window { focus() }
         }
+    }
+    private var restarting = false
+    private var whenReady: [CheckedContinuation<Void, Never>] = []
+    /// Calls whose effect the page holds, made again after a crash.
+    private var kept: [PageMethod: KeyValuePairs<String, Any>] = [:]
+    /// Re-sent with fresh system colours when the accent or highlight colour changes.
+    private var appearance: EditorAppearance?
+    /// The file the page shows: messages about another are stale.
+    private var openPath: String?
+    private let controller = WKUserContentController()
+    private var colorToken: NotificationCenter.ObservationToken?
+    private var closed = false
+
+    private static let log = Logger(subsystem: "com.texlocal.mac", category: "editor")
+
+    override init() {
+        let config = WKWebViewConfiguration()
+        config.setURLSchemeHandler(WebFiles(), forURLScheme: Self.scheme)
+        config.userContentController = controller
+        webView = EditorWebView(frame: .zero, configuration: config)
+        super.init()
+        controller.add(self, name: "texlocal")
+        webView.navigationDelegate = self
+        webView.step = { [weak self] redo in Task { _ = await self?.command(redo ? .redo : .undo) } }
+        webView.setAccessibilityLabel("Source")
+        // Until the page draws its own surface: a web view paints white before then.
+        webView.isHidden = true
+        #if DEBUG
+        webView.isInspectable = true
+        #endif
+        colorToken = NotificationCenter.default.addObserver(of: NSColor.self, for: .systemColorsDidChange) { [weak self] _ in
+            guard let self, let appearance = self.appearance else { return }
+            Task { await self.setAppearance(appearance) }
+        }
+        webView.load(URLRequest(url: URL(string: "\(Self.scheme)://app/embed/editor.html")!))
+    }
+
+    /// Lets the page and its web process go: the content controller holds
+    /// its message handler (this) strongly.
+    func close() {
+        closed = true
+        if let colorToken { NotificationCenter.default.removeObserver(colorToken) }
+        controller.removeScriptMessageHandler(forName: "texlocal")
+        webView.navigationDelegate = nil
+        // The page won't say it's ready now; release what waits on it.
+        becomeReady()
+    }
+
+    // ---------- navigation ----------
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !closed else { return }
+        ready = false
+        restarting = true
+        crashes += 1
+        self.webView.history = (false, false)
+        onCrash()
+        // Until the page draws its surface again, as at first.
+        webView.isHidden = true
+        webView.reload()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        failed = true
+        Self.log.error("The editor page didn't load: \(error.localizedDescription, privacy: .public)")
+        becomeReady()
+    }
+
+    /// Nothing navigates the editor page off the app's own files.
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        action.request.url?.scheme == Self.scheme ? .allow : .cancel
     }
 
     // ---------- host → page ----------
 
-    private func untilReady() async {
-        if ready { return }
-        await withCheckedContinuation { whenReady.append($0) }
+    private enum PageMethod: String {
+        case open, getDocument, currentLine, reveal, command, forget, rename
+        case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance, setTopInset
     }
 
     @discardableResult
-    private func js(_ body: String, _ args: [String: Any] = [:]) async -> Any? {
-        await untilReady()
-        return try? await page.callJavaScript(body, arguments: args, contentWorld: .page)
+    private func call(_ method: PageMethod, _ args: KeyValuePairs<String, Any> = [:]) async -> Any? {
+        if !ready { await withCheckedContinuation { whenReady.append($0) } }
+        if closed || failed { return nil }
+        return await run(method, args)
     }
 
-    /// `focus` false leaves keyboard focus where it is, as choosing a file
-    /// in the sidebar should.
+    @discardableResult
+    private func run(_ method: PageMethod, _ args: KeyValuePairs<String, Any>) async -> Any? {
+        // `return texlocal.<method>(<names>)`, the names bound to their values.
+        let names = args.map(\.key).joined(separator: ", ")
+        do {
+            return try await webView.callAsyncJavaScript("return texlocal.\(method.rawValue)(\(names))",
+                                                         arguments: Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) }),
+                                                         contentWorld: .page)
+        } catch {
+            Self.log.debug("texlocal.\(method.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    /// `focus` false leaves keyboard focus where it is (choosing a file in the sidebar).
     func open(path: String, text: String, focus: Bool = true) async {
-        await js("return texlocal.open(path, text, 0, focus)", ["path": path, "text": text, "focus": focus])
+        openPath = path
+        await call(.open, ["path": path, "text": text, "scrollTop": 0, "focus": focus])
     }
 
-    func text() async -> String? {
-        await js("return texlocal.getText()") as? String
+    /// The page's text and the file it belongs to: by the time the page
+    /// answers, it may show another.
+    func document() async -> (path: String, text: String)? {
+        guard let document = await call(.getDocument) as? [String: Any],
+              let path = document["path"] as? String, let text = document["text"] as? String else { return nil }
+        return (path, text)
     }
 
     func currentLine() async -> Int {
-        (await js("return texlocal.currentLine()") as? Int) ?? 1
+        (await call(.currentLine) as? Int) ?? 1
     }
 
-    /// `atTop` puts the line at the top of the view, as an outline's jump
-    /// does; otherwise it is centred. `focus` false leaves keyboard focus
-    /// where it is.
+    /// `atTop` puts the line at the top of the view; otherwise it is centred.
     func reveal(line: Int, atTop: Bool = false, focus: Bool = true) async {
-        await js("texlocal.reveal(line, atTop, focus)", ["line": line, "atTop": atTop, "focus": focus])
+        await call(.reveal, ["line": line, "atTop": atTop, "focus": focus])
     }
 
     /// False when the page did not run the command.
     @discardableResult
-    func command(_ name: String, _ arg: String? = nil) async -> Bool {
-        (await js("return texlocal.command(name, arg)", ["name": name, "arg": arg as Any? ?? NSNull()]) as? Bool) ?? false
+    func command(_ command: EditorCommand, _ arg: String? = nil) async -> Bool {
+        (await call(.command, ["name": command.rawValue, "arg": arg ?? NSNull()]) as? Bool) ?? false
     }
 
     func forget(path: String) async {
-        await js("texlocal.forget(path)", ["path": path])
+        await call(.forget, ["path": path])
     }
 
     func rename(from: String, to: String) async {
-        await js("texlocal.rename(from, to)", ["from": from, "to": to])
+        openPath = openPath.map { remapPath($0, from: from, to: to) }
+        await call(.rename, ["from": from, "to": to])
     }
 
-    /// A call whose effect the page holds on to, kept to be made again.
-    private func keep(_ key: String, _ body: String, _ args: [String: Any]) async {
-        kept[key] = (body, args)
-        await js(body, args)
+    private func keep(_ method: PageMethod, _ args: KeyValuePairs<String, Any> = [:]) async {
+        kept[method] = args
+        await call(method, args)
     }
 
     func setSymbols(_ symbols: Symbols) async {
-        await keep("symbols", "texlocal.setSymbols(labels, citations)", ["labels": symbols.labels, "citations": symbols.citations])
+        await keep(.setSymbols, ["labels": symbols.labels, "citations": symbols.citations])
     }
 
     func setHostKeys(_ keys: [(id: String, accel: String)]) async {
-        let list = keys.map { ["id": $0.id, "accel": $0.accel] }
-        await keep("hostKeys", "texlocal.setHostKeys(list)", ["list": list])
+        await keep(.setHostKeys, ["list": keys.map { ["id": $0.id, "accel": $0.accel] }])
     }
 
-    /// The find bar is native: the page's search runs from it, and
-    /// CodeMirror's own panel stays hidden.
+    /// The page's search runs from the native find bar; CodeMirror's panel stays hidden.
     func useHostFind() async {
-        await keep("hostFind", "texlocal.setHostFind(true)", [:])
+        await keep(.setHostFind)
     }
 
-    /// The find bar's query, which the page searches for as it changes.
+    /// The height of the toolbar and bars the text runs on under.
+    private var topInset: CGFloat?
+    func setTopInset(_ inset: CGFloat) async {
+        guard inset != topInset else { return }
+        topInset = inset
+        await keep(.setTopInset, ["px": inset])
+    }
+
     func setFind(_ query: FindQuery) async {
-        await js("texlocal.setFind(q)", ["q": query.dictionary])
+        await call(.setFind, ["q": query.dictionary])
     }
 
     func closeFind() async {
-        await js("texlocal.closeFind()")
+        await call(.closeFind)
     }
 
-    /// Settings' theme and font, with the user's accent and highlight
-    /// colours for the caret and the selection, as native text views take
-    /// them, and the system's colours for the text's surface, the gutter,
-    /// find matches and completion lists, so the editor sits on the same
-    /// surface as the native chrome around it. The colours are resolved in
-    /// the theme's appearance.
+    /// Settings' palette and font, with the system's colours resolved in the
+    /// editor's appearance so the text sits on the same surface as the chrome.
     func setAppearance(_ appearance: EditorAppearance) async {
         self.appearance = appearance
-        var settings: [String: Any] = ["theme": appearance.theme, "palette": appearance.palette,
-                                       "font": appearance.font, "fontSize": appearance.fontSize]
-        let drawing = NSAppearance(named: appearance.theme == "dark" ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
+        let dark = appearance.colorScheme == .dark
+        var settings: [String: Any] = ["theme": dark ? "dark" : "light", "palette": appearance.palette.rawValue,
+                                       "font": appearance.font.rawValue, "fontSize": appearance.fontSize]
+        let name: NSAppearance.Name = switch (dark, appearance.contrast == .increased) {
+        case (true, true): .accessibilityHighContrastDarkAqua
+        case (true, false): .darkAqua
+        case (false, true): .accessibilityHighContrastAqua
+        case (false, false): .aqua
+        }
+        let drawing = NSAppearance(named: name) ?? NSApp.effectiveAppearance
         drawing.performAsCurrentDrawingAppearance {
             settings["accent"] = Self.css(.controlAccentColor)
-            settings["selection"] = Self.css(.selectedTextBackgroundColor)
-            settings["inactiveSelection"] = Self.css(.unemphasizedSelectedTextBackgroundColor)
             settings["host"] = [
+                "selection": Self.css(.selectedTextBackgroundColor),
+                "selection-inactive": Self.css(.unemphasizedSelectedTextBackgroundColor),
                 "text-background": Self.css(.textBackgroundColor),
                 "text": Self.css(.textColor),
                 "secondary-label": Self.css(.secondaryLabelColor),
                 "find-highlight": Self.css(.findHighlightColor),
                 "selected-content": Self.css(.selectedContentBackgroundColor),
                 "selected-text": Self.css(.alternateSelectedControlTextColor),
-                // The current line and other occurrences of the selection,
-                // a faint neutral fill as Xcode draws them.
                 "current-line": Self.css(.quaternarySystemFill),
                 "selection-match": Self.css(.unemphasizedSelectedTextBackgroundColor),
+                "insertion-point": Self.css(.textInsertionPointColor),
             ]
         }
-        await keep("appearance", "texlocal.setAppearance(a)", ["a": settings])
+        await keep(.setAppearance, ["a": settings])
     }
 
     /// A colour as CSS, resolved in the current drawing appearance.
@@ -202,87 +308,119 @@ final class EditorBridge: NSObject, WKScriptMessageHandler {
         return "rgb(\(rgb.joined(separator: " ")) / \(c.alphaComponent))"
     }
 
+    /// Keyboard focus to the text, once the web view is in a window; never while
+    /// it's hidden under a preview, whose keys would edit a file that isn't shown.
     func focus() {
-        focusRequest += 1
+        guard shown else { return }
+        webView.window?.makeFirstResponder(webView)
     }
 
     // ---------- page → host ----------
 
+    private enum PageMessage: String {
+        case ready, changed, cursor, scroll, findOpen, findClosed, findMatches, history
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        guard let body = message.body as? [String: Any],
+              let type = (body["type"] as? String).flatMap(PageMessage.init) else { return }
+        if [.changed, .cursor, .scroll, .history].contains(type), let path = body["path"] as? String, path != openPath { return }
         switch type {
-        case "ready":
+        case .ready:
             guard restarting else {
                 becomeReady()
                 return
             }
             restarting = false
-            // Made again, in order, before any waiting call resumes.
-            let calls = Array(kept.values)
+            // Before any waiting call resumes. The kept calls are independent,
+            // so their order doesn't matter.
+            let calls = kept
             Task {
-                for (script, args) in calls {
-                    _ = try? await page.callJavaScript(script, arguments: args, contentWorld: .page)
-                }
+                for (method, args) in calls { await run(method, args) }
                 onRestart()
                 becomeReady()
             }
-        case "changed":
+        case .changed:
             onChanged()
-        case "cursor":
+        case .cursor:
             if let line = body["line"] as? Int { onCursor(line) }
-        case "scroll":
+        case .scroll:
             if let line = body["line"] as? Int { onScroll(line) }
-        case "command":
-            if let id = body["id"] as? String { onCommand(id) }
-        case "findOpen":
+        case .findOpen:
             onFind(FindQuery(body["query"] as? [String: Any] ?? [:]))
-        case "findClosed":
+        case .findClosed:
             onFindClosed()
-        case "findMatches":
+        case .findMatches:
             onFindMatches(FindMatches(index: body["index"] as? Int ?? 0, total: body["total"] as? Int ?? 0,
                                       limited: body["limited"] as? Bool ?? false))
-        default:
-            break
+        case .history:
+            webView.history = (body["undo"] as? Bool ?? false, body["redo"] as? Bool ?? false)
         }
     }
 
     private func becomeReady() {
         ready = true
+        webView.isHidden = !shown
         whenReady.forEach { $0.resume() }
         whenReady.removeAll()
     }
 }
 
-/// How the editor looks: the system's appearance ("light" or "dark"), then
-/// Settings' syntax colours and font.
+/// The page's `texlocal.command` names.
+enum EditorCommand: String {
+    case bold, italic, math, displayMath, comment, heading, symbol
+    /// A block from web/src/latex-data.js `BLOCK_TEMPLATES`, by id.
+    case block
+    /// A template with "$0" where the selection goes.
+    case inline
+    case find, findNext, findPrevious, replaceNext, replaceAll, undo, redo
+}
+
 struct EditorAppearance: Hashable {
-    var theme: String
-    var palette: String
-    var font: String
+    var colorScheme: ColorScheme
+    var contrast: ColorSchemeContrast
+    var palette: EditorPalette
+    var font: EditorFont
     var fontSize: Int
 }
 
-/// The editor's settings, shared by Settings and the editor so their keys
-/// and defaults can't drift apart.
-enum EditorPrefs {
-    static let paletteKey = "editorPalette", fontKey = "editorFont", fontSizeKey = "editorFontSize"
-    /// "onedark" is the editor's own colours (EditorSettings says why).
-    static let palette = "onedark", font = "system"
-    /// The system's body size.
-    static let fontSize = 13
+/// Values are the page's (web/src/embed/editor.js `setAppearance`).
+enum EditorPalette: String, CaseIterable, Identifiable {
+    /// The editor's own colours, One Dark in dark mode and CodeMirror's in
+    /// light, so it isn't named for either.
+    case standard = "onedark"
+    case xcode
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .standard: "Default"
+        case .xcode: "Xcode"
+        }
+    }
 }
 
-/// Links in the editor never navigate the editor page itself: web and
-/// mail links open in their apps.
-private struct Links: WebPage.NavigationDeciding {
-    func decidePolicy(for action: WebPage.NavigationAction,
-                      preferences: inout WebPage.NavigationPreferences) async -> WKNavigationActionPolicy {
-        if action.request.url?.scheme == EditorBridge.scheme { return .allow }
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme) {
-            NSWorkspace.shared.open(url)
+/// Values are the page's (web/src/embed/editor.js `setAppearance`).
+enum EditorFont: String, CaseIterable, Identifiable {
+    case system, jetbrains
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "System Monospaced"
+        case .jetbrains: "JetBrains Mono"
         }
-        return .cancel
     }
+}
+
+/// The keys and defaults Settings and the editor share.
+enum EditorPrefs {
+    static let paletteKey = "editorPalette", fontKey = "editorFont", fontSizeKey = "editorFontSize"
+    static let palette = EditorPalette.standard
+    static let font = EditorFont.system
+    static let fontSize = Int(NSFont.systemFontSize)
 }
 
 /// The source's search, as CodeMirror's `SearchQuery` takes it.
@@ -308,42 +446,42 @@ extension FindQuery {
     }
 }
 
-/// How many matches a search has, and which one is selected (from 1; 0
-/// when the selection is not a match). `limited`: there are more than are
-/// counted.
+/// A search's matches: `index` from 1 (0 when the selection isn't one);
+/// `limited` when there are more than were counted.
 struct FindMatches: Equatable {
     var index = 0
     var total = 0
     var limited = false
 
-    /// A find bar's count, as the web's (workspace.js `showCount`) and
-    /// Xcode's read: "3 of 12", "12 matches" when none is selected,
-    /// "1 of 5000+" past a cap, "Not found", or nothing before a search.
+    /// "3 of 12", "12 matches", "1 of 5000+", "Not found", or nothing before a search.
     func label(for query: String) -> String {
         if query.isEmpty { return "" }
-        if total == 0 { return "Not found" }
+        if total == 0 { return String(localized: "Not found") }
         let count = "\(total)\(limited ? "+" : "")"
-        if index > 0 { return "\(index) of \(count)" }
-        return total == 1 && !limited ? "1 match" : "\(count) matches"
+        if index > 0 { return String(localized: "\(index) of \(count)") }
+        if limited { return String(localized: "\(count) matches") }
+        return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
     }
 }
 
 /// The texlocal-app: scheme, serving the bundled web/.
-private struct WebFiles: URLSchemeHandler {
-    func reply(for request: URLRequest) -> AsyncThrowingStream<URLSchemeTaskResult, any Error> {
-        AsyncThrowingStream { continuation in
-            let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
-            let file = root.appendingPathComponent(request.url?.path ?? "").standardizedFileURL
-            // Only files inside web/; the request path is untrusted.
-            guard let url = request.url, file.path.hasPrefix(root.standardizedFileURL.path + "/"),
-                  let data = try? Data(contentsOf: file) else {
-                continuation.finish(throwing: URLError(.fileDoesNotExist))
-                return
-            }
-            let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-            continuation.yield(.response(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)))
-            continuation.yield(.data(data))
-            continuation.finish()
+private final class WebFiles: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let resources = Bundle.main.resourceURL, let url = task.request.url else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
         }
+        let root = resources.appending(path: "web", directoryHint: .isDirectory)
+        let file = root.appending(path: url.path).standardizedFileURL
+        // Only files inside web/: the request path is untrusted.
+        guard file.path.hasPrefix(root.standardizedFileURL.path + "/"), let data = try? Data(contentsOf: file) else {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
+        }
+        let mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(URLResponse(url: url, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil))
+        task.didReceive(data)
+        task.didFinish()
     }
+
+    /// Each reply is whole and at once: nothing is left to stop.
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 }

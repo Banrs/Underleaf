@@ -1025,6 +1025,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pdf-dark .pdf-page-wrap canvas { filter: invert(1) hue-rotate(180deg); }
 .pdf-dark .pdf-scroll { background: #1a1a1a; }
 
+/* Its colour and duration are the Mac's too (PDFRepresentable.flash in apps/macos/TeXLocal/PDFController.swift), which removes the mark without a fade. */
 .sync-flash { position: absolute; background: color-mix(in srgb, var(--yellow) 40%, transparent); border-radius: 2px; pointer-events: none; animation: fade-out 2.2s forwards; }
 @keyframes fade-out { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 

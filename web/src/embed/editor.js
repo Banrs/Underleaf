@@ -9,6 +9,7 @@
 
 import { EditorView, keymap } from '@codemirror/view';
 import { Prec, StateEffect } from '@codemirror/state';
+import { undoDepth, redoDepth } from '@codemirror/commands';
 import {
   search, SearchQuery, getSearchQuery, setSearchQuery, searchPanelOpen, openSearchPanel, closeSearchPanel,
   findNext, findPrevious, replaceNext, replaceAll,
@@ -23,6 +24,45 @@ let editor = null;
 let path = null;
 let symbols = { labels: [], citations: [] };
 let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+
+// ---------- resizing ----------
+// Marks the page data-resizing while its size changes and briefly after, so a
+// host's chrome hides the overlay scroller (editor.html); not a scroller that
+// takes room, which would re-wrap the text.
+
+const RESIZE_SETTLE_MS = 400;
+let resizeTimer = 0;
+let lastSize = null;
+new ResizeObserver(([entry]) => {
+  const size = `${entry.contentRect.width}×${entry.contentRect.height}`;
+  const first = lastSize === null;
+  if (size === lastSize) return;
+  lastSize = size;
+  const scroller = parent.querySelector('.cm-scroller');
+  if (first || !scroller || scroller.offsetWidth > scroller.clientWidth) return;
+  const root = document.documentElement;
+  root.dataset.resizing = '';
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { delete root.dataset.resizing; }, RESIZE_SETTLE_MS);
+}).observe(parent);
+
+// ---------- the context menu ----------
+// In a host's own chrome (the Mac's), a text view's: none outside the text
+// (the line numbers), where the web view's offers to reload the page. A
+// right-click in blank space, where WebKit selects the line break as the
+// nearest word, leaves a caret there instead, so the menu doesn't offer to
+// look up or share nothing.
+
+document.addEventListener('contextmenu', (event) => {
+  if (!('host' in document.documentElement.dataset)) return;
+  if (!event.target.closest?.('.cm-content')) {
+    event.preventDefault();
+    return;
+  }
+  const selection = getSelection();
+  // A line break, and the spaces round it: a deliberate run of spaces stays.
+  if (/^[ \t]*\n[ \t]*$/.test(selection.toString())) selection.collapseToEnd();
+});
 
 // ---------- the host's find bar ----------
 // A host that draws its own find bar (the Mac's) drives CodeMirror's search
@@ -110,6 +150,30 @@ const hostFindExtension = [
   Prec.highest(keymap.of([{ key: 'Mod-f', run: openFind, scope: 'editor search-panel' }])),
 ];
 
+// On the Mac: the text's own name for VoiceOver, not only the web view's round
+// it, and no spellcheck, as in code editors. With it on, WebKit lets the system's
+// smart dashes, quotes and text replacements rewrite LaTeX (-- became an em
+// dash). Highest precedence: the shared editor turns spellcheck on.
+const hostAttributes = Prec.highest(EditorView.contentAttributes.of({ 'aria-label': 'Source', spellcheck: 'false' }));
+
+// The Mac's Edit › Undo and Redo, enabled while the document has a step to take:
+// its history is CodeMirror's, which WebKit's undo manager doesn't see.
+let history = '';
+function reportHistory(state) {
+  const undo = undoDepth(state) > 0;
+  const redo = redoDepth(state) > 0;
+  if (`${undo}${redo}` === history) return;
+  history = `${undo}${redo}`;
+  post({ type: 'history', path, undo, redo });
+}
+const hostHistory = EditorView.updateListener.of((u) => reportHistory(u.state));
+
+// The Mac's text runs on under its toolbar and find bar, where the host draws
+// the system's edge effect over it: the first line starts below them
+// (editor.html), and a line scrolled to stays below them.
+let topInset = 0;
+const hostInset = EditorView.scrollMargins.of(() => ({ top: topInset }));
+
 // A new editor (a file opened) takes the host's search as it stands. The
 // caller keeps the stand-in quiet meanwhile.
 function attachHostFind(view) {
@@ -167,12 +231,39 @@ function step(run) {
   return true;
 }
 
-const WRAPS = {
-  bold: ['\\textbf{', '}'],
-  italic: ['\\textit{', '}'],
-  math: ['$', '$'],
-  displayMath: ['\\[', '\\]'],
+// texlocal.command's names, each given the command's argument. Only undo,
+// redo and block say whether they ran: false hands the key back to the host.
+// The native apps' copies of these names are checked against this table
+// (test/protocol.test.js).
+const COMMANDS = {
+  bold: () => { editor.wrapSelection('\\textbf{', '}'); },
+  italic: () => { editor.wrapSelection('\\textit{', '}'); },
+  math: () => { editor.wrapSelection('$', '$'); },
+  displayMath: () => { editor.wrapSelection('\\[', '\\]'); },
+  // The document's history only while the document has focus. In the find
+  // panel's fields the host undoes there instead.
+  undo: () => historyStep('undo'),
+  redo: () => historyStep('redo'),
+  comment: () => { editor.toggleComment(); },
+  find: () => { if (hostFind) openFind(currentView()); else editor.openSearch(); },
+  findNext: () => { if (hostFind) step(findNext); else editor.findNext(); },
+  findPrevious: () => { if (hostFind) step(findPrevious); else editor.findPrevious(); },
+  replaceNext: () => { step(replaceNext); },
+  replaceAll: () => { step(replaceAll); },
+  block: (id) => editor.insertBlock(id),
+  heading: (command) => { editor.setHeading(command ?? ''); },
+  text: (text) => { editor.insertText(text ?? ''); },
+  symbol: (symbol) => { editor.insertSymbol(symbol ?? ''); },
+  // A template such as \ref{$0} around the selection, in the line: "$0" is
+  // where the selection (or the cursor) goes.
+  inline: (template) => { editor.wrapSelection(...(`${template}$0`).split('$0', 2)); },
 };
+
+function historyStep(name) {
+  if (!document.activeElement?.closest('.cm-content')) return false;
+  editor[name]();
+  return true;
+}
 
 window.texlocal = {
   // Show a file. Its earlier state (undo history, selection) comes back only
@@ -198,6 +289,11 @@ window.texlocal = {
       onScroll: (line) => post({ type: 'scroll', path, line }),
     });
     editor.setScrollTop(scrollTop);
+    if ('host' in document.documentElement.dataset) {
+      currentView()?.dispatch({ effects: StateEffect.appendConfig.of([hostAttributes, hostHistory, hostInset]) });
+      history = '';
+      reportHistory(currentView().state);
+    }
     attachHostFind(currentView());
     quiet = false;
     if (focus) editor.focus();
@@ -216,26 +312,32 @@ window.texlocal = {
     if (path) path = moved(path);
   },
   getText: () => editor?.getContent() ?? null,
+  // The text with the file it belongs to, so a save can't write one file's
+  // text to another that opened meanwhile.
+  getDocument: () => (editor ? { path, text: editor.getContent() } : null),
   currentLine: () => editor?.currentLine() ?? 1,
   reveal(line, atTop, focus = true) { editor?.gotoLine(line, atTop, focus); },
   setSymbols(labels, citations) { symbols = { labels, citations }; },
   setHostKeys: forwardHostKeys(),
   // The host draws the find bar (see "the host's find bar" above).
-  setHostFind(on) {
-    hostFind = on;
-    if (on) document.documentElement.dataset.hostFind = '';
+  setHostFind() {
+    hostFind = true;
     quiet = true;
     attachHostFind(currentView());
     quiet = false;
   },
   setFind,
   closeFind,
-  // `accent` and the selection colours are the host system's (the Mac's
-  // accent and highlight colours); without them the page keeps its own.
-  // `host` holds the host's own colours for the text's surface and the
-  // editor's chrome (the Mac's), as CSS; the page then matches the native
+  setTopInset(px) {
+    topInset = px;
+    document.documentElement.style.setProperty('--host-top-inset', `${px}px`);
+    currentView()?.requestMeasure();
+  },
+  // `accent` is the host system's accent colour; without it the page keeps its own.
+  // `host` holds the host's own colours for the text's surface, the selection and
+  // the editor's chrome (the Mac's), as CSS; the page then matches the native
   // chrome around it (editor.html, :root[data-host]).
-  setAppearance({ theme, palette, font, fontSize, accent, selection, inactiveSelection, host }) {
+  setAppearance({ theme, palette, font, fontSize, accent, host }) {
     const root = document.documentElement;
     dark = theme === 'dark';
     root.dataset.theme = theme;
@@ -243,11 +345,6 @@ window.texlocal = {
     if (font) root.style.setProperty('--editor-font', font === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
     if (fontSize) root.style.setProperty('--editor-fs', `${fontSize}px`);
     if (accent) root.style.setProperty('--accent', accent);
-    if (selection && inactiveSelection) {
-      root.style.setProperty('--host-selection', selection);
-      root.style.setProperty('--host-selection-inactive', inactiveSelection);
-      root.dataset.hostSelection = '';
-    }
     if (host) {
       for (const [name, value] of Object.entries(host)) root.style.setProperty(`--host-${name}`, value);
       root.dataset.host = '';
@@ -255,29 +352,9 @@ window.texlocal = {
     editor?.setTheme(dark);
   },
   command(name, arg) {
-    if (!editor) return false;
-    if (WRAPS[name]) editor.wrapSelection(...WRAPS[name]);
-    else if (name === 'undo' || name === 'redo') {
-      // The document's history only while the document has focus. In the
-      // find panel's fields this returns false, and the host undoes there.
-      if (!document.activeElement?.closest('.cm-content')) return false;
-      editor[name]();
-    }
-    else if (name === 'comment') editor.toggleComment();
-    else if (name === 'find') { if (hostFind) openFind(currentView()); else editor.openSearch(); }
-    else if (name === 'findNext') { if (hostFind) step(findNext); else editor.findNext(); }
-    else if (name === 'findPrevious') { if (hostFind) step(findPrevious); else editor.findPrevious(); }
-    else if (name === 'replaceNext') step(replaceNext);
-    else if (name === 'replaceAll') step(replaceAll);
-    else if (name === 'block') return editor.insertBlock(arg);
-    else if (name === 'heading') editor.setHeading(arg ?? '');
-    else if (name === 'text') editor.insertText(arg ?? '');
-    else if (name === 'symbol') editor.insertSymbol(arg ?? '');
-    // A template such as \ref{$0} around the selection, in the line: "$0"
-    // is where the selection (or the cursor) goes.
-    else if (name === 'inline') editor.wrapSelection(...(`${arg}$0`).split('$0', 2));
-    else return false;
-    return true;
+    const run = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : null;
+    if (!editor || !run) return false;
+    return run(arg) !== false;
   },
 };
 
