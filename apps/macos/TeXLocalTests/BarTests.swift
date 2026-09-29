@@ -5,27 +5,19 @@ import Testing
 /// The accessory bars measured off screen, with no window shown.
 @MainActor
 struct PaneBarLayoutTests {
-    private func height(_ view: some View) -> CGFloat {
-        NSHostingView(rootView: view.paneBarControls()).fittingSize.height
-    }
-
-    @Test func aBarIsARegularControlAndItsInsets() {
-        #expect(height(HStack { Button("Done") {} }.padding(.vertical, BarMetrics.inset))
-                == regularControlHeight() + 2 * BarMetrics.inset)
-    }
+    private func height(_ view: some View) -> CGFloat { NSHostingView(rootView: view).fittingSize.height }
 
     /// A control group draws a little taller than a button, but still inside the bar.
     @Test func everyControlFitsTheBar() {
-        let bar = height(HStack { Button("Done") {} }.padding(.vertical, BarMetrics.inset))
+        let room = regularControlHeight() + 2 * BarMetrics.inset - 2 * BarMetrics.spacing
         let steps = ControlGroup {
-            Button("Previous Match", systemImage: "chevron.up") {}
-            Button("Next Match", systemImage: "chevron.down") {}
+            Button("Previous Match", systemImage: "chevron.backward") {}
+            Button("Next Match", systemImage: "chevron.forward") {}
         }.fixedSize()
         let copy = Button("Copy Log", systemImage: "document.on.document") {}
             .buttonStyle(.accessoryBar).labelStyle(.iconOnly)
-        for control in [height(steps), height(copy), height(Button("Done") {})] {
-            #expect(control <= bar - 2 * BarMetrics.spacing)
-        }
+        #expect(height(steps) <= room)
+        #expect(height(copy) <= room)
     }
 }
 

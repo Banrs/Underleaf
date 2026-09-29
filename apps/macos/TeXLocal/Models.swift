@@ -160,10 +160,7 @@ func isTextFile(_ path: String) -> Bool {
 /// The files previewed in the source column; any other non-text file shows
 /// No Preview there.
 func isPreviewFile(_ path: String) -> Bool {
-    switch FileKind(path) {
-    case .image, .pdf: true
-    case .text, .other: false
-    }
+    [.image, .pdf].contains(FileKind(path))
 }
 
 /// A file's symbol in the sidebar.

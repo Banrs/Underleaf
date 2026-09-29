@@ -449,25 +449,20 @@ final class ProjectModel {
             let parent = (path as NSString).deletingLastPathComponent
             treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
         }
-        if openFileChanged { scheduleDiskCheck() }
-        if treeChanged { scheduleTreeReload() }
-    }
-
-    /// FSEvents coalesces a burst of changes; a newer reload replaces this one.
-    private func scheduleTreeReload() {
-        treeReload?.cancel()
-        treeReload = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            await self?.reloadTree(quietly: true)
+        // A newer check or reload replaces one that hasn't started.
+        if openFileChanged {
+            diskCheck?.cancel()
+            diskCheck = Task { [weak self] in
+                guard !Task.isCancelled else { return }
+                await self?.checkDisk()
+            }
         }
-    }
-
-    /// FolderWatcher coalesces a write's events; a newer check replaces this one.
-    private func scheduleDiskCheck() {
-        diskCheck?.cancel()
-        diskCheck = Task { [weak self] in
-            guard !Task.isCancelled else { return }
-            await self?.checkDisk()
+        if treeChanged {
+            treeReload?.cancel()
+            treeReload = Task { [weak self] in
+                guard !Task.isCancelled else { return }
+                await self?.reloadTree(quietly: true)
+            }
         }
     }
 
@@ -759,8 +754,6 @@ final class ProjectModel {
         await compile(auto: true)
     }
 
-    /// Taken names are asked about first (`importClash`), then copied again
-    /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     /// Files dropped on the tree: the project's own move into `dir`, as in Finder,
     /// and files from elsewhere are copied in.
     func dropFiles(_ urls: [URL], into dir: String) async {
@@ -776,6 +769,8 @@ final class ProjectModel {
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
 
+    /// Taken names are asked about first (`importClash`), then copied again
+    /// with the answer: "replace" (old ones to the Trash) or "keepBoth".
     func importFiles(_ urls: [URL], into dir: String = "", conflict: String? = nil) async {
         var args: [String: Any] = ["id": id, "dir": dir, "paths": urls.map(\.path)]
         args["conflict"] = conflict

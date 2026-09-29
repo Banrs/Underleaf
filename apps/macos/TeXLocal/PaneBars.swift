@@ -155,8 +155,6 @@ struct SearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let view = NSSearchField()
-        // A find bar's: its field editor passes Edit › Find's items on
-        // (`FindFieldEditor`); a filter has no matches to step.
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -337,7 +335,7 @@ struct RenameField: View {
     @Binding var text: String
     var isFile = false
     /// Return or Escape ended it: the list takes the keyboard back, as Finder's does.
-    var ended: () -> Void = {}
+    let ended: () -> Void
     let commit: () -> Void
     let cancel: () -> Void
     @FocusState private var focused: Bool

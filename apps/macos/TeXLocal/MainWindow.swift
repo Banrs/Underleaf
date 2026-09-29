@@ -107,17 +107,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame and minimum: a new content view controller sizes the
-    /// window to its view and sets the minimum to zero. The view comes at the window's
-    /// size, so the window never shrinks to an unsized one (with the projects'
-    /// toolbar coming in, that squeezed its title to a few points and broke its
-    /// constraints).
+    /// Keeps the window's frame and minimum, which a new content view controller resets to
+    /// its view's size and zero: the view comes at the window's size (an unsized one
+    /// squeezed the projects' bridged toolbar into broken constraints).
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
-        let frame = window.frame
-        controller.view.setFrameSize(window.contentRect(forFrameRect: frame).size)
+        controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
-        window.contentMinSize = WindowMetrics.contentMinimum
+        window.contentMinSize = ColumnMetrics.contentMinimum
     }
 
     // ---------- window ----------
@@ -191,7 +188,7 @@ struct HomeRoot: View {
     var body: some View {
         HomeView()
             // SwiftUI sets the window's minimum from its content's: the app's own.
-            .frame(minWidth: WindowMetrics.contentMinimum.width, minHeight: WindowMetrics.contentMinimum.height)
+            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
             .windowModals()
             .environment(app)
     }
@@ -215,9 +212,6 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
 }
 
 enum WindowMetrics {
-    /// The content's minimum: the panes' own, the build panel open.
-    static let contentMinimum = CGSize(width: ColumnMetrics.contentMinimumWidth,
-                                       height: ColumnMetrics.contentMinimumHeight)
     /// Fits the smallest current Mac display's default resolution (1470 × 956)
     /// with the menu bar and Dock.
     static let projectDefault = CGSize(width: 1200, height: 760)

@@ -21,21 +21,14 @@ extension NSToolbarItem.Identifier {
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
-/// The project window's toolbar, AppKit's so each column's tools sit over it:
-/// the sidebar toggle over the sidebar; back, the title and the source's tools over
-/// the source; the PDF's and the build's over the PDF, from the source/PDF divider,
-/// whose line runs through the toolbar (`NSTrackingSeparatorToolbarItem`); the PDF
-/// toggle and the system's inspector toggle over the inspector, or at the end while
-/// it's shut, so the columns' toggles keep to the window's edges. A hidden PDF's
-/// tools move over the source by themselves. Short of room, zoom goes to the
-/// overflow menu first (the widest: with Share at the same priority, AppKit would
-/// hide both where Share still fits), Compile and the toggles last (HIG, Toolbars:
-/// few, frequent, grouped by task); Customize Toolbar adds the rest.
+/// The project window's toolbar, AppKit's so each column's tools sit over it: the PDF's
+/// section starts at the source/PDF divider (`NSTrackingSeparatorToolbarItem`), and the
+/// PDF and inspector toggles keep to the window's edge. Short of room, zoom overflows
+/// first (with Share at the same priority, AppKit would hide both where Share still
+/// fits), Compile and the toggles last (HIG, Toolbars).
 ///
-/// Each action is its own item: side by side, the system puts buttons on one glass
-/// capsule with no line between (the UI kit's button group: Bold and Italic, 73 pt).
-/// A line divides only a segmented control's parts, the two whose middle or end is
-/// a pull-down: zoom out | the scale | zoom in, and Inline Math | Symbols.
+/// Each action is its own item, so the system puts neighbours on one capsule; only zoom
+/// and Math, whose middle or end segment opens a menu, are segmented controls.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
@@ -204,18 +197,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let control = NSSegmentedControl(images: [symbol("radicand.squareroot", MenuCommand.editMath.title),
                                                   symbol("sum", "Symbols")].compactMap(\.self),
                                          trackingMode: .momentary, target: self, action: #selector(math(_:)))
-        control.setToolTip(MenuCommand.editMath.title, forSegment: 0)
-        control.setToolTip("Symbols", forSegment: 1)
         control.setMenu(NSHostingMenu(rootView: SymbolItems(project: project)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
-        let group = NSToolbarItemGroup(itemIdentifier: .math)
-        group.label = "Math"
-        group.subitems = [MenuCommand.editMath.title, "Symbols"].map { title in
-            let subitem = NSToolbarItem(itemIdentifier: .init(title))
-            subitem.label = title
-            return subitem
-        }
-        group.view = control
+        let group = segmentGroup(.math, "Math", control, [MenuCommand.editMath.title, "Symbols"])
         let form = NSMenuItem(title: "Math", action: nil, keyEquivalent: "")
         form.submenu = NSHostingMenu(rootView: Group { [project, inlineMath] in
             inlineMath
@@ -233,20 +217,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                                          trackingMode: .momentary, target: self, action: #selector(zoom(_:)))
         control.setImage(nil, forSegment: 1)
         control.setLabel(pdf.zoomLabel, forSegment: 1)
-        control.setToolTip("Zoom Out", forSegment: 0)
-        control.setToolTip("Scale", forSegment: 1)
-        control.setToolTip("Zoom In", forSegment: 2)
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         control.setAccessibilityLabel("Zoom")
-        let group = NSToolbarItemGroup(itemIdentifier: .zoom)
-        group.label = "Zoom"
-        group.subitems = ["Zoom Out", "Scale", "Zoom In"].map { title in
-            let subitem = NSToolbarItem(itemIdentifier: .init(title))
-            subitem.label = title
-            return subitem
-        }
-        group.view = control
+        let group = segmentGroup(.zoom, "Zoom", control, ["Zoom Out", "Scale", "Zoom In"])
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
         form.image = symbol("plus.magnifyingglass", "Zoom")
         form.submenu = NSHostingMenu(rootView: Group { [app, project, pdf] in
@@ -259,6 +233,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             ScaleMenuItems(pdf: pdf)
         })
         group.menuFormRepresentation = form
+        return group
+    }
+
+    /// A segmented control as a group: each segment a labelled subitem, with its tooltip.
+    private func segmentGroup(_ id: NSToolbarItem.Identifier, _ label: String, _ control: NSSegmentedControl,
+                              _ segments: [String]) -> NSToolbarItemGroup {
+        let group = NSToolbarItemGroup(itemIdentifier: id)
+        group.label = label
+        group.subitems = segments.enumerated().map { index, title in
+            control.setToolTip(title, forSegment: index)
+            let subitem = NSToolbarItem(itemIdentifier: .init(title))
+            subitem.label = title
+            return subitem
+        }
+        group.view = control
         return group
     }
 

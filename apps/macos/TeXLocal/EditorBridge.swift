@@ -84,7 +84,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     var onRestart: () -> Void = {}
     private(set) var crashes = 0
     /// The page never loaded; every call answers nil.
-    private(set) var failed = false
+    private var failed = false
 
     private var ready = false
     /// Whether the column shows the editor rather than a preview or placeholder.
@@ -158,18 +158,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-        fail(error)
+        failed = true
+        Self.log.error("The editor page didn't load: \(error.localizedDescription, privacy: .public)")
+        becomeReady()
     }
 
     /// Nothing navigates the editor page off the app's own files.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         action.request.url?.scheme == Self.scheme ? .allow : .cancel
-    }
-
-    private func fail(_ error: any Error) {
-        failed = true
-        Self.log.error("The editor page didn't load: \(error.localizedDescription, privacy: .public)")
-        becomeReady()
     }
 
     // ---------- host → page ----------
@@ -179,14 +175,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         case setSymbols, setHostKeys, setHostFind, setFind, closeFind, setAppearance
     }
 
-    private func untilReady() async {
-        if ready { return }
-        await withCheckedContinuation { whenReady.append($0) }
-    }
-
     @discardableResult
     private func call(_ method: PageMethod, _ args: KeyValuePairs<String, Any> = [:]) async -> Any? {
-        await untilReady()
+        if !ready { await withCheckedContinuation { whenReady.append($0) } }
         if closed || failed { return nil }
         return await run(method, args)
     }
@@ -200,9 +191,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                                                          arguments: Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) }),
                                                          contentWorld: .page)
         } catch {
-            #if DEBUG
             Self.log.debug("texlocal.\(method.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            #endif
             return nil
         }
     }
@@ -260,7 +249,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     /// The page's search runs from the native find bar; CodeMirror's panel stays hidden.
     func useHostFind() async {
-        await keep(.setHostFind, ["on": true])
+        await keep(.setHostFind)
     }
 
     func setFind(_ query: FindQuery) async {
@@ -287,9 +276,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         let drawing = NSAppearance(named: name) ?? NSApp.effectiveAppearance
         drawing.performAsCurrentDrawingAppearance {
             settings["accent"] = Self.css(.controlAccentColor)
-            settings["selection"] = Self.css(.selectedTextBackgroundColor)
-            settings["inactiveSelection"] = Self.css(.unemphasizedSelectedTextBackgroundColor)
             settings["host"] = [
+                "selection": Self.css(.selectedTextBackgroundColor),
+                "selection-inactive": Self.css(.unemphasizedSelectedTextBackgroundColor),
                 "text-background": Self.css(.textBackgroundColor),
                 "text": Self.css(.textColor),
                 "secondary-label": Self.css(.secondaryLabelColor),

@@ -1,20 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// An open project's window content, as AppKit's split view controllers lay it out:
-/// the sidebar | the rest | the inspector; in the rest, source | PDF over the build
-/// panel, which spans both, and the status bar at their foot (the item's bottom
-/// accessory). Each column's find bar is its top accessory, and the toolbar's sections
-/// follow the sidebar's, the source/PDF and the inspector's dividers
-/// (`WorkspaceToolbar`). SwiftUI draws every pane.
-///
+/// An open project's window content: sidebar | source | PDF over the build panel, the
+/// status bar at their foot | inspector; each find bar is its column's top accessory.
 /// AppKit, not `NavigationSplitView`, which can't hide its last column (the PDF), run a
-/// panel under two of its columns, or put bars in its columns' accessories; and only
-/// an AppKit split gives the toolbar a section per column (`WorkspaceToolbar`).
-///
-/// The models say what shows: a change they make (View › Hide PDF, a find, a failed
-/// build) collapses or shows an item with AppKit's own animation, and the sidebar or
-/// the inspector dragged or toggled shut goes back to them.
+/// panel under two columns, or put bars in accessories; and only an AppKit split gives
+/// the toolbar a section per column (`WorkspaceToolbar`).
+/// The models collapse and show the items with AppKit's animation; a column dragged or
+/// toggled shut goes back to them.
 final class WorkspaceController: DetentSplitViewController {
     let app: AppModel
     let project: ProjectModel
@@ -49,9 +42,9 @@ final class WorkspaceController: DetentSplitViewController {
         self.project = project
         super.init(nibName: nil, bundle: nil)
         buildSidebar(height: size.height)
+        // Before the area, which opens in the room the side columns leave; added after it.
         buildInspector()
         buildArea(size: size)
-        // Made before the area, which opens in the room the side columns leave.
         addSplitViewItem(inspectorItem)
         // The sidebar's opening width, and source and PDF at half each.
         detent = { [unowned self] divider in
@@ -97,7 +90,8 @@ final class WorkspaceController: DetentSplitViewController {
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.isCollapsed = !app.sidebarVisible
-        sidebarSearch = accessory(SidebarSearch(project: project, field: searchField))
+        sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField)
+            .padding([.horizontal, .bottom], BarMetrics.inset))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
@@ -106,7 +100,7 @@ final class WorkspaceController: DetentSplitViewController {
     private func buildArea(size: CGSize) {
         let sidebarWidth = app.sidebarVisible ? sidebar.view.frame.width : 0
         let inspectorWidth = inspectorItem.isCollapsed ? 0 : inspectorItem.viewController.view.frame.width
-        let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimumWidth)
+        let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimum.width)
         let panes = room - ColumnMetrics.divider
         let pdfWidth = keptPDFWidth(in: panes)
         let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
@@ -231,6 +225,11 @@ final class WorkspaceController: DetentSplitViewController {
     /// Search results take the whole sidebar; only LaTeX has an outline.
     private var showsOutline: Bool { !project.isSearching && project.isLaTeX }
 
+    private func updateOutline() {
+        setCollapsed(outlineItem, !showsOutline || app.outlineCollapsed)
+        setHidden(outlineBar, !showsOutline)
+    }
+
     // ---------- the models drive the panes ----------
 
     private func watch() {
@@ -240,12 +239,8 @@ final class WorkspaceController: DetentSplitViewController {
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
             track({ project.showPDF }) { [weak self] in self?.setPDFShown($0) },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
-            track({ OutlineState(shown: !project.isSearching && project.isLaTeX,
-                                   collapsed: app.outlineCollapsed) }) { [weak self] state in
-                guard let self else { return }
-                setCollapsed(outlineItem, !state.shown || state.collapsed)
-                setHidden(outlineBar, !state.shown)
-            },
+            track({ project.isSearching || !project.isLaTeX }) { [weak self] _ in self?.updateOutline() },
+            track({ app.outlineCollapsed }) { [weak self] _ in self?.updateOutline() },
             track({ project.findShown }) { [weak self] shown in if let self { setHidden(sourceFind, !shown) } },
             // ⌘F, or Find and Replace…, again while the bar shows: back to its field.
             track({ project.findFocus }) { [weak self] focus in
@@ -261,8 +256,6 @@ final class WorkspaceController: DetentSplitViewController {
             follow(sidebarItem) { [app] visible in if app.sidebarVisible != visible { app.sidebarVisible = visible } },
             follow(inspectorItem) { [app] visible in if app.inspectorVisible != visible { app.inspectorVisible = visible } },
         ]
-        // Sizes as they're dragged to, not as a resized window squeezes them or a
-        // collapse passes through them.
         drags = [splitView, sidebar.splitView, columns.splitView, area.splitView].map { split in
             NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { [weak self] message in
                 if message.userResize { self?.saveSizes() }
@@ -549,12 +542,6 @@ private final class Hairline: NSView {
     }
 }
 
-/// Whether the File Outline shows, and whether it's folded to its header.
-private nonisolated struct OutlineState: Equatable {
-    let shown: Bool
-    let collapsed: Bool
-}
-
 /// Column and pane limits. Each minimum is its content's: the toolbar is the
 /// system's to fit, its tools crossing a divider or going into its overflow menu
 /// near the window's minimum.
@@ -582,13 +569,12 @@ enum ColumnMetrics {
     static let outlineShare: CGFloat = 0.45
     /// The splits' thin dividers (`NSSplitView.DividerStyle.thin`).
     static let divider: CGFloat = 1
-    /// The window's content at its narrowest: the source and the PDF, a divider
-    /// between. A narrowing window folds the sidebar first (AppKit's way with
-    /// sidebars), so two windows tile side by side on the smallest Mac display.
-    static let contentMinimumWidth = sourceMinimum + divider + pdfMinimum
-    /// And at its shortest: the columns over the build panel, then the status bar
-    /// under its line.
-    static let contentMinimumHeight = columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight
+    /// The window's content at its narrowest, source | PDF: a narrowing window folds
+    /// the sidebar first (AppKit's way with sidebars), so two windows tile side by side
+    /// on the smallest Mac display. At its shortest, the columns over the build panel
+    /// and the status bar under its line.
+    static let contentMinimum = CGSize(width: sourceMinimum + divider + pdfMinimum,
+                                       height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight)
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.

@@ -1,7 +1,7 @@
 import Foundation
 
 /// A heading and the headings under it.
-nonisolated struct OutlineNode: Identifiable, Hashable {
+nonisolated struct OutlineNode: Identifiable {
     let item: OutlineItem
     let children: [OutlineNode]?
 

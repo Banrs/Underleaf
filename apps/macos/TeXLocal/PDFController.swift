@@ -257,18 +257,14 @@ struct PDFRepresentable: NSViewRepresentable {
         controller.view = view
         let center = NotificationCenter.default
         // Each read once as it starts watching too: the first fitted scale is set before.
-        context.coordinator.watches = [
-            Task { [controller] in
-                let changes = center.notifications(named: .PDFViewPageChanged, object: view)
-                controller.pageChanged()
-                for await _ in changes { controller.pageChanged() }
-            },
-            Task { [controller] in
-                let changes = center.notifications(named: .PDFViewScaleChanged, object: view)
-                controller.scaleChanged()
-                for await _ in changes { controller.scaleChanged() }
-            },
-        ]
+        context.coordinator.watches = [(Notification.Name.PDFViewPageChanged, controller.pageChanged),
+                                       (.PDFViewScaleChanged, controller.scaleChanged)].map { name, changed in
+            Task {
+                let changes = center.notifications(named: name, object: view)
+                changed()
+                for await _ in changes { changed() }
+            }
+        }
         return view
     }
 
@@ -297,12 +293,12 @@ struct PDFRepresentable: NSViewRepresentable {
         view.document = document
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         // A reopened project's first PDF opens at the page it was left at.
-        let restore = project.restorePDFPage.map { min(max($0, 1), document.pageCount) - 1 }
+        let restore = project.restorePDFPage
         project.restorePDFPage = nil
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: place.point))
-        } else if let restore, let page = document.page(at: restore) {
-            view.go(to: page)
+        } else if let restore {
+            controller.go(toPage: restore)
         }
         controller.pageCount = document.pageCount
         controller.pageChanged()

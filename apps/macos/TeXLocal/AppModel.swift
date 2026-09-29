@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The app's user-defaults keys, in one place, with their registered defaults.
+/// The app's user-defaults keys.
 enum DefaultsKey {
     static let sidebarVisible = "sidebarVisible"
     static let inspectorVisible = "inspectorVisible"
@@ -10,23 +10,12 @@ enum DefaultsKey {
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
     static let showPDF = "showPDF"
-    /// A launch argument (`-openProject <id>`), read for this run only.
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
     static let outlineFolded = "OutlineFolded"
     static let settingsTab = "settingsTab"
     /// Pane sizes set by dragging a divider (`PaneSize`).
     static let paneSizes = "PaneSizes"
-
-    /// Registered defaults aren't persisted, so this runs at every launch.
-    static func register() {
-        UserDefaults.standard.register(defaults: [
-            sidebarVisible: true,
-            autoCompile: true,
-            showWordCount: true,
-            showPDF: true,
-        ])
-    }
 }
 
 /// An alert: a short, specific title and the detail in the message (HIG, Alerts).
@@ -118,8 +107,9 @@ final class AppModel {
     }
 
     init() {
-        DefaultsKey.register()
         let defaults = UserDefaults.standard
+        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
+                                     DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
         sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
         inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
@@ -156,13 +146,11 @@ final class AppModel {
     /// Polls while TeX is missing, so installing it needs no relaunch.
     func watchForTeX() async {
         while tex?.available == false, !Task.isCancelled {
-            try? await Task.sleep(for: Self.texPollInterval)
+            // Each look runs `status`, which searches the disk for latexmk.
+            try? await Task.sleep(for: .seconds(10))
             tex = try? await core.call("status", as: TexStatus.self)
         }
     }
-
-    /// Each look runs `status`, which searches the disk for latexmk.
-    private static let texPollInterval = Duration.seconds(10)
 
     /// Nil finds TeX automatically. The core refuses a folder without latexmk.
     func setTeXFolder(_ path: String?) async throws {

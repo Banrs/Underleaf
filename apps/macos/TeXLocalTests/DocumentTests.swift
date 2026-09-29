@@ -49,21 +49,13 @@ struct OutlineTests {
 
     /// A subsection before any section has no parent: it sits flush, as does
     /// the section after it; the subsection under that section is one in.
-    @Test func nestingFollowsTheHeadingsNotTheirLevels() async throws {
-        let outline = try await outline(
-            "\\subsection{}\n\\section{First Section}\n\\subsection{Detail}\n\\subsubsection{Finer}\n\\section{Second}")
-        let tree = Outline.tree(outline)
-        #expect(tree.map(\.item).map(Outline.displayTitle) == ["Untitled Subsection", "First Section", "Second"])
-        #expect(tree[1].children?.map(\.item.title) == ["Detail"])
-        #expect(tree[1].children?[0].children?.map(\.item.title) == ["Finer"])
-    }
-
     @Test func theTreeNestsAsTheHeadingsDo() async throws {
-        let tree = Outline.tree(try await outline("\\subsection{}\n\\section{A}\n\\subsection{A1}\n\\subsection{A2}\n\\section{B}"))
+        let tree = Outline.tree(try await outline(
+            "\\subsection{}\n\\section{A}\n\\subsection{A1}\n\\subsubsection{A1a}\n\\subsection{A2}\n\\section{B}"))
         #expect(tree.map(\.item).map(Outline.displayTitle) == ["Untitled Subsection", "A", "B"])
-        #expect(tree[0].children == nil)
+        #expect(tree[0].children == nil && tree[2].children == nil)
         #expect(tree[1].children?.map(\.item.title) == ["A1", "A2"])
-        #expect(tree[2].children == nil)
+        #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
     }
 
     /// A fold is keyed by the heading's level, title and which of its

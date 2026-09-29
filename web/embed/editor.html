@@ -14,10 +14,8 @@
        Settings on a Mac, Fluent ones on Windows — rather than the browser
        version's tinted bar (styles.css). */
     * { scrollbar-width: auto; scrollbar-color: auto; }
-    /* No scroller while the editor's size changes (editor.js sets
-       data-resizing): CodeMirror scrolls to keep the top line in place as
-       lines re-wrap, and WebKit shows its scroller for any scroll, where a
-       native text view shows none as its pane resizes. */
+    /* No scroller while the editor resizes (editor.js): CodeMirror scrolls to keep
+       the top line as lines re-wrap, and a native text view shows none. */
     :root[data-host][data-resizing] { scrollbar-width: none; }
     /* The Mac scrolls the page, not CodeMirror's scroller, so the text passes
        under the toolbar, where WebKit draws the system's scroll edge effect
@@ -27,32 +25,22 @@
     :root[data-host] .cm-editor { min-height: 100vh; }
     /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
-    /* The host's highlight colour for the selection when it sends one (the
-       Mac's), unemphasised while the editor is not focused, as in a native
-       text view. !important: the syntax themes set theirs at higher
-       specificity. */
-    :root[data-host-selection] .cm-editor .cm-selectionBackground {
-      background: var(--host-selection-inactive) !important;
-    }
-    :root[data-host-selection] .cm-editor.cm-focused .cm-selectionBackground {
-      background: var(--host-selection) !important;
-    }
 
     /* ---------- a host's own chrome (setAppearance `host`: the Mac's) ----------
        The editor then sits in the native chrome as a native text view
        would: the system's text surface, its type scale and colours, and the
-       metrics of its menus. Hosts that send no colours keep the page's look.
-       !important where a syntax theme sets its own at higher specificity. */
+       metrics of its menus. !important where a syntax theme sets its own at higher specificity. */
 
     /* The system's text background, whatever surface the syntax colours'
        theme brings (One Dark's is blue-grey). */
     :root[data-host], :root[data-host] body,
     :root[data-host] .cm-editor { background-color: var(--host-text-background) !important; }
+    /* The system's selection colours, unemphasised while the editor isn't focused, as in a text view. */
+    :root[data-host] .cm-editor .cm-selectionBackground { background: var(--host-selection-inactive) !important; }
+    :root[data-host] .cm-editor.cm-focused .cm-selectionBackground { background: var(--host-selection) !important; }
 
-    /* The gutter as Xcode draws it: line numbers a step smaller than the
-       code, in SF Mono with tabular figures and the secondary label colour,
-       8 px either side, then 4 px before the text. The line box stays the
-       code's, so each number sits on its line. */
+    /* The gutter as Xcode draws it; the line box stays the code's, so each
+       number sits on its line. */
     :root[data-host] .cm-gutters {
       background: transparent !important;
       border: none !important;
@@ -107,14 +95,10 @@
       color: #000 !important;
     }
     /* The host draws the find bar; CodeMirror's panel is an empty stand-in. */
-    :root[data-host-find] .cm-panels { display: none !important; }
+    :root[data-host] .cm-panels { display: none !important; }
 
-    /* Completions and the math preview as the system's menus are: a raised
-       surface with the menu shadow and the kit's 12 px menu corners, rows at
-       the editor's font and size with 8 px corners (24 px at 13 px, growing
-       with the font), the selection in the system's selected-content colour,
-       details in the secondary colour. No per-kind icons: a Mac completion
-       list is text. */
+    /* Completions and the math preview as the system's menus are. No per-kind
+       icons: a Mac completion list is text. */
     :root[data-host] .cm-tooltip {
       background: var(--bg-raised) !important;
       color: var(--host-text) !important;

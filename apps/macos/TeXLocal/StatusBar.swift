@@ -1,13 +1,8 @@
 import SwiftUI
 
-/// The status bar under the source and the PDF: the build's summary, which shows
-/// its issues; the word count (View › Show Word Count); whether the PDF is out of
-/// date; its page, which opens Go to Page (the PDF's own numbers, not LaTeX's,
-/// which front matter and roman numbering change); and the build panel's toggle at
-/// the far end, past a hairline that sets it apart from what the bar reports.
-/// Not here: the save state (edits save themselves 0.7 s after typing
-/// stops, and a failed save is an alert), the caret's line (the gutter marks it)
-/// and the engine (the inspector).
+/// The status bar under the source and the PDF. Its page is the PDF's own number, not
+/// LaTeX's, which front matter and roman numbering change. No save state (edits save
+/// 0.7 s after typing; a failed save is an alert), caret line (the gutter) or engine (the inspector).
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -98,7 +93,8 @@ struct StatusBar: View {
                     badge("Compiled in \(result.durationText)", "checkmark.circle.fill", .green)
                 } else {
                     // The error count folds into the failure, so its symbol shows once.
-                    badge(failedTitle, "xmark.octagon.fill")
+                    badge(project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
+                          "xmark.octagon.fill")
                 }
             } else {
                 Text(project.noBuildTitle)
@@ -115,17 +111,9 @@ struct StatusBar: View {
         .fixedSize()
     }
 
-    private var failedTitle: String {
-        switch project.errorCount {
-        case 0: "Build Failed"
-        case 1: "Build Failed · 1 Error"
-        case let count: "Build Failed · \(count) Errors"
-        }
-    }
-
     /// Errors and warnings in the symbols' own colours; success in green, which
     /// the multicolour checkmark isn't.
-    private func badge(_ title: String, _ systemImage: String, _ color: Color? = nil) -> some View {
+    private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil) -> some View {
         Label {
             Text(title)
         } icon: {

@@ -1,26 +1,9 @@
 import SwiftUI
 
-/// The sidebar's search field, over the files: Find in Project….
-struct SidebarSearch: View {
-    @Bindable var project: ProjectModel
-    let field: FieldHandle
-
-    var body: some View {
-        SearchField(text: $project.searchQuery, prompt: "Search Project", handle: field)
-            .padding(.horizontal, BarMetrics.inset)
-            .padding(.bottom, BarMetrics.inset)
-    }
-}
-
-/// The File Outline's header, the one view for it folded or not: at the Files
-/// pane's foot, so it stays put over the outline's scrolling and rides up with it
-/// as it opens. It's the system's own collapsible sidebar section, with no rows of
-/// its own, so it works as a sidebar section's header does: the whole header folds
-/// and opens the outline, its chevron shows while the pointer is over it, and
-/// VoiceOver names it and its state. Its title keeps its place under the line
-/// either way. Folded, it's the status bar's height at the window's foot, and the
-/// two read as one bar; open, it ends with its title's row, where a section's
-/// first row would start.
+/// The File Outline's header: the system's collapsible sidebar section (so it folds,
+/// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
+/// Files pane's foot so it stays put over the outline. Folded, it's the status bar's
+/// height, and the two read as one bar.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
@@ -41,9 +24,8 @@ struct OutlineHeader: View {
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
-        // The list as tall as its content, its room under the header too, so a drag
-        // from the header has nothing to scroll (scrollDisabled doesn't stop a
-        // drag's autoscroll); the bar shows its top.
+        // Its room under the header too, so a drag from the header has nothing to
+        // autoscroll (scrollDisabled doesn't stop it); the bar shows its top.
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
         .offset(y: -Self.titleDrop)
         .frame(height: app.outlineCollapsed ? BarMetrics.secondaryBarHeight : sidebarListRoom + Self.headerRow,
@@ -90,10 +72,9 @@ struct FilesList: View {
                     row(node).tag(node.path)
                 }
             } header: {
-                // The project's top level, marked while a drop would go there, as a
-                // row takes a drop into its folder. A List hands a drop on its empty
-                // space to neither dropDestination nor onDrop (27.2). Search results
-                // aren't the tree, so they take none.
+                // The project's top level, as a row takes a drop into its folder: a List
+                // hands a drop on its empty space to neither dropDestination nor onDrop
+                // (27.2). Search results take none.
                 Text("Files")
                     .headerDropHighlight(dropFolder == "")
                     .contentShape(.rect)
@@ -403,9 +384,8 @@ struct OutlineList: View {
                 }
             }
             .listStyle(.sidebar)
-            // The header over it stands where a section's would, so the room a
-            // sidebar list leaves over its first row goes; the scroller keeps to
-            // what shows.
+            // The header above stands in for a section's, so the list's room over its
+            // first row goes; the scroller keeps to what shows.
             .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
             .padding(.top, -sidebarListRoom)
             .clipped()

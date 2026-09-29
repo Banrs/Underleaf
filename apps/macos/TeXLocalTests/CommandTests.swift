@@ -110,29 +110,22 @@ struct MenuStructureTests {
         #expect(steps == [false, true])
     }
 
-    @Test func findNextAndPreviousAreCommandG() throws {
-        #expect(try item("g").title == "Find Next")
-        #expect(try item("g", [.command, .shift]).title == "Find Previous")
-    }
-
-    /// The Mac's chords where the shared table's differ (`MenuCommand.macAccel`).
-    @Test func theViewMenuHasTheMacsChords() throws {
-        #expect(try item("s", [.command, .control]).title.hasSuffix("Sidebar"))
-        #expect(try item("0").title == "Actual Size")
-        #expect(try item("9").title == "Fit Width")
-        #expect(try item("9", [.command, .option]).title == "Fit Height")
-    }
-
-    /// Find in PDF… has no chord of its own: ⌥⌘F is Find and Replace….
-    @Test func findHasTheMacsChords() throws {
-        #expect(try item("f").title == "Find…")
-        #expect(try item("f", [.command, .option]).title == "Find and Replace…")
+    /// The chords the Mac relies on, its own (`MenuCommand.macAccel`, HIG Keyboards) and the system's.
+    @Test func eachChordHasItsItem() throws {
+        let chords: [(String, NSEvent.ModifierFlags, String)] = [
+            ("g", .command, "Find Next"), ("g", [.command, .shift], "Find Previous"),
+            ("f", .command, "Find…"), ("f", [.command, .option], "Find and Replace…"),
+            ("s", [.command, .control], "Sidebar"), ("0", .command, "Actual Size"),
+            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Height"),
+            ("l", [.command, .shift], "Build Panel"), ("i", [.command, .option], "Inspector"),
+            ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
+            (".", .command, "Stop"), ("w", [.command, .shift], MenuCommand.projectClose.title),
+            ("e", [.command, .option], MenuCommand.editMath.title), ("j", [.command, .option], MenuCommand.syncForward.title)]
+        for (key, modifiers, title) in chords {
+            #expect(try item(key, modifiers).title.hasSuffix(title), "\(title)")
+        }
+        // Find in PDF… has no chord of its own: ⌥⌘F is Find and Replace….
         #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
-    }
-
-    @Test func theBottomPanelIsTheBuildPanel() throws {
-        let title = try item("l", [.command, .shift]).title
-        #expect(["Show Build Panel", "Hide Build Panel"].contains(title), "\(title)")
     }
 
     /// The system's spelling commands, which WebKit's spell checking answers.
@@ -169,22 +162,6 @@ struct MenuStructureTests {
         #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
         #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
         #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
-    }
-
-    /// The Mac-only commands have their HIG chords (HIG, Keyboards).
-    @Test func theMacsCommandsHaveTheirChords() throws {
-        let file = try menu("File"), view = try menu("View"), compile = try menu("Compile")
-        #expect(try item("Open…", in: file).keyEquivalent == "o")
-        #expect(try item("Print…", in: file).keyEquivalent == "p")
-        let setup = try item("Page Setup…", in: file)
-        #expect(setup.keyEquivalent.lowercased() == "p"
-                && (setup.keyEquivalent == "P" || setup.keyEquivalentModifierMask.contains(.shift)))
-        let inspector = try #require(view.items.first { $0.title.hasSuffix("Inspector") })
-        #expect(inspector.keyEquivalent == "i" && inspector.keyEquivalentModifierMask == [.command, .option])
-        #expect(try item("Stop", in: compile).keyEquivalent == ".")
-        #expect(try item("w", [.command, .shift]).title == MenuCommand.projectClose.title)
-        #expect(try item("e", [.command, .option]).title == MenuCommand.editMath.title)
-        #expect(try item("j", [.command, .option]).title == MenuCommand.syncForward.title)
     }
 
     /// Share… as the HIG names it, there even with nothing to share.

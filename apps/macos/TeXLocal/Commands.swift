@@ -1,5 +1,4 @@
 import AppKit
-import os
 import SwiftUI
 
 /// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
@@ -94,24 +93,17 @@ enum MenuCommand: String, CaseIterable {
         }
     }
 
-    /// The shared accelerator (web/src/shortcuts.json, which the build copies
-    /// into the app); `macAccel` departs from it where the HIG reserves a key.
+    /// The shared accelerator (web/src/shortcuts.json, which the build copies into the app).
     var accel: String? { Self.sharedAccels[rawValue] }
 
     private static let sharedAccels: [String: String] = {
         guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json", subdirectory: "web"),
-              let data = try? Data(contentsOf: url),
-              let table = try? JSONDecoder().decode([String: String].self, from: data) else {
-            Logger(subsystem: "com.texlocal.mac", category: "commands").fault("web/shortcuts.json is missing from the app")
-            return [:]
-        }
-        return table
+              let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
     }()
 
-    /// Mac chords where HIG-reserved keys differ from the shared table (HIG,
-    /// Keyboards): ⌃⌘S sidebar, ⌘0 actual size, ⌥⌘F find and replace, ⌘. stop,
-    /// ⇧⌘W close project (a file and its windows). Sync and Inline Math leave the
-    /// table's Control and ⇧⌘M (Minimize plus Shift) chords.
+    /// Departs from the shared table where the HIG reserves its key (HIG, Keyboards); Sync
+    /// and Inline Math leave the table's Control and ⇧⌘M (Minimize plus Shift) chords.
     var macAccel: String? {
         switch self {
         case .projectOpen: "CmdOrCtrl+O"
@@ -130,8 +122,7 @@ enum MenuCommand: String, CaseIterable {
         // As the Mac's VS Code LaTeX extension; the PDF answers ⌘-click for the other way.
         case .syncForward: "CmdOrCtrl+Alt+J"
         case .syncInverse: nil
-        // ⌘L is Go to Line; ⌥⌘G is Go to Page in the Mac's PDF readers, the
-        // chord people know.
+        // ⌥⌘G is Go to Page in the Mac's PDF readers; ⌘L is Go to Line.
         case .pdfGotoPage: "CmdOrCtrl+Alt+G"
         // ⌘F finds in the PDF when it has the keyboard.
         case .pdfFind: nil
@@ -169,18 +160,12 @@ enum MenuCommand: String, CaseIterable {
         return KeyboardShortcut(equivalent, modifiers: modifiers)
     }
 
-    /// The editor page handles these chords itself rather than handing them back.
-    var editorHandles: Bool {
-        switch self {
-        case .editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment: true
-        default: false
-        }
-    }
-
-    /// Chords the editor page gives back to the menu, so none is lost to the page.
+    /// Chords the editor page gives back to the menu, so none is lost to the page;
+    /// it handles `pageKeeps` itself.
     static var editorHostKeys: [(id: String, accel: String)] {
-        allCases.compactMap { c in
-            guard !c.editorHandles, let accel = c.macAccel else { return nil }
+        let pageKeeps: [MenuCommand] = [.editUndo, .editRedo, .editFind, .editFindNext, .editFindPrevious, .editComment]
+        return allCases.compactMap { c in
+            guard !pageKeeps.contains(c), let accel = c.macAccel else { return nil }
             return (c.rawValue, accel)
         }
     }

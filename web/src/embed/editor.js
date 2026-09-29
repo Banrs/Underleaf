@@ -26,11 +26,9 @@ let symbols = { labels: [], citations: [] };
 let dark = matchMedia('(prefers-color-scheme: dark)').matches;
 
 // ---------- resizing ----------
-// While the editor's size changes (a divider dragged, a pane shown or
-// hidden), and for a moment after, the page is marked resizing: a host that
-// draws its own chrome hides the overlay scroller meanwhile (editor.html).
-// Not a scroller that takes room (System Settings, "Always"): hiding it
-// would re-wrap the text.
+// Marks the page data-resizing while its size changes and briefly after, so a
+// host's chrome hides the overlay scroller (editor.html); not a scroller that
+// takes room, which would re-wrap the text.
 
 const RESIZE_SETTLE_MS = 400;
 let resizeTimer = 0;
@@ -318,21 +316,19 @@ window.texlocal = {
   setSymbols(labels, citations) { symbols = { labels, citations }; },
   setHostKeys: forwardHostKeys(),
   // The host draws the find bar (see "the host's find bar" above).
-  setHostFind(on) {
-    hostFind = on;
-    if (on) document.documentElement.dataset.hostFind = '';
+  setHostFind() {
+    hostFind = true;
     quiet = true;
     attachHostFind(currentView());
     quiet = false;
   },
   setFind,
   closeFind,
-  // `accent` and the selection colours are the host system's (the Mac's
-  // accent and highlight colours); without them the page keeps its own.
-  // `host` holds the host's own colours for the text's surface and the
-  // editor's chrome (the Mac's), as CSS; the page then matches the native
+  // `accent` is the host system's accent colour; without it the page keeps its own.
+  // `host` holds the host's own colours for the text's surface, the selection and
+  // the editor's chrome (the Mac's), as CSS; the page then matches the native
   // chrome around it (editor.html, :root[data-host]).
-  setAppearance({ theme, palette, font, fontSize, accent, selection, inactiveSelection, host }) {
+  setAppearance({ theme, palette, font, fontSize, accent, host }) {
     const root = document.documentElement;
     dark = theme === 'dark';
     root.dataset.theme = theme;
@@ -340,11 +336,6 @@ window.texlocal = {
     if (font) root.style.setProperty('--editor-font', font === 'jetbrains' ? 'var(--mono-jetbrains)' : 'var(--mono)');
     if (fontSize) root.style.setProperty('--editor-fs', `${fontSize}px`);
     if (accent) root.style.setProperty('--accent', accent);
-    if (selection && inactiveSelection) {
-      root.style.setProperty('--host-selection', selection);
-      root.style.setProperty('--host-selection-inactive', inactiveSelection);
-      root.dataset.hostSelection = '';
-    }
     if (host) {
       for (const [name, value] of Object.entries(host)) root.style.setProperty(`--host-${name}`, value);
       root.dataset.host = '';

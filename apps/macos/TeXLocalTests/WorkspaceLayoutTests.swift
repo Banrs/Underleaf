@@ -192,11 +192,11 @@ final class WorkspaceLayoutTests {
     /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
     @Test func theWindowReachesItsMinimum() {
         let workspace = open(panel: true, sidebar: false)
-        window?.setContentSize(WindowMetrics.contentMinimum)
+        window?.setContentSize(ColumnMetrics.contentMinimum)
         window?.layoutIfNeeded()
-        #expect(isClose(workspace.view.frame.width, WindowMetrics.contentMinimum.width))
+        #expect(isClose(workspace.view.frame.width, ColumnMetrics.contentMinimum.width))
         // Below the titlebar: the panes stop at the safe area.
-        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, WindowMetrics.contentMinimum.height))
+        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height))
     }
 }
 

@@ -18,15 +18,13 @@ struct SymbolItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        Group {
-            ForEach(symbolGroups, id: \.0) { title, symbols in
-                Menu(title) {
-                    // The glyph over its command: the menu item's title and subtitle.
-                    ForEach(symbols, id: \.1) { glyph, command in
-                        Button { project?.format(.symbol, command) } label: {
-                            Text(glyph)
-                            Text(command)
-                        }
+        ForEach(symbolGroups, id: \.0) { title, symbols in
+            Menu(title) {
+                // The glyph over its command: the menu item's title and subtitle.
+                ForEach(symbols, id: \.1) { glyph, command in
+                    Button { project?.format(.symbol, command) } label: {
+                        Text(glyph)
+                        Text(command)
                     }
                 }
             }

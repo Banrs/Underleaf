@@ -32,20 +32,20 @@ struct SourceColumn: View {
     var body: some View {
         // The editor stays mounted under a preview or the placeholder, so its
         // page keeps the text and its place.
-        let editing = project.openPath != nil && project.editsText
+        let editing = project.editsText
         let appearance = EditorAppearance(colorScheme: colorScheme, contrast: contrast,
                                           palette: palette, font: font, fontSize: fontSize)
         ZStack {
             EditorView(bridge: project.editor, shown: editing, obscuredTop: obscuredTop)
                 .ignoresSafeArea(.container, edges: .top)
                 .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { obscuredTop = $0 }
-            if project.openPath != nil, !project.editsText, let url = project.openURL {
-                FilePreview(url: url)
-                    .background(.background)
-            } else if project.openPath == nil {
+            if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.background)
+            } else if !project.editsText, let url = project.openURL {
+                FilePreview(url: url)
                     .background(.background)
             }
         }

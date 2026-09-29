@@ -12,7 +12,7 @@
   - Tests in Swift Testing.
   - Files are named for what they hold.
 - **Mac CI passes** on the runner's macOS 27.0, every commit of the 2026-09-29 review included.
-- **Last full check (2026-09-29):** `npm test` (87); the Mac's 54 tests; Debug builds with no Swift warnings. `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace` pass, and the core hasn't changed since.
+- **Last full check (2026-09-29):** `npm test` (87); the Mac's 51 tests; Debug builds with no Swift warnings. `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace` pass, and the core hasn't changed since.
 - **Windows is a work in progress** (the owner, 2026-09-29): leave `apps/windows` alone, including changes the core or the web would need there.
 
 ## Layout
@@ -67,8 +67,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - `CommandTests`: chords, the menu bar, Find routing;
   - `ProjectTests`: the file watcher, the core, project flows;
   - `DocumentTests`: SyncTeX, the outline, find;
-  - `BarTests`;
-  - `SettingsTests`.
+  - `BarTests`.
 
   The scheme runs them one suite at a time (`parallelizable = NO`) in the scratch library `TEXLOCAL_DATA=/tmp/texlocal-xctest`. Run them under `caffeinate -d -i -u`: the split tests need an awake, unlocked display.
 - **Typecheck against CI's SDK:** `xcrun swiftc -typecheck -swift-version 6 -default-isolation MainActor -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos27.0 -I crates/texlocal-ffi/include apps/macos/TeXLocal/*.swift`.
@@ -122,7 +121,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
 - `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. The PDF runs on under the toolbar with the system's scroll edge effect; Fit Height, the sync point and forward search measure the part that shows (`shownHeight`).
 - `SidebarView`: the sidebar's search, the File Outline's header, the files and the outline.
-  - Files: rows drag out as the file (copied by other apps, opened by the editor) and move within the tree onto a folder, a file's folder or the Files header (the top level), as in Finder; files from elsewhere are copied in. A List hands a drop on its empty space to neither `dropDestination` nor `onDrop` (27.2), so the header takes the top level.
+  - Files: rows drag out as the file (copied by other apps, opened by the editor) and move within the tree onto a folder, a file's folder or the Files header (the top level), as in Finder; files from elsewhere are copied in.
   - Outline: headings are native list rows, the current heading the selection; choosing one (click anywhere on the row, or the arrow keys) scrolls the source to it and leaves the keyboard in the list. A click on the current row goes back to its heading, which an unchanged selection wouldn't.
   - Return or Escape in a rename gives the keyboard back to the list, as in Finder; a click elsewhere leaves it there.
 - `Outline`, `HomeView`, `SettingsView`.
@@ -153,13 +152,12 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
   - Its context menu is WebKit's text menu, as a text view's: none on the line numbers, where WebKit offered only Reload (which would reload the page and lose unsaved edits), and no Look Up “” in blank space, where WebKit selects the line break (and the spaces round it); a deliberate selection of spaces keeps Cut and Copy (`web/src/embed/editor.js`, with a host's chrome only). WebKit's Font, Paragraph Direction and Selection Direction stay: they have no public identifiers, and Safari's text areas show them too.
   - Its page scrolls as a whole on the Mac (`editor.html`, `:root[data-host]`), not CodeMirror's scroller, so the text passes under the toolbar and find bar, where WebKit draws the system's scroll edge effect (`obscuredContentInsets`, the top safe area SwiftUI reports). WebKit paints nothing of a page pulled up into its obscured area, so the inner scroller couldn't. `createEditor` reads the top line from whichever of the two scrolls.
-  - No spellcheck in the source (Mac only, `hostAttributes`): with it on, WebKit lets the system's smart dashes, quotes and text replacement rewrite LaTeX (`--` became an em dash).
+  - No spellcheck in the source (`hostAttributes`, editor.js): WebKit's smart dashes and quotes would rewrite LaTeX.
   - Edit › Undo and Redo are the system's: `undo:`/`redo:` go to whatever has the keyboard, a text field's own undo manager with its titles, or `EditorWebView`, which steps CodeMirror's history (WebKit's undo manager never sees it) and enables them from a Mac-only page message (`history`).
   - `EditorWebView` takes a drag with files before WebKit does: a dropped file opens, the project's own in the editor and a project from elsewhere as from the Dock, as other editors open one. CodeMirror would paste a text file's contents in.
   - The caret is WebKit's, not CodeMirror's drawn one: 2 pt, fading in and out as a text view's (measured on 27.2 in window captures), in `NSColor.textInsertionPointColor` (`--host-insertion-point`; `caret-color: auto` takes the text's colour). `editor.html` undoes `drawSelection`'s transparent caret and hides CodeMirror's primary cursor; a multiple selection's other cursors stay CodeMirror's.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
-  - The view fills the item's glass (36 pt, measured), which passes no clicks to it.
   - The title is the system font, 12 pt from the ends, as an item's title is (by glyph width: medium read wider and bolder).
   - One view for both states: swapping an item's `view` in or out while it's in the toolbar throws in `NSToolbarItemViewer` on the next layout (27.2).
 - **The segmented zoom and Math controls open their menu segment's menu from their action** (`openMenu(of:)`). AppKit opens a segment's menu on a click only in a control with no action, and these have one for their other segments.
@@ -211,10 +209,8 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - Compile flakes, each seen once:
   - `a_timed_out_compile_keeps_the_output_it_wrote`;
   - a build reported as failed with a truncated log.
-- **Not yet seen on screen:** focus rings with Keyboard navigation on (a system setting). Drops (the projects screen's, the sidebar's, the editor's, refused ones) and the fields' first focus (renames, New File, Go to Line, New Project) were checked on 2026-09-29.
-- **The toolbar, checked on screen (Debug, active window, dark and light):**
-  - At 1200 pt the PDF section starts at the source/PDF divider, and the line runs through the toolbar.
-  - Items are 8 pt apart and 8 pt from section edges; B I is one 73 pt capsule; Compile is 75 pt.
+- **Not yet seen on screen:** focus rings with Keyboard navigation on (a system setting).
+- **The toolbar short of room:**
   - A column narrower than its section's tools parts the section line from the divider; that's the system's layout. The source section needs about 350 pt with the sidebar shown, and about 480 pt without it (the traffic lights, the toggle, back, the title, which keeps about 160 pt, B I and Insert).
   - Short of room window-wide, zoom goes to `>>` first, then Share; Compile and the toggles last.
 - **Window minimums:** the content goes down to 641 × 318 pt, or 641 × 370 pt with the build panel open, where the panes' own minimums bind (a live drag of the corner, 27.2). Hiding the PDF doesn't let it narrow.
@@ -225,11 +221,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - App Intents rejects the ad-hoc signature ("Unable to get teamId", `linkd.autoShortcut`). A team-signed build shouldn't log it; this Mac has no signing identity.
   - PDFKit's text recognition logs `e5rt` errors when pages show.
   - The editor's WebContent process logs sandbox and preferences errors.
-- `theSideColumnsOpenAtTheirWidths` passes with or without the fix it covers. Before that fix, a project opened with the inspector shown squeezed the sidebar to 200 pt, but only in the real window (probably its toolbar). The fix was checked on screen.
+- `theSideColumnsOpenAtTheirWidths` doesn't catch a727502's bug (the inspector shown at open squeezed the sidebar to 200 pt): it showed only in the real window, probably its toolbar.
 - **Toolbar configurations:** the inspector section's items are immovable defaults.
   - A toolbar configuration saved before them (after a Customize Toolbar change) could lack them, with no way to add them back.
   - The toolbar saves as "Workspace", and none was saved on the owner's Mac; the owner accepted the risk.
-- **Orphaned defaults:** split sizes are `PaneSizes` keys, and the old per-split keys are orphaned. On the owner's Mac they were deleted on 2026-09-28; other Macs keep them, unread.
+- **Orphaned defaults:** split sizes are `PaneSizes` keys; the old per-split keys stay, unread, on Macs that ran earlier builds.
 - **Biber on macOS 27:** TeX Live 2026's `biber` 2.21 unpacks its arm64 half with `lipo -extract_family`, which Xcode 27's `lipo` no longer has ("extracting arm64 binary with lipo failed"), so biblatex with biber gets no bibliography. Replacing it with its arm64 half (`lipo -thin arm64`) works. The build panel shows it only as undefined citations.
 
 ## Deferred (not dropped)
@@ -238,11 +234,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - PDF find is synchronous: the first query in a 392-page PDF blocks about 445 ms (text extraction), later ones 4–87 ms. `beginFindString` would avoid it, but PDFKit doesn't say which thread its find delegate runs on.
   - The build panel's issue list clears its selection whenever the filter or Warnings change what shows (rows by position, as LaTeX repeats identical warnings).
   - The Mac works out the library folder itself (`Core.libraryFolder`, the core's rule repeated), where Windows lets the core choose (`tl_open(null)`). The core as its only source needs a small FFI getter for the path the Mac shows when it can't open it.
-  - An empty-space drop on the Files list does nothing (see `SidebarView`); the Files header takes the top level.
+  - An empty-space drop on the Files list does nothing: a List hands it to neither `dropDestination` nor `onDrop` (27.2), so the Files header takes the top level.
 - **From the HIG review (2026-09-29):** the app icon is a flat PNG set (`AppIcon.appiconset`). macOS 27's layered icon with dark, clear and tinted looks needs an `AppIcon.icon` made in Icon Composer: new artwork, the owner's to make.
-- **Decided by the owner (2026-09-29):** the sidebar keeps two panes, files over the outline (one list with sections declined: the outline would scroll away under a long file list); `QLPreviewView` for file previews declined (it draws hyperref's link boxes, which no LaTeX editor shows). The rest of the review's design questions are built: see the file list and AppKit notes above.
+- **Decided by the owner (2026-09-29):** the sidebar keeps two panes, files over the outline (one list with sections declined: the outline would scroll away under a long file list); `QLPreviewView` for file previews declined (it draws hyperref's link boxes, which no LaTeX editor shows).
 
-- **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Analysis.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
+- **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Outline.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
   - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
   - Waits for Windows: its side must change in the same commit.
 - **Core:** check it stays the only source of the default engine and library folder.
@@ -254,7 +250,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 
 ## Next
 
-- Confirm the Mac CI run on the branch (above), then a PR from `claude/macos-polish` to `main`.
+- Confirm Mac CI on the branch's last commit, then a PR from `claude/macos-polish` to `main`.
 - Deferred features:
   - error hints and gutter markers;
   - `.blg` parsing;
@@ -287,7 +283,7 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.
   - `DetentSplitViewController` snaps within 8 pt and taps `NSHapticFeedbackManager`'s `.alignment` once, as the divider arrives.
   - Only the sidebar (at its opening 270 pt) and the source/PDF divider (at half) have detents. The File Outline's and the build panel's dividers have no size worth stopping at, and a snap there would fight fine adjustment, so they have neither snap nor haptic.
-- **No scroller while the editor resizes.** CodeMirror keeps the top line in place as lines re-wrap by scrolling, and WebKit shows its overlay scroller for any scroll, a native text view's none. The embed page marks itself `data-resizing` while its size changes and for 0.4 s after (`web/src/embed/editor.js`), and `editor.html` hides the Mac's overlay scroller meanwhile (not a scroller that takes room: hiding it would re-wrap the text).
+- **No scroller while the editor resizes** (`data-resizing`, `web/src/embed/editor.js` and `editor.html`): CodeMirror scrolls to keep the top line as lines re-wrap, which shows WebKit's overlay scroller; a text view shows none.
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
@@ -319,14 +315,13 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The system's `.toggleInspector` keeps glass of its own, so the PDF toggle beside it is a separate circle (the owner's choice: native, with the divide).
 - **A toolbar item's own view** keeps the item's `.prominent` or `.plain` glass, 36 pt high, which wraps the view and passes it no clicks: the view must fill it. Customize Toolbar draws the view without the style, so its copy (`willBeInsertedIntoToolbar` false) is a title item.
 - **Customize Toolbar compresses the default set's views.** The zoom control's palette copy resists compression, or its scale reads "…". The toolbar's own copy must not, or it holds the window 50 pt wider even from the overflow menu.
-- **A segmented control's segment menu** opens on a click only in a control with no action. With one, it opens only on a press and hold, and the click sends the action. Momentary tracking resets `selectedSegment` before `mouseDown` returns, and segment frames aren't public, so the action opens the menu under the click.
 - **Xcode's bottom bars, measured on 27.2:** a corner control's glyph 16.5 pt from the window's edge, and a 1 pt × 12 pt separator 8.5 pt from what's either side of it. The status bar's controls are the HIG's 20 × 20 pt at least (`hitTarget`: a frame and a content shape, as a borderless button's hit area is only what it draws), and the toggle takes 3 pt off either side so its glyph keeps Xcode's place.
 - **Toolbar items at the same visibility priority overflow together**: Share went to `>>` with zoom where it still fitted. Rank the widest lowest.
 - **Closing a toolbar popover logs "Invalid attempt to open a new transaction during CA commit"** on macOS 27.2, from AppKit: a bare SwiftUI app with one toolbar popover logs it too. It is not the app's.
 
 **Swift and SwiftUI**
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
-- **`track` needs `nonisolated` Equatable values** (`OutlineState`, the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
+- **`track` needs `nonisolated` Equatable values** (the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
 - **An `NSMenuItem` subclass can't override its initialisers under default main-actor isolation.** The toolbar's menus are `NSHostingMenu`s over SwiftUI items instead, which also keeps them the menu bar's.
 - **Hide an AppKit view to take it out of the key view loop.** A SwiftUI view at zero opacity leaves the accessibility tree but not the loop, and a hidden split-item accessory only folds to no height, its controls still in the loop and VoiceOver: `setHidden` hides the accessory's view too, and the editor's web view is hidden (`EditorBridge.shown`) while a preview shows.
 - **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
@@ -350,7 +345,5 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - `compile.rs` `program_path` finds the program on the child's PATH; `tools_start_by_posix_spawn_never_a_fork` guards it.
 
 **Tests**
-- **Swift Testing suites** set up in `init` and tear down in an `isolated deinit`. Suites that call the app's main-actor code are `@MainActor`.
-- **`WorkspaceLayoutTests` save and restore the five defaults keys they change.** Recents aren't pruned when the library lists without them (`AppModel.recents` filters instead), since a scratch library would wipe them.
-- **A timed-out `waitUntil` throws `TimedOut(state:)`** with what the test passes as `state`, so a failure on CI says what it saw.
+- **Recents aren't pruned when the library lists without them** (`AppModel.recents` filters instead), since the tests' scratch library would wipe them.
 - **Swift Testing's expansion of a failed `#expect` can mislabel nested calls' values.** `isClose(width(item), sidebarIdeal)` printed the width against `sidebarIdeal`. Put the values in the comment when they matter.
