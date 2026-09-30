@@ -90,7 +90,7 @@ final class WorkspaceLayoutTests {
     }
 
     /// Folding, revealing and hiding the outline must not change its header's
-    /// compact spacing: 28 pt plus the native divider above it.
+    /// native spacing: 36 pt plus the divider above it.
     @Test func theOutlineHeaderKeepsItsHeight() async throws {
         let workspace = open()
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
@@ -110,6 +110,55 @@ final class WorkspaceLayoutTests {
         workspace.project.openPath = "main.tex"
         try await waitUntil { !header.isHidden && !outline.isCollapsed } state: { "tex: hidden \(header.isHidden), fold \(outline.isCollapsed)" }
         #expect(isClose(header.view.frame.height, BarMetrics.secondaryBarHeight + sidebar.splitView.dividerThickness))
+    }
+
+    /// The outline keeps the native Files header's close spacing to its first row,
+    /// leaving the extra height above its title in either state.
+    @Test func theOutlineHeaderKeepsNativeSidebarRowSpacing() async throws {
+        let workspace = open()
+        let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
+        let files = try #require(sidebar.splitViewItems.first)
+        let header = try #require(files.bottomAlignedAccessoryViewControllers.first)
+        let outline = try #require(sidebar.splitViewItems.last)
+        workspace.project.openPath = "main.tex"
+        workspace.project.tree = [TreeNode(type: "file", name: "main.tex", path: "main.tex", children: nil)]
+        workspace.project.outline = [OutlineItem(id: 0, level: 2, title: "Introduction", line: 1)]
+        workspace.app.outlineCollapsed = false
+
+        func tables(_ view: NSView) -> [NSTableView] {
+            (view as? NSTableView).map { [$0] } ?? view.subviews.flatMap(tables)
+        }
+        try await waitUntil {
+            tables(files.viewController.view).contains { $0.numberOfRows >= 2 }
+                && tables(header.view).contains { $0.numberOfRows > 0 }
+                && tables(outline.viewController.view).contains { $0.numberOfRows > 0 }
+                && !outline.isCollapsed
+        }
+        let fileTable = try #require(tables(files.viewController.view).first { $0.numberOfRows >= 2 })
+        let headerTable = try #require(tables(header.view).first { $0.numberOfRows > 0 })
+        let outlineTable = try #require(tables(outline.viewController.view).first { $0.numberOfRows > 0 })
+        try await Task.sleep(for: .milliseconds(300))
+        let filesGap = fileTable.rect(ofRow: 1).minY - fileTable.rect(ofRow: 0).maxY
+
+        func top(_ rect: NSRect, in view: NSView) -> CGFloat {
+            view.isFlipped ? rect.minY : view.bounds.maxY - rect.maxY
+        }
+        let title = header.view.convert(headerTable.rect(ofRow: 0), from: headerTable)
+        let inset = top(title, in: header.view)
+        let below = header.view.bounds.height - inset - title.height
+        #expect(inset > below, "title top \(inset), bottom \(below)")
+        let titleInSidebar = sidebar.view.convert(headerTable.rect(ofRow: 0), from: headerTable)
+        let firstInSidebar = sidebar.view.convert(outlineTable.rect(ofRow: 0), from: outlineTable)
+        let outlineGap = top(firstInSidebar, in: sidebar.view) - top(titleInSidebar, in: sidebar.view) - titleInSidebar.height
+        #expect(isClose(outlineGap, filesGap + sidebar.splitView.dividerThickness, within: 1),
+                "outline gap \(outlineGap), native Files gap \(filesGap)")
+        for collapsed in [true, false] {
+            workspace.app.outlineCollapsed = collapsed
+            try await Task.sleep(for: .milliseconds(300))
+            try await waitUntil { outline.isCollapsed == collapsed }
+            let now = header.view.convert(headerTable.rect(ofRow: 0), from: headerTable)
+            #expect(isClose(top(now, in: header.view), inset))
+        }
     }
 
     /// Native width tracking keeps a completed viewport and a gutter-aware

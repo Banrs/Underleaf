@@ -182,7 +182,9 @@ extension AppModel {
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
-        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight,
+        case .viewZoomIn: project?.hasPDF == true && (pdfController?.view?.canZoomIn ?? true)
+        case .viewZoomOut: project?.hasPDF == true && (pdfController?.view?.canZoomOut ?? true)
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitHeight,
              .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.editsText } ?? false

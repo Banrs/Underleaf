@@ -7,7 +7,10 @@ import Synchronization
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView? {
         // PDFView keeps a set scale as it resizes: Fit Height sets it again.
-        didSet { view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } } }
+        didSet {
+            if view !== oldValue { stopFind() }
+            view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } }
+        }
     }
     var page = 0
     var pageCount = 0
@@ -22,6 +25,14 @@ final class PDFController {
     var matchIndex = 0
     /// More matches exist than are kept.
     var limited = false
+    @ObservationIgnored private var findDocument: PDFDocument?
+    @ObservationIgnored private var findMatchObserver: NSObjectProtocol?
+    @ObservationIgnored private var findEndObserver: NSObjectProtocol?
+    @ObservationIgnored private var findGeneration = 0
+    @ObservationIgnored private var foundSelections: [PDFSelection] = []
+
+    isolated deinit { stopFind() }
+
     /// Whether fitting or set.
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
@@ -96,16 +107,64 @@ final class PDFController {
     /// Keeping place: a rebuilt PDF's matches, the current one kept where it still
     /// is, and the pages left where they are (a build follows every pause in typing).
     func find(_ value: String, keepingPlace: Bool = false) {
-        guard let view, let document = view.document else { return }
+        stopFind()
         query = PDFFind.normalize(value)
-        let all = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
-        matches = Array(all.prefix(PDFFind.maxMatches))
-        limited = all.count > matches.count
-        if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
+        matches = []
+        limited = false
+        if !keepingPlace { matchIndex = 0 }
+        view?.highlightedSelections = nil
+        view?.clearSelection()
+        guard !query.isEmpty, let view, let document = view.document else { return }
+
+        findDocument = document
+        let generation = findGeneration
+        let center = NotificationCenter.default
+        findMatchObserver = center.addObserver(forName: .PDFDocumentDidFindMatch, object: document, queue: .main) { [weak self] notification in
+            // Foundation guarantees the main queue; these legacy PDFKit types
+            // do not express that isolation. No payload leaves this callback.
+            nonisolated(unsafe) let selection = notification.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection
+            MainActor.assumeIsolated {
+                guard let self, self.findGeneration == generation,
+                      self.view?.document === self.findDocument, let selection else { return }
+                if self.foundSelections.count == PDFFind.maxMatches {
+                    self.limited = true
+                    self.finishFind(keepingPlace: keepingPlace)
+                } else {
+                    self.foundSelections.append(selection)
+                }
+            }
+        }
+        findEndObserver = center.addObserver(forName: .PDFDocumentDidEndFind, object: document, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.findGeneration == generation,
+                      self.view?.document === self.findDocument else { return }
+                self.finishFind(keepingPlace: keepingPlace)
+            }
+        }
+        document.beginFindString(query, withOptions: .caseInsensitive)
+    }
+
+    private func finishFind(keepingPlace: Bool) {
+        matches = foundSelections
+        if matchIndex >= matches.count { matchIndex = 0 }
         matches.forEach { $0.color = .findHighlightColor }
-        view.highlightedSelections = matches.isEmpty ? nil : matches
-        view.clearSelection()
+        view?.highlightedSelections = matches.isEmpty ? nil : matches
         show(scrolling: !keepingPlace)
+        stopFind()
+    }
+
+    /// Invalidate queued callbacks before stopping the native operation. A cancelled
+    /// PDFKit search need not send an end notification, so nothing waits for it.
+    private func stopFind() {
+        findGeneration += 1
+        if let findMatchObserver { NotificationCenter.default.removeObserver(findMatchObserver) }
+        if let findEndObserver { NotificationCenter.default.removeObserver(findEndObserver) }
+        findMatchObserver = nil
+        findEndObserver = nil
+        foundSelections = []
+        let document = findDocument
+        findDocument = nil
+        document?.cancelFindString()
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
@@ -286,6 +345,7 @@ struct PDFRepresentable: NSViewRepresentable {
     let current: Bool
 
     final class Coordinator {
+        weak var controller: PDFController?
         var highlightToken = 0
         /// Following the view's page and scale, until the view goes.
         var watches: [Task<Void, Never>] = []
@@ -302,6 +362,7 @@ struct PDFRepresentable: NSViewRepresentable {
             Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
         controller.view = view
+        context.coordinator.controller = controller
         let center = NotificationCenter.default
         // Each read once as it starts watching too: the first fitted scale is set before.
         context.coordinator.watches = [(Notification.Name.PDFViewPageChanged, controller.pageChanged),
@@ -327,6 +388,7 @@ struct PDFRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
         coordinator.watches.forEach { $0.cancel() }
+        if coordinator.controller?.view === view { coordinator.controller?.view = nil }
     }
 
     /// A rebuilt PDF at the same place and zoom, by PDFKit's own destination.

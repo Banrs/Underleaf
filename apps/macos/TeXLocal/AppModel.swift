@@ -69,6 +69,8 @@ final class AppModel {
     var searchFocusToken = 0
     /// The token lets the same action be asked for twice in a row.
     var pdfRequest: (action: PDFAction, token: Int)?
+    /// The workspace's live PDFKit limits, shared by toolbar and menu validation.
+    weak var pdfController: PDFController?
     private var pdfToken = 0
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
@@ -157,14 +159,11 @@ final class AppModel {
         tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
 
-    func create(name: String, template: String) async {
-        do {
-            let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
-            await refresh()
-            await open(info.id)
-        } catch {
-            alert = AppAlert("Couldn’t Create “\(name)”", error)
-        }
+    /// The creation sheet owns failures, so its name and template remain editable.
+    func create(name: String, template: String) async throws {
+        let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
+        await refresh()
+        await open(info.id)
     }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
@@ -277,4 +276,3 @@ final class AppModel {
         return true
     }
 }
-

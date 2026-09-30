@@ -7,9 +7,9 @@ enum BarMetrics {
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
     /// The File Outline header, folded or revealed.
-    static let secondaryBarHeight: CGFloat = 28
-    /// The owner-selected compact bottom status bar, below its native hairline.
-    static let statusBarHeight: CGFloat = 28
+    static let secondaryBarHeight: CGFloat = 36
+    /// The bottom status bar, level with the File Outline header's native hairline.
+    static let statusBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
     /// Design: the least room a find query needs, and the widest a filter grows
@@ -223,9 +223,37 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    let submit: () -> Void
-    @ViewBuilder var fields: Fields
+    private let submission: Submission
+    private let fields: Fields
     @Environment(\.dismiss) private var dismiss
+    @State private var isSubmitting = false
+    @State private var alert: AppAlert?
+
+    private enum Submission {
+        case immediate(() -> Void)
+        case asynchronous(failureTitle: String, () async throws -> Void)
+    }
+
+    init(title: String, message: String? = nil, action: String, enabled: Bool,
+         submit: @escaping () -> Void, @ViewBuilder fields: () -> Fields) {
+        self.title = title
+        self.message = message
+        self.action = action
+        self.enabled = enabled
+        submission = .immediate(submit)
+        self.fields = fields()
+    }
+
+    /// Creating on disk can fail: keep the entered values until it succeeds.
+    init(title: String, message: String? = nil, action: String, enabled: Bool,
+         failureTitle: String, submit: @escaping () async throws -> Void, @ViewBuilder fields: () -> Fields) {
+        self.title = title
+        self.message = message
+        self.action = action
+        self.enabled = enabled
+        submission = .asynchronous(failureTitle: failureTitle, submit)
+        self.fields = fields()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -248,18 +276,41 @@ struct DialogSheet<Fields: View>: View {
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
+                .disabled(isSubmitting)
         }
         .frame(width: 390) // UI kit Dialogs
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
+        .interactiveDismissDisabled(isSubmitting)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+                    .disabled(isSubmitting)
+            }
             ToolbarItem(placement: .confirmationAction) {
-                Button(action) {
+                Button(action, action: confirm)
+                    .disabled(!enabled || isSubmitting)
+            }
+        }
+        .alert($alert)
+    }
+
+    private func confirm() {
+        guard enabled, !isSubmitting else { return }
+        switch submission {
+        case .immediate(let submit):
+            dismiss()
+            submit()
+        case .asynchronous(let failureTitle, let submit):
+            isSubmitting = true
+            Task {
+                do {
+                    try await submit()
                     dismiss()
-                    submit()
+                } catch {
+                    alert = AppAlert(failureTitle, error)
                 }
-                .disabled(!enabled)
+                isSubmitting = false
             }
         }
     }

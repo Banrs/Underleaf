@@ -56,6 +56,7 @@ private struct FilePreview: View {
         .task(id: url) {
             guard isPreviewFile(url.path) else { return }
             let data = await Self.read(url)
+            guard !Task.isCancelled else { return }
             loaded = (url, data.flatMap(NSImage.init(data:)))
         }
     }
@@ -93,6 +94,7 @@ struct SourceFindBar: View {
     @Bindable var project: ProjectModel
     let field: FieldHandle
     @FocusState private var replaceFocused: Bool
+    @State private var replaceVisible = false
 
     var body: some View {
         FindBar(query: $project.findQuery.search, prompt: "Find", field: field, options: options,
@@ -108,10 +110,12 @@ struct SourceFindBar: View {
                         .onSubmit { project.replace(all: false) }
                         .onExitCommand { project.closeFind() }
                         .focused($replaceFocused)
-                        // Find and Replace…, whether or not the bar already shows.
-                        .task(id: project.replaceFocus) {
-                            if project.replaceFocus > 0 { replaceFocused = true }
+                        .background(ReplaceVisibility { replaceVisible = $0 })
+                        .onChange(of: project.replaceFocus) { _, _ in focusReplaceIfVisible() }
+                        .onChange(of: replaceVisible) { _, visible in
+                            if visible { focusReplaceIfVisible() } else { replaceFocused = false }
                         }
+                        .onDisappear { replaceVisible = false; replaceFocused = false }
                     HStack {
                         Button("Replace") { project.replace(all: false) }
                         Button("Replace All") { project.replace(all: true) }
@@ -130,5 +134,39 @@ struct SourceFindBar: View {
             SearchOption(title: "Whole Words", isOn: $project.findQuery.wholeWord),
             SearchOption(title: "Regular Expression", isOn: $project.findQuery.regexp),
         ]
+    }
+
+    private func focusReplaceIfVisible() {
+        if replaceVisible && project.replaceFocus > 0 { replaceFocused = true }
+    }
+}
+
+/// The replace field can be built while its AppKit split accessory is hidden.
+/// Focus it once the field is actually in a visible window.
+private struct ReplaceVisibility: NSViewRepresentable {
+    let changed: @MainActor (Bool) -> Void
+
+    func makeNSView(context: Context) -> VisibilityView {
+        let view = VisibilityView()
+        view.changed = changed
+        return view
+    }
+
+    func updateNSView(_ view: VisibilityView, context: Context) { view.changed = changed }
+
+    final class VisibilityView: NSView {
+        var changed: (@MainActor (Bool) -> Void)?
+
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+        override func viewDidUnhide() { super.viewDidUnhide(); report() }
+        override func viewDidHide() { super.viewDidHide(); report() }
+
+        private func report() {
+            // Defer state changes until AppKit has finished this visibility update.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                changed?(window != nil && !isHiddenOrHasHiddenAncestor)
+            }
+        }
     }
 }

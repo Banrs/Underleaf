@@ -179,6 +179,37 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Distinct Inspector edits that overlap must both reach the settings file.
+    @Test(.timeLimit(.minutes(1)))
+    func overlappingSettingsEditsAreKeptInOrder() async throws {
+        let (project, _) = try await opened()
+        try await project.createEntry("alternate.TEX", directory: false)
+        let changes = [Task { await project.setStopOnFirstError(true) },
+                       Task { await project.setMainFile("alternate.TEX") }]
+        for change in changes { await change.value }
+        let saved = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
+        #expect(saved.stopOnFirstError && saved.mainFile == "alternate.TEX")
+        #expect(project.settings?.stopOnFirstError == true && project.settings?.mainFile == "alternate.TEX")
+        #expect(!project.changingSettings)
+        await app.close()
+    }
+
+    /// Uppercase extensions get the same outline and retain the editor on rename.
+    @Test(.timeLimit(.minutes(1)))
+    func uppercaseLaTeXHasToolsAndKeepsItsDocumentOnRename() async throws {
+        let (project, _) = try await opened()
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "chapter.TEX", "text": "\\section{Chapter}\nText"])
+        await project.open("chapter.TEX")
+        try await waitUntil { project.outline.count == 1 }
+        #expect(project.isLaTeX && project.editsText)
+        let document = project.editor.textView.document
+        await project.renameEntry("chapter.TEX", to: "renamed.tex")
+        #expect(project.openPath == "renamed.tex" && project.isLaTeX)
+        #expect(project.editor.textView.document === document)
+        #expect(project.outline.first?.title == "Chapter")
+        await app.close()
+    }
+
     /// The outline hears of a scroll only as another heading reaches the top:
     /// told of every line, it redrew the sidebar at every step of a scroll.
     @Test(.timeLimit(.minutes(1)))

@@ -1,4 +1,5 @@
 import SwiftUI
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -35,6 +36,40 @@ struct MenuCommandTests {
             #expect(seen[shortcut] == nil, "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
             seen[shortcut] = command
         }
+    }
+}
+
+/// Menus and toolbar use the same limits supplied by the current PDFKit view.
+@MainActor
+struct PDFCommandValidationTests {
+    @Test func zoomCommandsRespectNativeScaleLimits() throws {
+        let app = AppModel()
+        let project = ProjectModel(id: "PDFCommandValidationTests", app: app)
+        project.pdfURL = URL(filePath: "/tmp/zoom-validation.pdf")
+        project.pdfVersion = 1
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let document = PDFDocument()
+        document.insert(try #require(PDFPage(image: image)), at: 0)
+        view.document = document
+        view.minScaleFactor = 0.5
+        view.maxScaleFactor = 2
+        let controller = PDFController()
+        controller.view = view
+        app.pdfController = controller
+        for scale in [0.5, 1, 2] {
+            view.scaleFactor = scale
+            // Validation reads PDFKit even before the scale notification is handled.
+            #expect(app.isEnabled(.viewZoomIn, on: project) == (scale < 2))
+            #expect(app.isEnabled(.viewZoomOut, on: project) == (scale > 0.5))
+        }
+        #expect(!app.isEnabled(.viewZoomIn, on: nil))
+        project.pdfVersion = 0
+        #expect(!app.isEnabled(.viewZoomOut, on: project))
     }
 }
 

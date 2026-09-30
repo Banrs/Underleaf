@@ -1,5 +1,16 @@
 import AppKit
+import CoreText
 import SwiftUI
+
+/// Adds tabular digits to the existing font without changing its face, size, or traits.
+func zoomFontWithTabularNumbers(_ font: NSFont) -> NSFont? {
+    let descriptor = font.fontDescriptor
+    var features = descriptor.object(forKey: .featureSettings) as? [[NSFontDescriptor.FeatureKey: Int]] ?? []
+    features.removeAll { $0[.typeIdentifier] == kNumberSpacingType }
+    features.append([.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector])
+    let tabularDescriptor = descriptor.addingAttributes([.featureSettings: features])
+    return NSFont(descriptor: tabularDescriptor, size: font.pointSize)
+}
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
@@ -348,8 +359,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             let control = item.view as? NSSegmentedControl
             // Tabular digits, so Share doesn't move as the scale changes. The toolbar
-            // resets the control's font, so it's set with each label.
-            if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
+            // resets the control's font, so it's set with each label. Derive it from
+            // that native font so its face and weight survive the feature change.
+            if let font = control?.font, let tabularFont = zoomFontWithTabularNumbers(font) {
+                control?.font = tabularFont
+            }
             control?.setLabel(state.zoomLabel, forSegment: 1)
             control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
             control?.setEnabled(state.hasPDF, forSegment: 1)

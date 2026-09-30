@@ -205,6 +205,14 @@ struct PDFFitTests {
 /// Find in PDF across a rebuild, off screen.
 @MainActor
 struct PDFFindTests {
+    private func waitForMatches(_ count: Int, in controller: PDFController) async throws {
+        for _ in 0..<200 {
+            if controller.matches.count == count { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("PDFKit did not finish finding \(count) matches")
+    }
+
     /// Each page's text drawn as text, so PDFKit finds it.
     private func document(_ pages: [String]) throws -> PDFDocument {
         let document = PDFDocument()
@@ -219,7 +227,7 @@ struct PDFFindTests {
 
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
-    @Test func aRebuildFindsAgainInPlace() throws {
+    @Test func aRebuildFindsAgainInPlace() async throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.displayMode = .singlePageContinuous
         view.document = try document(["needle", "filler", "needle", "needle"])
@@ -228,6 +236,7 @@ struct PDFFindTests {
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
+        try await waitForMatches(3, in: controller)
         controller.step(1)
 
         let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
@@ -235,6 +244,7 @@ struct PDFFindTests {
         view.layoutDocumentView()
         let place = try #require(view.documentView).visibleRect
         controller.documentShown()
+        try await waitForMatches(4, in: controller)
 
         #expect(controller.finding)
         #expect(controller.matches.count == 4)
@@ -242,5 +252,22 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 1)
         #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
         #expect(try #require(view.documentView).visibleRect == place)
+    }
+
+    @Test func aNewQueryAndCloseDiscardOldResults() async throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.document = try document(["alpha beta", "alpha gamma", "beta"])
+        let controller = PDFController()
+        controller.view = view
+        controller.finding = true
+        controller.find("alpha")
+        controller.find("gamma")
+        controller.find("beta")
+        try await waitForMatches(2, in: controller)
+        #expect(controller.query == "beta")
+        #expect(controller.matches.allSatisfy { $0.string?.localizedCaseInsensitiveContains("beta") == true })
+        controller.closeFind()
+        #expect(controller.matches.isEmpty)
+        #expect(view.highlightedSelections == nil)
     }
 }

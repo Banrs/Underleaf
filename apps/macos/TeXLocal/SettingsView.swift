@@ -41,18 +41,26 @@ private struct GeneralSettings: View {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading.")
                 }
+                .accessibilityLabel("Document Paper")
+                .accessibilityHint("Dark paper inverts the rendered PDF for night reading.")
             }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
                     Text("Recompile shortly after you stop typing.")
                 }
+                .accessibilityLabel("Compile Automatically")
+                .accessibilityHint("Recompile shortly after you stop typing.")
                 // A spinner until the status is in, rather than a flash of "Not Found" at launch.
                 LabeledContent {
                     HStack {
                         if app.tex?.available == false { GetMacTeXButton() }
-                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
+                        if app.tex?.texDir != nil {
+                            Button("Use Automatic") { setTeXFolder(nil) }
+                                .accessibilityLabel("Use Automatic TeX")
+                        }
                         Button("Choose…") { choosingTeX = true }
+                            .accessibilityLabel("Choose TeX Folder")
                     }
                 } label: {
                     Text("TeX")

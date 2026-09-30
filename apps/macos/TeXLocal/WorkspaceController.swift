@@ -55,6 +55,7 @@ final class WorkspaceController: DetentSplitViewController {
             return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
         }
         toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
+        app.pdfController = pdf
         watch()
     }
 
@@ -405,6 +406,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// The window is leaving the project: nothing more to watch.
     func close() {
+        if app.pdfController === pdf { app.pdfController = nil }
         watches.forEach { $0.cancel() }
         drags.forEach(NotificationCenter.default.removeObserver)
         collapses = []

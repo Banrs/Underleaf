@@ -96,6 +96,9 @@ final class ProjectModel {
     private var saveTask: Task<Void, Never>?
     /// Each save waits for the one before it.
     private var lastSave: Task<Bool, Never>?
+    /// Settings patches read and write the same file in the core; keep them in order.
+    @ObservationIgnored private var lastSettingsPatch: Task<Bool, Never>?
+    private var settingsWrites = 0
     private var searchTask: Task<Void, Never>?
     private var analysis: Task<Void, Never>?
     private var highlightToken = 0
@@ -122,7 +125,8 @@ final class ProjectModel {
     }
 
     /// Only LaTeX has an outline, counts and the LaTeX tools.
-    var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+    var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
+    var changingSettings: Bool { settingsWrites > 0 }
     /// The caret line's section level.
     var headingLevel: HeadingLevel {
         outline.first { $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
@@ -583,13 +587,24 @@ final class ProjectModel {
 
     @discardableResult
     private func patchSettings(_ patch: [String: Any]) async -> Bool {
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
-            return true
-        } catch {
-            report(error, "Couldn’t Change the Project’s Settings")
-            return false
+        settingsWrites += 1
+        defer {
+            settingsWrites -= 1
+            if settingsWrites == 0 { lastSettingsPatch = nil }
         }
+        let previous = lastSettingsPatch
+        let write = Task {
+            if let previous { _ = await previous.value }
+            do {
+                settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
+                return true
+            } catch {
+                report(error, "Couldn’t Change the Project’s Settings")
+                return false
+            }
+        }
+        lastSettingsPatch = write
+        return await write.value
     }
 
     func setEngine(_ engine: String) async {
@@ -640,14 +655,10 @@ final class ProjectModel {
 
     // ---------- files ----------
 
-    func createEntry(_ path: String, directory: Bool) async {
-        do {
-            try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
-            await reloadTree()
-            if !directory { await open(path) }
-        } catch {
-            report(error, "Couldn’t Create “\(name(path))”")
-        }
+    func createEntry(_ path: String, directory: Bool) async throws {
+        try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
+        await reloadTree()
+        if !directory { await open(path) }
     }
 
     func renameEntry(_ from: String, to: String) async {
@@ -663,7 +674,7 @@ final class ProjectModel {
             if let openPath, let wasOpen, openPath != wasOpen {
                 // Text or not, LaTeX or not, changed: it opens afresh, as the editor
                 // holds the last text file opened, and the outline is only .tex's.
-                if isTextFile(openPath) != isTextFile(wasOpen) || openPath.hasSuffix(".tex") != wasOpen.hasSuffix(".tex") {
+                if isTextFile(openPath) != isTextFile(wasOpen) || isLaTeXFile(openPath) != isLaTeXFile(wasOpen) {
                     clearOpenFile()
                     await open(openPath, focus: false)
                 } else {

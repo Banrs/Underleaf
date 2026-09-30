@@ -9,8 +9,8 @@ struct OutlineHeader: View {
 
     /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    /// Raise the native row's centre to the compact bar's centre.
-    private static let titleDrop: CGFloat = sidebarListRoom + (headerRow - BarMetrics.secondaryBarHeight) / 2
+    /// Native sidebar headers sit near the next row, with more room above the title.
+    private static let titleDrop: CGFloat = sidebarListRoom + headerRow - BarMetrics.secondaryBarHeight
 
     var body: some View {
         List {
@@ -90,7 +90,7 @@ struct FilesList: View {
                     Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
                     Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
                     Divider()
-                } else if node.path.hasSuffix(".tex") {
+                } else if isLaTeXFile(node.path) {
                     Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                     Divider()
                 }
