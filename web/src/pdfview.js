@@ -976,10 +976,10 @@ export class PdfViewer {
     flash.style.top = `${top}px`;
     flash.style.width = `${Math.max(minimumWidth, (loc.width ?? 0) * s) + 2 * margin}px`;
     flash.style.height = `${height * s + 2 * margin}px`;
+    flash.addEventListener('animationend', () => flash.remove(), { once: true });
     p.wrap.appendChild(flash);
     const targetTop = this._padT + p.top + top - this.scrollEl.clientHeight / 2.5;
     this.scrollEl.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-    setTimeout(() => flash.remove(), 2400);
   }
 
   destroy() {

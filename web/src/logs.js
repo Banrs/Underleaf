@@ -25,7 +25,6 @@ export function renderLogs({ pdfScroll, logsButton }) {
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   if (logsButton) {
-    logsButton.classList.toggle('selected', state.logOpen);
     logsButton.setAttribute('aria-pressed', String(state.logOpen));
     logsButton.querySelector('.badge-count')?.remove();
     // A badge with the more severe of the two counts.

@@ -22,14 +22,14 @@ export function pageText(items) {
 // Every occurrence of `query`, case-insensitively. Ranges index into the string
 // pageText built, not into any one item. `limit` lets the viewer stop scanning a
 // pathological one-character query once it has enough results to display.
+// Unicode case folding matches in place, where a toLowerCase() copy can change
+// length ('İ' lowers to two code units) and shift every later range.
 export function matchRanges(text, query, limit = Number.POSITIVE_INFINITY) {
-  const q = query.toLowerCase();
-  if (!q || limit <= 0) return [];
-  const hay = text.toLowerCase();
+  if (!query || limit <= 0) return [];
   const out = [];
-  for (let at = hay.indexOf(q); at !== -1; at = hay.indexOf(q, at + q.length)) {
-    out.push({ start: at, end: at + q.length });
-    if (out.length >= limit) break;
+  // Escaped as a literal. RegExp.escape once CI's Node has it (not Node 22).
+  for (const m of text.matchAll(new RegExp(query.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&'), 'giu'))) {
+    if (out.push({ start: m.index, end: m.index + m[0].length }) >= limit) break;
   }
   return out;
 }

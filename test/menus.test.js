@@ -39,7 +39,7 @@ const items = () => [
 let anchor;
 
 beforeEach(() => {
-  document.body.innerHTML = '<button id="anchor">Menu</button><div id="modal-root"></div>';
+  document.body.innerHTML = '<button id="anchor">Menu</button><div id="modal-root"></div><div id="toast-root" popover="manual"></div>';
   document.body.style.zoom = '1';
   globalThis.innerWidth = 800;
   globalThis.innerHeight = 600;
