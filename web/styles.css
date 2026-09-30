@@ -586,14 +586,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace-layout.js) */
 .sidebar.collapsed + .divider { display: none; }
 
-/* Preserve the kit's compact 20px desktop section band and accessories.
-   The overlay below uses larger controls for narrow/touch layouts. */
+/* Section headers share the existing 4px rhythm and 28px action targets. */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
-  height: 20px;
+  min-height: 36px;
   margin: 0;
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
@@ -606,8 +605,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .section-header.disclosure { margin-top: var(--sp-4); }   /* section-to-section gap */
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
-.section-actions { display: flex; gap: 1px; }
-.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-control); }
+.section-actions { display: flex; gap: var(--sp-1); }
+.section-actions .icon-btn { width: 28px; height: 28px; border-radius: var(--r-control); }
 .section-actions .icon-btn svg { width: 14px; height: 14px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
@@ -1346,7 +1345,3 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
 .divider-sync::before { content: none; }
 .divider:has(.pane-resize-handle.dragging) { background: var(--accent); }
-
-.layout-overlay .section-header { height: 36px; }
-.layout-overlay .section-actions { gap: var(--sp-1); }
-.layout-overlay .section-actions .icon-btn { width: 28px; height: 28px; }
