@@ -61,6 +61,80 @@ final class WorkspaceLayoutTests {
     private func width(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.height }
 
+    /// Scrollers stay below the toolbar and find accessory while the document
+    /// itself can scroll under their glass. Check both system scroller styles.
+    @Test func sourceScrollersStayBelowTheToolbarAndFindBar() async throws {
+        let workspace = open()
+        let window = try #require(window)
+        window.toolbar = workspace.toolbar.toolbar
+        window.toolbarStyle = .unified
+        workspace.project.openPath = "main.tex"
+        workspace.project.editor.open(path: "main.tex", text: String(repeating: "A line of source.\n", count: 100))
+        let source = workspace.project.editor.scrollView
+        try await waitUntil { source.contentInsets.top > 0 } state: { "initial safe \(source.safeAreaInsets), inset \(source.contentInsets), shown \(workspace.project.editsText)" }
+        try await Task.sleep(for: .milliseconds(100))
+        let toolbarInset = source.contentInsets.top
+        for finding in [false, true, false] {
+            workspace.project.findShown = finding
+            try await waitUntil {
+                finding ? source.contentInsets.top > toolbarInset : isClose(source.contentInsets.top, toolbarInset)
+            } state: { "finding \(finding), inset \(source.contentInsets.top), toolbar \(toolbarInset), shown \(workspace.project.editsText)" }
+            for style in [NSScroller.Style.legacy, .overlay] {
+                source.scrollerStyle = style
+                source.tile()
+                let scroller = try #require(source.verticalScroller)
+                #expect(scroller.frame.minY >= source.contentInsets.top)
+                #expect(scroller.frame.maxY <= source.bounds.maxY)
+            }
+        }
+    }
+
+    /// Folding, revealing and hiding the outline must not change its header's
+    /// compact spacing: 36 pt plus the native divider above it.
+    @Test func theOutlineHeaderKeepsItsHeight() async throws {
+        let workspace = open()
+        let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
+        let header = try #require(sidebar.splitViewItems.first?.bottomAlignedAccessoryViewControllers.first)
+        let outline = try #require(sidebar.splitViewItems.last)
+        workspace.project.openPath = "main.tex"
+        for collapsed in [false, true, false, true, false] {
+            workspace.app.outlineCollapsed = collapsed
+            try await Task.sleep(for: .milliseconds(300))
+            try await waitUntil { outline.isCollapsed == collapsed && !header.isHidden } state: { "fold \(collapsed), native \(outline.isCollapsed), header hidden \(header.isHidden)" }
+            try await waitUntil {
+                isClose(header.view.frame.height, BarMetrics.secondaryBarHeight + sidebar.splitView.dividerThickness)
+            } state: { "header \(header.view.frame.height), divider \(sidebar.splitView.dividerThickness)" }
+        }
+        workspace.project.openPath = "references.bib"
+        try await waitUntil { header.isHidden } state: { "bib: header hidden \(header.isHidden)" }
+        workspace.project.openPath = "main.tex"
+        try await waitUntil { !header.isHidden && !outline.isCollapsed } state: { "tex: hidden \(header.isHidden), fold \(outline.isCollapsed)" }
+        #expect(isClose(header.view.frame.height, BarMetrics.secondaryBarHeight + sidebar.splitView.dividerThickness))
+    }
+
+    /// A distant outline destination is still placed below the toolbar and find
+    /// bar after TextKit has refined its estimated document geometry.
+    @Test func distantSourceJumpsAlignBelowTheBars() async throws {
+        let workspace = open()
+        let window = try #require(window)
+        window.toolbar = workspace.toolbar.toolbar
+        workspace.project.openPath = "main.tex"
+        workspace.project.findShown = true
+        let editor = workspace.project.editor
+        editor.open(path: "main.tex", text: String(repeating: "A line of source.\n", count: 6000))
+        try await waitUntil { editor.scrollView.contentInsets.top > workspace.view.safeAreaInsets.top }
+        for line in [5000, 10, 3000] {
+            editor.reveal(line: line, atTop: true, focus: false)
+            try await Task.sleep(for: .milliseconds(100))
+            let manager = try #require(editor.textView.textLayoutManager)
+            let range = try #require(editor.textView.textRange(NSRange(location: editor.textView.document.lineStart(line), length: 0)))
+            let fragment = try #require(manager.textLayoutFragment(for: range.location))
+            let y = fragment.layoutFragmentFrame.minY + editor.textView.textContainerOrigin.y
+            let top = editor.scrollView.contentView.bounds.minY + editor.scrollView.contentInsets.top
+            #expect(isClose(y, top, within: 1), "line \(line): \(y) versus \(top)")
+        }
+    }
+
     @Test func thePanelSpansSourceAndPDF() async throws {
         let workspace = open(panel: true)
         try await waitUntil { self.height(workspace.panelItem) > 0 }

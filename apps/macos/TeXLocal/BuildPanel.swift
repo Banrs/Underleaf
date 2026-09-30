@@ -15,6 +15,7 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
+                .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
                 .buttonStyle(.accessoryBar)
@@ -93,6 +94,7 @@ struct BuildPanel: View {
                     .filter { $0.localizedCaseInsensitiveContains(filter) }
                     .joined(separator: "\n")
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
+                .ignoresSafeArea(.container, edges: .bottom)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))

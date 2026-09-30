@@ -60,6 +60,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         // The clip shows under the toolbar above the first line, where AppKit
         // takes the column's colour for its band and edge effect.
         scrollView.drawsBackground = true
+        // Native elastic scrolling, including files shorter than the viewport.
+        scrollView.verticalScrollElasticity = .allowed
         scrollView.isHidden = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
@@ -137,10 +139,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let manager = textView.textLayoutManager, let whole = textView.textRange(NSRange(location: 0, length: offset)) else { return }
-        // Laid out down to the line, so its place is exact rather than estimated.
-        manager.ensureLayout(for: whole)
-        guard let fragment = manager.textLayoutFragment(for: whole.endLocation) else { return }
+        guard let manager = textView.textLayoutManager,
+              let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
+        // Let NSTextView relocate its viewport, then align the target fragment.
+        // Laying out every preceding paragraph made distant outline jumps stall.
+        textView.scrollRangeToVisible(NSRange(location: offset, length: 0))
+        manager.ensureLayout(for: target)
+        guard let fragment = manager.textLayoutFragment(for: target.location) else { return }
         let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textView.textContainerOrigin.y)
         let clip = scrollView.contentView, insets = scrollView.contentInsets
         let shown = clip.bounds.height - insets.top - insets.bottom

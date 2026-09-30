@@ -15,7 +15,7 @@ struct SourceColumn: View {
             // On under the toolbar and the find bar, where AppKit draws its
             // edge effect over the text.
             EditorView(editor: project.editor, shown: project.editsText)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: [.top, .trailing])
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))

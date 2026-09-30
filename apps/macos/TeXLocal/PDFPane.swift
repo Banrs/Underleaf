@@ -47,7 +47,7 @@ struct PDFPane: View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: [.top, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

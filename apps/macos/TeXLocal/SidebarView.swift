@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// Files pane's foot so it stays put over the outline. Folded, it's the status bar's
-/// height, and the two read as one bar.
+/// Files pane's foot so it stays put over the outline. Its height stays level with
+/// the status bar, whether the outline is folded or revealed.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
@@ -28,8 +28,7 @@ struct OutlineHeader: View {
         // autoscroll (scrollDisabled doesn't stop it); the bar shows its top.
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
         .offset(y: -Self.titleDrop)
-        .frame(height: app.outlineCollapsed ? BarMetrics.secondaryBarHeight : sidebarListRoom + Self.headerRow,
-               alignment: .top)
+        .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
     }
 }
 
@@ -374,7 +373,7 @@ struct OutlineList: View {
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
-            guard let id, id != current, let item = outline.first(where: { $0.id == id }) else { return }
+            guard let id, id != (chosen ?? current), let item = outline.first(where: { $0.id == id }) else { return }
             chosen = id
             project.reveal(item)
         })
@@ -384,7 +383,8 @@ struct OutlineList: View {
                     Text("No Sections").foregroundStyle(.secondary)
                         .selectionDisabled()
                 } else {
-                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded)
+                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded,
+                                selected: chosen ?? current)
                 }
             }
             .listStyle(.sidebar)
@@ -422,12 +422,13 @@ private struct OutlineRows: View {
     let project: ProjectModel
     let keys: [String]
     @Binding var folded: Set<String>
+    let selected: Int?
 
     var body: some View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node.item)) {
-                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded)
+                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded, selected: selected)
                 } label: {
                     row(node.item)
                 }
@@ -438,7 +439,7 @@ private struct OutlineRows: View {
     }
 
     private func row(_ item: OutlineItem) -> some View {
-        HeadingRow(project: project, item: item)
+        HeadingRow(project: project, item: item, repeatSelection: selected == item.id)
             .equatable()
             .id(item.id)
             .tag(item.id)
@@ -460,9 +461,10 @@ private struct OutlineRows: View {
 private struct HeadingRow: View, Equatable {
     let project: ProjectModel
     let item: OutlineItem
+    let repeatSelection: Bool
 
     static func == (a: Self, b: Self) -> Bool {
-        a.project === b.project && a.item == b.item
+        a.project === b.project && a.item == b.item && a.repeatSelection == b.repeatSelection
     }
 
     var body: some View {
@@ -476,7 +478,9 @@ private struct HeadingRow: View, Equatable {
         .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        .simultaneousGesture(TapGesture().onEnded { project.reveal(item) })
+        // New selections are handled by List (including arrow keys). Only a
+        // click on the already selected heading needs a second way to activate.
+        .simultaneousGesture(TapGesture().onEnded { if repeatSelection { project.reveal(item) } })
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
         .accessibilityValue(item.kind)

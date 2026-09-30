@@ -178,7 +178,7 @@ final class SyncPDFView: PDFView {
     override func setFrameSize(_ newSize: NSSize) {
         // SwiftUI sets the frame again, unchanged, whenever PDFKit's own scrolling
         // lays out the pane (each step): only a new size counts.
-        guard newSize != frame.size else { return super.setFrameSize(newSize) }
+        guard newSize != frame.size else { return }
         // PDFKit keeps the point at the view's top, which runs on under the
         // toolbar: at the start of the document, a new scale slid the first page
         // under it. There it stays at the start.
@@ -221,7 +221,9 @@ final class SyncPDFView: PDFView {
     /// for the first document, which brings the scroll view (an override of
     /// `document` would be called on PDFKit's form-filling queue).
     func matchScroller() {
-        documentView?.enclosingScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
+        guard let scroll = documentView?.enclosingScrollView else { return }
+        scroll.scrollerKnobStyle = darkPaper ? .light : .dark
+        scroll.verticalScrollElasticity = .allowed
     }
 
     /// PDFView's own (the page on white, in the crop box it shows), then for dark

@@ -147,6 +147,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Toolbar draws a view without the item's style, so it gets the title.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
+            item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
             if flag {
                 item.view = NSHostingView(rootView: compileButton(state))
             } else {
@@ -160,6 +161,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
+            item.possibleLabels = ["Show PDF", "Hide PDF"]
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -353,6 +355,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             item.label = state.pdfTitle
             item.toolTip = state.pdfTitle
+        case .pdfSeparator:
+            guard let separator = item as? NSTrackingSeparatorToolbarItem, let workspace else { return }
+            // A collapsed PDF's divider lies past the inspector partition, making
+            // AppKit join the source's scroll edge to the whole toolbar. Track
+            // that native partition instead, without rewriting the saved items.
+            let split = state.showsPDF ? workspace.columns.splitView : workspace.splitView
+            let divider = state.showsPDF ? 0 : workspace.splitViewItems.firstIndex(of: workspace.inspectorItem)! - 1
+            guard separator.splitView !== split || separator.dividerIndex != divider else { return }
+            // Index zero is valid in both splits while changing the tracked view.
+            separator.dividerIndex = 0
+            separator.splitView = split
+            separator.dividerIndex = divider
         default:
             break
         }

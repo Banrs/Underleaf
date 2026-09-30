@@ -1,13 +1,13 @@
 # Handoff: TeXLocal
 
-## Status (2026-09-29)
+## Status (2026-09-30)
 
-- **`main`** has the Mac app's rewrite and polish (PR #12, `claude/macos-polish`): AppKit owns the window, split and toolbar, SwiftUI draws the panes; one window with a back button and an inspector; tests in Swift Testing.
-- **`claude/native-editor`** (from `main`) is the native frontend study's first phase (the study: https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm):
-  - `crates/texlocal-syntax`: the LaTeX editing logic, ported from the web's editor and CodeMirror's stex mode.
-  - The Mac's editor is a native `NSTextView` over it; the Mac embeds no web page any more. The web and Windows keep CodeMirror.
-- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono, the maths preview (inline, `\[`, `align`; typing in it; closed outside maths and when the app deactivates).
-- **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
+- **`main`** includes merged PRs #13 (native Mac editor/shared LaTeX editing core) and #14 (Clippy delimiter-pairing fix). All checks on their merged head passed before merge. Local `main` is updated to `origin/main`.
+- **`codex/finish-native-workflows`** continues the original Claude work: backend sweep (`f46c2cc`, `fdb2209`), web sweep (`782b82f`, `097ff64`), and the original uncommitted Mac fixes preserved in `fb6eb67`. The prior reverted Codex implementation was not replayed. `codex/claude-recovery-snapshot` retains that recovery point.
+- **Verification:** 82 web tests and production bundle; 148 Rust tests across core, syntax, FFI and server, formatting and Clippy with warnings denied; 63 Mac tests in 17 suites. The final toolbar change was also checked with the 19 workspace/menu tests. UI verification uses an isolated check app and scratch project library, leaving the installed app and real projects untouched.
+- **Web workflow verified:** dialog keyboard submission/cancel/focus return, native Find checkboxes, settings radio/switch state, hidden-sidebar `inert` and Find in Project focus, nested outline rails, sync controls, divider dragging, PDF rendering and narrow layout. No console warnings/errors in the in-app browser. Screenshots are in `/tmp/underleaf-verification-evidence`. Windows/WebView2 and Tauri checks for these recovered changes run in CI; their local builds are not claimed.
+- **Owner decisions retained:** native TextKit 2, SwiftUI panes within AppKit window/splits/toolbar, fixed native inspector, stock completion, and the segmented zoom pill with hairlines. Zoom-pill shrink remains deferred. File Outline now uses the owner-confirmed **36 pt plus the native hairline in both states**, preserving the collapsed title alignment.
+- **Native scrolling:** stock NSTextView scroll-view construction, native `.allowed` vertical elasticity for both source and PDF, and automatic toolbar/find insets. Same-size PDF frame updates no longer reset scrolling. The source scroller is checked below both bars. CUA wheel scrolling verifies layout and glass; trackpad gesture feel still needs a physical trackpad check.
 
 ## Layout
 
@@ -119,7 +119,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - `MathPopover`: the maths preview's popover and the KaTeX page it shows.
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
-- `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. Dark paper inverts the pages only (`documentView`'s filters), so the view's background and scrollers stay the window's.
+- `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. Dark paper draws into PDFKit's page tiles through the public drawing override, preserving sharp text at any scale; the view's background and scrollers keep their native drawing.
 - `SidebarView`: the sidebar's search, the File Outline's header, the files and the outline.
   - Files: rows drag out as the file (copied by other apps, opened by the editor) and move within the tree onto a folder, a file's folder or the Files header (the top level), as in Finder; files from elsewhere are copied in.
   - Outline: headings are native list rows, the current heading the selection; choosing one (click anywhere on the row, or the arrow keys) scrolls the source to it and leaves the keyboard in the list. A click on the current row goes back to its heading, which an unchanged selection wouldn't.
@@ -288,7 +288,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
-- **Both columns run on under the toolbar.** The toolbar is adaptive, as Mail's: while each section holds its tools, AppKit paints each its own background; when a section can't (about 370 pt for the PDF's), it joins them into one band with one line, and both columns show through it with the system's edge effect. While apart, the PDF's section takes the titlebar material, which covers the pages, whenever the source column holds a scroll view of any kind, SwiftUI's or AppKit's (measured on 27.2 with the view tree; the cause is inside AppKit). Fit Height, the sync point and forward search measure the part that shows (`shownHeight`).
+- **Both columns run on under the toolbar.** The toolbar is adaptive, as Mail's: while each section holds its tools, AppKit paints each its own background; when a section can't (about 370 pt for the PDF's), it joins them into one band with one line, and both columns show through it with the system's edge effect. AppKit's LTR inspector partition misses its divider overhang on 27.2, leaving the PDF section without a registered scroll view. The columns' half-divider trailing safe-area inset corrects that boundary; both representables still draw to the trailing edge. Remove the workaround if Apple corrects the partition. When PDF is hidden, the existing tracking separator follows the root inspector divider instead of an out-of-bounds collapsed PDF divider; saved toolbar items stay unchanged. Fit Height, the sync point and forward search measure the part that shows (`shownHeight`).
   - The source's scroll view runs under the toolbar and the find bar (`ignoresSafeArea`), and its automatic content insets take in both, so the first line and a line scrolled to sit below them while AppKit draws its edge effect over the text.
   - A SwiftUI-only `NavigationSplitView` (a `TextEditor`, a `ScrollView`, per-column toolbars) runs both columns' content under the toolbar with the soft effect in every state: its sections take the window background material, not the titlebar's.
 - **The PDF column doesn't collapse on a drag**, AppKit's default for a plain item, kept on purpose: collapsed at the window's trailing edge, its divider would sit under the window's resize edge, so a drag back would resize the window instead of opening the PDF.
@@ -303,7 +303,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **The File Outline's header is the files pane's foot accessory, folded or not,** so it never swaps views and its title keeps its distance from the line.
   - The sidebar split's divider runs under it. That divider draws nothing (`QuietSplitView`), and its own reach (AppKit's 2 pt either side of a thin divider) moves up onto the header's line (`splitView(_:effectiveRect:forDrawnRect:ofDividerAt:)`); folded, it has none.
   - The header is the system's own collapsible sidebar section (`Section(isExpanded:)` in a one-section `.sidebar` list, no rows of its own): a click anywhere on it folds it, and the chevron shows on hover.
-  - Its list's own 10 pt over the header row keeps the title's distance from the line. Folded, it's 36 pt, level with the status bar; open, it ends with the header's 19 pt row (29 pt), where a section's first row would start. The list itself is its whole 39 pt content (its 10 pt under the row too), shown from the top: shorter, a drag from the header autoscrolled it, which `scrollDisabled` doesn't stop. `scrollContentBackground(.hidden)` lets the sidebar's material through.
+  - Its list's own 10 pt over the header row keeps the title's distance from the line. Folded or open, it's 36 pt, level with the status bar, plus the native hairline above it (owner-confirmed 2026-09-30). The list itself is its whole 39 pt content (its 10 pt under the row too), shown from the top: shorter, a drag from the header autoscrolled it, which `scrollDisabled` doesn't stop. `scrollContentBackground(.hidden)` lets the sidebar's material through.
   - A sidebar `List`'s 10 pt over its first row is inside its table (`NSTableView` `.sourceList`), so `contentMargins(.scrollContent)` and `safeAreaPadding` don't reach it. The outline pulls its list up by 10 pt and clips it.
   - Clipped, the scroller's top went with it; `contentMargins(.top, 10, for: .scrollIndicators)` brings it back to the pane's top.
 - **The sidebar column's minimum must be at least 140 pt.** Below that, hiding the sidebar pushes its toolbar toggle into the `>>` overflow, leaving no button to show it again.
@@ -347,7 +347,7 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and Co
 - **PDFKit is left to itself:** no insets of the app's round its fit-width layout. A rebuild goes back to `currentDestination`, and `loadDocument` hides hyperref's boxes.
 - **The pages keep PDFKit's own margins** (set ones made it scroll the pages on every resize step). They scale with the page, so Fit Height counts them, and PDFView keeps a set scale as it resizes, so `SyncPDFView.onResize` fits the height again.
 - **Command-click in the PDF jumps to the source**, as in the Mac's TeX apps; a double-click stays PDFKit's word selection. The web and Windows viewers use a double-click.
-- **Core Image filters work in linear light:** dark paper's `colorInvert` turns sRGB 0.84 grey into 0.61, not 0.16.
+- **Dark paper is rendered in PDFKit's page tiles**, rather than a Core Image filter over the document subtree. The public `draw(_:to:)` override preserves tile resolution and leaves scrollers outside the colour transformation.
 
 **Files and TeX**
 - **One FSEvents stream watches the project folder** (`FolderWatcher`).

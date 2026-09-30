@@ -119,6 +119,9 @@ final class WorkspaceController: DetentSplitViewController {
 
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
+        // AppKit's toolbar partition reaches half a thin divider into the next
+        // column. Give its scroll-view registration the same trailing boundary.
+        columns.view.additionalSafeAreaInsets.right = columns.splitView.dividerThickness / 2
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -577,7 +580,8 @@ enum ColumnMetrics {
     /// the sidebar first (AppKit's way with sidebars), so two windows tile side by side
     /// on the smallest Mac display. At its shortest, the columns over the build panel
     /// and the status bar under its line.
-    static let contentMinimum = CGSize(width: sourceMinimum + divider + pdfMinimum,
+    // Include the toolbar partition inset in the columns’ minimum room.
+    static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + divider / 2).rounded(.up),
                                        height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight)
 }
 
