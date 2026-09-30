@@ -129,9 +129,8 @@ private struct WindowModals: ViewModifier {
 extension View {
     /// Shows an `AppAlert` while `alert` holds one.
     func alert(_ alert: Binding<AppAlert?>) -> some View {
-        self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in
-            Button("OK") {}
-        } message: { alert in
+        // No actions: the system adds its own OK.
+        self.alert(alert.wrappedValue?.title ?? "", item: alert) { _ in } message: { alert in
             Text(alert.message)
         }
     }

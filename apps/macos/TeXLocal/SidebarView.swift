@@ -395,7 +395,7 @@ struct OutlineList: View {
             .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            .onChange(of: project.topLine) { _, top in line = top }
+            .onChange(of: project.topHeading) { line = project.topLine }
             // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in

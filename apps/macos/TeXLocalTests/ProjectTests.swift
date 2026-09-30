@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import TeXLocal
 
@@ -175,6 +176,25 @@ final class ProjectFlowTests {
         #expect(await project.save())
         let saved = try String(contentsOf: folder.appending(path: try #require(project.openPath)), encoding: .utf8)
         #expect(saved.contains("\\textbf{}"))
+        await app.close()
+    }
+
+    /// The outline hears of a scroll only as another heading reaches the top:
+    /// told of every line, it redrew the sidebar at every step of a scroll.
+    @Test(.timeLimit(.minutes(1)))
+    func theOutlineFollowsTheTopHeadingOnly() async throws {
+        let info = try await project("\\section{A}\n1\n2\n\\section{B}\n3").info
+        await app.open(info.id)
+        let project = try #require(app.project)
+        try await waitUntil { project.outline.count == 2 }
+        let scrolled = project.editor.onScroll
+        scrolled(2)
+        let told = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking { _ = project.topHeading } onChange: { told.withLock { $0 = true } }
+        scrolled(3)
+        #expect(!told.withLock { $0 } && project.topLine == 3)
+        scrolled(4)
+        #expect(told.withLock { $0 } && project.topHeading == project.outline[1].id)
         await app.close()
     }
 

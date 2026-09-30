@@ -5,8 +5,8 @@ import SwiftUI
 /// text files, each file's text, undo and selection kept while another shows;
 /// the find bar's search; and the formatting commands, whose LaTeX is the core's.
 final class SourceEditor: NSObject, NSTextViewDelegate {
-    let scrollView = NSScrollView()
-    let textView = SourceTextView(usingTextLayoutManager: true)
+    let scrollView = SourceTextView.scrollableTextView()
+    let textView: SourceTextView
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
@@ -32,17 +32,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     override init() {
+        // AppKit's own plain-text scroll view: TextKit 2, sized to its text.
+        textView = scrollView.documentView as! SourceTextView
         super.init()
         let text = textView
-        text.autoresizingMask = [.width]
-        text.isVerticallyResizable = true
-        text.isHorizontallyResizable = false
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        // The container is sized round the gutter (`SourceTextView.setFrameSize`).
         text.textContainer?.widthTracksTextView = false
         text.textContainerInset = NSSize(width: 0, height: 4)
-        text.isRichText = false
-        text.importsGraphics = false
-        text.usesFontPanel = false
         text.allowsUndo = true
         // Spelling underlined in the prose only (below), and nothing
         // corrected: smart dashes and quotes would rewrite the LaTeX (--
@@ -61,8 +57,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
         text.textStorage?.delegate = text
-        scrollView.hasVerticalScroller = true
-        scrollView.documentView = text
+        // The clip shows under the toolbar above the first line, where AppKit
+        // takes the column's colour for its band and edge effect.
+        scrollView.drawsBackground = true
         scrollView.isHidden = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
