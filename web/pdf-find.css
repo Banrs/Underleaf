@@ -1,7 +1,7 @@
 /* Correctness fixes that depend on shell layout rather than design tokens. */
 .pdf-find {
   position: absolute;
-  top: var(--h-toolbar);
+  top: var(--preview-toolbar-height, var(--h-toolbar));
   left: 0;
   right: 0;
   z-index: 4;
@@ -14,7 +14,7 @@
    its row as well so page content and hit targets never sit underneath it. */
 .pdf-pane.find-open .pdf-scroll,
 .pdf-pane.find-open .logs {
-  padding-top: calc(var(--h-toolbar) + 36px + var(--sp-3));
+  padding-top: calc(var(--preview-toolbar-height, var(--h-toolbar)) + 36px + var(--sp-3));
 }
 
 
