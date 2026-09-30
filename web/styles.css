@@ -1339,7 +1339,7 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .layout-compact .workspace:not(.preview-active) > .pdf-pane { display: none; }
 .layout-compact .titlebar > .icon-btn { flex: none; }
 .layout-compact .titlebar { flex-wrap: wrap; height: auto; min-height: var(--h-titlebar); padding-block: var(--sp-1); }
-.layout-compact .window-title { flex: 1; min-width: 0; }
+.layout-compact .window-title { flex: 1; min-width: 120px; }
 .pdf-pane > .toolbar { flex-wrap: wrap; height: auto; min-height: var(--h-toolbar); row-gap: var(--sp-1); padding-block: var(--sp-2); }
 .layout-compact .pdf-pane .toolbar .spacer { display: none; }
 .divider:focus-visible, .pane-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; z-index: 2; }
