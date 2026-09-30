@@ -36,8 +36,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView = scrollView.documentView as! SourceTextView
         super.init()
         let text = textView
-        // The container is sized round the gutter (`SourceTextView.setFrameSize`).
-        text.textContainer?.widthTracksTextView = false
+        // Let NSTextView resize its container in the same layout pass as the view.
+        // SourceTextView expresses the gutter through the native container inset.
+        text.textContainer?.widthTracksTextView = true
         text.textContainerInset = NSSize(width: 0, height: 4)
         text.allowsUndo = true
         // Spelling underlined in the prose only (below), and nothing

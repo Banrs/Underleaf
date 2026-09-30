@@ -53,6 +53,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
+    /// Leave room for the native title and Insert menu in a narrow source pane.
+    /// AppKit only attempts to align tracking separators; it otherwise lets the
+    /// formatting capsule push the line past the content divider. The same
+    /// commands remain in Format and keep their keyboard shortcuts.
+    func updateLayout() {
+        guard let workspace else { return }
+        let compact = workspace.sourceItem.viewController.view.bounds.width < 400
+        for item in toolbar.items where [.bold, .italic].contains(item.itemIdentifier) {
+            if item.isHidden != compact { item.isHidden = compact }
+        }
+    }
+
     func close() {
         watch?.cancel()
     }
@@ -176,7 +188,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.autovalidates = false
             (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
         }
-        if flag { configure(item, state) }
+        if flag {
+            configure(item, state)
+            if [.bold, .italic].contains(id), let workspace {
+                item.isHidden = workspace.sourceItem.viewController.view.bounds.width < 400
+            }
+        }
         return item
     }
 

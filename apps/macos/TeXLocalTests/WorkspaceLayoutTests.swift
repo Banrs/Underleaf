@@ -112,6 +112,29 @@ final class WorkspaceLayoutTests {
         #expect(isClose(header.view.frame.height, BarMetrics.secondaryBarHeight + sidebar.splitView.dividerThickness))
     }
 
+    /// Native width tracking keeps a completed viewport and a gutter-aware
+    /// container after each split resize, without changing the text or caret.
+    @Test func sourceContainerTracksSplitResizes() async throws {
+        let workspace = open()
+        workspace.project.openPath = "main.tex"
+        let editor = workspace.project.editor
+        editor.open(path: "main.tex", text: String(repeating: "A long paragraph of source which wraps in a narrow column. ", count: 20) + "\n")
+        let text = editor.textView
+        let container = try #require(text.textContainer)
+        #expect(container.widthTracksTextView)
+        let selection = text.selectedRange()
+        for position in [360.0, 520, 400, 610, 320] {
+            workspace.columns.splitView.setPosition(position, ofDividerAt: 0)
+            workspace.columns.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(60))
+            #expect(isClose(container.size.width, text.frame.width - text.textContainerOrigin.x - 8))
+            #expect(text.selectedRange() == selection)
+            let manager = try #require(text.textLayoutManager)
+            let range = try #require(manager.textViewportLayoutController.viewportRange)
+            #expect(manager.textLayoutFragment(for: range.location) != nil)
+        }
+    }
+
     /// A distant outline destination is still placed below the toolbar and find
     /// bar after TextKit has refined its estimated document geometry.
     @Test func distantSourceJumpsAlignBelowTheBars() async throws {

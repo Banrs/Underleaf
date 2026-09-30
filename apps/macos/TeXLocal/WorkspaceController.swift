@@ -265,6 +265,7 @@ final class WorkspaceController: DetentSplitViewController {
         ]
         drags = [splitView, sidebar.splitView, columns.splitView, area.splitView].map { split in
             NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { [weak self] message in
+                self?.toolbar.updateLayout()
                 if message.userResize { self?.saveSizes() }
             }
         }

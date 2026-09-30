@@ -43,6 +43,8 @@ abstractions that only add lines.
   not overwrite desktop visibility/width preferences. Saved widths are clamped
   to available space; separators support arrows (Shift for larger steps) and
   Home/End. Hidden panes are inert and return focus to a visible control.
+- **Sidebar density:** retain the compact 20 px desktop section band/accessories;
+  narrow overlays use 36 px bands and 28 px action targets.
 - **Small surfaces:** menus/popovers scroll within zoom-correct viewport bounds;
   settings stack by dialog width; symbol arrow keys follow the rendered grid.
 
