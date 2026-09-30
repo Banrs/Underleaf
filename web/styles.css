@@ -583,7 +583,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    there the sidebar only needs to stay out of the way. */
 .mac .sidebar { background: transparent; }
 
-.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace.js) */
+.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace-layout.js) */
 .sidebar.collapsed + .divider { display: none; }
 
 /* Preserve the kit's compact 20px desktop section band and accessories.
@@ -1327,7 +1327,6 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 /* Responsive workspace: preserve the desktop preferences while space is tight.
    Classes use the shell's CSS width, so interface zoom follows the same rules. */
 .workspace-switcher { display: flex; flex: none; gap: var(--sp-1); padding: var(--sp-2); background: var(--bg-content); border-bottom: 1px solid var(--separator); }
-.workspace-switcher[hidden] { display: none; }
 .workspace-switcher .btn { flex: 1; }
 .workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }
 .sidebar-backdrop { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 20%); }
