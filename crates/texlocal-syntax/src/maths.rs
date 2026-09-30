@@ -230,7 +230,9 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
         .collect();
     let column = pos - line_start;
     let pair = dollars
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .find(|p| column > p[0] && column <= p[1])?;
     let tex = preview_tex(None, &String::from_utf16_lossy(&line[pair[0] + 1..pair[1]]));
     preview(line_start + pair[0], tex, false)
