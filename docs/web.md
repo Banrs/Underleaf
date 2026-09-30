@@ -37,6 +37,14 @@ abstractions that only add lines.
 - **Uploads** onto taken names ask once (`clashQuestion`): Replace (`X-Replace`
   on just those files; the old ones go to the Trash), Keep Both (`keepBoth` in
   `web/src/api.js`, as the core's) or Stop.
+- **Responsive workspace** (`web/src/workspace-layout.js`): at 1024 CSS px and
+  above, show docked panes; below that, open the sidebar as a dismissible
+  overlay; below 720 px, switch between Editor and Preview. Narrow layouts do
+  not overwrite desktop visibility/width preferences. Saved widths are clamped
+  to available space; separators support arrows (Shift for larger steps) and
+  Home/End. Hidden panes are inert and return focus to a visible control.
+- **Small surfaces:** menus/popovers scroll within zoom-correct viewport bounds;
+  settings stack by dialog width; symbol arrow keys follow the rendered grid.
 
 ## Tauri only (delete with `src-tauri`)
 
@@ -49,12 +57,7 @@ WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 
 ## Open
 
-- `contextMenu` / `menuUnder` in `web/src/dom.js` place menus with the
-  window's rects while the body is zoomed (Interface Size ≠ 100%), so they may
-  land offset; `popoverUnder` already divides by the zoom.
 - The outline has no per-section folding.
-- Layout states for narrow windows (wide: sidebar, editor and PDF; medium:
-  overlay the sidebar; compact: one surface or an editor/PDF switch).
 - Profile before changing: long-document text-layer rendering, re-renders
   while resizing, and whole-body CSS zoom for the interface scale.
 - A light variant of One Dark for Syntax Colors.

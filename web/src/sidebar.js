@@ -497,7 +497,7 @@ export function renderOutline() {
       style,
       title: o.title,
       onclick: () => chooseSection(i),
-    }, o.title);
+    }, el('span', { class: 'row-label' }, o.title));
   }));
   updateOutlineSelection();
   if (focused !== -1) box.children[Math.min(focused, box.children.length - 1)].focus();

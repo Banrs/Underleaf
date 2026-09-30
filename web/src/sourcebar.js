@@ -53,16 +53,14 @@ export const SYMBOL_GROUPS = [
     ['⇒', '\\Rightarrow'], ['⇐', '\\Leftarrow'], ['⇔', '\\Leftrightarrow'], ['↦', '\\mapsto'],
     ['∀', '\\forall'], ['∃', '\\exists'], ['¬', '\\neg'], ['∧', '\\wedge'], ['∨', '\\vee']]],
 ];
-const PALETTE_COLUMNS = 10;
-
 // Where an arrow key goes in the palette, from symbol `i` of the flat list:
 // across moves one, and up or down the same column of the row above or
 // below, which may be the next group's (or the last of a shorter row).
-export function paletteMove(groupSizes, i, key) {
+export function paletteMove(groupSizes, i, key, columns = 10) {
   const rows = [];
   let start = 0;
   for (const size of groupSizes) {
-    for (let r = 0; r < size; r += PALETTE_COLUMNS) rows.push([start + r, Math.min(PALETTE_COLUMNS, size - r)]);
+    for (let r = 0; r < size; r += columns) rows.push([start + r, Math.min(columns, size - r)]);
     start += size;
   }
   const last = start - 1;
@@ -236,8 +234,12 @@ function openSymbols(anchor) {
   box.addEventListener('keydown', (e) => {
     const i = buttons.indexOf(document.activeElement);
     const arrow = ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key);
+    // Read the laid-out first row on every keypress: its column count changes
+    // with the available viewport width, including a resize while open.
+    const grid = box.querySelector('.symbol-grid');
+    const columns = [...grid.children].filter((b) => b.offsetTop === grid.firstElementChild.offsetTop).length;
     const to = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1
-      : arrow ? paletteMove(SYMBOL_GROUPS.map(([, symbols]) => symbols.length), i, e.key) : null;
+      : arrow ? paletteMove(SYMBOL_GROUPS.map(([, symbols]) => symbols.length), i, e.key, columns) : null;
     if (to == null || i === -1) return;
     e.preventDefault();
     const next = buttons[to];

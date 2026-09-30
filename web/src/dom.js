@@ -150,6 +150,24 @@ export function confirmModal({ title, body, confirm = 'Delete', destructive = tr
 // keyboard open), and `onArrow(±1)` handles ←/→ (the menu bar's neighbours).
 let openMenu = null;
 
+// Pointer/anchor rects use window pixels, while a fixed menu's lengths use
+// the body's interface zoom. Measure offset sizes so the pop-in transform
+// cannot shift the placement, and bound both menus and popovers before sizing.
+function placeMenu(menu, x, y) {
+  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  const width = Math.max(0, innerWidth - 16) / zoom;
+  menu.style.minWidth = `${Math.min(160, width)}px`;
+  menu.style.maxWidth = `${width}px`;
+  menu.style.maxHeight = `${Math.max(0, innerHeight - 16) / zoom}px`;
+  // An old right-edge position must not constrain shrink-to-fit width when
+  // a resize gives the menu more room again.
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  const [w, h] = [menu.offsetWidth * zoom, menu.offsetHeight * zoom];
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8)) / zoom}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - h - 8)) / zoom}px`;
+}
+
 export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}) {
   openMenu?.dismiss({ restore: false });
   const root = $('#modal-root');
@@ -160,6 +178,7 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
     anchor?.setAttribute('aria-expanded', 'false');
     removeEventListener('pointerdown', onAway, true);
     removeEventListener('keydown', onKey, true);
+    removeEventListener('resize', position);
     if (restore && restoreTo?.isConnected) restoreTo.focus();
   };
   // A press on the anchor is left to its click, which closes the menu, so the
@@ -179,7 +198,7 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
         onclick: () => { dismiss({ restore: false }); it.action(); },
       },
       el('span', { class: 'menu-check', 'aria-hidden': 'true' }, it.checked ? '✓' : ''),
-      it.label,
+      el('span', { class: 'menu-label' }, it.label),
       it.hint ? el('span', { class: 'menu-hint' }, it.hint) : null);
       if (!it.disabled) buttons.push(b);
       return b;
@@ -203,12 +222,15 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
     buttons[(next + buttons.length) % buttons.length]?.focus();
   };
 
+  const position = () => {
+    const r = anchor?.getBoundingClientRect();
+    placeMenu(menu, r?.left ?? x, r ? r.bottom + 4 : y);
+  };
   root.appendChild(menu);
-  const r = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+  position();
   addEventListener('pointerdown', onAway, true);
   addEventListener('keydown', onKey, true);
+  addEventListener('resize', position);
   anchor?.setAttribute('aria-expanded', 'true');
   openMenu = { dismiss, anchor };
   if (focus) buttons[0]?.focus();
@@ -236,6 +258,7 @@ export function popoverUnder(target, content, { label } = {}) {
     target.setAttribute('aria-expanded', 'false');
     removeEventListener('pointerdown', onAway, true);
     removeEventListener('keydown', onKey, true);
+    removeEventListener('resize', position);
     if (restore && target.isConnected) target.focus();
   };
   const onAway = (e) => { if (!box.contains(e.target) && !target.contains(e.target)) dismiss(); };
@@ -244,19 +267,15 @@ export function popoverUnder(target, content, { label } = {}) {
     else if (e.key === 'Tab') dismiss();   // Tab then moves on from the control
   };
   const box = el('div', { class: 'menu popover', role: 'dialog', 'aria-label': label }, content);
+  const position = () => {
+    const r = target.getBoundingClientRect();
+    placeMenu(box, r.left, r.bottom + 4);
+  };
   $('#modal-root').appendChild(box);
-  // The target's rect is in window pixels, the box's own lengths in the
-  // body's zoomed ones (the interface scale; its size is read from offset*,
-  // which the pop-in transform leaves alone). Taller than the window, it
-  // scrolls.
-  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
-  box.style.maxHeight = `${(innerHeight - 16) / zoom}px`;
-  const r = target.getBoundingClientRect();
-  const [w, h] = [box.offsetWidth * zoom, box.offsetHeight * zoom];
-  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8)) / zoom}px`;
-  box.style.top = `${Math.max(8, Math.min(r.bottom + 4, innerHeight - h - 8)) / zoom}px`;
+  position();
   addEventListener('pointerdown', onAway, true);
   addEventListener('keydown', onKey, true);
+  addEventListener('resize', position);
   target.setAttribute('aria-expanded', 'true');
   openMenu = { dismiss, anchor: target };
   return { dismiss };
