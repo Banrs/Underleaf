@@ -377,7 +377,7 @@ final class WorkspaceController: DetentSplitViewController {
         focusField(searchField, in: sidebarSearch)
     }
 
-    /// Whether a text field is one of the find bars': it gets `FindFieldEditor`.
+    /// Whether a text field is one of the find bars': it gets a `FindPassingTextView`.
     func hostsFindField(_ field: NSTextField) -> Bool {
         field.isDescendant(of: sourceFind.view) || field.isDescendant(of: pdfFind.view)
     }

@@ -82,8 +82,8 @@ targets:
         path: scripts/build-core.sh
         basedOnDependencyAnalysis: false
     postCompileScripts:
-      - name: Copy editor page
-        path: scripts/copy-web.sh
+      - name: Copy shared resources
+        path: scripts/copy-resources.sh
         basedOnDependencyAnalysis: false
   TeXLocalTests:
     type: bundle.unit-test

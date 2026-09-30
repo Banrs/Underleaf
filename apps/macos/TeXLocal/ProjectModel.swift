@@ -60,18 +60,11 @@ final class ProjectModel {
     private var treeReload: Task<Void, Never>?
     private var diskCheck: Task<Void, Never>?
 
-    /// The source's find bar: CodeMirror's search behind native fields.
+    /// The source's find bar.
     var findShown = false
     var findQuery = FindQuery() {
         didSet {
-            guard findQuery != oldValue else { return }
-            // Cancelled and replaced, so the last query wins.
-            findSync?.cancel()
-            let query = findQuery
-            findSync = Task { [editor] in
-                guard !Task.isCancelled else { return }
-                await editor.setFind(query)
-            }
+            if findQuery != oldValue { editor.setFind(findQuery) }
         }
     }
     var findMatches = FindMatches()
@@ -79,12 +72,9 @@ final class ProjectModel {
     /// closes, so the next bar doesn't take a stale focus request.
     var findFocus = 0
     var replaceFocus = 0
-    /// Find and Replace… opens the bar on the replace field.
-    private var replacing = false
     /// The replace row: Find and Replace… adds it until the bar closes, so a plain
     /// Find keeps the bar to one row.
     var replaceShown = false
-    @ObservationIgnored private var findSync: Task<Void, Never>?
 
     /// While the workspace asks Replace, Keep Both or Stop.
     var importClash: ImportClash?
@@ -96,8 +86,8 @@ final class ProjectModel {
     /// so its results pane doesn't read No Results while it runs.
     var searchHits: [SearchHit]?
 
-    /// Per project: one editor web view, which the source column shows.
-    let editor = EditorBridge()
+    /// Per project: one editor, which the source column shows.
+    let editor = SourceEditor()
     private weak var app: AppModel?
     private let core = Core.shared
     private var saveTask: Task<Void, Never>?
@@ -113,9 +103,6 @@ final class ProjectModel {
     private var stopRequested = false
     /// A build still running when the project closes reports nothing.
     private var closed = false
-    private var readingText = false
-    /// The editor's web process died holding edits not yet on disk.
-    private var lostEdits = false
     /// Writes that reached the disk, and how many of them the PDF was built
     /// from: equal means the PDF matches the disk.
     private var writes = 0
@@ -169,27 +156,14 @@ final class ProjectModel {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
         editor.onScroll = { [weak self] line in self?.topLine = line }
-        editor.onFind = { [weak self] query in
-            guard let self else { return }
-            findQuery = query
-            findShown = true
-            if replacing {
-                replaceShown = true
-                replaceFocus += 1
-            } else {
-                findFocus += 1
-            }
-            replacing = false
-        }
-        editor.onFindClosed = { [weak self] in self?.findClosed() }
         editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
-        editor.onCrash = { [weak self] in
-            if let self, dirty || readingText { lostEdits = true }
+        // Escape in the text closes the find bar first.
+        editor.textView.escape = { [weak self] in
+            guard let self, findShown else { return false }
+            closeFind()
+            return true
         }
-        editor.onRestart = { [weak self] in Task { await self?.editorRestarted() } }
-        editor.webView.fileDrop = { [weak self] in self?.dropped($0) }
-        await editor.setHostKeys(MenuCommand.editorHostKeys)
-        await editor.useHostFind()
+        editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
@@ -223,7 +197,7 @@ final class ProjectModel {
 
     private func refreshSymbols() async {
         if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self), !closed {
-            await editor.setSymbols(symbols)
+            editor.symbols = symbols
         }
     }
 
@@ -262,15 +236,15 @@ final class ProjectModel {
                 diskText = text
                 analyze(text ?? "")
                 if let text {
-                    await editor.open(path: path, text: text, focus: focus)
-                    cursorLine = await editor.currentLine()
+                    editor.open(path: path, text: text, focus: focus)
+                    cursorLine = editor.currentLine
                 }
             } catch {
                 if !closed { report(error, "Couldn’t Open “\(name(path))”") }
                 return
             }
         }
-        if let line, editsText, generation == openGeneration, !closed { await editor.reveal(line: line, atTop: atTop, focus: focus) }
+        if let line, editsText, generation == openGeneration, !closed { editor.reveal(line: line, atTop: atTop, focus: focus) }
     }
 
     /// A file of the project on disk, to drag out; nil until its folder is watched.
@@ -328,30 +302,13 @@ final class ProjectModel {
         guard hasUnsavedText, let path = openPath else { return true }
         // Not over another app's change until asked which to keep.
         guard diskConflict == nil, missingFile == nil else { return false }
+        // The editor's text, which is the open file's: they change together.
+        guard let document = editor.document, document.path == path else { return true }
+        let text = document.text
         saving = true
         defer { saving = false }
-        // Before the read: an edit during the read or write marks it dirty
-        // again, and its own save follows.
+        // An edit during the write marks it dirty again, and its own save follows.
         dirty = false
-        let crashes = editor.crashes
-        readingText = true
-        let document = await editor.document()
-        readingText = false
-        guard let document else {
-            // The web process died with the edits; the restart reports it.
-            if lostEdits || editor.crashes != crashes { return true }
-            dirty = true
-            app?.alert = AppAlert("“\(name(path))” Wasn’t Saved",
-                                  "The editor’s text couldn’t be read. Your changes are still in the editor, and TeXLocal saves them again after your next edit.")
-            return false
-        }
-        // Another file opened meanwhile: the text is that file's, never to be written to this one.
-        guard document.path == path else {
-            app?.alert = AppAlert("“\(name(path))” Wasn’t Saved",
-                                  "Another file opened in the editor before its text could be read.")
-            return false
-        }
-        let text = document.text
         do {
             // Before the write, so its own change event matches.
             diskText = text
@@ -364,27 +321,6 @@ final class ProjectModel {
             dirty = true
             report(error, "“\(name(path))” Wasn’t Saved")
             return false
-        }
-    }
-
-    /// The web process died and the page came back empty: reopen the file
-    /// from disk. Unsaved edits died with it.
-    private func editorRestarted() async {
-        let lost = lostEdits
-        lostEdits = false
-        guard let path = openPath else { return }
-        saveTask?.cancel()
-        clearOpenFile()
-        // A save in flight read its text before the crash and still lands.
-        _ = await lastSave?.value
-        // The disk matches the PDF unless a save has landed since it was built.
-        if pdfFreshness == .edited, writes == builtWrites { pdfFreshness = nil }
-        await open(path)
-        // The new page has no search; the bar still shows one.
-        if findShown { await editor.setFind(findQuery) }
-        if lost {
-            app?.alert = AppAlert("Unsaved Changes Were Lost",
-                                  "The editor stopped unexpectedly. Changes to \(path) since it was last saved were lost.")
         }
     }
 
@@ -493,7 +429,7 @@ final class ProjectModel {
             saveTask?.cancel()
             diskConflict = path
         } else {
-            await showDiskText(file.text, of: path)
+            showDiskText(file.text, of: path)
             if autoCompile { await compile(auto: true) }
         }
     }
@@ -523,12 +459,12 @@ final class ProjectModel {
     }
 
     /// Keeps the scroll position.
-    private func showDiskText(_ text: String, of path: String) async {
+    private func showDiskText(_ text: String, of path: String) {
         let top = topLine
-        await editor.open(path: path, text: text, focus: false)
+        editor.open(path: path, text: text, focus: false)
         analyze(text)
-        await editor.reveal(line: top, atTop: true, focus: false)
-        cursorLine = await editor.currentLine()
+        editor.reveal(line: top, atTop: true, focus: false)
+        cursorLine = editor.currentLine
     }
 
     func revertToDisk() async {
@@ -536,7 +472,7 @@ final class ProjectModel {
         guard let path = openPath, let text = diskText else { return }
         saveTask?.cancel()
         _ = await lastSave?.value
-        await showDiskText(text, of: path)
+        showDiskText(text, of: path)
         // Written back, in case a save under way when the change came
         // wrote the edits over it.
         dirty = true
@@ -624,7 +560,6 @@ final class ProjectModel {
         folderWatcher = nil
         treeReload?.cancel()
         diskCheck?.cancel()
-        editor.close()
     }
 
     /// Kills the build's process group; the compile returns stopped.
@@ -672,7 +607,7 @@ final class ProjectModel {
     func forwardSync() async {
         guard let path = openPath else { return }
         guard await saveEdits() else { return }
-        let line = await editor.currentLine()
+        let line = editor.currentLine
         do {
             let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line], as: ForwardLoc.self)
             highlightToken += 1
@@ -711,7 +646,7 @@ final class ProjectModel {
         guard await saveEdits() else { return }
         do {
             let result = try await core.call("rename_entry", ["id": id, "from": from, "to": to], as: RenameResult.self)
-            await editor.rename(from: result.from, to: result.to)
+            editor.rename(from: result.from, to: result.to)
             // The open file may move with its folder. The editor keeps its
             // text; only the save path changes, so the old path can't return.
             let wasOpen = openPath
@@ -741,7 +676,7 @@ final class ProjectModel {
         guard await saveEdits() else { return }
         do {
             try await core.perform("delete_entry", ["id": id, "path": path])
-            await editor.forget(path: path)
+            editor.forget(path: path)
             if let open = openPath, open == path || open.hasPrefix(path + "/") { clearOpenFile() }
             await reloadTree()
         } catch {
@@ -835,35 +770,46 @@ final class ProjectModel {
     // ---------- editor commands ----------
 
     func format(_ command: EditorCommand, _ arg: String? = nil) {
-        Task { await editor.command(command, arg) }
+        editor.perform(command, arg)
     }
 
+    /// With nothing to find yet, the bar opens instead.
     func findStep(_ delta: Int) {
-        format(delta > 0 ? .findNext : .findPrevious)
+        if !editor.findStep(delta) { showFind() }
     }
 
     func replace(all: Bool) {
-        format(all ? .replaceAll : .replaceNext)
+        editor.replace(all: all)
     }
 
-    func findAndReplace() {
+    /// Opens the find bar, or gives its field the keyboard again, the selection
+    /// its query when it's a short one; Find and Replace… adds the replace row
+    /// until the bar closes.
+    func showFind(replacing: Bool = false) {
         guard editsText else { return }
-        replacing = true
-        format(.find)
+        if let selection = editor.selectionQuery { findQuery.search = selection }
+        findShown = true
+        editor.setFind(findQuery)
+        if replacing {
+            replaceShown = true
+            replaceFocus += 1
+        } else {
+            findFocus += 1
+        }
     }
 
     /// Edit › Find's items for the source (`WorkspaceController.findAction` sends
-    /// them here unless the PDF has the keyboard). The
-    /// page's find takes the selection as its query, so it serves Use
-    /// Selection for Find too. With no text open, Find goes to the PDF.
+    /// them here unless the PDF has the keyboard). Find takes the selection as
+    /// its query, so it serves Use Selection for Find too. With no text open,
+    /// Find goes to the PDF.
     func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
         guard editsText else {
             guard action == .showFindInterface, pdfVersion > 0 else { return nil }
             return { [weak self] in self?.app?.requestPDF(.find) }
         }
         switch action {
-        case .showFindInterface, .setSearchString: return { self.format(.find) }
-        case .showReplaceInterface: return findAndReplace
+        case .showFindInterface, .setSearchString: return { self.showFind() }
+        case .showReplaceInterface: return { self.showFind(replacing: true) }
         case .nextMatch: return { self.findStep(1) }
         case .previousMatch: return { self.findStep(-1) }
         default: return nil
@@ -880,10 +826,8 @@ final class ProjectModel {
     /// Done or Escape: unmarks the matches and returns typing to the text.
     func closeFind() {
         findClosed()
-        Task {
-            await editor.closeFind()
-            editor.focus()
-        }
+        editor.closeFind()
+        editor.focus()
     }
 
     /// An outline heading at the top of the source; the keyboard stays where it is.
@@ -893,7 +837,7 @@ final class ProjectModel {
     }
 
     func reveal(line: Int) {
-        Task { await editor.reveal(line: line) }
+        editor.reveal(line: line)
     }
 }
 

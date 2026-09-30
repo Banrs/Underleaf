@@ -5,8 +5,10 @@ import test from 'node:test';
 import { prefChoices } from '../web/src/prefs.js';
 import SHORTCUTS from '../web/src/shortcuts.json' with { type: 'json' };
 
-// The native apps send the editor page names (commands, palettes, fonts) and
-// keep the web's accelerators; each copy must be one the page and the web know.
+// Windows sends the editor page its commands by name; both native apps offer
+// the web's palettes and fonts and keep its accelerators. Each copy must be
+// one the page and the web know. (The Mac's editor is its own, over the core's
+// crates/texlocal-syntax, and sends the page nothing.)
 
 const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 // A declaration's body, from its opening line to the first line that closes it.
@@ -29,11 +31,10 @@ function swiftRawValues(text, name) {
 
 const page = source('web/src/embed/editor.js');
 const pageCommands = all(body(page, 'const COMMANDS = {', '\n};'), /^ {2}(\w+):/gm);
-const bridge = source('apps/macos/TeXLocal/EditorBridge.swift');
+const macEditor = source('apps/macos/TeXLocal/SourceEditor.swift');
 
-test('the commands the native apps send are ones the editor page runs', () => {
+test('the commands Windows sends are ones the editor page runs', () => {
   assert.ok(pageCommands.includes('bold') && pageCommands.includes('inline'));
-  for (const name of swiftRawValues(bridge, 'EditorCommand')) assert.ok(pageCommands.includes(name), `Mac: ${name}`);
   const windows = source('apps/windows/TeXLocal/Commands.cs') + source('apps/windows/TeXLocal/WorkspaceView.xaml.cs');
   const sent = all(windows, /Format\((?:project, )?"(\w+)"/g);
   assert.ok(sent.length > 0);
@@ -41,8 +42,8 @@ test('the commands the native apps send are ones the editor page runs', () => {
 });
 
 test('the palettes and fonts the native apps offer are the web\'s', () => {
-  assert.deepEqual(swiftRawValues(bridge, 'EditorPalette'), prefChoices('editorTheme'));
-  assert.deepEqual(swiftRawValues(bridge, 'EditorFont'), prefChoices('editorFont'));
+  assert.deepEqual(swiftRawValues(macEditor, 'EditorPalette'), prefChoices('editorTheme'));
+  assert.deepEqual(swiftRawValues(macEditor, 'EditorFont'), prefChoices('editorFont'));
   const settings = source('apps/windows/TeXLocal/SettingsView.xaml.cs');
   const list = (name) => all(body(settings, `${name} = [`, ']'), /"(\w+)"/g);
   assert.deepEqual(list('Palettes'), prefChoices('editorTheme'));

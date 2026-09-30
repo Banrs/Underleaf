@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
@@ -6,22 +7,19 @@ import { CompletionContext } from '@codemirror/autocomplete';
 globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
 const { latexCompletions, mathPreviewField, headingLine, blockInsertion } = await import('../web/src/editor.js');
+const { BLOCK_TEMPLATES } = await import('../web/src/latex-data.js');
 
-const complete = (doc) => {
+// Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
+const fixture = JSON.parse(readFileSync(new URL('../crates/texlocal-syntax/tests/fixtures/editing.json', import.meta.url), 'utf8'));
+
+// CodeMirror narrows the options itself; each case names one it must offer.
+test('completion targets the innermost open argument, else a command or entry type', () => {
   const source = latexCompletions(() => ({ citations: ['knuth84'], labels: ['sec:intro'] }));
-  return source(new CompletionContext(EditorState.create({ doc }), doc.length, false));
-};
-
-test('argument completion targets the innermost open argument', () => {
-  assert.deepEqual(complete('\\footnote{see \\cite{kn').options.map((o) => o.label), ['knuth84']);
-  assert.deepEqual(complete('\\section{Proof of \\ref{').options.map((o) => o.label), ['sec:intro']);
-  assert.equal(complete('\\cite[p.~5]{kn').options[0].label, 'knuth84');
-});
-
-test('command completion works inside another command\'s argument', () => {
-  const result = complete('\\frac{\\al');
-  assert.equal(result.from, '\\frac{'.length);
-  assert.ok(result.options.some((o) => o.label === '\\alpha'));
+  for (const [doc, explicit, from, offered] of fixture.completions) {
+    const result = source(new CompletionContext(EditorState.create({ doc }), doc.length, explicit));
+    assert.equal(result?.from ?? null, from, doc);
+    if (offered) assert.ok(result.options.some((o) => o.label === offered), doc);
+  }
 });
 
 test('moving within an unchanged equation keeps the same preview tooltip', () => {
@@ -35,23 +33,15 @@ test('moving within an unchanged equation keeps the same preview tooltip', () =>
 });
 
 test('a heading changes level wherever the outline finds it', () => {
-  const as = (line, command) => headingLine(line, command).text;
-  assert.equal(as('\\section[Short]{A Long Title}', 'subsection'), '\\subsection[Short]{A Long Title}');
-  assert.equal(as('\\section[Short]{A Long Title}', ''), 'A Long Title');
-  assert.equal(as('Intro text \\section{X} more', 'chapter'), 'Intro text \\chapter{X} more');
-  assert.equal(as('Intro text \\section{X}', ''), 'Intro text X');
-  assert.equal(as('  \\section*{A {b} c} % note', 'part'), '  \\part*{A {b} c} % note');
-  assert.equal(as('  Plain words', 'section'), '  \\section{Plain words}');
-  assert.deepEqual(headingLine('\\section[S]{T} x', 'paragraph'), { text: '\\paragraph[S]{T} x', cursor: '\\paragraph[S]{T'.length });
+  for (const [line, command, text, cursor] of fixture.headings) {
+    assert.deepEqual(headingLine(line, command), { text, cursor }, `${line} as ${command || 'text'}`);
+  }
 });
 
 test('a block starts a line of its own, with no blank line before it', () => {
-  const block = '\\begin{figure}\n  $0\n\\end{figure}\n';
-  // At the start of a line, or after only indentation: straight in.
-  assert.deepEqual(blockInsertion('', block), { text: '\\begin{figure}\n  \n\\end{figure}\n', cursor: 17 });
-  assert.equal(blockInsertion('  ', block).text.startsWith('\\begin'), true);
-  // After text on the line: a new line first.
-  assert.deepEqual(blockInsertion('Some text', block), { text: '\n\\begin{figure}\n  \n\\end{figure}\n', cursor: 18 });
+  for (const [before, id, text, cursor] of fixture.blocks) {
+    assert.deepEqual(blockInsertion(before, BLOCK_TEMPLATES[id]), { text, cursor }, `${id} after ${JSON.stringify(before)}`);
+  }
   // Without "$0" the caret goes after the block.
   assert.equal(blockInsertion('', 'x\n').cursor, 2);
 });

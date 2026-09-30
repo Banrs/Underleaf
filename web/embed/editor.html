@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <!-- The editor page the native apps embed (see web/src/embed/editor.js).
+  <!-- The editor page the Windows app embeds (see web/src/embed/editor.js).
        Everything is same-origin: the host serves web/ on its own scheme. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:" />
   <link rel="stylesheet" href="/styles.css" />
@@ -10,132 +10,11 @@
   <style>
     html, body { height: 100%; margin: 0; background: var(--bg-content); }
     #editor { height: 100%; }
-    /* The platform's own scrollers — overlay ones that follow System
-       Settings on a Mac, Fluent ones on Windows — rather than the browser
-       version's tinted bar (styles.css). */
+    /* The platform's own scrollers, Fluent ones on Windows, rather than
+       the browser version's tinted bar (styles.css). */
     * { scrollbar-width: auto; scrollbar-color: auto; }
-    /* No scroller while the editor resizes (editor.js): CodeMirror scrolls to keep
-       the top line as lines re-wrap, and a native text view shows none. */
-    :root[data-host][data-resizing] .cm-scroller { scrollbar-width: none; }
-    /* Room for the Mac's toolbar and find bar over the text's top (setTopInset). */
-    :root[data-host] .cm-content { padding-top: calc(4px + var(--host-top-inset, 0px)); }
     /* Room to scroll past the last line, so it can sit above the pane's foot. */
     .cm-content { padding-bottom: 64px; }
-
-    /* ---------- a host's own chrome (setAppearance `host`: the Mac's) ----------
-       The editor then sits in the native chrome as a native text view
-       would: the system's text surface, its type scale and colours, and the
-       metrics of its menus. !important where a syntax theme sets its own at higher specificity. */
-
-    /* The system's text background, whatever surface the syntax colours'
-       theme brings (One Dark's is blue-grey). */
-    :root[data-host], :root[data-host] body,
-    :root[data-host] .cm-editor { background-color: var(--host-text-background) !important; }
-    /* The system's selection colours, unemphasised while the editor isn't focused, as in a text view. */
-    :root[data-host] .cm-editor .cm-selectionBackground { background: var(--host-selection-inactive) !important; }
-    :root[data-host] .cm-editor.cm-focused .cm-selectionBackground { background: var(--host-selection) !important; }
-
-    /* The gutter as Xcode draws it; the line box stays the code's, so each
-       number sits on its line. */
-    :root[data-host] .cm-gutters {
-      background: transparent !important;
-      border: none !important;
-      color: var(--host-secondary-label) !important;
-    }
-    :root[data-host] .cm-lineNumbers .cm-gutterElement {
-      font-family: var(--mono);
-      font-size: calc(var(--editor-fs, 13px) - 2px);
-      line-height: calc(var(--editor-fs, 13px) * 1.45);
-      padding: 0 8px !important;
-    }
-    :root[data-host] .cm-activeLineGutter { color: var(--host-text) !important; }
-    :root[data-host] .cm-line { padding-left: 4px; }
-
-    /* WebKit's own caret, which blinks and fades as the system's does, in
-       the system's insertion point colour (auto would take the text's):
-       CodeMirror hides it to draw one of its own. Extra cursors of a
-       multiple selection stay CodeMirror's; a text view has none. */
-    :root[data-host] .cm-editor .cm-content,
-    :root[data-host] .cm-editor .cm-line { caret-color: var(--host-insertion-point) !important; }
-    :root[data-host] .cm-editor .cm-cursor-primary { display: none !important; }
-
-    /* The current line and the other occurrences of the selection in the
-       host's faint neutral fills, as Xcode draws them, whatever the syntax
-       colours' theme tints them. Specificity rather than !important, which
-       would outrank the jump flash's animation (styles.css) on the line it
-       lands on. As CodeMirror's own rule, no occurrence tint inside a find
-       match. */
-    :root[data-host] .cm-editor .cm-activeLine,
-    :root[data-host] .cm-editor .cm-activeLineGutter { background-color: var(--host-current-line); }
-    :root[data-host] .cm-editor .cm-selectionMatch { background-color: var(--host-selection-match); }
-    :root[data-host] .cm-editor .cm-searchMatch .cm-selectionMatch { background-color: transparent; }
-
-    /* Find matches in the system's find highlight: every match tinted, the
-       current one solid with dark text, as Safari and TextEdit show it. */
-    :root[data-host] .cm-searchMatch {
-      background-color: color-mix(in srgb, var(--host-find-highlight) 35%, transparent) !important;
-      outline: none !important;
-    }
-    /* In dark mode the tint lifts the background toward the syntax colours
-       (a comment's grey, a keyword's pink), so the other matches' text takes
-       the system's text colour, which keeps its contrast on the tint. */
-    :root[data-host][data-theme="dark"] .cm-searchMatch,
-    :root[data-host][data-theme="dark"] .cm-searchMatch * {
-      color: var(--host-text) !important;
-    }
-    :root[data-host] .cm-searchMatch-selected,
-    :root[data-host] .cm-searchMatch-selected *,
-    :root[data-host][data-theme="dark"] .cm-searchMatch-selected,
-    :root[data-host][data-theme="dark"] .cm-searchMatch-selected * {
-      background-color: var(--host-find-highlight) !important;
-      color: #000 !important;
-    }
-    /* The host draws the find bar; CodeMirror's panel is an empty stand-in. */
-    :root[data-host] .cm-panels { display: none !important; }
-
-    /* Completions and the math preview as the system's menus are. No per-kind
-       icons: a Mac completion list is text. */
-    :root[data-host] .cm-tooltip {
-      background: var(--bg-raised) !important;
-      color: var(--host-text) !important;
-      border: none !important;
-      border-radius: 12px;
-      box-shadow: var(--shadow-menu);
-    }
-    :root[data-host] .cm-tooltip.cm-tooltip-autocomplete { padding: 5px; }
-    :root[data-host] .cm-tooltip-autocomplete > ul {
-      font-family: var(--editor-font, var(--mono)) !important;
-      font-size: var(--editor-fs, 13px);
-      max-height: 240px !important;
-    }
-    /* The line box follows the font, or glyphs past 16 px would be clipped
-       (CodeMirror hides a row's overflow): 16 px at 13 px, a menu row's
-       text, rounded to whole pixels so rows stay crisp. */
-    :root[data-host] .cm-tooltip-autocomplete > ul > li {
-      padding: 4px 8px !important;
-      line-height: round(1.25em, 1px);
-      border-radius: 8px;
-    }
-    :root[data-host] .cm-tooltip-autocomplete > ul > li[aria-selected] {
-      background: var(--host-selected-content) !important;
-      color: var(--host-selected-text) !important;
-    }
-    :root[data-host] .cm-completionIcon { display: none; }
-    :root[data-host] .cm-completionLabel { font-family: inherit; }
-    :root[data-host] .cm-completionMatchedText { text-decoration: none; font-weight: 600; }
-    /* A step smaller than the completion, as 11 px is beside 13 px, in a
-       line box no taller than itself: at the row's line height the smaller
-       font's baseline would stretch the row by half a pixel. */
-    :root[data-host] .cm-completionDetail {
-      margin-left: 12px;
-      font-family: var(--font);
-      font-size: 0.85em;
-      line-height: 1;
-      font-style: normal;
-      color: var(--host-secondary-label);
-    }
-    :root[data-host] li[aria-selected] .cm-completionDetail { color: inherit; opacity: 0.85; }
-    :root[data-host] .cm-tooltip.cm-math-preview { padding: 8px 16px; }
   </style>
 </head>
 <body>

@@ -50,6 +50,7 @@ jobs:
         with:
           workspaces: . -> target
           key: macos-app-27.0
+      # The app copies the editor's font from node_modules.
       - run: npm ci
       - name: Build
         working-directory: apps/macos

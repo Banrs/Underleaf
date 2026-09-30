@@ -1,6 +1,5 @@
 import SwiftUI
 import Testing
-import WebKit
 @testable import TeXLocal
 
 /// The commands' chords: the shared table's (web/src/shortcuts.json) and the
@@ -35,21 +34,6 @@ struct MenuCommandTests {
             guard let shortcut = command.shortcut else { continue }
             #expect(seen[shortcut] == nil, "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
             seen[shortcut] = command
-        }
-    }
-
-    @Test func theEditorKeepsTheChordsItImplements() {
-        let ids = Set(MenuCommand.editorHostKeys.map(\.id))
-        for id in ["compile.run", "edit.gotoLine", "view.zoomIn"] {
-            #expect(ids.contains(id), "\(id)")
-        }
-        for id in ["edit.find", "edit.findNext", "edit.findPrevious", "edit.comment", "edit.undo", "edit.redo"] {
-            #expect(!ids.contains(id), "\(id)")
-        }
-        // The Mac's own chords, which the page would otherwise see first.
-        for id in ["project.open", "edit.findAndReplace", "view.toggleInspector", "view.actualSize", "compile.stop",
-                   "file.pageSetup", "file.print"] {
-            #expect(ids.contains(id), "\(id)")
         }
     }
 }
@@ -89,25 +73,10 @@ struct MenuStructureTests {
     }
 
     /// The system's, which whatever has the keyboard answers: a text field from
-    /// its undo manager, the editor from CodeMirror's history.
+    /// its undo manager, the source from its file's (`SourceEditor`).
     @Test func undoAndRedoAreTheSystems() throws {
-        #expect(try item("z").action == #selector(EditorWebView.undo(_:)))
-        #expect(try item("z", [.command, .shift]).action == #selector(EditorWebView.redo(_:)))
-    }
-
-    @Test func theEditorAnswersUndoFromItsHistory() {
-        let view = EditorWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        let undo = NSMenuItem(title: "Undo Typing", action: #selector(EditorWebView.undo(_:)), keyEquivalent: "z")
-        let redo = NSMenuItem(title: "Redo", action: #selector(EditorWebView.redo(_:)), keyEquivalent: "Z")
-        #expect(!view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))
-        view.history = (undo: true, redo: false)
-        #expect(view.validateUserInterfaceItem(undo) && !view.validateUserInterfaceItem(redo))
-        #expect(undo.title == "Undo")
-        var steps: [Bool] = []
-        view.step = { steps.append($0) }
-        view.undo(nil)
-        view.redo(nil)
-        #expect(steps == [false, true])
+        #expect(try item("z").action == Selector(("undo:")))
+        #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
     }
 
     /// The chords the Mac relies on, its own (`MenuCommand.macAccel`, HIG Keyboards) and the system's.
@@ -128,7 +97,7 @@ struct MenuStructureTests {
         #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
     }
 
-    /// The system's spelling commands, which WebKit's spell checking answers.
+    /// The system's spelling commands, which the source's text view answers.
     @Test func spellingIsInTheEditMenu() throws {
         _ = try item(";")
         _ = try item(":")
@@ -178,7 +147,7 @@ struct FindRoutingTests {
     /// A find bar's field editor passes the items on, where the shared one
     /// would take them and turn them off.
     @Test func aFindFieldsEditorPassesFindOn() {
-        let editor = FindFieldEditor()
+        let editor = FindPassingTextView()
         editor.isFieldEditor = true
         let window = Responder()
         editor.nextResponder = window

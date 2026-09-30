@@ -18,8 +18,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var titleWatch: Task<Void, Never>?
     /// Polls for TeX while it's missing; one at a time.
     private var texWatch: Task<Void, Never>?
-    /// The find bars' fields' field editor (`FindFieldEditor`).
-    private let findEditor = FindFieldEditor()
+    /// The find bars' fields' field editor.
+    private let findEditor = FindPassingTextView()
 
     init(app: AppModel) {
         self.app = app
@@ -135,8 +135,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     /// Edit › Find's items, which the system sends down the responder chain with
     /// the `NSTextFinder.Action` as the item's tag, to the pane with the keyboard.
-    /// Nothing before the window answers them: not the editor's plain web view,
-    /// not PDFView, and the find fields pass them on (`FindFieldEditor`).
+    /// Nothing before the window answers them: the source's text view and the
+    /// find fields pass them on (`FindPassingTextView`), and PDFView has none.
     @objc func performFindPanelAction(_ sender: Any?) {
         findAction(for: sender)?()
     }

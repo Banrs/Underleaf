@@ -12,7 +12,10 @@ import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, fin
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
-import { COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES, BLOCK_TEMPLATES } from './latex-data.js';
+import {
+  COMMANDS, ENVIRONMENTS, BIB_ENTRY_TYPES, BLOCK_TEMPLATES, SECTIONS, CITE_COMMANDS, REF_COMMANDS,
+  MATH_ENVIRONMENT_NAMES, VERBATIM_ENVIRONMENT_NAMES, TEXT_COMMAND_NAMES, PREVIEW_ENVIRONMENTS,
+} from './latex-data.js';
 
 const themeCompartment = new Compartment();
 
@@ -139,7 +142,7 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 // When the cursor sits inside math ($…$, \[…\], $$…$$, or a math environment),
 // render it with KaTeX in a tooltip above the cursor.
 
-const MATH_ENVS = 'equation|align|gather|multline|eqnarray|alignat|flalign|cases|split';
+const MATH_ENVS = PREVIEW_ENVIRONMENTS.join('|');
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
 // Display math: a math environment, $$…$$ or \[…\], each with how to read it.
 const BLOCKS = [
@@ -157,13 +160,15 @@ function texForPreview(env, body) {
   return `\\begin{aligned}${clean}\\end{aligned}`;
 }
 
-function mathAtCursor(state) {
-  const pos = state.selection.main.head;
+// The maths a position of `doc` (a CodeMirror Text) is in, or just after:
+// { from, tex, display }. The core has a port (crates/texlocal-syntax
+// `math_at`), which the fixture in test/mathmode.test.js holds to the same answers.
+export function mathAt(doc, pos) {
   // Only scan a window around the cursor, not the whole document — the cost per
   // cursor move is bounded by the window, not by document size.
   const WIN = 20000;
   const from = Math.max(0, pos - WIN);
-  const text = state.doc.sliceString(from, Math.min(state.doc.length, pos + WIN));
+  const text = doc.sliceString(from, Math.min(doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
   for (const [re, tex] of BLOCKS) {
@@ -177,7 +182,7 @@ function mathAtCursor(state) {
   }
 
   // Inline $…$ on the cursor's line (unescaped, non-$$ delimiters).
-  const line = state.doc.lineAt(pos);
+  const line = doc.lineAt(pos);
   const spans = [];
   let start = -1;
   for (let i = 0; i < line.text.length; i++) {
@@ -195,7 +200,7 @@ function mathAtCursor(state) {
 }
 
 function mathTooltip(state, prev = null) {
-  const m = mathAtCursor(state);
+  const m = mathAt(state.doc, state.selection.main.head);
   if (!m?.tex) return null;
   // The tooltip manager keys its views by `create`, so a fresh object rebuilds
   // the DOM and reruns KaTeX. Moving within an unchanged equation keeps it.
@@ -245,16 +250,10 @@ const mathPreviewFocus = EditorView.focusChangeEffect.of((_state, focusing) => e
 // the paragraph it cannot span. Only the text before the position counts,
 // so `$|$` (an empty pair, the caret between) is math.
 
-const MATH_ENVIRONMENTS = new Set([
-  'equation', 'align', 'gather', 'multline', 'eqnarray', 'alignat', 'flalign', 'xalignat', 'xxalignat',
-  'math', 'displaymath', 'dmath', 'dgroup', 'darray',
-].flatMap((e) => [e, `${e}*`]));
-const VERBATIM_ENVIRONMENTS = new Set(['verbatim', 'verbatim*', 'Verbatim', 'Verbatim*', 'lstlisting', 'minted', 'comment']);
+const MATH_ENVIRONMENTS = new Set(MATH_ENVIRONMENT_NAMES.flatMap((e) => [e, `${e}*`]));
+const VERBATIM_ENVIRONMENTS = new Set(VERBATIM_ENVIRONMENT_NAMES);
 // Commands whose braced argument is text, even in math.
-const TEXT_COMMANDS = new Set([
-  'text', 'textrm', 'textit', 'textbf', 'textsf', 'texttt', 'textup', 'textsl', 'textsc', 'textmd', 'textnormal',
-  'mbox', 'hbox', 'fbox', 'intertext', 'shortintertext',
-]);
+const TEXT_COMMANDS = new Set(TEXT_COMMAND_NAMES);
 
 export function mathModeAt(text, pos = text.length) {
   const src = text.slice(0, pos);
@@ -412,9 +411,9 @@ export function latexCompletions(getSymbols) {
       const wordStart = ctx.pos - (ctx.matchBefore(/[^{,]*$/)?.text.length ?? 0);
       const symbols = getSymbols();
       let options = null;
-      if (/^(cite|citep|citet|citeauthor|citeyear|textcite|parencite|autocite)$/.test(cmd)) {
+      if (CITE_COMMANDS.includes(cmd)) {
         options = symbols.citations.map((c) => ({ label: c, type: 'constant' }));
-      } else if (/^(ref|eqref|pageref|autoref|cref|Cref|vref)$/.test(cmd)) {
+      } else if (REF_COMMANDS.includes(cmd)) {
         options = symbols.labels.map((l) => ({ label: l, type: 'variable' }));
       } else if (/^(begin|end)$/.test(cmd)) {
         options = ENVIRONMENTS.map((e) => ({ label: e, type: 'type' }));
@@ -455,8 +454,10 @@ export function blockInsertion(before, template) {
 // none, and where the caret goes: after the title. A heading is found where
 // the outline finds one (state.js SECTION_RE): anywhere on the line, with
 // an optional short title, which it keeps; otherwise the line is the title.
+const HEADING_RE = new RegExp(`\\\\(${SECTIONS.join('|')})(\\*?)\\s*(\\[[^\\]]*\\])?\\s*\\{`);
+
 export function headingLine(line, command) {
-  const m = /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(\*?)\s*(\[[^\]]*\])?\s*\{/.exec(line);
+  const m = HEADING_RE.exec(line);
   let before = /^\s*/.exec(line)[0];
   let title = line.trim();
   let rest = '';

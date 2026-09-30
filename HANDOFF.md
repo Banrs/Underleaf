@@ -2,18 +2,12 @@
 
 ## Status (2026-09-29)
 
-- **`main`** has PR #11 (`claude/windows-parity`: the Fluent redesign, WebView2 recovery, a trimmed SDK, an Inno Setup installer). Its macOS CI run fails in the old SwiftUI split's panel test, which the Mac rewrite below replaces.
-- **`claude/macos-polish`** (pushed, `main` merged in) is the Mac app's rewrite and polish:
-  - AppKit owns the window, split and toolbar; SwiftUI draws the panes.
-  - One window, with a back button to the projects screen, and an inspector.
-  - Compile turns to Stop with a spinner.
-  - The toolbar's menus are the menu bar's own SwiftUI items.
-  - Divider detents with the alignment haptic.
-  - Tests in Swift Testing.
-  - Files are named for what they hold.
-- **Mac CI passes** on the runner's macOS 27.0, every commit of the 2026-09-29 review included.
-- **Last full check (2026-09-29):** `npm test` (87); the Mac's 51 tests; Debug builds with no Swift warnings. `cargo fmt --check`, clippy `-D warnings` and `cargo test --workspace` pass, and the core hasn't changed since.
-- **Windows is a work in progress** (the owner, 2026-09-29): leave `apps/windows` alone, including changes the core or the web would need there.
+- **`main`** has the Mac app's rewrite and polish (PR #12, `claude/macos-polish`): AppKit owns the window, split and toolbar, SwiftUI draws the panes; one window with a back button and an inspector; tests in Swift Testing.
+- **`claude/native-editor`** (from `main`) is the native frontend study's first phase (the study: https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm):
+  - `crates/texlocal-syntax`: the LaTeX editing logic, ported from the web's editor and CodeMirror's stex mode.
+  - The Mac's editor is a native `NSTextView` over it; the Mac embeds no web page any more. The web and Windows keep CodeMirror.
+- **Last full check (2026-09-29, `claude/native-editor`):** `npm test` (79) and `npm run build`; the Mac's 57 tests; Debug builds with no Swift warnings; `cargo fmt --check`, clippy `-D warnings` and `cargo test` for the core, syntax, FFI and server crates. On screen (a check copy): typing, colours light and dark, the gutter, completion and snippets, find, the outline's jumps, undo, Bold, JetBrains Mono, the maths preview (inline, `\[`, `align`; typing in it; closed outside maths and when the app deactivates).
+- **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
 
 ## Layout
 
@@ -26,7 +20,7 @@ One Rust core (`crates/`) under three clients:
 - **Browser** (`web/`, served by `crates/texlocal-server`): local only.
 - **Tauri** (`src-tauri`) still ships until both native apps are verified.
 
-The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit on the Mac and pdf.js elsewhere.
+The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`) and CodeMirror elsewhere (the browser; Windows embeds `web/embed/editor.html`). The PDF is PDFKit on the Mac and pdf.js elsewhere.
 
 ## Architecture
 
@@ -39,16 +33,19 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - the browser server calls `Service` directly, and `web/src/bridge.js` is its client;
   - Tauri forwards to one `call` command;
   - `serve.rs` serves `__pdf` / `__raw`.
+- **`texlocal-syntax`** (`crates/texlocal-syntax`): the editing logic, pure Rust with no I/O.
+  - A `SourceDocument` mirrors the editor's text through its edits and answers in UTF-16 offsets: highlights (`highlight.rs`, CodeMirror's stex mode token for token, per-line states cached), completions with snippet fields (`complete.rs`), comments, indentation, headings and blocks (`edit.rs`), maths mode and the maths to preview (`maths.rs`). The editor owns the text, its undo and its drawing, and applies the edits it gets back.
+  - The ports follow `web/src/editor.js`, regex for regex. `src/catalog.json` holds what both recognise and insert (commands, environments, blocks, sectioning), and `web/src/latex-data.js` reads it; `tests/fixtures/editing.json` holds both to the same answers (`cargo test`, `test/mathmode.test.js`, `test/editor.test.js`).
+  - `texlocal-ffi` exposes it as `tl_source_*` beside `tl_call` (`include/texlocal.h`): edits, lines and highlights as plain C, the commands as JSON, which Windows could P/Invoke too. Hand-written: UniFFI generated 2,400 lines for a dozen functions.
 - **`analyze`** (`analyze.rs`): outline, words and lines.
   - Ported from the web's `analyzeDoc` (`web/src/state.js`), which stays the source of truth.
   - `crates/texlocal-core/tests/fixtures/analyze.json` is checked by both `cargo test` and `test/analyze.test.js`.
 - **Atomic saves** (`atomic.rs`): write a temporary file beside the target, sync it, then rename it over the target.
-- **Embed protocol:** the host calls `window.texlocal`.
-  - The page posts `ready`, `changed`, `cursor` and `scroll`; find messages on the Mac, `command` (a menu chord) only on Windows.
-  - `getDocument()` answers `{ path, text }`; a Mac save writes only the text of the file it read.
-  - Insert blocks are named by id; their LaTeX is in `BLOCK_TEMPLATES` (`web/src/latex-data.js`), which `test/blocks.test.js` checks.
+- **Embed protocol (Windows):** the host calls `window.texlocal`.
+  - The page posts `ready`, `changed`, `cursor`, `scroll` and `command` (a menu chord).
+  - Insert blocks are named by id; their LaTeX is the catalog's `blocks`, which `test/blocks.test.js` checks every client's ids against.
 - **Commands and chords:** accelerators live in `web/src/shortcuts.json`, which the web and the Mac read.
-  - `test/protocol.test.js` holds the Mac's and Windows' copies (commands, palettes, fonts, accelerators) to the web's.
+  - `test/protocol.test.js` holds Windows' copies (commands, accelerators) and both apps' palettes and fonts to the web's.
   - It also checks that the Mac menu has every web command, less the web-only ones it lists.
 
 ## Build, test, run
@@ -58,13 +55,14 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
   - `npm run serve` runs the browser version; `npm run app` runs Tauri.
 - **macOS:** `xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -derivedDataPath <dd> build` (or `test`).
-  - Pre-build runs `cargo build -p texlocal-ffi`. Post-compile runs `npm run build` and copies the embed into `Resources/web`.
+  - Pre-build runs `cargo build -p texlocal-ffi`. Post-compile (`scripts/copy-resources.sh`) copies `shortcuts.json`, and JetBrains Mono and KaTeX from `node_modules` into `Resources/Fonts` and `Resources/KaTeX`, so `npm ci` comes first.
   - The app links the static `libtexlocal_ffi.a` by path.
   - Bundle id `com.texlocal.mac`.
   - `project.yml` and the committed `.xcodeproj` are kept in step by hand, since XcodeGen isn't installed. `apps/macos/scripts/add-source.py app|tests Name.swift` registers a new file with both.
 - **Mac tests** are Swift Testing (`TeXLocalTests/`), one file per area:
   - `WorkspaceLayoutTests`: the split, on screen and unseen;
   - `CommandTests`: chords, the menu bar, Find routing;
+  - `SourceEditorTests`: the native editor's typing, snippets, find and per-file undo;
   - `ProjectTests`: the file watcher, the core, project flows;
   - `DocumentTests`: SyncTeX, the outline, find;
   - `BarTests`.
@@ -114,9 +112,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `MenuItems`: `SectionLevelItems`, `SymbolItems` and `InsertMenuItems`, shared by the menu bar and the toolbar. `ScaleMenuItems` is in `PDFPane`.
 - `WorkspaceModals`: the project's sheets and alerts (`workspaceModals`), New File or Folder, Go to Line and Go to Page.
 - `InspectorView`: a grouped `Form` with the project's settings, the open file's facts and the build's.
-- `SourceColumn`: the source column (the editor, a file preview or no file), `EditorView` (the editor's web view in SwiftUI) and `SourceFindBar`.
+- `SourceColumn`: the source column (the editor, a file preview or no file) and `SourceFindBar`.
 - `StatusBar`: the status bar and its build-panel toggle.
-- `EditorBridge`: a project's editor, `EditorWebView` (a plain `WKWebView` that takes file drops and answers Edit › Undo and Redo); the editor's commands, appearance and prefs; `FindQuery` and `FindMatches`.
+- `SourceEditor`: a project's editor: one `SourceTextView` for its files, each file's undo and selection kept while its text is unchanged; the find bar's search (`FindQuery`, CodeMirror's semantics); the formatting commands; `EditorView`; the palettes, fonts and prefs.
+- `SourceTextView`: the text view: it tells the core (`SourceDocument.swift`) every edit, draws the gutter and current line in `drawBackground`, colours what shows with TextKit 2 rendering attributes, and types as the web's editor does (closing brackets, indentation, completion with linked snippet fields).
+- `MathPopover`: the maths preview's popover and the KaTeX page it shows.
 - `BuildPanel`: the build panel (issues and the log).
 - `PDFPane`: the PDF column, its find bar, the scale menu, `PDFFind` and `PDFPrefs`. The find bar stays open across rebuilds (the web closes it): each new PDF is searched again, keeping the current match and leaving the pages where they are.
 - `PDFController`: the PDF's state, `SyncPDFView` and the `PDFView` wrapper. Dark paper inverts the pages only (`documentView`'s filters), so the view's background and scrollers stay the window's.
@@ -129,12 +129,12 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - `ProjectModel`: the open project, saves, builds, file watching; `SavedWorkspace`. `FolderWatcher` is the FSEvents watch.
 - `Core`, `Models` (the core's JSON types), `LaTeX` (the snippets the toolbar and menus write).
 - `Commands`: menus and shortcuts.
-  - Every item is a `MenuCommand`, which also lists the chords the editor page keeps from CodeMirror; WebKit hands them on to the menu, which matches them by character and validates them (the page posts them only on Windows).
+  - Every item is a `MenuCommand`.
   - The menus act on `app.commandProject`: the open project while the main window is key, otherwise nil.
   - File › Rename, Show in Finder, Move to Trash (⌘⌫, without asking, as in Finder) and Share… aren't `MenuCommand`s: the web has no ids for them. The first three act on the chosen item of the list with the keyboard, whose actions (`ItemActions`, also its context menu's) the list passes to `AppModel.chosenItem` (`offersActions`): a SwiftUI focused value doesn't reach the menus from an AppKit window's hosting views. A bare ⌫ does nothing. Share… is a `ShareLink`, the system's item.
   - Insert sits between View and Window, its symbols one submenu down (a section). Format keeps Bold, Italic, the section level (the caret line's ticked) and Comment.
   - Mac chords that leave the shared table (`macAccel`): ⇧⌘W Close Project, ⌥⌘E Inline Math (Pages' Insert › Equation), ⌥⌘J Go to PDF Position; Go to Source Position has none (⌘-click, or the PDF's context menu).
-- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindFieldEditor`, `DialogSheet`, the rename pieces, and `ItemActions` (`offersActions`).
+- `PaneBars`: bar metrics (the UI kit's), `Typography`, `FindBar`, `SearchField` and `FieldHandle`, `FindPassingTextView` (the find bars' field editor and the source's base class), `DialogSheet`, the rename pieces, and `ItemActions` (`offersActions`).
 - `SyncTeXGeometry`.
 - Leaf views have `#Preview`s that need no Rust core.
 
@@ -146,15 +146,13 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The status bar's ends:** constraints to the corner-adapted safe area's layout guide (`layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))`) put the content 16 pt from the window's edge where there's a corner, as Xcode's bottom bars have it, and at the bar's own 8 pt elsewhere. SwiftUI's `containerCornerInsets` are zero inside an AppKit split item's accessory.
 - **Its hairline and the File Outline header's** are a small view in the split's `dividerColor`, 1 pt like the dividers they continue.
 - **The status bar and the folded header are 36 pt** (`BarMetrics.secondaryBarHeight`), Xcode's editor status bar between its hairlines (measured on 27.2), so the two lines run on as one. Their content sits under their lines, and the header's title is raised the 1.5 pt the list puts it low (`titleDrop`), so both bars' words are centred and level, as in Xcode.
-- **A plain `WKWebView` for the editor.**
-  - SwiftUI's `WebView` answers Edit › Find with WebKit's own find bar, which sees only the lines CodeMirror has drawn.
-  - A plain web view passes `performFindPanelAction:` on to `MainWindowController`, which sends it to the pane with the keyboard (`WorkspaceController.findAction`).
-  - The find bars' fields get `FindFieldEditor`, which passes the items on, through `windowWillReturnFieldEditor`.
-  - Its context menu is WebKit's text menu, as a text view's: none on the line numbers, where WebKit offered only Reload (which would reload the page and lose unsaved edits), and no Look Up “” in blank space, where WebKit selects the line break (and the spaces round it); a deliberate selection of spaces keeps Cut and Copy (`web/src/embed/editor.js`, with a host's chrome only). WebKit's Font, Paragraph Direction and Selection Direction stay: they have no public identifiers, and Safari's text areas show them too.
-  - No spellcheck in the source (`hostAttributes`, editor.js): WebKit's smart dashes and quotes would rewrite LaTeX.
-  - Edit › Undo and Redo are the system's: `undo:`/`redo:` go to whatever has the keyboard, a text field's own undo manager with its titles, or `EditorWebView`, which steps CodeMirror's history (WebKit's undo manager never sees it) and enables them from a Mac-only page message (`history`).
-  - `EditorWebView` takes a drag with files before WebKit does: a dropped file opens, the project's own in the editor and a project from elsewhere as from the Dock, as other editors open one. CodeMirror would paste a text file's contents in.
-  - The caret is WebKit's, not CodeMirror's drawn one: 2 pt, fading in and out as a text view's (measured on 27.2 in window captures), in `NSColor.textInsertionPointColor` (`--host-insertion-point`; `caret-color: auto` takes the text's colour). `editor.html` undoes `drawSelection`'s transparent caret and hides CodeMirror's primary cursor; a multiple selection's other cursors stay CodeMirror's.
+- **An `NSTextView` (TextKit 2) for the source.** SwiftUI's `TextEditor` has no gutter, no viewport hook to colour only what shows, no completion list, and one undo manager rather than one per file.
+  - The caret, context menu, Services, dictation, text drags, completion list, find indicator and Undo are the system's; each file has its own undo manager (`SourceEditor.undoManager(for:)`), and the core's edits go in as one named step each.
+  - Edit › Find's items pass on (`FindPassingTextView`) to `MainWindowController`, which sends them to the pane with the keyboard; the find bars' field editor is the same class.
+  - Spelling is underlined in the prose only (the delegate drops what the core colours; comments are prose), a kept setting (`EditorPrefs.spellCheck`). No substitutions: smart dashes and quotes would rewrite LaTeX.
+  - The completion list is the system's, words only (native over custom, the owner's call).
+  - A drag with files opens them (`fileDrop`). JetBrains Mono is the web's WOFF2, registered with CoreText on first use.
+  - The maths preview (`MathPopover`): the core's `math_at`, typeset by the web's KaTeX in the system's popover over where the maths starts, while the caret is in it and the text has the keyboard. A web view that takes no clicks or keys draws it: there's no system maths typesetter.
 - **The inspector is AppKit's split item**, the one SwiftUI's `.inspector` builds on. The modifier attaches to a SwiftUI split, and this window's split is AppKit's. Its content is SwiftUI.
 - **Compile's own view** (a SwiftUI button in an `NSHostingView`): an item's image can't animate Stop's spinner.
   - The title is the system font, 12 pt from the ends, as an item's title is (by glyph width: medium read wider and bolder).
@@ -219,7 +217,6 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **The launch log:** the app's own faults are fixed. What's left is the system's:
   - App Intents rejects the ad-hoc signature ("Unable to get teamId", `linkd.autoShortcut`). A team-signed build shouldn't log it; this Mac has no signing identity.
   - PDFKit's text recognition logs `e5rt` errors when pages show.
-  - The editor's WebContent process logs sandbox and preferences errors.
 - `theSideColumnsOpenAtTheirWidths` doesn't catch a727502's bug (the inspector shown at open squeezed the sidebar to 200 pt): it showed only in the real window, probably its toolbar.
 - **Toolbar configurations:** the inspector section's items are immovable defaults.
   - A toolbar configuration saved before them (after a Customize Toolbar change) could lack them, with no way to add them back.
@@ -237,19 +234,24 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **From the HIG review (2026-09-29):** the app icon is a flat PNG set (`AppIcon.appiconset`). macOS 27's layered icon with dark, clear and tinted looks needs an `AppIcon.icon` made in Icon Composer: new artwork, the owner's to make.
 - **Decided by the owner (2026-09-29):** the sidebar keeps two panes, files over the outline (one list with sections declined: the outline would scroll away under a long file list); `QLPreviewView` for file previews declined (it draws hyperref's link boxes, which no LaTeX editor shows).
 
+- **The native editor (2026-09-29), not done:**
+  - The web still runs CodeMirror's stex and its own completion; it could run `texlocal-syntax` through wasm and drop its copies (the fixtures keep them equal meanwhile).
+  - One caret: typing over several selections replaces the first (CodeMirror has multiple carets). Quotes aren't paired (LaTeX's are two backticks and two apostrophes).
+  - The session (open files, undo, saves) stays in each host; the core takes it when a second native host would share it.
 - **Rust core and web:** the core and the web's `analyzeDoc` mark an untitled heading `"(untitled)"`, which the Mac (`Outline.untitledTitle`) and Windows (`Outline.DisplayTitle`, `Rows.Untitled`) string-match.
   - The fix: send an empty title (the fixture, `analyze.rs`, `state.js`), and have each client name it by its kind. The web's outline, breadcrumb and section menu show the title as it comes.
   - Waits for Windows: its side must change in the same commit.
 - **Core:** check it stays the only source of the default engine and library folder.
 - **Windows (a work in progress; the owner's):**
-  - Save with `getDocument` and check its path, as the Mac does (`EditorBridge.cs` still reads `getText`).
+  - Check the path of the text a save writes, as the Mac's `SourceEditor.document` pairs them (`EditorBridge.cs` reads `getText`, which knows no path).
   - Read `web/src/shortcuts.json` rather than keeping `MenuCommand.Accel`'s copy (the protocol test holds the copy to it meanwhile).
   - Check for the bugs the Mac pass fixed: the non-text `flush()` loop, stale state after deleting the open file, the fixed-delay watcher re-arm, and a closed project's popovers and sheets carrying over.
   - Mirror the visible Mac changes if the platforms should match.
 
 ## Next
 
-- Confirm Mac CI on the branch's last commit, then a PR from `claude/macos-polish` to `main`.
+- Confirm CI on `claude/native-editor`; a PR to `main` when the owner asks.
+- The study's next phases: Windows' editor (native, or CodeMirror over the core's logic through wasm), then the session (open files, undo, saves) in the core once two native hosts would share it.
 - Deferred features:
   - error hints and gutter markers;
   - `.blg` parsing;
@@ -282,12 +284,11 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
   - The split view consults it on drags and on `setPosition(_:ofDividerAt:)`.
   - `DetentSplitViewController` snaps within 8 pt and taps `NSHapticFeedbackManager`'s `.alignment` once, as the divider arrives.
   - Only the sidebar (at its opening 270 pt) and the source/PDF divider (at half) have detents. The File Outline's and the build panel's dividers have no size worth stopping at, and a snap there would fight fine adjustment, so they have neither snap nor haptic.
-- **No scroller while the editor resizes** (`data-resizing`, `web/src/embed/editor.js` and `editor.html`): CodeMirror scrolls to keep the top line as lines re-wrap, which shows WebKit's overlay scroller; a text view shows none.
 - **The column line and the toolbar's section line are one line only while they track.**
   - A section wider than its column parts them, and the toolbar draws its own short line off the divider.
   - The column minimums are the content's: sizing them to hold the toolbar's tools would be measuring the system's layout by hand.
 - **Both columns run on under the toolbar.** The toolbar is adaptive, as Mail's: while each section holds its tools, AppKit paints each its own background; when a section can't (about 370 pt for the PDF's), it joins them into one band with one line, and both columns show through it with the system's edge effect. While apart, the PDF's section takes the titlebar material, which covers the pages, whenever the source column holds a scroll view of any kind, SwiftUI's or AppKit's (measured on 27.2 with the view tree; the cause is inside AppKit). Fit Height, the sync point and forward search measure the part that shows (`shownHeight`).
-  - The source's text is a web view. WebKit takes the safe area for its own inset (`obscuredContentInsets`) and draws Safari's edge effect: hard, in the page's colour, and never joined. So `EditorView` zeroes that inset as it lays out (set before WebKit's adjustment, it doesn't stick). The page pads the text by the host's inset (`setTopInset`), and its scroll margins keep the caret and a line scrolled to below the toolbar. An empty SwiftUI `ScrollView` over the text, which lets clicks through, gives AppKit the scroll view it draws a column's edge effect from.
+  - The source's scroll view runs under the toolbar and the find bar (`ignoresSafeArea`), and its automatic content insets take in both, so the first line and a line scrolled to sit below them while AppKit draws its edge effect over the text.
   - A SwiftUI-only `NavigationSplitView` (a `TextEditor`, a `ScrollView`, per-column toolbars) runs both columns' content under the toolbar with the soft effect in every state: its sections take the window background material, not the titlebar's.
 - **The PDF column doesn't collapse on a drag**, AppKit's default for a plain item, kept on purpose: collapsed at the window's trailing edge, its divider would sit under the window's resize edge, so a drag back would resize the window instead of opening the PDF.
 - **Sidebars fold on a window resize, inspectors don't** (`canCollapseFromWindowResize`: YES for sidebars, NO for inspectors).
@@ -325,10 +326,20 @@ The editor is CodeMirror everywhere (`web/embed/editor.html`). The PDF is PDFKit
 - **`Core` makes the blocking `tl_call` on a GCD thread**, not in a `@concurrent` function, which would block Swift's cooperative pool. `Core.Handle` is nonisolated so that thread can read it.
 - **`track` needs `nonisolated` Equatable values** (the toolbar's `State`, `SavedWorkspace`), or a main-actor conformance can't satisfy `Sendable`. It runs after the change, never inside a SwiftUI update, so collapsing a split item there is safe.
 - **An `NSMenuItem` subclass can't override its initialisers under default main-actor isolation.** The toolbar's menus are `NSHostingMenu`s over SwiftUI items instead, which also keeps them the menu bar's.
-- **Hide an AppKit view to take it out of the key view loop.** A SwiftUI view at zero opacity leaves the accessibility tree but not the loop, and a hidden split-item accessory only folds to no height, its controls still in the loop and VoiceOver: `setHidden` hides the accessory's view too, and the editor's web view is hidden (`EditorBridge.shown`) while a preview shows.
+- **Hide an AppKit view to take it out of the key view loop.** A SwiftUI view at zero opacity leaves the accessibility tree but not the loop, and a hidden split-item accessory only folds to no height, its controls still in the loop and VoiceOver: `setHidden` hides the accessory's view too, and the source's scroll view is hidden (`SourceEditor.shown`) while a preview shows.
 - **A SwiftUI `Picker` whose selection has no matching tag logs a fault**, nil included. The inspector's pickers list the current value as a choice until the settings and the file list come.
-- **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the editor's web view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
+- **A field that appears while the editor has focus needs `focused = true` in `onAppear`.** `.defaultFocus` leaves focus in the source's text view, so an in-place rename typed into the document. `defaultFocus` is right for sheets, which are a new focus scope.
 - **`NSBox`'s separator is 1 px, the thin split divider 1 pt.** The bars' lines are a small view (`Hairline`) in the split's `dividerColor`.
+
+**The source's text view**
+- **The text storage's edited range runs past the change** to the paragraph's end, taking in the attributes it fixed. The core's mirror takes the whole range (right either way); snippet fields and stepped-over brackets follow the range `shouldChangeText(inRanges:)` passed (`SourceTextView.changing`), or a field typed in would end its snippet.
+- **The system's completion list closes on a typed key** with `NSTextMovement.other` and `isFinal`: that key is the user's text, not a choice, so `insertCompletion` takes only Return, Tab or a click, and the list opens again, narrowed, after the key goes in.
+- **The selection draws over rendering attributes' backgrounds,** so the current find match is the selection, shown by the find indicator as it's reached; the other matches are tinted.
+- **A taller line keeps its extra room above the text,** and a positive baseline offset shrinks the line rather than raising the text. `lineStyle` gives the line half the extra and line spacing the rest; TextKit lays that spacing out at the top of the next paragraph's fragment, so the current line's fill takes it from there.
+- **Spell checking's results count from the start of the range checked** (`textView(_:didCheckTextIn:…)`, 27.2), not the document's.
+- **The maths preview's web view** is transparent only through `drawsBackground` by key-value coding (`underPageBackgroundColor` isn't enough). Its size is measured after a layout and `document.fonts.ready`, or it's the fallback font's and the maths is cut short. `NSPopover.positioningRect` raises ("window must exist") until the popover shows.
+- **`ATSApplicationFontsPath` doesn't load a WOFF2,** which CoreText registers from a URL (`EditorFont.registerJetBrains`).
+- **In a test, a file's undo steps are one group:** `groupsByEvent` closes a group only as the run loop turns. Check one step per opened file.
 
 **PDF**
 - **PDFKit is left to itself:** no insets of the app's round its fit-width layout. A rebuild goes back to `currentDestination`, and `loadDocument` hides hyperref's boxes.

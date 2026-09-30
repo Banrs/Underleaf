@@ -1,149 +1,25 @@
 // Static LaTeX for the editor: the blocks it inserts and its completions.
+// The one copy is the core's (crates/texlocal-syntax/src/catalog.json), which
+// the Mac's native editor reads through the core.
+
+import catalog from '../../crates/texlocal-syntax/src/catalog.json' with { type: 'json' };
 
 // The blocks the source bar and the native apps' Insert and Format menus
-// write, by id: the one copy, which the Mac and Windows reach through the
-// editor page's `block` command. "$0" marks where the cursor lands.
-export const BLOCK_TEMPLATES = {
-  figure: '\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n',
-  table: '\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n',
-  equation: '\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n',
-  align: '\\begin{align}\n  $0 \\\\\n\\end{align}\n',
-  code: '\\begin{verbatim}\n$0\n\\end{verbatim}\n',
-  itemize: '\\begin{itemize}\n  \\item $0\n\\end{itemize}\n',
-  enumerate: '\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n',
-  description: '\\begin{description}\n  \\item[$0] \n\\end{description}\n',
-};
+// write, by id; Windows reaches them through the editor page's `block`
+// command. "$0" marks where the cursor lands.
+export const BLOCK_TEMPLATES = catalog.blocks;
 
-export const ENVIRONMENTS = [
-  'document', 'abstract', 'itemize', 'enumerate', 'description', 'figure', 'table',
-  'tabular', 'array', 'equation', 'equation*', 'align', 'align*', 'gather', 'gather*',
-  'multline', 'cases', 'matrix', 'pmatrix', 'bmatrix', 'vmatrix', 'center', 'flushleft',
-  'flushright', 'quote', 'quotation', 'verbatim', 'lstlisting', 'minipage', 'frame',
-  'theorem', 'lemma', 'proof', 'definition', 'corollary', 'example', 'remark',
-  'algorithm', 'algorithmic', 'tikzpicture', 'thebibliography', 'titlepage', 'appendix',
-];
+export const ENVIRONMENTS = catalog.environments;
 
 // [name, detail, snippet]; #{…} marks a snippet field
-export const COMMANDS = [
-  ['\\documentclass', 'class', '\\documentclass{#{article}}'],
-  ['\\usepackage', 'package', '\\usepackage{#{}}'],
-  ['\\begin', 'environment', '\\begin{#{env}}\n\t#{}\n\\end{#{env}}'],
-  ['\\section', 'sectioning', '\\section{#{}}'],
-  ['\\subsection', 'sectioning', '\\subsection{#{}}'],
-  ['\\subsubsection', 'sectioning', '\\subsubsection{#{}}'],
-  ['\\paragraph', 'sectioning', '\\paragraph{#{}}'],
-  ['\\chapter', 'sectioning', '\\chapter{#{}}'],
-  ['\\part', 'sectioning', '\\part{#{}}'],
-  ['\\title', 'metadata', '\\title{#{}}'],
-  ['\\author', 'metadata', '\\author{#{}}'],
-  ['\\date', 'metadata', '\\date{#{\\today}}'],
-  ['\\maketitle', 'metadata', '\\maketitle'],
-  ['\\tableofcontents', 'structure', '\\tableofcontents'],
-  ['\\label', 'reference', '\\label{#{}}'],
-  ['\\ref', 'reference', '\\ref{#{}}'],
-  ['\\eqref', 'reference', '\\eqref{#{}}'],
-  ['\\pageref', 'reference', '\\pageref{#{}}'],
-  ['\\cite', 'citation', '\\cite{#{}}'],
-  ['\\citep', 'citation', '\\citep{#{}}'],
-  ['\\citet', 'citation', '\\citet{#{}}'],
-  ['\\footnote', 'text', '\\footnote{#{}}'],
-  ['\\textbf', 'text', '\\textbf{#{}}'],
-  ['\\textit', 'text', '\\textit{#{}}'],
-  ['\\texttt', 'text', '\\texttt{#{}}'],
-  ['\\textsc', 'text', '\\textsc{#{}}'],
-  ['\\underline', 'text', '\\underline{#{}}'],
-  ['\\emph', 'text', '\\emph{#{}}'],
-  ['\\mbox', 'text', '\\mbox{#{}}'],
-  ['\\verb', 'text', '\\verb|#{}|'],
-  ['\\item', 'list', '\\item '],
-  ['\\includegraphics', 'graphics', '\\includegraphics[width=#{0.8}\\linewidth]{#{}}'],
-  ['\\caption', 'float', '\\caption{#{}}'],
-  ['\\centering', 'float', '\\centering'],
-  ['\\frac', 'math', '\\frac{#{}}{#{}}'],
-  ['\\dfrac', 'math', '\\dfrac{#{}}{#{}}'],
-  ['\\sqrt', 'math', '\\sqrt{#{}}'],
-  ['\\sum', 'math', '\\sum_{#{}}^{#{}}'],
-  ['\\prod', 'math', '\\prod_{#{}}^{#{}}'],
-  ['\\int', 'math', '\\int_{#{}}^{#{}}'],
-  ['\\lim', 'math', '\\lim_{#{}}'],
-  ['\\infty', 'math', '\\infty'],
-  ['\\partial', 'math', '\\partial'],
-  ['\\nabla', 'math', '\\nabla'],
-  ['\\cdot', 'math', '\\cdot'],
-  ['\\times', 'math', '\\times'],
-  ['\\pm', 'math', '\\pm'],
-  ['\\leq', 'math', '\\leq'],
-  ['\\geq', 'math', '\\geq'],
-  ['\\neq', 'math', '\\neq'],
-  ['\\approx', 'math', '\\approx'],
-  ['\\equiv', 'math', '\\equiv'],
-  ['\\rightarrow', 'math', '\\rightarrow'],
-  ['\\Rightarrow', 'math', '\\Rightarrow'],
-  ['\\leftarrow', 'math', '\\leftarrow'],
-  ['\\mapsto', 'math', '\\mapsto'],
-  ['\\forall', 'math', '\\forall'],
-  ['\\exists', 'math', '\\exists'],
-  ['\\in', 'math', '\\in'],
-  ['\\subset', 'math', '\\subset'],
-  ['\\subseteq', 'math', '\\subseteq'],
-  ['\\cup', 'math', '\\cup'],
-  ['\\cap', 'math', '\\cap'],
-  ['\\emptyset', 'math', '\\emptyset'],
-  ['\\mathbb', 'math', '\\mathbb{#{}}'],
-  ['\\mathcal', 'math', '\\mathcal{#{}}'],
-  ['\\mathbf', 'math', '\\mathbf{#{}}'],
-  ['\\mathrm', 'math', '\\mathrm{#{}}'],
-  ['\\operatorname', 'math', '\\operatorname{#{}}'],
-  ['\\hat', 'math', '\\hat{#{}}'],
-  ['\\bar', 'math', '\\bar{#{}}'],
-  ['\\tilde', 'math', '\\tilde{#{}}'],
-  ['\\vec', 'math', '\\vec{#{}}'],
-  ['\\dot', 'math', '\\dot{#{}}'],
-  ['\\alpha', 'greek', '\\alpha'], ['\\beta', 'greek', '\\beta'], ['\\gamma', 'greek', '\\gamma'],
-  ['\\delta', 'greek', '\\delta'], ['\\epsilon', 'greek', '\\epsilon'], ['\\varepsilon', 'greek', '\\varepsilon'],
-  ['\\zeta', 'greek', '\\zeta'], ['\\eta', 'greek', '\\eta'], ['\\theta', 'greek', '\\theta'],
-  ['\\iota', 'greek', '\\iota'], ['\\kappa', 'greek', '\\kappa'], ['\\lambda', 'greek', '\\lambda'],
-  ['\\mu', 'greek', '\\mu'], ['\\nu', 'greek', '\\nu'], ['\\xi', 'greek', '\\xi'],
-  ['\\pi', 'greek', '\\pi'], ['\\rho', 'greek', '\\rho'], ['\\sigma', 'greek', '\\sigma'],
-  ['\\tau', 'greek', '\\tau'], ['\\upsilon', 'greek', '\\upsilon'], ['\\phi', 'greek', '\\phi'],
-  ['\\varphi', 'greek', '\\varphi'], ['\\chi', 'greek', '\\chi'], ['\\psi', 'greek', '\\psi'],
-  ['\\omega', 'greek', '\\omega'], ['\\Gamma', 'greek', '\\Gamma'], ['\\Delta', 'greek', '\\Delta'],
-  ['\\Theta', 'greek', '\\Theta'], ['\\Lambda', 'greek', '\\Lambda'], ['\\Sigma', 'greek', '\\Sigma'],
-  ['\\Phi', 'greek', '\\Phi'], ['\\Psi', 'greek', '\\Psi'], ['\\Omega', 'greek', '\\Omega'],
-  ['\\left', 'math', '\\left(#{}\\right)'],
-  ['\\bigl', 'math', '\\bigl(#{}\\bigr)'],
-  ['\\text', 'math', '\\text{#{}}'],
-  ['\\newcommand', 'definition', '\\newcommand{\\#{name}}{#{}}'],
-  ['\\renewcommand', 'definition', '\\renewcommand{\\#{name}}{#{}}'],
-  ['\\newenvironment', 'definition', '\\newenvironment{#{name}}{#{}}{#{}}'],
-  ['\\input', 'file', '\\input{#{}}'],
-  ['\\include', 'file', '\\include{#{}}'],
-  ['\\bibliography', 'bibliography', '\\bibliography{#{}}'],
-  ['\\bibliographystyle', 'bibliography', '\\bibliographystyle{#{plain}}'],
-  ['\\printbibliography', 'bibliography', '\\printbibliography'],
-  ['\\addbibresource', 'bibliography', '\\addbibresource{#{}}'],
-  ['\\hspace', 'spacing', '\\hspace{#{1em}}'],
-  ['\\vspace', 'spacing', '\\vspace{#{1em}}'],
-  ['\\newpage', 'spacing', '\\newpage'],
-  ['\\clearpage', 'spacing', '\\clearpage'],
-  ['\\noindent', 'spacing', '\\noindent'],
-  ['\\linebreak', 'spacing', '\\linebreak'],
-  ['\\hline', 'table', '\\hline'],
-  ['\\toprule', 'table', '\\toprule'],
-  ['\\midrule', 'table', '\\midrule'],
-  ['\\bottomrule', 'table', '\\bottomrule'],
-  ['\\multicolumn', 'table', '\\multicolumn{#{2}}{#{c}}{#{}}'],
-  ['\\multirow', 'table', '\\multirow{#{2}}{*}{#{}}'],
-  ['\\today', 'misc', '\\today'],
-  ['\\LaTeX', 'misc', '\\LaTeX'],
-  ['\\TeX', 'misc', '\\TeX'],
-  ['\\ldots', 'misc', '\\ldots'],
-  ['\\dots', 'misc', '\\dots'],
-  ['\\%', 'escape', '\\%'], ['\\&', 'escape', '\\&'], ['\\$', 'escape', '\\$'],
-  ['\\_', 'escape', '\\_'], ['\\#', 'escape', '\\#'], ['\\{', 'escape', '\\{'], ['\\}', 'escape', '\\}'],
-];
+export const COMMANDS = catalog.commands;
 
-export const BIB_ENTRY_TYPES = [
-  'article', 'book', 'inbook', 'incollection', 'inproceedings', 'conference',
-  'manual', 'mastersthesis', 'phdthesis', 'misc', 'techreport', 'unpublished', 'online',
-];
+export const BIB_ENTRY_TYPES = catalog.bibEntryTypes;
+
+// What the editor recognises: sectioning, citation and reference commands;
+// maths, verbatim and preview environments; commands whose argument is text.
+export const {
+  sections: SECTIONS, citeCommands: CITE_COMMANDS, refCommands: REF_COMMANDS,
+  mathEnvironments: MATH_ENVIRONMENT_NAMES, verbatimEnvironments: VERBATIM_ENVIRONMENT_NAMES,
+  textCommands: TEXT_COMMAND_NAMES, previewEnvironments: PREVIEW_ENVIRONMENTS,
+} = catalog;

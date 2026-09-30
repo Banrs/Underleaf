@@ -3883,9 +3883,11 @@ dependencies = [
 name = "texlocal-ffi"
 version = "0.2.0"
 dependencies = [
+ "serde",
  "serde_json",
  "tempfile",
  "texlocal-core",
+ "texlocal-syntax",
  "tokio",
 ]
 
@@ -3900,6 +3902,15 @@ dependencies = [
  "tempfile",
  "texlocal-core",
  "tokio",
+]
+
+[[package]]
+name = "texlocal-syntax"
+version = "0.2.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

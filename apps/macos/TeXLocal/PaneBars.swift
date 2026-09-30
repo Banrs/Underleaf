@@ -192,10 +192,11 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
-/// A find bar's field editor, which the window hands its find fields: it passes
-/// Edit › Find's items on to the window (`MainWindowController`), where the shared
-/// field editor would answer them itself and turn them off.
-final class FindFieldEditor: NSTextView {
+/// A text view that passes Edit › Find's items on to the window
+/// (`MainWindowController`), which sends them to the pane with the keyboard,
+/// where a text view would answer them itself: the find bars' field editor
+/// (the shared one turns them off) and the source (`SourceTextView`).
+class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
     }

@@ -198,7 +198,12 @@ fn program_path(program: &str, path_env: &str) -> std::io::Result<PathBuf> {
     std::env::split_paths(path_env)
         .map(|dir| dir.join(program))
         .find(|path| path.is_file())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{program} is not on the PATH")))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("{program} is not on the PATH"),
+            )
+        })
 }
 
 /// Windows has no fork: CreateProcess searches the child's PATH itself.

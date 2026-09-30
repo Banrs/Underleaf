@@ -1,6 +1,6 @@
 [package]
 name = "texlocal-ffi"
-description = "C ABI over texlocal-core's command service, for the native macOS and Windows apps"
+description = "C ABI over texlocal-core's command service and texlocal-syntax's editor logic, for the native apps"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,8 +11,10 @@ name = "texlocal_ffi"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 texlocal-core = { path = "../texlocal-core" }
+texlocal-syntax = { path = "../texlocal-syntax" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]

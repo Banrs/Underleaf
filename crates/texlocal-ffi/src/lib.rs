@@ -5,14 +5,19 @@
 //! `tl_call` blocks until the command finishes (a compile can take minutes),
 //! so hosts call it off their UI thread. Concurrent calls from several threads
 //! are fine: each drives the handle's runtime on its own thread.
+//!
+//! `tl_source_*` are the native editors' own: `texlocal_syntax`'s mirror of
+//! a file's text, answering in UTF-16 offsets, on the editor's thread.
 
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use texlocal_core::service::{arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
+use texlocal_syntax::{SourceDocument, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -163,4 +168,145 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     let handle = Box::from_raw(handle);
     // Compiles run in their own process groups, so nothing else stops them.
     handle.service.compile.kill_all();
+}
+
+/// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
+pub struct TlSource(SourceDocument);
+
+/// # Safety
+/// `text` is null (empty) or a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_new(text: *const c_char) -> *mut TlSource {
+    let text = str_arg(text).unwrap_or_default();
+    Box::into_raw(Box::new(TlSource(SourceDocument::new(text))))
+}
+
+/// The editor replaced `length` units at `start` with `text`.
+///
+/// # Safety
+/// `source` came from `tl_source_new` and is not freed; `text` is null
+/// (nothing) or a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_edit(
+    source: *mut TlSource,
+    start: u32,
+    length: u32,
+    text: *const c_char,
+) {
+    (*source)
+        .0
+        .edit(start, length, str_arg(text).unwrap_or_default());
+}
+
+/// # Safety
+/// As `tl_source_edit`.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
+    (*source).0.line_at(offset)
+}
+
+/// # Safety
+/// As `tl_source_edit`.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
+    (*source).0.line_start(line)
+}
+
+/// # Safety
+/// As `tl_source_edit`.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
+    (*source).0.line_count()
+}
+
+/// The highlighted runs of the lines a range touches, as start, length and
+/// kind (`HighlightKind`'s order) for each; `count` is the number of values.
+/// Free them with `tl_source_free_runs`.
+///
+/// # Safety
+/// As `tl_source_edit`; `count` is valid for a write.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_highlights(
+    source: *mut TlSource,
+    start: u32,
+    length: u32,
+    count: *mut usize,
+) -> *mut u32 {
+    let runs: Box<[u32]> = (*source)
+        .0
+        .highlights(start, length)
+        .into_iter()
+        .flat_map(|h| [h.start, h.length, h.kind as u32])
+        .collect();
+    *count = runs.len();
+    Box::into_raw(runs).cast()
+}
+
+/// # Safety
+/// `runs` and `count` came from one `tl_source_highlights`, freed once.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
+    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+        runs, count,
+    )));
+}
+
+/// The arguments the source's commands take, each what it needs.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SourceArgs {
+    caret: u32,
+    explicit: bool,
+    labels: Vec<String>,
+    citations: Vec<String>,
+    command: String,
+    id: String,
+    selection: TextRange,
+    selections: Vec<TextRange>,
+    more: bool,
+}
+
+/// The editing commands, as `texlocal_syntax::SourceDocument` has them:
+/// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
+/// "insert_symbol", "math_at" and "text". Returns the result's JSON (free it with
+/// `tl_free`), or null for an unknown command or arguments.
+///
+/// # Safety
+/// As `tl_source_edit`; the strings are null or NUL-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_call(
+    source: *const TlSource,
+    command: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    let doc = &(*source).0;
+    let Some(a) = str_arg(args_json).and_then(|a| serde_json::from_str::<SourceArgs>(a).ok())
+    else {
+        return std::ptr::null_mut();
+    };
+    let result = match str_arg(command).unwrap_or_default() {
+        "completions" => json!(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
+        "toggle_comment" => json!(doc.toggle_comment(&a.selections)),
+        "indent" => json!(doc.indent(&a.selections, a.more)),
+        "set_heading" => json!(doc.set_heading(a.caret, &a.command)),
+        "insert_block" => json!(doc.insert_block(&a.id, a.selection)),
+        "insert_symbol" => json!(doc.insert_symbol(&a.command, a.selection)),
+        "math_at" => json!(doc.math_at(a.caret)),
+        "text" => json!(doc.text()),
+        _ => return std::ptr::null_mut(),
+    };
+    CString::new(result.to_string())
+        .expect("JSON has no interior NUL")
+        .into_raw()
+}
+
+/// Null is ignored.
+///
+/// # Safety
+/// `source` came from `tl_source_new` and is freed once.
+#[no_mangle]
+pub unsafe extern "C" fn tl_source_free(source: *mut TlSource) {
+    if !source.is_null() {
+        drop(Box::from_raw(source));
+    }
 }

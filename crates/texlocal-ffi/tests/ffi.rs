@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 
 use serde_json::{json, Value};
-use texlocal_ffi::{tl_call, tl_close, tl_free, tl_open, TlHandle};
+use texlocal_ffi::{
+    tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_free,
+    tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_new, TlHandle,
+};
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
     call_raw(handle, command, args.map(|a| a.to_string()).as_deref())
@@ -272,4 +275,41 @@ fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
     );
 
     unsafe { tl_close(handle) };
+}
+
+#[test]
+fn the_source_mirror_round_trips_through_the_c_abi() {
+    let c = |s: &str| CString::new(s).unwrap();
+    unsafe {
+        let source = tl_source_new(c("é \\emph{x}").as_ptr());
+        // Offsets count UTF-16 units: "é " is two.
+        tl_source_edit(source, 2, 0, c("\n").as_ptr());
+        assert_eq!(tl_source_line_at(source, 3), 2);
+        let mut count = 0;
+        let runs = tl_source_highlights(source, 0, 20, &mut count);
+        assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
+        tl_source_free_runs(runs, count);
+        let call = |command: &str, args: Value| {
+            let out = tl_source_call(source, c(command).as_ptr(), c(&args.to_string()).as_ptr());
+            if out.is_null() {
+                return None;
+            }
+            let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+            tl_free(out);
+            Some(value)
+        };
+        assert_eq!(call("text", json!({})), Some(json!("é \n\\emph{x}")));
+        let symbol = call(
+            "insert_symbol",
+            json!({ "command": "\\alpha", "selection": { "start": 0, "length": 1 } }),
+        );
+        assert_eq!(
+            symbol,
+            Some(json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8 }))
+        );
+        let maths = call("math_at", json!({ "caret": 1 }));
+        assert_eq!(maths, Some(Value::Null), "é isn't maths");
+        assert_eq!(call("unknown", json!({})), None);
+        tl_source_free(source);
+    }
 }
