@@ -1,6 +1,6 @@
-import CoreImage.CIFilterBuiltins
 import PDFKit
 import SwiftUI
+import Synchronization
 
 /// What the toolbar, the find bar and the menus ask of the PDF view.
 @Observable
@@ -176,6 +176,9 @@ final class SyncPDFView: PDFView {
     var onResize: () -> Void = {}
 
     override func setFrameSize(_ newSize: NSSize) {
+        // SwiftUI sets the frame again, unchanged, whenever PDFKit's own scrolling
+        // lays out the pane (each step): only a new size counts.
+        guard newSize != frame.size else { return super.setFrameSize(newSize) }
         // PDFKit keeps the point at the view's top, which runs on under the
         // toolbar: at the start of the document, a new scale slid the first page
         // under it. There it stays at the start.
@@ -187,31 +190,57 @@ final class SyncPDFView: PDFView {
         }
     }
 
+    /// The first page's top no higher than the top of what shows, give or take its
+    /// page-break margin (which scales with the page, and PDFKit's own `go(to:)`
+    /// leaves). In view points.
     private var atDocumentStart: Bool {
-        guard let documentView, let scroll = documentView.enclosingScrollView else { return false }
-        let shown = scroll.contentView.bounds, inset = scroll.contentInsets.top
-        return documentView.isFlipped ? shown.minY <= -inset + 1 : shown.maxY >= documentView.frame.maxY + inset - 1
+        guard let page = document?.page(at: 0) else { return false }
+        let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
+        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
     }
 
-    /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
-    /// colour wheel so figures keep their hues. Only the pages, so the view's
-    /// background and scrollers stay the window's.
+    /// Read on PDFKit's tile queue.
+    private let pagesDark = Atomic(false)
+
+    /// As the web draws it (`.pdf-dark`): lightness inverted, hues kept. Drawn
+    /// into PDFKit's tiles, so sharp at any scale, and only the pages.
     var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
+            pagesDark.store(darkPaper, ordering: .relaxed)
             pageShadowsEnabled = !darkPaper
-            paintPages()
+            matchScroller()
+            // PDFKit keeps the tiles it drew until the box they show changes.
+            let box = displayBox
+            displayBox = box == .mediaBox ? .cropBox : .mediaBox
+            displayBox = box
         }
     }
 
-    /// Again for each document, whose pages PDFKit may put in a new view.
-    func paintPages() {
-        guard let pages = documentView else { return }
-        pages.wantsLayer = true
-        pages.layerUsesCoreImageFilters = true
-        let hue = CIFilter.hueAdjust()
-        hue.angle = .pi
-        pages.contentFilters = darkPaper ? [CIFilter.colorInvert(), hue] : []
+    /// The knob runs over the pages: light on dark paper, dark on white. Again
+    /// for the first document, which brings the scroll view (an override of
+    /// `document` would be called on PDFKit's form-filling queue).
+    func matchScroller() {
+        documentView?.enclosingScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
+    }
+
+    /// PDFView's own (the page on white, in the crop box it shows), then for dark
+    /// paper the page inverted and given back its own hue and saturation. PDFKit
+    /// calls this for each tile, on its own queue.
+    override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
+        let box = page.bounds(for: .cropBox)
+        context.setFillColor(.white)
+        context.fill(box)
+        page.draw(with: .cropBox, to: context)
+        guard pagesDark.load(ordering: .relaxed) else { return }
+        context.setBlendMode(.difference)
+        context.fill(box)
+        context.setBlendMode(.color)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setBlendMode(.normal)
+        context.fill(box)
+        page.draw(with: .cropBox, to: context)
+        context.endTransparencyLayer()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -307,7 +336,7 @@ struct PDFRepresentable: NSViewRepresentable {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
-        view.paintPages()
+        view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         // A reopened project's first PDF opens at the page it was left at.
         let restore = project.restorePDFPage

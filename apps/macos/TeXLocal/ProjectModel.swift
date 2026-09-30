@@ -12,8 +12,11 @@ final class ProjectModel {
     var outline: [OutlineItem] = []
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
-    /// The line at the top of the source, which the outline follows.
-    var topLine = 1
+    /// The line at the top of the source; unobserved, as it changes on every
+    /// line scrolled past.
+    @ObservationIgnored var topLine = 1
+    /// The heading at the top of the source, which the outline follows.
+    private(set) var topHeading: Int?
 
     var dirty = false
     var saving = false
@@ -155,7 +158,13 @@ final class ProjectModel {
     func load(restoring saved: SavedWorkspace? = nil) async {
         editor.onChanged = { [weak self] in self?.edited() }
         editor.onCursor = { [weak self] line in self?.cursorLine = line }
-        editor.onScroll = { [weak self] line in self?.topLine = line }
+        editor.onScroll = { [weak self] line in
+            guard let self else { return }
+            topLine = line
+            // The outline redraws only as a heading reaches the top.
+            let heading = Outline.chain(outline, at: line).last?.id
+            if heading != topHeading { topHeading = heading }
+        }
         editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
         // Escape in the text closes the find bar first.
         editor.textView.escape = { [weak self] in
