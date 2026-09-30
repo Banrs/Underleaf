@@ -583,7 +583,7 @@ enum ColumnMetrics {
     /// and the status bar under its line.
     // Include the toolbar partition inset in the columns’ minimum room.
     static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + divider / 2).rounded(.up),
-                                       height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight)
+                                       height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.statusBarHeight)
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.

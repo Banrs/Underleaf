@@ -90,7 +90,7 @@ final class WorkspaceLayoutTests {
     }
 
     /// Folding, revealing and hiding the outline must not change its header's
-    /// compact spacing: 36 pt plus the native divider above it.
+    /// compact spacing: 28 pt plus the native divider above it.
     @Test func theOutlineHeaderKeepsItsHeight() async throws {
         let workspace = open()
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)

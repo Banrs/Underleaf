@@ -9,9 +9,8 @@ struct OutlineHeader: View {
 
     /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    /// How far under the middle of the status bar's height the list puts the title
-    /// (measured, 27.2): it's raised so the two bars' words are level and centred.
-    private static let titleDrop: CGFloat = 1.5
+    /// Raise the native row's centre to the compact bar's centre.
+    private static let titleDrop: CGFloat = sidebarListRoom + (headerRow - BarMetrics.secondaryBarHeight) / 2
 
     var body: some View {
         List {
