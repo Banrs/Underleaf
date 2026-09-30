@@ -559,7 +559,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- shell ---------- */
 
-.shell { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+.shell { position: relative; flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 .main-column { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .workspace { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -586,11 +586,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace.js) */
 .sidebar.collapsed + .divider { display: none; }
 
-/* Section header, measured off the kit's Sidebars/Large/Header symbol: a 20-tall
-   band whose 16-tall content sits centred in it (y=2), 13 Bold, and — per the
-   Large/Section group, where the first Item starts at y=20 — NO gap before the
-   rows. Trailing accessories in that symbol are 20 wide, so the action buttons
-   below are sized to fit inside the band rather than stretching it. */
+/* Preserve the kit's compact 20px desktop section band and accessories.
+   The overlay below uses larger controls for narrow/touch layouts. */
 .section-header {
   display: flex;
   align-items: center;
@@ -610,10 +607,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
 .section-actions { display: flex; gap: 1px; }
-/* Square 20px targets so the header keeps its 20px band; the kit's own trailing
-   accessories are 20 wide, and a square is a kinder pointer target than its 16
-   tall without changing any layout. */
-.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-small); }
+.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-control); }
 .section-actions .icon-btn svg { width: 14px; height: 14px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
@@ -696,8 +690,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   /* Nesting rails are per-row background gradients set in sidebar.js, so hover
      uses background-COLOR to layer over them rather than erase them. */
   background-repeat: no-repeat;
-  display: block;
+  display: flex;
 }
+.outline-row .row-label { min-width: 0; }
 .outline-row:hover { background-color: var(--fill-4); }
 .outline-row[aria-selected="true"] { background-color: var(--fill-2); }
 /* The lists clip an outer ring. */
@@ -760,7 +755,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .search-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-hit { gap: var(--sp-2); padding: var(--sp-2) var(--sp-1); align-items: baseline; }
-.search-line { flex: none; min-width: 30px; text-align: right; color: var(--label-3); font-family: var(--mono); font-size: var(--fs-small); }
+.search-line { flex: none; min-width: 30px; text-align: right; color: var(--label-2); font-family: var(--mono); font-size: var(--fs-small); }
 .search-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-control); line-height: var(--lh-control); }
 .search-preview mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 3px; }
 
@@ -833,11 +828,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .heading-twin { visibility: hidden; }
 
 /* The symbol palette: a grid per kind, in a popover under its button. */
-.popover { padding: var(--sp-3); overflow-y: auto; }
-.symbol-palette { display: flex; flex-direction: column; gap: var(--sp-3); }
+.menu.popover { padding: var(--sp-3); }
+.symbol-palette { display: flex; flex-direction: column; gap: var(--sp-3); width: 338px; max-width: 100%; }
 .symbol-group-title { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); margin-bottom: var(--sp-1); }
-.symbol-grid { display: grid; grid-template-columns: repeat(10, 32px); gap: 2px; }
-.symbol { width: 32px; height: 32px; border-radius: var(--r-menu); font-size: 17px; line-height: 1; color: var(--label); }
+.symbol-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); gap: 2px; }
+.symbol { width: 100%; min-width: 0; height: 32px; border-radius: var(--r-menu); font-size: 17px; line-height: 1; color: var(--label); }
 .symbol:hover { background: var(--fill-2); }
 
 /* Where the caret is: project › folders › file › section, a 28px row. */
@@ -961,7 +956,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
    and fit-width re-renders in a feedback loop. Top padding = 44px bar + 12px,
    which pdfview.js reads from here (#metrics). */
-.pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
+.pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
    are the true content extents the pinch gesture clamps against, and so the CSS
    centring below agrees with a zero offset.
@@ -1035,7 +1030,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- compile log ---------- */
 
-.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--h-toolbar) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); animation: fade-in 0.14s ease-out; }
+.logs { position: absolute; inset: 0; overflow-y: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) var(--sp-4) var(--sp-3); background: var(--bg-recessed); animation: fade-in 0.14s ease-out; }
 .logs-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .logs-summary { display: flex; align-items: center; gap: var(--sp-2); }
 .logs-duration { color: var(--label-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
@@ -1131,8 +1126,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .modal .field input, .modal .field select { width: 100%; }
 .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-5); }
 
-.settings-dialog { width: 520px; }
-.settings-body { overflow-y: auto; margin: 0 calc(-1 * var(--sp-1)); padding: 0 var(--sp-1); }
+.settings-dialog { width: 520px; container: settings / inline-size; }
+.settings-body { min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--sp-1)); padding: 0 var(--sp-1); }
 .settings-group + .settings-group { margin-top: var(--sp-5); }
 .settings-group-title { font-size: var(--fs-header); line-height: var(--lh-header); font-weight: 700; color: var(--label-2); margin-bottom: var(--sp-1); padding-left: var(--sp-4); }
 .settings-card { border: 0.5px solid var(--separator); border-radius: var(--r-container); overflow: hidden; }
@@ -1147,10 +1142,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   line-height: var(--lh-body);
 }
 .settings-row + .settings-row { box-shadow: inset 0 0.5px 0 var(--separator); }
-.settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.settings-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
 .settings-hint { font-size: var(--fs-small); line-height: var(--lh-small); color: var(--label-2); overflow-wrap: anywhere; }   /* a long TeX path wraps */
-.settings-control { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; color: var(--label-2); }
+.settings-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); flex: none; max-width: 100%; color: var(--label-2); }
 .settings-control .btn:not(:disabled) { color: var(--label); }
+
+/* Follow the dialog's available width, including interface/browser zoom. */
+@container settings (max-width: 400px) {
+  .settings-row { flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding-block: var(--sp-3); }
+  .settings-row > :last-child { max-width: 100%; }
+  .settings-row .segmented { width: 100%; }
+  .settings-row .segment { flex: 1; min-width: 0; padding-inline: var(--sp-2); }
+}
 
 /* TeX folder chooser: drive chips, the current path, then a grouped list of
    folders in the recents' style. */
@@ -1177,6 +1180,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   position: fixed;
   z-index: 200;
   min-width: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--sp-1);
   border-radius: var(--r-container);
   background: var(--material);
@@ -1189,7 +1194,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   align-items: center;
   gap: 5px;
   width: 100%;
-  height: var(--h-menu-row);
+  min-height: var(--h-menu-row);
   padding: 0 var(--sp-2) 0 0;
   border-radius: var(--r-menu);
   font-size: var(--fs-control);
@@ -1204,10 +1209,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .menu-item.danger { color: var(--red-text); }
 .mac .menu-item.danger:not(:disabled):is(:hover, :focus-visible) { background: var(--red-fill); color: #fff; }
 .menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: var(--fs-control); }
+.menu-label { min-width: 0; overflow-wrap: anywhere; }
 .menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
 .menu-item:disabled { color: var(--label-3); }
 .menu-item:disabled:hover { background: none; }
-.menu-hint { margin-left: auto; padding-left: var(--sp-4); color: var(--label-2); font-variant-numeric: tabular-nums; }
+.menu-hint { flex: none; margin-left: auto; padding-left: var(--sp-4); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mac .menu-item:is(:hover, :focus-visible) .menu-hint { color: inherit; }
 
 /* In a browser no shell draws a menu bar, so the title bar carries one. */
@@ -1317,3 +1323,31 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
   .toolbar [data-command="view.zoomIn"],
   .toolbar [data-command="pdf.save"] { display: none; }
 }
+
+/* Responsive workspace: preserve the desktop preferences while space is tight.
+   Classes use the shell's CSS width, so interface zoom follows the same rules. */
+.workspace-switcher { display: flex; flex: none; gap: var(--sp-1); padding: var(--sp-2); background: var(--bg-content); border-bottom: 1px solid var(--separator); }
+.workspace-switcher[hidden] { display: none; }
+.workspace-switcher .btn { flex: 1; }
+.workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }
+.sidebar-backdrop { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 20%); }
+.layout-overlay > .sidebar { overflow-y: auto; position: absolute; inset: 0 auto 0 0; z-index: 21; max-width: calc(100% - 32px); background: var(--bg-recessed); box-shadow: var(--shadow-pane); }
+.floating .layout-overlay > .sidebar { margin: var(--sp-2); bottom: var(--sp-2); }
+.layout-overlay .icon-btn.sidebar-toggle-fallback { display: inline-flex; }
+.layout-overlay > .main-column { width: 100%; }
+.layout-compact .workspace > .pane { flex: 1; width: 100%; min-width: 0; }
+.layout-compact .workspace.preview-active > .editor-pane { display: none; }
+.layout-compact .workspace:not(.preview-active) > .pdf-pane { display: none; }
+.layout-compact .titlebar > .icon-btn { flex: none; }
+.layout-compact .titlebar { flex-wrap: wrap; height: auto; min-height: var(--h-titlebar); padding-block: var(--sp-1); }
+.layout-compact .window-title { flex: 1; min-width: 0; }
+.pdf-pane > .toolbar { flex-wrap: wrap; height: auto; min-height: var(--h-toolbar); row-gap: var(--sp-1); padding-block: var(--sp-2); }
+.layout-compact .pdf-pane .toolbar .spacer { display: none; }
+.divider:focus-visible, .pane-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; z-index: 2; }
+.pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
+.divider-sync::before { content: none; }
+.divider:has(.pane-resize-handle.dragging) { background: var(--accent); }
+
+.layout-overlay .section-header { height: 36px; }
+.layout-overlay .section-actions { gap: var(--sp-1); }
+.layout-overlay .section-actions .icon-btn { width: 28px; height: 28px; }

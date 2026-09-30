@@ -51,3 +51,18 @@ test('up and down in the symbol palette keep the column across groups', () => {
   assert.equal(paletteMove(sizes, 0, 'ArrowLeft'), 0);
   assert.equal(paletteMove(sizes, 29, 'ArrowRight'), 30, 'across runs on into the next group');
 });
+
+test('symbol navigation follows narrower grids and their partial rows', () => {
+  const sizes = SYMBOL_GROUPS.map(([, symbols]) => symbols.length);
+  assert.equal(paletteMove(sizes, 3, 'ArrowDown', 6), 9);
+  assert.equal(paletteMove(sizes, 29, 'ArrowDown', 6), 35, 'a group boundary keeps the column');
+  assert.equal(paletteMove(sizes, 41, 'ArrowDown', 6), 44, 'a short row clamps to its last symbol');
+  assert.equal(paletteMove(sizes, 43, 'ArrowDown', 6), 46);
+  assert.equal(paletteMove(sizes, 46, 'ArrowUp', 6), 43);
+  assert.equal(paletteMove(sizes, 27, 'ArrowDown', 4), 29);
+  assert.equal(paletteMove(sizes, 29, 'ArrowDown', 4), 31);
+  assert.equal(paletteMove(sizes, 29, 'ArrowDown', 1), 30);
+  assert.equal(paletteMove(sizes, 30, 'ArrowUp', 1), 29);
+  assert.equal(paletteMove(sizes, 0, 'ArrowUp', 1), 0);
+  assert.equal(paletteMove(sizes, 70, 'ArrowDown', 1), 70);
+});

@@ -44,6 +44,7 @@ const jumpFlashField = StateField.define({
 // `background` is deliberately NOT taken from the theme (Xcode's is #FFFFFF /
 // #1F1F24): the editor sits flush against this app's own panels, so it follows
 // the panel token and a one-value difference can't show up as a seam.
+// Dark comments are lightened for AA contrast on both app editor surfaces.
 const XCODE_THEME = {
   light: {
     plain: '#000000', comment: '#5D6C79', keyword: '#9B2393', string: '#C41A16',
@@ -52,7 +53,7 @@ const XCODE_THEME = {
     selection: '#A4CDFF', currentLine: '#E8F2FF', invisible: '#CCCCCC',
   },
   dark: {
-    plain: '#FFFFFF', comment: '#6C7986', keyword: '#FC5FA3', string: '#FC6A5D',
+    plain: '#FFFFFF', comment: '#8A97A5', keyword: '#FC5FA3', string: '#FC6A5D',
     number: '#D0BF69', macro: '#FD8F3F', type: '#9EF1DD', variable: '#67B7A4',
     attribute: '#BF8555', url: '#5482FF',
     selection: '#515B70', currentLine: '#23252B', invisible: '#424D5B',
