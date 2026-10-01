@@ -2,8 +2,7 @@ use serde::{Serialize, Serializer};
 use texlocal_core::CoreError;
 
 /// What a command rejects with. Serializes to a plain string so the JS side
-/// sees `new Error(message)` — the same shape the Electron preload produced by
-/// unwrapping its `{ value } / { error }` envelope.
+/// sees `new Error(message)`.
 #[derive(Debug)]
 pub struct CmdError(pub String);
 

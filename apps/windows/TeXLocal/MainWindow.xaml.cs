@@ -429,7 +429,7 @@ public sealed partial class MainWindow : Window
 
     // ---------- window size ----------
 
-    /// <summary>960 × 600 at least, as on macOS; the presenter takes physical pixels (microsoft-ui-xaml#10452).</summary>
+    /// <summary>960 × 600 at least; the presenter takes physical pixels (microsoft-ui-xaml#10452).</summary>
     private void ApplyMinimumSize()
     {
         var scale = Root.XamlRoot.RasterizationScale;
@@ -442,7 +442,6 @@ public sealed partial class MainWindow : Window
         overlapped.PreferredMinimumHeight = (int)Math.Ceiling(600 * scale);
     }
 
-    /// <summary>F11: the whole screen for the window, and back.</summary>
     internal void ToggleFullScreen()
     {
         if (AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen)
@@ -496,7 +495,6 @@ public sealed partial class MainWindow : Window
         _ = CloseAfterSavingAsync();
     }
 
-    /// <summary>Close once the open document reaches disk, or once the user agrees to lose it.</summary>
     private async Task CloseAfterSavingAsync()
     {
         if (closing || Dialogs.IsOpen)

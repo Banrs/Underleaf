@@ -59,9 +59,7 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => window::focus_or_create(app),
-            // Compiles run in their own process groups so a kill reaches the
-            // whole latexmk tree, which also means nothing signals them when
-            // this process exits unless we do it here.
+            // Compiles run in their own process groups, which nothing else stops.
             RunEvent::Exit => app.state::<AppState>().service.compile.kill_all(),
             _ => {}
         });

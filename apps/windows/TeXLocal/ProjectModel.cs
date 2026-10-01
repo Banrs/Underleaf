@@ -612,10 +612,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
                 return;
             }
             Result = result;
-            // Builds compile past their errors, as Overleaf's do: whenever
-            // this one wrote a PDF it shows, with the count on the log
-            // button. The log takes its place only when a failed build left
-            // nothing to show.
+            // Builds compile past errors: any PDF written shows, and the panel opens only when a failed build wrote none.
             if (result.Pdf is not null && await CompiledPdfAsync() is { } pdf)
             {
                 PdfPath = pdf;
@@ -830,10 +827,8 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Copy files and folders from elsewhere into the project, at the root or
-    /// into a folder. Names already taken there are asked about once for the
-    /// whole import, as on the Mac, then it runs again with the answer:
-    /// "replace" (the old ones go to the Recycle Bin) or "keepBoth" ("a 2.png").
+    /// Copy files and folders from elsewhere into the project, at the root or into a folder.
+    /// Taken names are asked about once, then the import runs again with "replace" or "keepBoth".
     /// </summary>
     public async Task ImportFilesAsync(IReadOnlyList<string> paths, string dir = "", string? conflict = null)
     {

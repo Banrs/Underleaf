@@ -288,7 +288,7 @@ public sealed partial class MainWindow
         }
     };
 
-    /// <summary>Undo, redo and the clipboard for the focused text box, else the page, else the editor (parity D16, K15).</summary>
+    /// <summary>Undo, redo and the clipboard for the focused text box, else the page, else the editor.</summary>
     private void EditText(MenuCommand command)
     {
         if (textTarget is TextBox box)

@@ -24,7 +24,6 @@ public sealed partial class WorkspaceView : UserControl
     private readonly Splitter inspectorSplitter;
     private readonly Splitter outlineSplitter;
 
-    // The limits the panes keep, after macOS's.
     private const double SidebarMinimum = 200;
     private const double SidebarMaximum = 360;
     private const double PaneMinimum = 240;
@@ -47,7 +46,7 @@ public sealed partial class WorkspaceView : UserControl
     private readonly List<RadioMenuFlyoutItem> engineMenuItems = [];
     private MenuFlyoutSubItem? engineMenu;
 
-    /// <summary>web/src/commands.js MENU, with macOS's Format menu and a Windows menu bar's Exit, clipboard and full screen.</summary>
+    /// <summary>web/src/commands.js MENU, plus Format and a Windows menu bar's Exit, clipboard and full screen.</summary>
     private static readonly (string Title, MenuCommand?[] Items)[] MenuLayout =
     [
         ("File", [
@@ -346,7 +345,7 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnStatusBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldStatusBar();
 
-    /// <summary>A narrow status bar drops whole items, as macOS's does: the engine, then the counts, then the save state.</summary>
+    /// <summary>A narrow status bar drops whole items: the engine, then the counts, then the save state.</summary>
     private void FoldStatusBar()
     {
         var available = StatusBar.ActualWidth - StatusBar.Padding.Left - StatusBar.Padding.Right;
