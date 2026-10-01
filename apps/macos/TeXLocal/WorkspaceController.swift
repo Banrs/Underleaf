@@ -3,9 +3,6 @@ import SwiftUI
 
 /// An open project's window content: sidebar | source | PDF over the build panel, the
 /// status bar at their foot | inspector; each find bar is its column's top accessory.
-/// AppKit, not `NavigationSplitView`, which can't hide its last column (the PDF), run a
-/// panel under two columns, or put bars in accessories; and only an AppKit split gives
-/// the toolbar a section per column (`WorkspaceToolbar`).
 /// The models collapse and show the items with AppKit's animation; a column dragged or
 /// toggled shut goes back to them.
 final class WorkspaceController: DetentSplitViewController {
@@ -118,10 +115,7 @@ final class WorkspaceController: DetentSplitViewController {
 
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        // AppKit (27.2) ends the last column's toolbar section at the inspector's glass
-        // divider, half a point inside the window, and gives a section its column's
-        // edge effect only when the scroll view's safe area ends exactly there; short
-        // of it, the section is opaque. The panes still run to the edge.
+        // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
         columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
@@ -331,12 +325,8 @@ final class WorkspaceController: DetentSplitViewController {
         }
     }
 
-    /// Show Build Panel brings it back at its kept height, its frame. On macOS 27.2
-    /// that's enough, and lowering a minimum raised for it jumped the panel a status
-    /// bar's height for a frame; 27.0 uncollapses to the minimum, so there it holds
-    /// the height as its minimum until it's back, as the PDF does its width. It rises
-    /// from and sinks under the status bar, whose glass showed its header: faded in
-    /// slowly and out quickly, it's clear by then.
+    /// Show Build Panel brings it back at its kept height: its frame on 27.2, its minimum too on 27.0.
+    /// It fades, rising from and sinking under the status bar's glass.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let panel = panelItem.viewController.view
@@ -488,8 +478,7 @@ class DetentSplitViewController: NSSplitViewController {
     /// A divider's detent, if it has one now, in the split view's coordinates.
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
 
-    /// NSSplitViewController doesn't answer this delegate method itself, so
-    /// there's no super to call.
+    /// NSSplitViewController doesn't implement this, so there's no super to call.
     override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
                             ofSubviewAt dividerIndex: Int) -> CGFloat {
         guard let detent = detent(dividerIndex),

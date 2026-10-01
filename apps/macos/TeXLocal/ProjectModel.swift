@@ -692,8 +692,7 @@ final class ProjectModel {
         }
     }
 
-    /// No file editing: the editor's page may still hold the old text, but
-    /// nothing saves or analyses it.
+    /// No file editing: the editor may still hold the old text, but nothing saves or analyses it.
     private func clearOpenFile() {
         analysis?.cancel()
         diskCheck?.cancel()

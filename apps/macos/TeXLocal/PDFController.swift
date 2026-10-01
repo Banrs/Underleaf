@@ -227,12 +227,10 @@ final class SyncPDFView: PDFView {
     var onResize: () -> Void = {}
 
     override func setFrameSize(_ newSize: NSSize) {
-        // SwiftUI sets the frame again, unchanged, whenever PDFKit's own scrolling
-        // lays out the pane (each step): only a new size counts.
+        // SwiftUI sets the frame again, unchanged, on each scroll step: only a new size counts.
         guard newSize != frame.size else { return super.setFrameSize(newSize) }
-        // PDFKit keeps the point at the view's top, which runs on under the
-        // toolbar: at the start of the document, a new scale slid the first page
-        // under it. There it stays at the start.
+        // PDFKit holds the view's top, which runs on under the toolbar, in place; at the
+        // document's start, the first page's top stays in view instead.
         let atStart = atDocumentStart
         super.setFrameSize(newSize)
         onResize()
@@ -250,10 +248,8 @@ final class SyncPDFView: PDFView {
         return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
     }
 
-    /// The top of what shows, under the toolbar and the find bar, where `go(to:)` puts
-    /// a destination (in a page break, at the page's edge: a margin off, once).
-    /// `currentDestination` is the view's top, behind them: a rebuilt PDF shown there
-    /// moved down by their height.
+    /// The top of what shows, under the toolbar and the find bar, where `go(to:)` puts a destination
+    /// (in a page break, at the page's edge: a margin off, once); `currentDestination` is behind them.
     var shownDestination: PDFDestination? {
         let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
         return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
@@ -419,8 +415,7 @@ struct PDFRepresentable: NSViewRepresentable {
         let mark = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
         mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
         page.addAnnotation(mark)
-        // A third of the way down the pages: a destination goes to the top of
-        // what shows, below the toolbar, where a rect went under it.
+        // A third of the way down what shows: a destination lands below the toolbar, a rect under it.
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
         Task {
             // web/styles.css .sync-flash

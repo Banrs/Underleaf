@@ -179,8 +179,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// The outline hears of a scroll only as another heading reaches the top:
-    /// told of every line, it redrew the sidebar at every step of a scroll.
+    /// The outline hears of a scroll only as another heading reaches the top, not on every line.
     @Test(.timeLimit(.minutes(1)))
     func theOutlineFollowsTheTopHeadingOnly() async throws {
         let info = try await project("\\section{A}\n1\n2\n\\section{B}\n3").info

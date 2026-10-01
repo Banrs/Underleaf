@@ -21,14 +21,9 @@ extension NSToolbarItem.Identifier {
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
-/// The project window's toolbar, AppKit's so each column's tools sit over it: the PDF's
-/// section starts at the source/PDF divider (`NSTrackingSeparatorToolbarItem`), and the
-/// PDF and inspector toggles keep to the window's edge. Short of room, zoom overflows
-/// first (with Share at the same priority, AppKit would hide both where Share still
-/// fits), Compile and the toggles last (HIG, Toolbars).
-///
-/// Each action is its own item, so the system puts neighbours on one capsule; only zoom
-/// and Math, whose middle or end segment opens a menu, are segmented controls.
+/// The project window's toolbar, a section per column: the PDF's starts at the source/PDF divider
+/// (`NSTrackingSeparatorToolbarItem`), and the PDF and inspector toggles keep to the window's edge.
+/// Short of room, zoom overflows first, Compile and the toggles last (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
@@ -82,9 +77,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
          .inspectorTrackingSeparator, .toggleInspector]
     }
 
-    /// The system's sidebar and inspector toggles send `toggleSidebar:` and
-    /// `toggleInspector:` down the responder chain, where the columns' own split view
-    /// controllers, which have neither, would answer first: they go to the window's split.
+    /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?["item"] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
@@ -130,9 +123,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             item = zoomItem()
             item.visibilityPriority = .low
-            // Customize Toolbar's default set squeezed its copy until the scale read
-            // "…". The toolbar's own stays compressible: held at its width, it kept
-            // the window 50 pt wider even in the overflow menu.
+            // Only Customize Toolbar's copy resists compression, or its scale reads "…"; the toolbar's must not.
             if !flag { item.view?.setContentCompressionResistancePriority(.required, for: .horizontal) }
         case .share:
             let share = NSSharingServicePickerToolbarItem(itemIdentifier: id)
@@ -141,10 +132,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.toolTip = "Share PDF"
             item = share
         case .compile:
-            // Its word, not a lone play symbol, which reads as media; the one
-            // prominent control, on glass of its own. In the toolbar its own view,
-            // for Stop's spinner (an item's image can't animate); Customize
-            // Toolbar draws a view without the item's style, so it gets the title.
+            // Its word, not a play symbol, which reads as media. Its own view in the toolbar, for
+            // Stop's spinner; a title in Customize Toolbar, which draws views without the style.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
             if flag {
@@ -402,10 +391,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    /// A segment's menu. AppKit opens it on a click only in a control without an
-    /// action, and on a press and hold in one with: these have their other
-    /// segments' action, so a click opens it here, under the control where it was
-    /// clicked.
+    /// A segment's menu, under the click: AppKit opens one on a click only in a control with no action.
     private func openMenu(of control: NSSegmentedControl) {
         guard let menu = control.menu(forSegment: control.selectedSegment) else { return }
         let x = if let event = NSApp.currentEvent, event.type == .leftMouseUp {

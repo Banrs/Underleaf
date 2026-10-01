@@ -143,7 +143,7 @@ final class WorkspaceLayoutTests {
         PaneSize.panel.store(250)
         let workspace = open()
         workspace.project.showLogs = true
-        // Its minimum is its height until it's back.
+        // On 27.0 its minimum is its height until it's back.
         try await waitUntil { workspace.panelItem.minimumThickness == ColumnMetrics.panelMinimum }
         #expect(isClose(height(workspace.panelItem), 250, within: 1))
         window?.setContentSize(NSSize(width: Self.size.width, height: 400))

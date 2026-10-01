@@ -51,8 +51,7 @@ struct FilesList: View {
     @State private var rowTargeted: TreeNode?
 
     var body: some View {
-        // Two lists: one list diffed from the tree to grouped hits and back
-        // kept stale rows.
+        // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
         if project.isSearching { results } else { files }
     }
 

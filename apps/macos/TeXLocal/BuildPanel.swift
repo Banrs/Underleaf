@@ -15,8 +15,7 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
-                // The tabs' and the field's height in both tabs: Copy Log's bezel is
-                // 2 pt taller than Warnings', and the content moved as the tab changed.
+                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
                 .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
@@ -179,8 +178,7 @@ private struct IssueRow: View {
     }
 }
 
-/// The build log in NSTextView: a SwiftUI Text laid out LaTeX's megabyte logs
-/// whole on every change.
+/// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
 private struct LogTextView: NSViewRepresentable {
     let text: String
     /// Unfiltered, the log opens at its end, where the error usually is.

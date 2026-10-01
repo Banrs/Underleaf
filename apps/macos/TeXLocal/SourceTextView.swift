@@ -42,9 +42,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 
     // MARK: edits reach the core
 
-    /// The range the text view is about to change, which the storage's
-    /// edited range runs past: that takes in the attributes it fixes, to the
-    /// paragraph's end.
+    /// The range the text view is about to change; the storage's edited range runs past it.
     private var changing: NSRange?
 
     override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
@@ -140,10 +138,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         NSPoint(x: gutterWidth + 4, y: textContainerInset.height)
     }
 
-    // TextKit 2 keeps the scroll offset as the width changes, though above what's
-    // laid out the heights are estimates, which a new width changes, wrapped again or
-    // not yet: a divider drag showed a 16,000-line file hundreds or thousands of lines
-    // from where it was (27.2). The paragraph at the top stays there instead.
+    // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
         guard size.width != frame.width else { return super.setFrameSize(size) }
         keepingTopLine { super.setFrameSize(size) }
@@ -155,8 +150,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     }
 
     private func keepingTopLine(_ change: () -> Void) {
-        // As last laid out, which is what shows: asked by point, TextKit answered from
-        // its new estimates.
+        // From the fragments last laid out: asked by point, TextKit answers from its new estimates.
         guard let clip = enclosingScrollView?.contentView,
               let top = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > clip.bounds.minY + clip.contentInsets.top })?.fragment
         else { return change() }
@@ -165,12 +159,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         scroll(top.rangeInElement.location) { $0.minY - offset }
     }
 
-    /// Scrolls to where `y` puts the clip for the location's paragraph (its frame in
-    /// the view). Laid out there only, as laying out all that's above it took a third
-    /// of a second near the end of 16,000 lines: above it is estimated, so once the
-    /// viewport is laid out there, a second pass puts it exactly. Only in a window, where
-    /// there's a viewport: laid out outside one, it kept the test host from quitting
-    /// (27.2).
+    /// Scrolls to where `y` puts the clip for the location's paragraph (its frame in the view),
+    /// laying out only that paragraph, in two passes; only in a window (27.2).
     func scroll(_ location: any NSTextLocation, to y: (NSRect) -> CGFloat) {
         guard let manager = textLayoutManager, let scroll = enclosingScrollView, window != nil else { return }
         let clip = scroll.contentView

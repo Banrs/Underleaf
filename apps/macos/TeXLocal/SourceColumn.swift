@@ -112,7 +112,7 @@ struct SourceFindBar: View {
                         .focused($replaceFocused)
                         // Find and Replace…, whether or not the bar already shows. After
                         // the update that adds the row: the task starts within it, and
-                        // focus asked for there was lost (27.2).
+                        // focus asked for there is lost (27.2).
                         .task(id: project.replaceFocus) {
                             await Task.yield()
                             if project.replaceFocus > 0 { replaceFocused = true }

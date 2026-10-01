@@ -168,7 +168,7 @@ struct SourceEditorTests {
     }
 
     /// The maths preview's body has SwiftUI's margins and is never narrower
-    /// than it's tall: a single letter read as an egg.
+    /// than it's tall, or a single letter reads as an egg.
     @Test func mathsPreviewsHaveTheSystemsMargins() {
         func body(_ width: CGFloat, _ height: CGFloat) -> NSSize {
             NSHostingController(rootView: MathView(page: WebPage(), size: CGSize(width: width, height: height))).view.fittingSize

@@ -55,7 +55,7 @@ struct RemapPathTests {
     }
 }
 
-/// The gallery's and the sidebar's rename in place.
+/// The projects screen's and the sidebar's rename in place.
 @MainActor
 struct InPlaceRenameTests {
     @Test func aRenameEndsOnceWithItsNewName() {

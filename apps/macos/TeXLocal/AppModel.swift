@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The app's user-defaults keys.
 enum DefaultsKey {
     static let sidebarVisible = "sidebarVisible"
     static let inspectorVisible = "inspectorVisible"

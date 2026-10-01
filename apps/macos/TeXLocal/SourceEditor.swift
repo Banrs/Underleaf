@@ -38,9 +38,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let text = textView
         text.textContainerInset = NSSize(width: 0, height: 4)
         text.allowsUndo = true
-        // Spelling underlined in the prose only (below), and nothing
-        // corrected: smart dashes and quotes would rewrite the LaTeX (--
-        // became an em dash).
+        // Spelling underlined in the prose only (below), and nothing corrected: smart dashes
+        // and quotes would rewrite the LaTeX (-- to an em dash).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
@@ -90,9 +89,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         path.map { ($0, textView.string) }
     }
 
-    /// Forget a file's kept state after it's renamed or deleted.
+    /// Forget a file's kept state after it's deleted, or every file's under a deleted folder.
     func forget(path: String) {
-        kept[path] = nil
+        kept = kept.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
     }
 
     /// Follows a rename: the file, or everything under a renamed folder, keeps
@@ -369,7 +368,6 @@ struct EditorView: NSViewRepresentable {
     }
 }
 
-/// The editor's formatting commands.
 enum EditorCommand {
     case bold, italic, math, displayMath, comment, heading, symbol
     /// A block from the core's catalog (crates/texlocal-syntax), by id.

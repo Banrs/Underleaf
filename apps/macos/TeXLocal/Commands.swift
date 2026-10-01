@@ -32,7 +32,6 @@ enum MenuCommand: String, CaseIterable {
     case pdfGotoPage = "pdf.gotoPage"
     case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
-    /// The web's id, which predates the name.
     case viewToggleInspector = "view.toggleInspector"
     case viewToggleLogs = "view.toggleLogs"
     case viewToggleWordCount = "view.toggleWordCount"
