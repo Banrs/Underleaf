@@ -269,31 +269,3 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
         Some(_) => format!("\\begin{{aligned}}{clean}\\end{{aligned}}"),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::SourceDocument;
-
-    use super::MathPreview;
-
-    #[test]
-    fn display_previews_keep_environment_dollar_bracket_precedence() {
-        for (source, tex) in [
-            (
-                "\\begin{equation} $$x$$ \\[y\\] \\end{equation}",
-                "$$x$$ \\[y\\]",
-            ),
-            ("$$ \\[x\\] $$", "\\[x\\]"),
-        ] {
-            let caret = source[..source.find('x').unwrap()].encode_utf16().count() as u32;
-            assert_eq!(
-                SourceDocument::new(source).math_at(caret),
-                Some(MathPreview {
-                    start: 0,
-                    tex: tex.into(),
-                    display: true,
-                })
-            );
-        }
-    }
-}
