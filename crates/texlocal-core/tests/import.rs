@@ -156,3 +156,22 @@ fn a_failed_import_leaves_no_half_made_project() {
     assert!(import_project(&service, &src).is_err());
     assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
 }
+
+#[test]
+fn excluded_build_output_does_not_count_towards_the_tex_folder_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Service::new(dir.path().join("data"));
+    let src = dir.path().join("Paper");
+    fs::create_dir_all(src.join("Build")).unwrap();
+    fs::write(src.join("main.tex"), "\\input{chapter}").unwrap();
+    fs::write(src.join("chapter.tex"), "\\section{Chapter}").unwrap();
+    fs::File::create(src.join("Build/main.pdf"))
+        .unwrap()
+        .set_len(UPLOAD_MAX_BYTES as u64 + 1)
+        .unwrap();
+    let info = import_project(&service, &src.join("main.tex")).unwrap();
+    assert_eq!(
+        names(&service.data_dir.join(&info.id)),
+        ["chapter.tex", "main.tex"]
+    );
+}
