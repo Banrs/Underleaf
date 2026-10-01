@@ -3,7 +3,7 @@ import AppKit
 /// The source's text view: TextKit 2's own, which types, selects, undoes,
 /// spells, speaks and drags as every Mac text view does. The core
 /// (`SourceDocument`, crates/texlocal-syntax) says what the LaTeX is; this
-/// draws the line numbers and colours, and edits as the web's editor does:
+/// draws the line numbers and colours, with LaTeX editing features:
 /// completion with snippet fields, closing brackets, keeping indentation,
 /// and the core's edits in one undo step each.
 final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
@@ -117,67 +117,27 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
 
-    /// Xcode's: the system font, condensed, at the text's size.
+    /// Monospaced digits align the line numbers at the editor's text size.
     private var numberFont: NSFont {
-        .systemFont(ofSize: font?.pointSize ?? NSFont.systemFontSize, weight: .regular, width: .condensed)
+        .monospacedDigitSystemFont(ofSize: font?.pointSize ?? NSFont.systemFontSize, weight: .regular)
     }
 
     private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
-    /// Xcode's margin as it measures at 13 pt (27.2), scaled to the font: 13.8 pt, the
-    /// numbers right-aligned in room for four digits or the largest, then 11.5 pt to the text.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
-        let scale = numberFont.pointSize / 13
         let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
-        let end = 13.8 * scale + CGFloat(lineCountDigits) * digit
-        guard end != numbersEnd else { return }
-        numbersEnd = end
-        gutterWidth = (end + 11.5 * scale).rounded()
-        // The view sizes its container, less the inset either side: the gutter, and
-        // 8 pt at the end, shared out.
+        let scale = numberFont.pointSize / 13
+        numbersEnd = 13.8 * scale + CGFloat(lineCountDigits) * digit
+        gutterWidth = (numbersEnd + 11.5 * scale).rounded()
+        // AppKit tracks the container width; share the gutter and trailing margin
+        // between its two insets, then offset its origin below.
         textContainerInset.width = (textContainerOrigin.x + 8) / 2
         needsDisplay = true
     }
 
-    /// The text's first letter starts after the gutter: the container pads each line.
     override var textContainerOrigin: NSPoint {
         NSPoint(x: gutterWidth - (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height)
-    }
-
-    // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
-    override func setFrameSize(_ size: NSSize) {
-        guard size.width != frame.width else { return super.setFrameSize(size) }
-        keepingTopLine {
-            super.setFrameSize(size)
-            // As it goes: scrolled down, AppKit's tracking waits for a live resize's end (27.2).
-            textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
-        }
-    }
-
-    private func keepingTopLine(_ change: () -> Void) {
-        // From the fragments last laid out: asked by point, TextKit answers from its new estimates.
-        guard let clip = enclosingScrollView?.contentView,
-              let top = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > clip.bounds.minY + clip.contentInsets.top })?.fragment
-        else { return change() }
-        let offset = top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY
-        change()
-        scroll(top.rangeInElement.location) { $0.minY - offset }
-    }
-
-    /// Scrolls to where `y` puts the clip for the location's paragraph (its frame in the view),
-    /// laying out only that paragraph, in two passes; only in a window (27.2).
-    func scroll(_ location: any NSTextLocation, to y: (NSRect) -> CGFloat) {
-        guard let manager = textLayoutManager, let scroll = enclosingScrollView, window != nil else { return }
-        let clip = scroll.contentView
-        for _ in 0..<2 {
-            manager.ensureLayout(for: NSTextRange(location: location))
-            guard let fragment = manager.textLayoutFragment(for: location) else { return }
-            let origin = NSPoint(x: 0, y: y(fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textContainerOrigin.y)))
-            clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin)
-            scroll.reflectScrolledClipView(clip)
-            manager.textViewportLayoutController.layoutViewport()
-        }
     }
 
     // macOS 27's viewport hooks: the line numbers and colours of what shows.
@@ -200,7 +160,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         needsDisplay = true
     }
 
-    /// The current line's fill, then the numbers, as Xcode's: the current one in the
+    /// The current line's fill, then the numbers: the current one in the
     /// text's colour, the others fainter, on the first line of their paragraph's baseline.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -236,7 +196,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let font = numberFont
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
-            let color: NSColor = offset == current ? palette.textColor : .tertiaryLabelColor
+            let color: NSColor = offset == current ? palette.textColor : .secondaryLabelColor
             let number = NSAttributedString(string: "\(document.line(at: offset))",
                                             attributes: [.font: font, .foregroundColor: color])
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
@@ -273,12 +233,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let inView = { (r: NSRange) in NSIntersectionRange(r, shown).length > 0 }
         // Every match tinted; the current one is the selection.
         var tints = findMatches.filter(inView).map { ($0, NSColor.findHighlightColor.withAlphaComponent(0.35)) }
-        // Only while typing comes here, else the selection is the same grey. CodeMirror's bracket colours.
+        // Related selections and bracket pairs are secondary to the system selection.
         if hasKeyboard {
             tints += selectionMatches(in: shown.location..<NSMaxRange(shown)).map { ($0, NSColor.unemphasizedSelectedTextBackgroundColor) }
             tints += brackets.filter { inView($0.0) }.map { range, matched in
-                (range, matched ? NSColor(srgbRed: 0x32 / 255, green: 0x8c / 255, blue: 0x82 / 255, alpha: 0x52 / 255)
-                    : NSColor(srgbRed: 0xbb / 255, green: 0x55 / 255, blue: 0x55 / 255, alpha: 0x44 / 255))
+                (range, matched ? NSColor.systemTeal.withAlphaComponent(0.2) : NSColor.systemRed.withAlphaComponent(0.2))
             }
         }
         return tints
@@ -317,8 +276,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
-        // The lines an insertion made show their colours: their first layout drops them.
-        recolour()
+        // Edits invalidate the syntax; moving the caret leaves its rendering intact.
+        colourViewport()
         needsDisplay = true
     }
 
@@ -360,6 +319,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     // MARK: the maths preview
 
     private var mathPopover: MathPopover?
+
+    func dismissMathPreview() { mathPopover?.close() }
 
     /// The maths at the caret, typeset over where it starts, while the text
     /// has the keyboard and that place shows (the web's preview).
@@ -666,29 +627,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
-    /// A double-click goes to the PDF too, at the word it selects (the system's own selection,
-    /// which tracks until the button's up): not one dragged out over more words, nor the
-    /// start of a triple-click, which selects the line.
-    override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        let word = selectedRange()
-        guard event.clickCount == 2, forwardSync() != nil,
-              word == selectionRange(forProposedRange: NSRange(location: word.location, length: 0), granularity: .selectByWord)
-        else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
-            if self?.selectedRange() == word { self?.forwardSync()?() }
-        }
-    }
-
-    /// Go to PDF Position for the clicked word (the click selects it), above the system's
-    /// items, as the PDF's menu has Go to Source Position.
+    /// Add document navigation to AppKit's standard editing menu.
     override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = super.menu(for: event)
-        // A misspelling's guesses, then Cut, Copy and Paste: Look Up, Translate, Search With,
-        // fonts, substitutions, speech and layout are for prose, and Spelling and Grammar is Edit's.
-        menu?.keep([#selector(cut(_:)), #selector(copy(_:)), #selector(paste(_:)), Selector(("_changeSpellingFromMenu:")),
-                    Selector(("_ignoreSpellingFromMenu:")), Selector(("_learnSpellingFromMenu:"))])
-        guard let menu, forwardSync() != nil else { return menu }
+        let proposed = super.menu(for: event)
+        proposed?.allowsContextMenuPlugIns = false
+        guard let menu = proposed, forwardSync() != nil else { return proposed }
         let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
         item.target = self
         menu.insertItem(item, at: 0)
@@ -702,6 +645,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     override func accessibilityInsertionPointLineNumber() -> Int { document.line(at: selectedRange().location) - 1 }
 
     // MARK: file drops open
+
+    /// This editor opens dropped files itself and never inserts their contents.
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + [.fileURL]
+    }
 
     private func files(_ info: any NSDraggingInfo) -> [URL] {
         info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -742,19 +690,5 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
-    }
-}
-
-extension NSMenu {
-    /// Only the items with these actions, a separator between groups, and none of the
-    /// plug-ins the system adds as the menu shows: Ask Siri, AutoFill and Services (27.2).
-    func keep(_ actions: Set<Selector>) {
-        var shown: [NSMenuItem] = []
-        for item in items where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : item.action.map(actions.contains) == true {
-            shown.append(item)
-        }
-        if shown.last?.isSeparatorItem == true { shown.removeLast() }
-        items = shown
-        allowsContextMenuPlugIns = false
     }
 }

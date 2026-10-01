@@ -6,8 +6,9 @@ use std::ptr;
 
 use serde_json::{json, Value};
 use texlocal_ffi::{
-    tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_free,
-    tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_new, TlHandle,
+    tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_edit_utf8,
+    tl_source_free, tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_new,
+    tl_source_new_utf8, TlHandle,
 };
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
@@ -317,6 +318,23 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let maths = call("math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");
         assert_eq!(call("unknown", json!({})), None);
+        tl_source_free(source);
+    }
+}
+
+#[test]
+fn the_source_mirror_preserves_embedded_nuls() {
+    let text = "é\0\n\\emph{x}";
+    let inserted = "🙂\0\n";
+    unsafe {
+        let source = tl_source_new_utf8(text.as_ptr().cast(), text.len());
+        assert_eq!(tl_source_line_at(source, 3), 2);
+        tl_source_edit_utf8(source, 3, 0, inserted.as_ptr().cast(), inserted.len());
+        assert_eq!(tl_source_line_at(source, 7), 3);
+        let out = tl_source_call(source, c"text".as_ptr(), c"{}".as_ptr());
+        let actual: Value = serde_json::from_slice(CStr::from_ptr(out).to_bytes()).unwrap();
+        assert_eq!(actual, json!("é\0\n🙂\0\n\\emph{x}"));
+        tl_free(out);
         tl_source_free(source);
     }
 }

@@ -1,3 +1,4 @@
+import QuickLookUI
 import SwiftUI
 
 /// The source column: the editor, or a preview or placeholder over it. It
@@ -23,7 +24,7 @@ struct SourceColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background)
             } else if !project.editsText, let url = project.openURL {
-                FilePreview(url: url)
+                FilePreview(url: url, revision: project.previewRevision)
                     .background(.background)
             }
         }
@@ -35,43 +36,20 @@ struct SourceColumn: View {
     }
 }
 
-/// An image or a PDF figure in place of the editor, fitted but never enlarged;
-/// anything else is No Preview, with the way to open it in its own app.
+/// An image or PDF in place of the editor; other files can be opened in their app.
 private struct FilePreview: View {
     let url: URL
+    let revision: Int
     @Environment(\.openURL) private var openURL
-    /// The image read for `url`, nil when it isn't one.
-    @State private var loaded: (url: URL, image: NSImage?)?
 
     var body: some View {
-        Group {
-            if !isPreviewFile(url.path) {
-                noPreview
-            } else if let loaded, loaded.url == url {
-                if let image = loaded.image { preview(image) } else { noPreview }
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+        if isPreviewFile(url.path) {
+            QuickLookPreview(url: url, revision: revision)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
+        } else {
+            noPreview
         }
-        .task(id: url) {
-            guard isPreviewFile(url.path) else { return }
-            let data = await Self.read(url)
-            // A newer file's read may have finished first.
-            if !Task.isCancelled { loaded = (url, data.flatMap(NSImage.init(data:))) }
-        }
-    }
-
-    private func preview(_ image: NSImage) -> some View {
-        Image(nsImage: image)
-            .resizable()
-            .scaledToFit()
-            // A PDF is a page: on white paper, as in the PDF column.
-            .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
-            .frame(maxWidth: image.size.width, maxHeight: image.size.height)
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityLabel(url.lastPathComponent)
     }
 
     private var noPreview: some View {
@@ -84,9 +62,45 @@ private struct FilePreview: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
 
-    @concurrent nonisolated private static func read(_ url: URL) async -> Data? {
-        try? Data(contentsOf: url)
+/// Quick Look supplies the system preview controls and native image/PDF gestures.
+private struct QuickLookPreview: NSViewRepresentable {
+    let url: URL
+    let revision: Int
+
+    final class Coordinator {
+        var url: URL?
+        var revision: Int?
+
+        init() {}
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        guard let view = QLPreviewView(frame: .zero, style: .normal) else {
+            return NSTextField(labelWithString: "Preview Unavailable")
+        }
+        view.previewItem = url as NSURL
+        context.coordinator.url = url
+        context.coordinator.revision = revision
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard let view = view as? QLPreviewView else { return }
+        if context.coordinator.url != url {
+            view.previewItem = url as NSURL
+        } else if context.coordinator.revision != revision {
+            view.refreshPreviewItem()
+        }
+        context.coordinator.url = url
+        context.coordinator.revision = revision
+    }
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        (view as? QLPreviewView)?.close()
     }
 }
 
@@ -104,9 +118,6 @@ struct SourceFindBar: View {
                 GridRow {
                     TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
                         .labelsHidden()
-                        // UI kit: a capsule, as the search field over it.
-                        .textFieldStyle(.bordered)
-                        .textInputBorderShape(.capsule)
                         .onSubmit { project.editor.replace(all: false) }
                         .onExitCommand { project.closeFind() }
                         .focused($replaceFocused)

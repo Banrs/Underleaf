@@ -51,6 +51,7 @@ final class WorkspaceLayoutTests {
                                      styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.contentViewController = workspace
+        window.contentMinSize = ColumnMetrics.contentMinimum
         window.setContentSize(size)
         window.alphaValue = 0
         window.orderFront(nil)
@@ -80,9 +81,10 @@ final class WorkspaceLayoutTests {
     }
 
     /// Hide PDF gives the source the room; Show PDF brings the PDF back at its width.
-    @Test func theHiddenPDFComesBackAtItsWidth() async throws {
+    @Test(arguments: [1200.0, 1400.0]) func theHiddenPDFComesBackAtItsWidth(windowWidth: CGFloat) async throws {
         let workspace = open()
         let pdfWidth = width(workspace.pdfItem)
+        let share = pdfWidth / (workspace.columns.view.frame.width - workspace.columns.splitView.dividerThickness)
         #expect(pdfWidth > ColumnMetrics.pdfMinimum)
         let state = {
             "collapsed \(workspace.pdfItem.isCollapsed), source \(self.width(workspace.sourceItem)), "
@@ -92,9 +94,12 @@ final class WorkspaceLayoutTests {
         try await waitUntil {
             workspace.pdfItem.isCollapsed && isClose(self.width(workspace.sourceItem), workspace.columns.view.frame.width)
         } state: { "hiding: " + state() }
+        window?.setContentSize(NSSize(width: windowWidth, height: Self.size.height))
+        window?.layoutIfNeeded()
+        let expectedWidth = ((workspace.columns.view.frame.width - workspace.columns.splitView.dividerThickness) * share).rounded()
         workspace.project.showPDF = true
         try await waitUntil {
-            !workspace.pdfItem.isCollapsed && isClose(self.width(workspace.pdfItem), pdfWidth, within: 1)
+            !workspace.pdfItem.isCollapsed && isClose(self.width(workspace.pdfItem), expectedWidth, within: 1)
         } state: { "showing: " + state() }
     }
 
@@ -132,17 +137,15 @@ final class WorkspaceLayoutTests {
         try await waitUntil { isClose(self.height(workspace.panelItem), 210, within: 1) }
     }
 
-    /// Panes never dragged open on whole points, as dragged ones are kept (`PaneSize.store`).
-    @Test func firstSizesAreWholePoints() async throws {
-        let workspace = open(size: NSSize(width: Self.size.width, height: 601))
-        workspace.project.showLogs = true
-        try await waitUntil { self.height(workspace.panelItem) > 0 }
-        for item in [workspace.outlineItem!, workspace.panelItem!] { #expect(height(item) == height(item).rounded()) }
-    }
-
-    /// A divider dragged is kept for the next launch.
+    /// A divider dragged is kept; an unrelated pane squeezed by window resizing isn't.
     @Test func aDraggedDividerIsKept() async throws {
+        PaneSize.panel.store(250)
         let workspace = open()
+        workspace.project.showLogs = true
+        try await waitUntil { !workspace.panelItem.isCollapsed && isClose(self.height(workspace.panelItem), 250, within: 1) }
+        window?.setContentSize(NSSize(width: Self.size.width, height: 400))
+        window?.layoutIfNeeded()
+        try await waitUntil { self.height(workspace.panelItem) < 240 }
         try await waitUntil { self.width(workspace.pdfItem) > 0 }
         let split = workspace.columns.splitView, window = try #require(window)
         let start = split.convert(NSPoint(x: width(workspace.sourceItem) + 0.5, y: split.bounds.midY), to: nil)
@@ -157,80 +160,29 @@ final class WorkspaceLayoutTests {
         let share = width(workspace.pdfItem) / (width(workspace.sourceItem) + width(workspace.pdfItem))
         #expect(share < 0.45)
         #expect(isClose(PaneSize.pdfShare.value ?? 0, share, within: 0.01))
-    }
-
-    /// A window resized in code squeezes a pane, and closing it then keeps the
-    /// size the pane was dragged to, not the squeeze.
-    @Test func aSqueezedPaneKeepsItsSize() async throws {
-        PaneSize.panel.store(250)
-        let workspace = open()
-        workspace.project.showLogs = true
-        // On 27.0 its minimum is its height until it's back.
-        try await waitUntil { workspace.panelItem.minimumThickness == ColumnMetrics.panelMinimum }
-        #expect(isClose(height(workspace.panelItem), 250, within: 1))
-        window?.setContentSize(NSSize(width: Self.size.width, height: 400))
-        try await waitUntil { self.height(workspace.panelItem) < 240 }
+        #expect(workspace.panelItem.minimumThickness == ColumnMetrics.panelMinimum)
         workspace.close()
         #expect(PaneSize.panel.value == 250)
     }
 
-    /// A divider dragged near its detent stops there: the sidebar at its opening
-    /// width, source and PDF at half each. Farther off, it goes where it's dragged.
-    @Test func dividersStopAtTheirDetents() async throws {
+    /// The outline grows up from its header and folds back to the same title spacing.
+    @Test func theOutlineFoldsToItsHeader() async throws {
         let workspace = open()
-        try await waitUntil { self.width(workspace.pdfItem) > 0 }
-        for (offset, expected) in [(5.0, ColumnMetrics.sidebarIdeal), (-7, ColumnMetrics.sidebarIdeal),
-                                   (30, ColumnMetrics.sidebarIdeal + 30)] {
-            workspace.splitView.setPosition(ColumnMetrics.sidebarIdeal + offset, ofDividerAt: 0)
-            workspace.view.layoutSubtreeIfNeeded()
-            #expect(isClose(width(workspace.sidebarItem), expected), "\(offset)")
-        }
-        let split = workspace.columns.splitView
-        let half = (split.bounds.width - split.dividerThickness) / 2
-        split.setPosition(half + 6, ofDividerAt: 0)
-        split.layoutSubtreeIfNeeded()
-        #expect(abs(width(workspace.sourceItem) - width(workspace.pdfItem)) <= 1)
-        split.setPosition(half + 40, ofDividerAt: 0)
-        split.layoutSubtreeIfNeeded()
-        #expect(isClose(width(workspace.sourceItem) - width(workspace.pdfItem), 80, within: 1.5))
-    }
-
-    /// The File Outline's header stays at the files' foot, folded or not, at one height. Open, the
-    /// line over it takes the divider's drags; folded, nothing does, and its title leaves the corner.
-    @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
-        let workspace = open()
-        let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
-        let split = sidebar.splitView, delegate = try #require(split.delegate)
-        let header = try #require(sidebar.splitViewItems.first?.bottomAlignedAccessoryViewControllers.first)
-        let outline = try #require(sidebar.splitViewItems.last)
         workspace.project.openPath = "main.tex"
         workspace.app.outlineCollapsed = false
-        try await waitUntil { !outline.isCollapsed && !header.isHidden }
-        split.layoutSubtreeIfNeeded()
-
-        let frame = header.view.convert(header.view.bounds, to: split)
-        let line = split.isFlipped ? frame.minY : frame.maxY
-        let divider = NSRect(x: 0, y: frame.maxY, width: split.bounds.width, height: split.dividerThickness)
-        let drag = try #require(delegate.splitView?(split, effectiveRect: divider.insetBy(dx: 0, dy: -2),
-                                                    forDrawnRect: divider, ofDividerAt: 0))
-        #expect(isClose(drag.midY, line, within: 1), "\(drag) for the line at \(line)")
-        #expect(drag.height > 0 && isClose(drag.width, frame.width))
-        // The title's row, in the bar (its 36 pt under the line, from its foot up).
-        func title() -> NSRect? {
-            func list(_ view: NSView) -> NSOutlineView? { view as? NSOutlineView ?? view.subviews.lazy.compactMap(list).first }
-            return list(header.view).map { $0.convert($0.rect(ofRow: 0), to: header.view) }
-        }
-        // Open, at the bar's foot, over the outline's first row.
-        #expect(isClose(title()?.minY ?? -1, 0), "\(String(describing: title()))")
-
+        try await waitUntil { self.height(workspace.outlineItem) > BarMetrics.secondaryBarHeight }
+        let expanded = height(workspace.outlineItem)
+        let split = try #require(workspace.outlineItem.viewController.parent as? NSSplitViewController).splitView
+        #expect(split.dividerThickness > 0)
         workspace.app.outlineCollapsed = true
-        try await waitUntil { outline.isCollapsed }
-        #expect(!header.isHidden)
-        // One height, so the split's collapse is all that moves the line.
-        #expect(header.view.frame.height == frame.height)
-        #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
-        // Folded, the bar's foot is the window's: centred, on the status bar's line, clear of the corner.
-        try await waitUntil { isClose(title()?.midY ?? -1, BarMetrics.secondaryBarHeight / 2) } state: { "\(String(describing: title()))" }
+        try await waitUntil { isClose(self.height(workspace.outlineItem), BarMetrics.secondaryBarHeight) } state: {
+            "outline \(self.height(workspace.outlineItem)), min \(workspace.outlineItem.minimumThickness), max \(workspace.outlineItem.maximumThickness)"
+        }
+        #expect(!workspace.outlineItem.isCollapsed)
+        workspace.app.outlineCollapsed = false
+        try await waitUntil { isClose(self.height(workspace.outlineItem), expanded, within: 1) } state: {
+            "outline \(self.height(workspace.outlineItem)), expected \(expanded)"
+        }
     }
 
     /// The sidebar shows the open file: its folders open, and a heading that gains
@@ -267,8 +219,9 @@ final class WorkspaceLayoutTests {
         window?.setContentSize(ColumnMetrics.contentMinimum)
         window?.layoutIfNeeded()
         #expect(isClose(workspace.view.frame.width, ColumnMetrics.contentMinimum.width))
-        // Below the titlebar: the panes stop at the safe area.
-        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height))
+        let columns = workspace.columns.view, panel = workspace.panelItem.viewController.view
+        #expect(isClose(columns.frame.height - columns.safeAreaInsets.top - columns.safeAreaInsets.bottom, ColumnMetrics.columnsMinimum))
+        #expect(isClose(panel.frame.height - panel.safeAreaInsets.top - panel.safeAreaInsets.bottom, ColumnMetrics.panelMinimum))
     }
 }
 

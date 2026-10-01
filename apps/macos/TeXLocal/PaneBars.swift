@@ -1,18 +1,13 @@
 import SwiftUI
 
-/// The in-window bars' metrics, from the macOS 27 UI kit.
+/// Insets for the app's pane accessories; controls keep their system sizes.
 enum BarMetrics {
-    /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
     static let inset: CGFloat = 8
-    /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The status bar and the File Outline header share this height, so the hairlines
-    /// over them run on as one (Xcode's status bar).
+    /// The File Outline's disclosure strip keeps its height when collapsed.
     static let secondaryBarHeight: CGFloat = 36
-    /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
-    /// Design: the least room a find query needs, and the widest a filter grows
-    /// (UI kit search fields are drawn 120 pt).
+    /// Keep a query usable in a narrow pane without crowding its actions.
     static let fieldMinWidth: CGFloat = 100
     static let fieldMaxWidth: CGFloat = 180
 }
@@ -23,7 +18,6 @@ enum Typography {
     static let itemTitle: Font = .headline
     /// Secondary rows and captions: the size `.small` controls use.
     static let secondary: Font = .subheadline
-    /// UI kit, form rows: the description 2 pt under the title.
     static let subtitleSpacing: CGFloat = 2
 }
 
@@ -78,8 +72,8 @@ struct FindBar<Replace: View>: View {
             }
             replace
         }
-        .padding(.vertical, BarMetrics.inset)
-        .paneBarControls()
+        .lineLimit(1)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -165,7 +159,7 @@ struct SearchField: NSViewRepresentable {
 
     /// As wide as offered: the frame around it sets its least and ideal widths.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
+        CGSize(width: proposal.width ?? nsView.intrinsicContentSize.width, height: nsView.intrinsicContentSize.height)
     }
 
     func updateNSView(_ view: NSSearchField, context: Context) {
@@ -177,7 +171,7 @@ struct SearchField: NSViewRepresentable {
         if view.stringValue != text { view.stringValue = text }
         // The field copies its menu, so it is made again when a state changes.
         let states = options.map(\.isOn.wrappedValue)
-        if !options.isEmpty, coordinator.optionStates != states {
+        if coordinator.optionStates != states {
             coordinator.optionStates = states
             let menu = NSMenu(title: "Find Options")
             for (index, option) in options.enumerated() {
@@ -187,7 +181,7 @@ struct SearchField: NSViewRepresentable {
                 item.state = option.isOn.wrappedValue ? .on : .off
                 menu.addItem(item)
             }
-            view.searchMenuTemplate = menu
+            view.searchMenuTemplate = options.isEmpty ? nil : menu
         }
     }
 }
@@ -215,8 +209,7 @@ class FindPassingTextView: NSTextView {
     }
 }
 
-/// A small sheet that asks for a few values: a title and message over a grouped
-/// form. Not an alert with fields: the HIG keeps alerts for important information.
+/// A form sheet with the system's sizing, title and action placements.
 struct DialogSheet<Fields: View>: View {
     let title: String
     var message: String?
@@ -232,30 +225,18 @@ struct DialogSheet<Fields: View>: View {
     @State private var alert: AppAlert?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: BarMetrics.spacing) {
-                Text(title)
-                    .font(.title3.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
+        Form {
+            Section {
+                fields
+            } footer: {
                 if let message {
                     Text(message)
-                        .font(Typography.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // A grouped form's own inset, so the title lines up with its sections
-            // (UI kit Dialogs: content 20 pt from every edge).
-            .padding([.horizontal, .top], 20)
-            // The grouped form's background differs in dark mode, leaving seams.
-            Form { fields }
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
-                .scrollDisabled(true)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 390) // UI kit Dialogs
-        // macOS 27 resets the control size in sheets: set it here.
-        .controlSize(.regular)
+        .formStyle(.grouped)
+        .presentationSizing(.form)
+        .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {

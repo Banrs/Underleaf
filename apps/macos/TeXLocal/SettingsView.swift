@@ -66,13 +66,12 @@ struct SettingsView: View {
                 }
             }
         }
-        // Sized to its content; 500 wide (UI kit example forms).
         .formStyle(.grouped)
-        .scrollDisabled(true)
-        .frame(width: 500)
-        .fixedSize(horizontal: false, vertical: true)
         .fileImporter(isPresented: $choosingTeX, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { setTeXFolder(url.path) }
+            switch result {
+            case .success(let url): setTeXFolder(url.path)
+            case .failure(let error): alert = AppAlert("Couldn’t Choose the TeX Folder", error)
+            }
         }
         .fileDialogConfirmationLabel("Choose")
         .fileDialogMessage("Choose the folder latexmk is in, such as a TeX distribution’s bin folder.")

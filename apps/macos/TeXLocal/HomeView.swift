@@ -97,7 +97,6 @@ struct HomeView: View {
                 }
             }
         }
-        .scrollIndicators(.never)
     }
 
     /// In the Recent section, not over the list, so the templates stay in view.
@@ -214,8 +213,6 @@ private struct TemplateCard: View {
             }
         }
         .contentShape(.rect)
-        // The focus ring on the group box's corners, not a square.
-        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous)) // UI kit: Group Boxes
         .accessibilityElement(children: .combine)
     }
 

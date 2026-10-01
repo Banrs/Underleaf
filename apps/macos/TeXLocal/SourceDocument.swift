@@ -8,7 +8,7 @@ final class SourceDocument {
     private let raw: OpaquePointer
 
     init(text: String) {
-        raw = tl_source_new(text)
+        raw = text.utf8CString.withUnsafeBufferPointer { tl_source_new_utf8($0.baseAddress, $0.count - 1) }
     }
 
     isolated deinit {
@@ -16,7 +16,9 @@ final class SourceDocument {
     }
 
     func edit(_ range: NSRange, with text: String) {
-        tl_source_edit(raw, UInt32(range.location), UInt32(range.length), text)
+        text.utf8CString.withUnsafeBufferPointer {
+            tl_source_edit_utf8(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count - 1)
+        }
     }
 
     /// The line an offset is on, from 1.

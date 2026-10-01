@@ -65,6 +65,17 @@ final class FolderWatcherTests {
         try await waitUntil { changes().contains(where: \.structural) }
         _ = watcher
     }
+
+    @Test func movingTheWatchedRootIsTold() async throws {
+        var changes: [FolderWatcher.Change] = []
+        let watcher = FolderWatcher(folder: folder) { changes += $0 }
+        let moved = folder.appendingPathExtension("moved")
+        try FileManager.default.moveItem(at: folder, to: moved)
+        defer { try? FileManager.default.moveItem(at: moved, to: folder) }
+        try await waitUntil(timeout: .seconds(5)) {
+            changes.contains { $0.path == watcher.folder && $0.structural }
+        }
+    }
 }
 
 /// The Rust core through its C ABI, in the scheme's scratch library
@@ -167,15 +178,24 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A save writes the editor's text to the file it belongs to.
+    /// Quit waits for the editor's text and the project's settings to reach disk.
     @Test(.timeLimit(.minutes(1)))
-    func anEditReachesTheDisk() async throws {
+    func quittingFlushesTextAndSettings() async throws {
         let (project, folder) = try await opened()
         #expect(project.editor.perform(.bold))
         try await waitUntil { project.hasUnsavedText }
-        #expect(await project.save())
+        var changingSettings = false
+        let change = Task {
+            changingSettings = true
+            await project.setStopOnFirstError(true)
+        }
+        try await waitUntil { changingSettings }
+        #expect(await app.flushForQuit())
         let saved = try String(contentsOf: folder.appending(path: try #require(project.openPath)), encoding: .utf8)
         #expect(saved.contains("\\textbf{}"))
+        let settings = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
+        #expect(settings.stopOnFirstError)
+        await change.value
         await app.close()
     }
 

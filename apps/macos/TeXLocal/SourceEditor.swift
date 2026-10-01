@@ -39,6 +39,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let text = textView
         text.textContainerInset = NSSize(width: 0, height: 4)
         text.allowsUndo = true
+        text.isRichText = false
+        text.usesFontPanel = false
+        text.textContainer?.widthTracksTextView = true
+        text.updateDragTypeRegistration()
         // Spelling underlined in the prose only (below), and nothing corrected: smart dashes
         // and quotes would rewrite the LaTeX (-- to an em dash).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
@@ -123,7 +127,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     /// `atTop` puts the line at the top of the view, as an outline's jump to a
-    /// heading does; otherwise it's centred, with the lines round it. A `column`
+    /// heading does; otherwise AppKit scrolls it into view. A `column`
     /// selects the word there. The system's find indicator shows where it went.
     func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
@@ -133,7 +137,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
         }
         textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
-        scroll(to: start, atTop: atTop)
+        textView.scrollRangeToVisible(word ?? NSRange(location: start, length: 0))
+        if atTop { scrollToTop(start) }
         if focus { self.focus() }
         let shown = word ?? NSRange(location: start, length: end - start)
         if shown.length > 0 {
@@ -142,15 +147,23 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
-    private func scroll(to offset: Int, atTop: Bool) {
-        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
-        let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
-        textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
+    /// An explicit outline jump can align a heading with the top of the editor.
+    /// Ordinary selection, finding and resizing use AppKit's scrolling.
+    private func scrollToTop(_ offset: Int) {
+        guard let target = textView.textRange(NSRange(location: offset, length: 0)),
+              let manager = textView.textLayoutManager else { return }
+        manager.ensureLayout(for: target)
+        guard let fragment = manager.textLayoutFragment(for: target.location) else { return }
+        let clip = scrollView.contentView
+        let origin = NSPoint(x: clip.bounds.minX,
+                             y: fragment.layoutFragmentFrame.minY + textView.textContainerOrigin.y - scrollView.contentInsets.top)
+        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin)
+        scrollView.reflectScrolledClipView(clip)
     }
 
     /// The first line at least half showing below the toolbar.
     @objc private func scrolled() {
-        textView.previewMath()
+        textView.dismissMathPreview()
         guard let manager = textView.textLayoutManager, let font = textView.font else { return }
         let y = scrollView.contentView.bounds.minY + scrollView.contentInsets.top - textView.textContainerOrigin.y
             + font.boundingRectForFont.height / 2
@@ -179,13 +192,16 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
-        let document = textView.document
-        let code = document.highlights(in: range).filter { $0.kind != .comment }.map(\.range) + document.notProse(in: range)
+        let code = nonProse(in: range)
         return results.filter { result in
-            // The results count from the start of the range checked (27.2).
-            let found = NSRange(location: range.location + result.range.location, length: result.range.length)
-            return result.resultType != .spelling || !code.contains { NSIntersectionRange($0, found).length > 0 }
+            // AppKit result ranges are absolute document offsets, including for a subrange check.
+            return result.resultType != .spelling || !code.contains { NSIntersectionRange($0, result.range).length > 0 }
         }
+    }
+
+    private func nonProse(in range: NSRange) -> [NSRange] {
+        let document = textView.document
+        return document.highlights(in: range).filter { $0.kind != .comment }.map(\.range) + document.notProse(in: range)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
@@ -243,7 +259,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     private var query = FindQuery()
     private(set) var findShown = false
-    private var matches: (ranges: [NSRange], limited: Bool) = ([], false)
+    private var matchesLimited = false
 
     /// The selection as a query: short and on one line, a line break as \n
     /// (CodeMirror's `defaultQuery`); nil otherwise.
@@ -256,12 +272,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// The find bar's query. A changed search selects its first match from
     /// the selection on, as you type, as a Mac find bar does.
     func setFind(_ query: FindQuery) {
-        let changed = query.search != self.query.search || !findShown
+        let changed = !findShown || (query.search, query.caseSensitive, query.regexp, query.wholeWord)
+            != (self.query.search, self.query.caseSensitive, self.query.regexp, self.query.wholeWord)
         self.query = query
         findShown = true
         refreshFind()
         guard changed, let hit = next(from: textView.selectedRange().location) else { return }
-        select(hit, centred: true)
+        select(hit)
     }
 
     func closeFind() {
@@ -301,9 +318,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// A match selected and shown by the system's find indicator, as
     /// TextEdit's find bar shows it.
-    private func select(_ match: NSRange, centred: Bool = false) {
+    private func select(_ match: NSRange) {
         textView.setSelectedRange(match)
-        if centred { scroll(to: match.location, atTop: false) } else { textView.scrollRangeToVisible(match) }
+        textView.scrollRangeToVisible(match)
         textView.showFindIndicator(for: match)
     }
 
@@ -321,16 +338,17 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// The matches again, after the text or query changed.
     private func refreshFind() {
-        matches = findShown ? query.matches(in: textView.string as NSString, limit: 1000) : ([], false)
+        let found = findShown ? query.matches(in: textView.string as NSString, limit: 1000) : (ranges: [], limited: false)
+        textView.findMatches = found.ranges
+        matchesLimited = found.limited
         markFindMatches()
     }
 
     private func markFindMatches() {
-        let selection = textView.selectedRange()
-        let index = matches.ranges.firstIndex(of: selection)
-        textView.findMatches = matches.ranges
+        let ranges = textView.findMatches
+        let index = ranges.firstIndex(of: textView.selectedRange())
         guard findShown else { return }
-        onFindMatches(FindMatches(index: index.map { $0 + 1 } ?? 0, total: matches.ranges.count, limited: matches.limited))
+        onFindMatches(FindMatches(index: index.map { $0 + 1 } ?? 0, total: ranges.count, limited: matchesLimited))
     }
 
     // ---------- appearance ----------
@@ -350,9 +368,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.updateGutterWidth()
     }
 
-    /// Xcode's line height: its themes' 1.1 × the font's own, in whole points (18 at
-    /// 13 pt), with the text in the middle of it. TextKit puts a taller line's extra
-    /// room above the text, so the line takes half of it and line spacing, below, the rest.
+    /// Extra room between source lines, shared above and below the glyphs.
     private static func lineStyle(for font: NSFont) -> NSParagraphStyle {
         let natural = NSLayoutManager().defaultLineHeight(for: font)
         let extra = (natural * 1.1).rounded(.up) - natural
@@ -530,7 +546,8 @@ nonisolated struct FindQuery: Equatable {
     /// and whether there were more.
     func matches(in text: NSString, range: NSRange? = nil, limit: Int) -> (ranges: [NSRange], limited: Bool) {
         var ranges: [NSRange] = [], limited = false
-        expression?.enumerateMatches(in: text as String, range: range ?? NSRange(location: 0, length: text.length)) { result, _, stop in
+        expression?.enumerateMatches(in: text as String, options: [.withTransparentBounds, .withoutAnchoringBounds],
+                                     range: range ?? NSRange(location: 0, length: text.length)) { result, _, stop in
             guard let r = result?.range, r.length > 0, isWhole(r, in: text) else { return }
             limited = ranges.count == limit
             if limited { stop.pointee = true } else { ranges.append(r) }
@@ -542,7 +559,8 @@ nonisolated struct FindQuery: Equatable {
     /// $1… its groups and $$ a dollar sign (JavaScript's).
     func replacement(for range: NSRange, in text: NSString) -> String {
         let replace = Self.unquote(self.replace)
-        guard regexp, let match = expression?.firstMatch(in: text as String, options: .anchored, range: range) else { return replace }
+        guard regexp, let match = expression?.firstMatch(in: text as String,
+            options: [.anchored, .withTransparentBounds, .withoutAnchoringBounds], range: range) else { return replace }
         return replace.replacing(/\$([$&]|\d+)/) { reference in
             let name = reference.1
             if name == "&" { return text.substring(with: match.range) }

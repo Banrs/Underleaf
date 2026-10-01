@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import UserNotifications
 
 /// One open project: its files, the document in the editor, and its builds.
 @Observable
@@ -24,6 +23,8 @@ final class ProjectModel {
     var result: CompileResult?
     /// Bumped whenever a new PDF is on disk, so the viewer reloads.
     var pdfVersion = 0
+    /// Refreshes an open Quick Look item when another app changes its file.
+    var previewRevision = 0
     var pdfURL: URL?
     /// Why the PDF may not match the source (workspace.js `setPdfFreshness`).
     var pdfFreshness: PDFFreshness?
@@ -93,6 +94,7 @@ final class ProjectModel {
     private var saveTask: Task<Void, Never>?
     /// Each save waits for the one before it.
     private var lastSave: Task<Bool, Never>?
+    private var lastSettingsPatch: Task<Bool, Never>?
     private var searchTask: Task<Void, Never>?
     private var analysis: Task<Void, Never>?
     private var highlightToken = 0
@@ -178,7 +180,6 @@ final class ProjectModel {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
             await watchFolder()
-            await refreshSymbols()
             guard !closed else { return }
             if let saved {
                 showLogs = saved.buildPanel
@@ -203,6 +204,7 @@ final class ProjectModel {
             if files != tree, !closed {
                 tree = files
                 analyze()
+                await refreshSymbols()
             }
         } catch {
             if !quietly { report(error, "Couldn’t Read the Project’s Files") }
@@ -217,9 +219,10 @@ final class ProjectModel {
 
     /// Shows the PDF the last build left, if it has pages.
     @discardableResult private func showPDFOnDisk() async -> Bool {
+        let main = settings?.mainFile
         guard let path = try? await core.call("pdf_path", ["id": id], as: String.self) else { return false }
         let url = URL(fileURLWithPath: path)
-        guard await Self.hasPages(url) else { return false }
+        guard await Self.hasPages(url), !closed, settings?.mainFile == main else { return false }
         pdfURL = url
         pdfVersion += 1
         return true
@@ -357,12 +360,15 @@ final class ProjectModel {
     /// Saves now, cancelling the pending autosave: before a file switch, a
     /// close or quit.
     func flush() async -> Bool {
-        saveTask?.cancel()
-        // Until no edit arrived during the write (savequeue.js flushUntilStable).
-        repeat {
+        // A rejected setting reports its error and keeps the committed value.
+        // Repeat if text or another settings patch arrived while either write awaited.
+        while true {
+            saveTask?.cancel()
+            let settings = lastSettingsPatch
+            _ = await settings?.value
             guard await save() else { return false }
-        } while hasUnsavedText
-        return true
+            if !hasUnsavedText, settings == lastSettingsPatch { return true }
+        }
     }
 
     /// Saves now and builds when auto-compile is on, since cancelling the
@@ -389,8 +395,11 @@ final class ProjectModel {
     /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        let folders = Set(tree.flattened.filter(\.isDirectory).map(\.path))
-        var openFileChanged = false, treeChanged = false
+        let entries = tree.flattened
+        let folders = Set(entries.filter(\.isDirectory).map(\.path))
+        let inputExtensions: Set = ["tex", "bib", "sty", "cls", "bst", "tikz", "png", "jpg", "jpeg", "pdf", "eps", "ps", "svg"]
+        let dependencies = Set(entries.filter { !$0.isDirectory && inputExtensions.contains(($0.path as NSString).pathExtension.lowercased()) }.map(\.path))
+        var openFileChanged = false, treeChanged = false, dependencyChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
                 // The folder itself: moved, or FSEvents lost count of it, so the
@@ -398,11 +407,17 @@ final class ProjectModel {
                 let folder = change.path == watcher.folder || change.path == watcher.folder + "/"
                 treeChanged = treeChanged || change.structural && folder
                 openFileChanged = openFileChanged || change.structural && folder && openPath != nil
+                dependencyChanged = dependencyChanged || change.structural && folder
                 continue
             }
+            let components = path.split(separator: "/")
+            guard components.first?.lowercased() != "build", !components.contains(where: { $0.hasPrefix(".") }) else { continue }
             // A folder moves as one change, not one for each file in it.
             openFileChanged = openFileChanged || path == openPath
                 || change.structural && openPath?.hasPrefix(path + "/") == true
+            dependencyChanged = dependencyChanged || (path != openPath || !editsText)
+                && inputExtensions.contains((path as NSString).pathExtension.lowercased())
+                || change.structural && dependencies.contains { $0.hasPrefix(path + "/") }
             let parent = (path as NSString).deletingLastPathComponent
             treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
         }
@@ -414,11 +429,18 @@ final class ProjectModel {
                 await self?.checkDisk()
             }
         }
-        if treeChanged {
+        if treeChanged || dependencyChanged {
             treeReload?.cancel()
             treeReload = Task { [weak self] in
-                guard !Task.isCancelled else { return }
-                await self?.reloadTree(quietly: true)
+                guard !Task.isCancelled, let self else { return }
+                if treeChanged { await reloadTree(quietly: true) }
+                if dependencyChanged, !closed {
+                    writes += 1
+                    if pdfVersion > 0 { pdfFreshness = .edited }
+                    analyze()
+                    await refreshSymbols()
+                    if autoCompile { await compile(auto: true) }
+                }
             }
         }
     }
@@ -430,7 +452,10 @@ final class ProjectModel {
             fileGone(path)
             return
         }
-        guard editsText else { return }
+        guard editsText else {
+            previewRevision += 1
+            return
+        }
         // A save of ours under way: until it lands, the disk still has the text
         // before it, which would read as another app's change.
         if saving { _ = await lastSave?.value }
@@ -522,7 +547,7 @@ final class ProjectModel {
         stopRequested = false
         let saved = await flush()
         let built = writes
-        if saved, !stopRequested {
+        if saved, !stopRequested, !closed {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
                 if closed {
@@ -540,7 +565,6 @@ final class ProjectModel {
                 }
                 if result.failed, !auto || result.pdf == nil { showBuildPanel() }
                 if result.ok, panelTab == .issues, (result.errors + result.warnings).isEmpty { showLogs = false }
-                if !result.stopped { notify(result) }
             } catch {
                 if !auto, !closed { report(error, "Couldn’t Compile") }
             }
@@ -550,24 +574,6 @@ final class ProjectModel {
         let again = saved && !closed ? compileQueued : nil
         compileQueued = nil
         if let again { await compile(auto: again) }
-    }
-
-    private func notify(_ result: CompileResult) {
-        guard !NSApp.isActive else { return }
-        let content = UNMutableNotificationContent()
-        // The system already shows the app's name.
-        content.title = id
-        content.body = switch (result.ok, result.errors.count) {
-        case (true, _): "Compiled in \(result.durationText)"
-        case (false, 0): "Build failed"
-        case (false, 1): "Build failed with 1 error"
-        case (false, let n): "Build failed with \(n) errors"
-        }
-        let center = UNUserNotificationCenter.current()
-        Task {
-            _ = try? await center.requestAuthorization(options: [.alert])
-            try? await center.add(UNNotificationRequest(identifier: "compile.\(id)", content: content, trigger: nil))
-        }
     }
 
     /// A build still running reports and queues nothing, so it can't
@@ -592,13 +598,19 @@ final class ProjectModel {
 
     @discardableResult
     private func patchSettings(_ patch: [String: Any]) async -> Bool {
-        do {
-            settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
-            return true
-        } catch {
-            report(error, "Couldn’t Change the Project’s Settings")
-            return false
+        let previous = lastSettingsPatch
+        let task = Task {
+            _ = await previous?.value
+            do {
+                settings = try await core.call("set_settings", ["id": id, "patch": patch], as: ProjectSettings.self)
+                return true
+            } catch {
+                report(error, "Couldn’t Change the Project’s Settings")
+                return false
+            }
         }
+        lastSettingsPatch = task
+        return await task.value
     }
 
     func setEngine(_ engine: String) async {
@@ -616,7 +628,6 @@ final class ProjectModel {
     }
 
     func setMainFile(_ path: String) async {
-        guard path != settings?.mainFile else { return }
         if await patchSettings(["mainFile": path]) { await mainFileChanged() }
     }
 
@@ -759,6 +770,9 @@ final class ProjectModel {
 
     /// In a temporary folder; the save panel copies it where it goes.
     func exportZip() async throws -> URL {
+        guard await flush() else {
+            throw CoreError(message: "The project wasn’t exported because the open file couldn’t be saved.")
+        }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("\(id).zip")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

@@ -15,8 +15,6 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
-                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
-                .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
                 .buttonStyle(.accessoryBar)

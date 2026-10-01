@@ -69,7 +69,7 @@ final class FolderWatcher {
         }
         guard let stream = FSEventStreamCreate(
             nil, callback, &context, [folder] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            Self.settle, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes))
+            Self.settle, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot))
         else { return }
         FSEventStreamSetDispatchQueue(stream, .main)
         guard FSEventStreamStart(stream) else {

@@ -56,10 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // A save in flight has cleared `dirty` before its write is on disk.
-        guard let project = app.project, project.hasUnsavedText || project.saving else { return .terminateNow }
         Task {
-            let saved = await project.flush()
+            let saved = await app.flushForQuit()
             // Not saved, the quit stops: the window its alert shows in comes back if
             // closing it began the quit.
             if !saved, mainWindow.window?.isVisible != true { mainWindow.showWindow(nil) }
