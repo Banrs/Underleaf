@@ -3,7 +3,7 @@
 ## Status (2026-10-01)
 
 - **Branch `claude/native-finish`:** a PR on `main` after PR #16 (Codex's `codex/finish-native-workflows`, merged). It keeps #16's fixes, rewrites the features it kept at their smallest, and drops the rest.
-- Last full check: TBD
+- **Last full check (2026-10-01, `claude/native-finish`):** the Mac's 64 tests in 17 suites and the CI typecheck, with no Swift warnings; `npm test` (116) and `npm run build`; `cargo fmt --check`, clippy `-D warnings` and 148 Rust tests. On screen (check copies): the toolbar glass, PDF scrolling, rebuilds and find, outline jumps and folding, the build panel, the creation sheets, Find and Replace, zoom limits; the web against `main` at every width (#15's states included).
 - **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
 - **The native frontend study:** https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm.
 - **Owner decisions are marked "(owner's decision)".** Don't reverse one without asking.
