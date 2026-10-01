@@ -1,5 +1,5 @@
-// The shared command surface: the JSON dispatch every non-Tauri host forwards
-// to, and the route table both URL-serving hosts use.
+// The shared command surface: the JSON dispatch every host forwards to, and
+// the route table both URL-serving hosts use.
 
 use std::path::Path;
 

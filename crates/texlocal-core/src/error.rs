@@ -1,8 +1,7 @@
 use std::fmt;
 
-/// An error with a status code attached. The code is not decoration: the
-/// `texlocal://` protocol handler returns it verbatim, and the 4xx/5xx split
-/// decides whether the UI blames the request or the app.
+/// An error with an HTTP status code: the browser server answers with it, and
+/// the FFI reports it as `status`.
 #[derive(Debug, Clone)]
 pub struct CoreError {
     pub status: u16,

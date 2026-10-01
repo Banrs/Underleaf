@@ -399,9 +399,7 @@ impl Service {
     // ---------- dispatch ----------
 
     /// Run a command by name with JSON arguments — the one table a host that
-    /// speaks JSON (the browser server, the native FFI) forwards to. Names and
-    /// argument keys match the desktop commands, so one frontend API table
-    /// serves every host.
+    /// speaks JSON (the browser server, the native FFI) forwards to.
     ///
     /// Only commands whose paths pass through the project boundary belong
     /// here. Anything that takes a host-chosen absolute path (export

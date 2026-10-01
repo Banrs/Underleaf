@@ -111,7 +111,6 @@ fn classify_entry(
     if !target.starts_with(root_canonical) {
         return Ok(None);
     }
-    // Following a directory link can duplicate trees or recurse forever.
     Ok(fs::metadata(entry.path())?
         .is_file()
         .then_some(EntryKind::File))
@@ -652,21 +651,9 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 // ---------- symbols ----------
 
-// Both failure modes here are real and pull in opposite directions, so the
-// decode has to happen before the match, not after.
-//
-// Matching raw bytes in Unicode mode drops an entry outright when the file
-// carries a byte that is not valid UTF-8 — an umlaut in a Latin-1 .bib —
-// because a class like `[^,\s]` cannot step across it. Escaping that with
-// `(?-u)` narrows `\s` to ASCII instead, which swallows a non-breaking
-// space into the captured key (autocomplete then offers a key `\cite`
-// will never match) and drops the entry entirely when one sits between the
-// type and the brace. Reference managers and PDF copy-paste emit those.
-//
-// Decoding first and matching a str gets both right: invalid bytes become
-// U+FFFD and the entry survives, while `\s` keeps its Unicode meaning.
-// `from_utf8_lossy` borrows when the file is already valid UTF-8, the
-// normal case, so then nothing is copied.
+// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
+// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
+// ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());

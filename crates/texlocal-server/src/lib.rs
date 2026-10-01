@@ -207,7 +207,7 @@ impl App {
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
-    /// the same shape as the desktop's `upload_file` invoke; `X-Replace: true`
+    /// the same shape as Tauri's `upload_file` invoke; `X-Replace: true`
     /// moves an entry in its place to the Trash.
     async fn upload(&self, req: Request) -> Response {
         let header = |name: &str| {

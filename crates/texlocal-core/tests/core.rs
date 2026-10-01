@@ -786,8 +786,8 @@ fn a_new_project_holds_its_template_and_default_settings() {
 fn zip_export_skips_its_own_archive_when_the_destination_is_spelled_through_a_link() {
     // The project is reached through one spelling and the destination through
     // another, as when a Save panel hands back /private/var for a data folder
-    // under /var. A lexical comparison missed that and archived the ZIP's own
-    // half-written temporary file into it.
+    // under /var. A lexical comparison would miss that and archive the ZIP's
+    // own half-written temporary file into it.
     let data = data_dir();
     let root = project(data.path(), "zip-alias");
     let aliases = tempfile::tempdir().unwrap();

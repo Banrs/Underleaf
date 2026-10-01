@@ -168,8 +168,8 @@ fn taskkill(pid: u32) -> std::process::Command {
     command
 }
 
-/// Synchronous shutdown kill. On Windows this waits for taskkill because the
-/// app process is about to exit and cannot leave a console helper behind.
+/// Synchronous kill, at quit and when a run is dropped. On Windows it waits for
+/// taskkill, so a quitting app leaves no console helper behind.
 fn kill_pid_tree(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -189,10 +189,8 @@ async fn terminate_pid_tree(pid: u32) {
     let _ = tokio::process::Command::from(taskkill(pid)).status().await;
 }
 
-/// `program` by its full path on `path_env`. With PATH set for the child, std
-/// spawns a bare name by fork and exec rather than posix_spawn, and a forked
-/// child of a multithreaded process (the Mac app, a debugger's) can crash
-/// before its exec. Not found, naming the program, when no PATH entry has it.
+/// `program` by its full path on `path_env`: std forks to spawn a bare name,
+/// and a forked child of a multithreaded process can crash before its exec.
 #[cfg(unix)]
 fn program_path(program: &str, path_env: &str) -> std::io::Result<PathBuf> {
     std::env::split_paths(path_env)

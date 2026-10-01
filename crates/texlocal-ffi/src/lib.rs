@@ -1,6 +1,6 @@
 //! The C ABI the native apps link: one JSON-in, JSON-out call over
 //! `texlocal_core::service`, the same command names and arguments the browser
-//! server and the desktop frontend use. See `include/texlocal.h`.
+//! server uses. See `include/texlocal.h`.
 //!
 //! `tl_call` blocks until the command finishes (a compile can take minutes),
 //! so hosts call it off their UI thread. Concurrent calls from several threads

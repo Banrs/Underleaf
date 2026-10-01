@@ -5,7 +5,7 @@
 //! NSString, .NET strings and JavaScript all count in.
 //!
 //! A port of the web editor's logic (web/src/editor.js) and of CodeMirror's
-//! stex mode, which the web still runs; the fixtures in tests/ hold both to
+//! stex mode, which the web runs; the fixtures in tests/ hold both to
 //! the same answers.
 
 mod catalog;

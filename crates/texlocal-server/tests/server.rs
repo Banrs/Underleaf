@@ -1,5 +1,5 @@
 // The browser host's contract: who may talk to it, and that each route maps
-// onto the shared service with the desktop's semantics.
+// onto the shared service.
 
 use std::sync::Arc;
 
@@ -84,7 +84,7 @@ async fn project_routes_need_the_token_header() {
         );
         assert_eq!(f.app.handle(wrong).await.status, 401, "{target}");
     }
-    // Cookies go to every port on the host, so one is no longer enough.
+    // Cookies go to every port on the host, so one isn't enough.
     let cookie = request(
         "POST",
         "/api/list_projects",

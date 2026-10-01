@@ -48,7 +48,7 @@ void tl_source_free_runs(uint32_t *runs, size_t count);
 
 /* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
  * "insert_symbol", "math_at" or "text", with a JSON object of arguments. Returns the
- * result's JSON, or NULL for an unknown command; free it with tl_free. */
+ * result's JSON, or NULL for an unknown command or arguments; free it with tl_free. */
 char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
 void tl_source_free(TlSource *source);
