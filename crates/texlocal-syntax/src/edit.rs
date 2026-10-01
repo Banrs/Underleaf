@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::{catalog, is, space, utf16, Insertion, Text, TextEdit, TextRange};
+use crate::{catalog, complete, is, space, utf16, Insertion, Text, TextEdit, TextRange};
 
 fn blank(line: &[u16]) -> bool {
     line.iter().all(|&u| space(u))
@@ -97,6 +97,7 @@ pub fn set_heading(text: &Text, caret: u32, command: &str) -> Insertion {
             text: new,
         },
         caret: start + cursor as u32,
+        fields: vec![],
     }
 }
 
@@ -148,17 +149,14 @@ pub fn insert_block(text: &Text, id: &str, selection: TextRange) -> Option<Inser
     // On a line of its own: after text, a line feed first. The template ends
     // with its own.
     let newline = if blank(before) { "" } else { "\n" };
-    let block = format!("{newline}{}", template.replacen("$0", "", 1));
-    let cursor = match template.find("$0") {
-        Some(at) => newline.len() + utf16(&template[..at]),
-        None => utf16(&block),
-    };
+    let (block, fields) = complete::expand(text, selection.start, &format!("{newline}{template}"));
     Some(Insertion {
+        caret: selection.start + fields.first().map_or(utf16(&block) as u32, |f| f.start),
         edit: TextEdit {
             start: selection.start,
             length: selection.length,
             text: block,
         },
-        caret: selection.start + cursor as u32,
+        fields,
     })
 }

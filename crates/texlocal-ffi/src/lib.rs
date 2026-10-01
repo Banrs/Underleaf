@@ -268,8 +268,9 @@ struct SourceArgs {
 
 /// The editing commands, as `texlocal_syntax::SourceDocument` has them:
 /// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
-/// "insert_symbol", "math_at" and "text". Returns the result's JSON (free it with
-/// `tl_free`), or null for an unknown command or arguments.
+/// "insert_symbol", "math_at", "not_prose" (the `selection`'s) and "text".
+/// Returns the result's JSON (free it with `tl_free`), or null for an
+/// unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
@@ -292,6 +293,7 @@ pub unsafe extern "C" fn tl_source_call(
         "insert_block" => json!(doc.insert_block(&a.id, a.selection)),
         "insert_symbol" => json!(doc.insert_symbol(&a.command, a.selection)),
         "math_at" => json!(doc.math_at(a.caret)),
+        "not_prose" => json!(doc.not_prose(a.selection.start, a.selection.length)),
         "text" => json!(doc.text()),
         _ => return std::ptr::null_mut(),
     };

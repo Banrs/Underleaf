@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EditorState } from '@codemirror/state';
-import { CompletionContext } from '@codemirror/autocomplete';
+import { CompletionContext, nextSnippetField } from '@codemirror/autocomplete';
 // Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
 import fixture from '../crates/texlocal-syntax/tests/fixtures/editing.json' with { type: 'json' };
 
 globalThis.addEventListener ??= () => {};
-const { latexCompletions, mathPreviewField, headingLine, blockInsertion } = await import('../web/src/editor.js');
-const { BLOCK_TEMPLATES } = await import('../web/src/latex-data.js');
+const { latexCompletions, mathPreviewField, headingLine, placeBlock } = await import('../web/src/editor.js');
 
 // CodeMirror narrows the options itself; each case names one it must offer.
 test('completion targets the innermost open argument, else a command or entry type', () => {
@@ -35,10 +34,18 @@ test('a heading changes level wherever the outline finds it', () => {
   }
 });
 
-test('a block starts a line of its own, with no blank line before it', () => {
-  for (const [before, id, text, cursor] of fixture.blocks) {
-    assert.deepEqual(blockInsertion(before, BLOCK_TEMPLATES[id]), { text, cursor }, `${id} after ${JSON.stringify(before)}`);
+test('a block starts a line of its own, and Tab goes through its fields', () => {
+  for (const [before, id, text, fields] of fixture.blocks) {
+    const target = { state: EditorState.create({ doc: before, selection: { anchor: before.length } }) };
+    target.dispatch = (tr) => { target.state = tr.state; };
+    placeBlock(target, id);
+    assert.equal(target.state.doc.sliceString(before.length), text, id);
+    const found = [];
+    do {
+      const { from, to } = target.state.selection.main;
+      found.push([from - before.length, to - from]);
+    } while (nextSnippetField(target));
+    assert.deepEqual(found, fields, `${id} after ${JSON.stringify(before)}`);
   }
-  // Without "$0" the caret goes after the block.
-  assert.equal(blockInsertion('', 'x\n').cursor, 2);
+  assert.equal(placeBlock({ state: EditorState.create() }, 'nothing'), false);
 });

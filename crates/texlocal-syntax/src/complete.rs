@@ -86,14 +86,10 @@ pub fn completions(
     }
     // \command, once a letter follows the backslash.
     let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
-    let indentation: String = String::from_utf16_lossy(text.line(line))
-        .chars()
-        .take_while(|&c| c == ' ' || c == '\t')
-        .collect();
     let items = matching(&catalog.commands, m.as_str(), |c| &c.0)
         .into_iter()
         .map(|(name, _, snippet)| {
-            let (text, fields) = expand(snippet, &indentation);
+            let (text, fields) = expand(text, caret, snippet);
             Completion {
                 label: name.clone(),
                 text,
@@ -127,11 +123,15 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
     exact
 }
 
-/// A snippet's text and fields: "#{name}" fields show their name as their
-/// text, and fields with the same name are one; a line after the first
-/// takes the caret line's indentation, and each leading tab one more level
-/// (two spaces, the editor's indent unit).
-fn expand(snippet: &str, indentation: &str) -> (String, Vec<SnippetField>) {
+/// A snippet's text and fields as it goes in at `at`: "#{name}" fields show
+/// their name as their text, and fields with the same name are one; a line
+/// after the first takes `at`'s line's indentation, and each leading tab one
+/// more level (two spaces, the editor's indent unit).
+pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
+    let indentation: String = String::from_utf16_lossy(source.line(source.line_index(at)))
+        .chars()
+        .take_while(|&c| c == ' ' || c == '\t')
+        .collect();
     let (mut text, mut fields, mut names) = (String::new(), Vec::new(), Vec::<&str>::new());
     for (n, line) in snippet.split('\n').enumerate() {
         let tabs = if n == 0 {

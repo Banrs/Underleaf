@@ -1,19 +1,20 @@
 {
   "blocks": {
-    "figure": "\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{$0}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n",
-    "table": "\\begin{table}[h]\n  \\centering\n  \\caption{$0}\n  \\label{tab:}\n  \\begin{tabular}{lcc}\n    \\hline\n     &  &  \\\\\n    \\hline\n  \\end{tabular}\n\\end{table}\n",
-    "equation": "\\begin{equation}\n  $0\n  \\label{eq:}\n\\end{equation}\n",
-    "align": "\\begin{align}\n  $0 \\\\\n\\end{align}\n",
-    "code": "\\begin{verbatim}\n$0\n\\end{verbatim}\n",
-    "itemize": "\\begin{itemize}\n  \\item $0\n\\end{itemize}\n",
-    "enumerate": "\\begin{enumerate}\n  \\item $0\n\\end{enumerate}\n",
-    "description": "\\begin{description}\n  \\item[$0] \n\\end{description}\n"
+    "figure": "\\begin{figure}[h]\n\t\\centering\n\t\\includegraphics[width=0.8\\linewidth]{#{}}\n\t\\caption{#{}}\n\t\\label{fig:#{}}\n\\end{figure}\n",
+    "table": "\\begin{table}[h]\n\t\\centering\n\t\\caption{#{}}\n\t\\label{tab:#{}}\n\t\\begin{tabular}{lcc}\n\t\t\\hline\n\t\t#{} & #{} & #{} \\\\\n\t\t\\hline\n\t\\end{tabular}\n\\end{table}\n",
+    "equation": "\\begin{equation}\n\t#{}\n\t\\label{eq:#{}}\n\\end{equation}\n",
+    "align": "\\begin{align}\n\t#{} \\\\\n\\end{align}\n",
+    "code": "\\begin{verbatim}\n#{}\n\\end{verbatim}\n",
+    "itemize": "\\begin{itemize}\n\t\\item #{}\n\\end{itemize}\n",
+    "enumerate": "\\begin{enumerate}\n\t\\item #{}\n\\end{enumerate}\n",
+    "description": "\\begin{description}\n\t\\item[#{}] #{}\n\\end{description}\n"
   },
   "environments": ["document","abstract","itemize","enumerate","description","figure","table","tabular","array","equation","equation*","align","align*","gather","gather*","multline","cases","matrix","pmatrix","bmatrix","vmatrix","center","flushleft","flushright","quote","quotation","verbatim","lstlisting","minipage","frame","theorem","lemma","proof","definition","corollary","example","remark","algorithm","algorithmic","tikzpicture","thebibliography","titlepage","appendix"],
   "bibEntryTypes": ["article","book","inbook","incollection","inproceedings","conference","manual","mastersthesis","phdthesis","misc","techreport","unpublished","online"],
   "sections": ["part","chapter","section","subsection","subsubsection","paragraph","subparagraph"],
   "citeCommands": ["cite","citep","citet","citeauthor","citeyear","textcite","parencite","autocite"],
   "refCommands": ["ref","eqref","pageref","autoref","cref","Cref","vref"],
+  "nameCommands": ["documentclass","usepackage","RequirePackage","begin","end","label","input","include","includeonly","includegraphics","bibliography","bibliographystyle","addbibresource"],
   "mathEnvironments": ["equation","align","gather","multline","eqnarray","alignat","flalign","xalignat","xxalignat","math","displaymath","dmath","dgroup","darray"],
   "verbatimEnvironments": ["verbatim","verbatim*","Verbatim","Verbatim*","lstlisting","minted","comment"],
   "textCommands": ["text","textrm","textit","textbf","textsf","texttt","textup","textsl","textsc","textmd","textnormal","mbox","hbox","fbox","intertext","shortintertext"],

@@ -11,8 +11,11 @@ struct Fixture {
     headings: Vec<(String, String, String, u32)>,
     math_at: Vec<(String, Option<Preview>)>,
     completions: Vec<(String, bool, Option<u32>, Option<String>)>,
-    blocks: Vec<(String, String, String, u32)>,
+    blocks: Vec<(String, String, String, Fields)>,
 }
+
+/// Each field's start and length, from the block's start, in Tab's order.
+type Fields = Vec<(u32, u32)>;
 
 #[derive(Deserialize)]
 struct Preview {
@@ -100,15 +103,17 @@ fn headings_match_the_web() {
 
 #[test]
 fn blocks_match_the_web() {
-    for (before, id, text, cursor) in fixture().blocks {
+    for (before, id, text, fields) in fixture().blocks {
         let doc = SourceDocument::new(&before);
         let end = units(&before);
         let block = doc.insert_block(&id, range(end, 0)).unwrap();
+        let found: Vec<_> = block.fields.iter().map(|f| (f.start, f.length)).collect();
         assert_eq!(
-            (block.edit.text, block.caret),
-            (text, end + cursor),
+            (block.edit.text, found),
+            (text, fields),
             "{id} after {before:?}"
         );
+        assert_eq!(block.caret, end + block.fields[0].start, "{id}");
     }
     assert!(SourceDocument::new("")
         .insert_block("nothing", range(0, 0))

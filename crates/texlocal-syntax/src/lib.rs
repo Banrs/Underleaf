@@ -13,6 +13,7 @@ mod complete;
 mod edit;
 mod highlight;
 mod maths;
+mod prose;
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,8 @@ pub struct TextEdit {
 pub struct Insertion {
     pub edit: TextEdit,
     pub caret: u32,
+    /// Where Tab goes in a block's text, as in a completion's.
+    pub fields: Vec<SnippetField>,
 }
 
 const NEWLINE: u16 = b'\n' as u16;
@@ -155,6 +158,14 @@ impl SourceDocument {
         self.highlighter.highlights(&self.text, start.min(end), end)
     }
 
+    /// The names in the paragraphs a range touches that commands take
+    /// (packages, citations, labels, files), for a spelling checker to pass
+    /// over, as it passes over what's highlighted but comments.
+    pub fn not_prose(&self, start: u32, length: u32) -> Vec<TextRange> {
+        let end = start.saturating_add(length).min(self.text.len());
+        prose::not_prose(&self.text, start.min(end), end)
+    }
+
     /// What to offer at the caret, if anything: commands after a backslash
     /// (only once a letter follows unless `explicit`, asked for by the user),
     /// the labels, citations or environments an argument takes, or a
@@ -196,7 +207,8 @@ impl SourceDocument {
     }
 
     /// A block by its id (the catalog's `blocks`) in place of the selection,
-    /// on a line of its own; none for an id the catalog hasn't.
+    /// on a line of its own, the caret in its first field; none for an id
+    /// the catalog hasn't.
     pub fn insert_block(&self, id: &str, selection: TextRange) -> Option<Insertion> {
         edit::insert_block(&self.text, id, clamp(selection, self.text.len()))
     }
@@ -219,6 +231,7 @@ impl SourceDocument {
                 text,
             },
             caret,
+            fields: vec![],
         }
     }
 }

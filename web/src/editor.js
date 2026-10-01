@@ -9,7 +9,7 @@ import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightSty
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, findPrevious } from '@codemirror/search';
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippet, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
 import {
@@ -421,14 +421,18 @@ export function latexCompletions(getSymbols) {
   };
 }
 
-// A block template as inserted after `before`, the line's text ahead of the
-// caret, and where the caret goes in it ("$0", else the end). A block starts
-// a line of its own; the template ends with its own newline.
-export function blockInsertion(before, template) {
-  const newline = /\S/.test(before) ? '\n' : '';
-  const at = template.indexOf('$0');
-  const text = newline + template.replace('$0', '');
-  return { text, cursor: at === -1 ? text.length : newline.length + at };
+// A block (latex-data.js BLOCK_TEMPLATES) in place of the selection, as a
+// snippet whose fields Tab goes through; false for an id there is none of.
+// It starts a line of its own; the template ends with its own newline.
+// `target` is the view, or a state and its dispatch.
+export function placeBlock(target, id) {
+  const template = BLOCK_TEMPLATES[id];
+  if (!template) return false;
+  const { from, to } = target.state.selection.main;
+  const line = target.state.doc.lineAt(from);
+  const newline = /\S/.test(line.text.slice(0, from - line.from)) ? '\n' : '';
+  snippet(newline + template)(target, null, from, to);
+  return true;
 }
 
 // A line as a heading of `command` (`section` etc.), or as plain text given
@@ -584,15 +588,8 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: line.from + cursor } });
       view.focus();
     },
-    // Insert a block (latex-data.js BLOCK_TEMPLATES) at the cursor, on a
-    // line of its own; false for an id there is none of.
     insertBlock(id) {
-      const template = BLOCK_TEMPLATES[id];
-      if (!template) return false;
-      const { from, to } = view.state.selection.main;
-      const line = view.state.doc.lineAt(from);
-      const { text, cursor } = blockInsertion(line.text.slice(0, from - line.from), template);
-      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + cursor } });
+      if (!placeBlock(view, id)) return false;
       view.focus();
       return true;
     },
