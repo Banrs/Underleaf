@@ -2,16 +2,13 @@ import SwiftUI
 
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// Files pane's foot so it stays put over the outline. Folded, it's the status bar's
-/// height, and the two read as one bar.
+/// Files pane's foot so it stays put over the outline. It's the status bar's height,
+/// folded or not, so the split's collapse is all that moves.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
     /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    /// How far under the middle of the status bar's height the list puts the title
-    /// (measured, 27.2): it's raised so the two bars' words are level and centred.
-    private static let titleDrop: CGFloat = 1.5
 
     var body: some View {
         List {
@@ -25,11 +22,12 @@ struct OutlineHeader: View {
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
         // Its room under the header too, so a drag from the header has nothing to
-        // autoscroll (scrollDisabled doesn't stop it); the bar shows its top.
+        // autoscroll (scrollDisabled doesn't stop it).
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
-        .offset(y: -Self.titleDrop)
-        .frame(height: app.outlineCollapsed ? BarMetrics.secondaryBarHeight : sidebarListRoom + Self.headerRow,
-               alignment: .top)
+        // The header's row at the bar's foot, over the outline's first row: more room
+        // over the title than under it, as over Files.
+        .offset(y: BarMetrics.secondaryBarHeight - sidebarListRoom - Self.headerRow)
+        .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
     }
 }
 
@@ -92,7 +90,7 @@ struct FilesList: View {
                     Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
                     Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
                     Divider()
-                } else if node.path.hasSuffix(".tex") {
+                } else if isLaTeXFile(node.path) {
                     Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                     Divider()
                 }

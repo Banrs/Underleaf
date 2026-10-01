@@ -160,6 +160,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
+            // Its label says what it will do; with labels shown, sized for either.
+            item.possibleLabels = ["Show PDF", "Hide PDF"]
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -200,6 +202,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                                          trackingMode: .momentary, target: self, action: #selector(math(_:)))
         control.setMenu(NSHostingMenu(rootView: SymbolItems(project: project)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
+        control.setAccessibilityLabel("Math")
         let group = segmentGroup(.math, "Math", control, [MenuCommand.editMath.title, "Symbols"])
         let form = NSMenuItem(title: "Math", action: nil, keyEquivalent: "")
         form.submenu = NSHostingMenu(rootView: Group { [project, inlineMath] in

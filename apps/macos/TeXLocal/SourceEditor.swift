@@ -36,8 +36,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView = scrollView.documentView as! SourceTextView
         super.init()
         let text = textView
-        // The container is sized round the gutter (`SourceTextView.setFrameSize`).
-        text.textContainer?.widthTracksTextView = false
         text.textContainerInset = NSSize(width: 0, height: 4)
         text.allowsUndo = true
         // Spelling underlined in the prose only (below), and nothing
@@ -137,16 +135,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let manager = textView.textLayoutManager, let whole = textView.textRange(NSRange(location: 0, length: offset)) else { return }
-        // Laid out down to the line, so its place is exact rather than estimated.
-        manager.ensureLayout(for: whole)
-        guard let fragment = manager.textLayoutFragment(for: whole.endLocation) else { return }
-        let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textView.textContainerOrigin.y)
-        let clip = scrollView.contentView, insets = scrollView.contentInsets
-        let shown = clip.bounds.height - insets.top - insets.bottom
-        let y = atTop ? frame.minY - insets.top : frame.midY - insets.top - shown / 2
-        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: NSPoint(x: 0, y: y), size: clip.bounds.size)).origin)
-        scrollView.reflectScrolledClipView(clip)
+        guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
+        let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
+        textView.scroll(target.location) { atTop ? $0.minY - insets.top : $0.midY - insets.top - shown / 2 }
     }
 
     /// The first line at least half showing below the toolbar.
@@ -565,11 +556,11 @@ struct FindMatches: Equatable {
     var total = 0
     var limited = false
 
-    /// "3 of 12", "12 matches", "1 of 5000+", "Not found", or nothing before a search.
+    /// "3 of 12", "12 matches", "1 of 5,000+", "Not found", or nothing before a search.
     func label(for query: String) -> String {
         if query.isEmpty { return "" }
         if total == 0 { return String(localized: "Not found") }
-        let count = "\(total)\(limited ? "+" : "")"
+        let count = "\(total.formatted())\(limited ? "+" : "")"
         if index > 0 { return String(localized: "\(index) of \(count)") }
         if limited { return String(localized: "\(count) matches") }
         return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)

@@ -157,14 +157,11 @@ final class AppModel {
         tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
 
-    func create(name: String, template: String) async {
-        do {
-            let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
-            await refresh()
-            await open(info.id)
-        } catch {
-            alert = AppAlert("Couldn’t Create “\(name)”", error)
-        }
+    func create(name: String, template: String) async throws {
+        let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
+        await refresh()
+        // Not awaited: the sheet goes as the project opens, not after its first build.
+        Task { await open(info.id) }
     }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)

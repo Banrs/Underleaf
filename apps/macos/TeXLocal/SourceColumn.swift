@@ -13,9 +13,10 @@ struct SourceColumn: View {
         // text and its place.
         ZStack {
             // On under the toolbar and the find bar, where AppKit draws its
-            // edge effect over the text.
+            // edge effect over the text, and past the columns' toolbar inset
+            // to the window's edge.
             EditorView(editor: project.editor, shown: project.editsText)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: [.top, .trailing])
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
@@ -56,7 +57,8 @@ private struct FilePreview: View {
         .task(id: url) {
             guard isPreviewFile(url.path) else { return }
             let data = await Self.read(url)
-            loaded = (url, data.flatMap(NSImage.init(data:)))
+            // A newer file's read may have finished first.
+            if !Task.isCancelled { loaded = (url, data.flatMap(NSImage.init(data:))) }
         }
     }
 
@@ -108,8 +110,11 @@ struct SourceFindBar: View {
                         .onSubmit { project.replace(all: false) }
                         .onExitCommand { project.closeFind() }
                         .focused($replaceFocused)
-                        // Find and Replace…, whether or not the bar already shows.
+                        // Find and Replace…, whether or not the bar already shows. After
+                        // the update that adds the row: the task starts within it, and
+                        // focus asked for there was lost (27.2).
                         .task(id: project.replaceFocus) {
+                            await Task.yield()
                             if project.replaceFocus > 0 { replaceFocused = true }
                         }
                     HStack {

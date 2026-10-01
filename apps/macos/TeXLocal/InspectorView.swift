@@ -8,7 +8,7 @@ struct InspectorView: View {
     var body: some View {
         Form {
             Section("Project") {
-                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && isLaTeXFile($0.path) }.map(\.path)
                 picker("Main File", project.settings?.mainFile, texFiles.map { ($0, $0) }, set: project.setMainFile)
                 picker("Engine", project.settings?.engine, texEngines, set: project.setEngine)
                 toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",

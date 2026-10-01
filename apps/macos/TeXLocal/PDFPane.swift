@@ -17,11 +17,14 @@ struct PDFPane: View {
         pages
             .onChange(of: controller.page) { _, page in project.pdfPage = page }
             .onChange(of: controller.pageCount) { _, count in project.pdfPageCount = count }
+            .onChange(of: controller.canZoomIn) { _, can in project.pdfCanZoomIn = can }
+            .onChange(of: controller.canZoomOut) { _, can in project.pdfCanZoomOut = can }
             // Keyed on hasPDF too: the URL can arrive after the version.
             .task(id: project.hasPDF ? project.pdfVersion : 0) {
                 let version = project.pdfVersion
                 guard project.hasPDF, let url = project.pdfURL else { return }
-                if let document = await Self.loadDocument(url) { loaded = (version, document) }
+                // A newer version's read may have finished first.
+                if let document = await Self.loadDocument(url), !Task.isCancelled { loaded = (version, document) }
             }
     }
 
@@ -47,7 +50,7 @@ struct PDFPane: View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: [.top, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

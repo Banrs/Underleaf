@@ -93,18 +93,69 @@ final class PDFController {
         view.scaleFactor = heightScale(view)
     }
 
+    /// PDFKit's own search, off the main thread (a first query extracts the text:
+    /// 445 ms in 392 pages), and what it has found.
+    @ObservationIgnored private var search: (document: PDFDocument, query: String, keepingPlace: Bool, found: [PDFSelection])?
+    @ObservationIgnored private var observers: [any NSObjectProtocol] = []
+
+    isolated deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        search?.document.cancelFindString()
+    }
+
     /// Keeping place: a rebuilt PDF's matches, the current one kept where it still
     /// is, and the pages left where they are (a build follows every pause in typing).
     func find(_ value: String, keepingPlace: Bool = false) {
         guard let view, let document = view.document else { return }
-        query = PDFFind.normalize(value)
-        let all = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
+        // Cancelling posts its end at once, unheard as `search` is cleared first.
+        let superseded = search?.document
+        search = nil
+        superseded?.cancelFindString()
+        let query = PDFFind.normalize(value)
+        guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
+        if observers.isEmpty { observeFinds() }
+        search = (document, query, keepingPlace, [])
+        document.beginFindString(query, withOptions: .caseInsensitive)
+    }
+
+    /// PDFKit posts these on the main queue; taken there as posted, so in order.
+    private func observeFinds() {
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: .PDFDocumentDidFindMatch, object: nil, queue: nil) { [weak self] note in
+                nonisolated(unsafe) let note = note
+                MainActor.assumeIsolated { self?.matched(note) }
+            },
+            center.addObserver(forName: .PDFDocumentDidEndFind, object: nil, queue: nil) { [weak self] note in
+                nonisolated(unsafe) let note = note
+                MainActor.assumeIsolated { self?.ended(note) }
+            },
+        ]
+    }
+
+    private func matched(_ note: Notification) {
+        guard note.object as? PDFDocument === search?.document,
+              let match = note.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection else { return }
+        search?.found.append(match)
+        // One more than is kept says there are more.
+        if search?.found.count ?? 0 > PDFFind.maxMatches { search?.document.cancelFindString() }
+    }
+
+    private func ended(_ note: Notification) {
+        guard let search, note.object as? PDFDocument === search.document else { return }
+        self.search = nil
+        found(search.query, search.found, keepingPlace: search.keepingPlace)
+    }
+
+    /// The count stays the last query's until its search ends.
+    private func found(_ query: String, _ all: [PDFSelection], keepingPlace: Bool) {
+        self.query = query
         matches = Array(all.prefix(PDFFind.maxMatches))
         limited = all.count > matches.count
         if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
         matches.forEach { $0.color = .findHighlightColor }
-        view.highlightedSelections = matches.isEmpty ? nil : matches
-        view.clearSelection()
+        view?.highlightedSelections = matches.isEmpty ? nil : matches
+        view?.clearSelection()
         show(scrolling: !keepingPlace)
     }
 
@@ -197,6 +248,15 @@ final class SyncPDFView: PDFView {
         guard let page = document?.page(at: 0) else { return false }
         let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
         return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
+    }
+
+    /// The top of what shows, under the toolbar and the find bar, where `go(to:)` puts
+    /// a destination (in a page break, at the page's edge: a margin off, once).
+    /// `currentDestination` is the view's top, behind them: a rebuilt PDF shown there
+    /// moved down by their height.
+    var shownDestination: PDFDestination? {
+        let top = CGPoint(x: bounds.minX, y: bounds.maxY - safeAreaInsets.top)
+        return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
     }
 
     /// Read on PDFKit's tile queue.
@@ -327,10 +387,10 @@ struct PDFRepresentable: NSViewRepresentable {
         coordinator.watches.forEach { $0.cancel() }
     }
 
-    /// A rebuilt PDF at the same place and zoom, by PDFKit's own destination.
+    /// A rebuilt PDF at the same place and zoom.
     private func show(_ document: PDFDocument, in view: SyncPDFView) {
         // Read before the swap: a page keeps its document only weakly.
-        let place = view.currentDestination.flatMap { destination in
+        let place = view.shownDestination.flatMap { destination in
             destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
         }
         let autoScales = view.autoScales

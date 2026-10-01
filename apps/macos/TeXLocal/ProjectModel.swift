@@ -34,6 +34,9 @@ final class ProjectModel {
     var pdfPage = 0
     /// For Go to Page's range.
     var pdfPageCount = 0
+    /// PDFKit's limits, for View › Zoom In and Zoom Out.
+    var pdfCanZoomIn = true
+    var pdfCanZoomOut = true
     @ObservationIgnored var restorePDFPage: Int?
     var panelTab: PanelTab = .issues
 
@@ -122,7 +125,7 @@ final class ProjectModel {
     }
 
     /// Only LaTeX has an outline, counts and the LaTeX tools.
-    var isLaTeX: Bool { openPath?.hasSuffix(".tex") == true }
+    var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
     /// The caret line's section level.
     var headingLevel: HeadingLevel {
         outline.first { $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
@@ -640,14 +643,10 @@ final class ProjectModel {
 
     // ---------- files ----------
 
-    func createEntry(_ path: String, directory: Bool) async {
-        do {
-            try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
-            await reloadTree()
-            if !directory { await open(path) }
-        } catch {
-            report(error, "Couldn’t Create “\(name(path))”")
-        }
+    func createEntry(_ path: String, directory: Bool) async throws {
+        try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
+        await reloadTree()
+        if !directory { await open(path) }
     }
 
     func renameEntry(_ from: String, to: String) async {
@@ -663,7 +662,7 @@ final class ProjectModel {
             if let openPath, let wasOpen, openPath != wasOpen {
                 // Text or not, LaTeX or not, changed: it opens afresh, as the editor
                 // holds the last text file opened, and the outline is only .tex's.
-                if isTextFile(openPath) != isTextFile(wasOpen) || openPath.hasSuffix(".tex") != wasOpen.hasSuffix(".tex") {
+                if isTextFile(openPath) != isTextFile(wasOpen) || isLaTeXFile(openPath) != isLaTeXFile(wasOpen) {
                     clearOpenFile()
                     await open(openPath, focus: false)
                 } else {
@@ -841,7 +840,8 @@ final class ProjectModel {
 
     /// An outline heading at the top of the source; the keyboard stays where it is.
     func reveal(_ item: OutlineItem) {
-        guard let path = openPath else { return }
+        // Already there: a click chooses the row as it goes down, then taps it.
+        guard let path = openPath, cursorLine != item.line || topLine != item.line else { return }
         Task { await open(path, line: item.line, atTop: true, focus: false) }
     }
 

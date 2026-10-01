@@ -97,6 +97,18 @@ final class WorkspaceLayoutTests {
         } state: { "showing: " + state() }
     }
 
+    /// With labels shown, the PDF toggle keeps the width of its widest title, so
+    /// the items beside it stay put as it changes.
+    @Test func thePDFToggleHoldsRoomForEitherTitle() throws {
+        let workspace = open()
+        let bar = workspace.toolbar!
+        let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: .togglePDF, willBeInsertedIntoToolbar: true))
+        for shown in [true, false] {
+            workspace.project.showPDF = shown
+            #expect(item.possibleLabels.contains(workspace.app.title(.viewTogglePdf, on: workspace.project)))
+        }
+    }
+
     /// The build panel opens at the height kept for it, not at its minimum.
     @Test func thePanelOpensAtItsKeptHeight() async throws {
         PaneSize.panel.store(210)
@@ -161,7 +173,7 @@ final class WorkspaceLayoutTests {
         #expect(isClose(width(workspace.sourceItem) - width(workspace.pdfItem), 80, within: 1.5))
     }
 
-    /// The File Outline's header stays at the files' foot, folded or not. Open, the
+    /// The File Outline's header stays at the files' foot, folded or not, at one height. Open, the
     /// line over it takes the divider's drags; folded, nothing does.
     @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
         let workspace = open()
@@ -185,6 +197,8 @@ final class WorkspaceLayoutTests {
         workspace.app.outlineCollapsed = true
         try await waitUntil { outline.isCollapsed }
         #expect(!header.isHidden)
+        // One height, so the split's collapse is all that moves.
+        #expect(header.view.frame.height == frame.height)
         #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
     }
 

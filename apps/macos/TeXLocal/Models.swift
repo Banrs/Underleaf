@@ -157,6 +157,11 @@ func isTextFile(_ path: String) -> Bool {
     FileKind(path) == .text
 }
 
+/// LaTeX's own tools (the outline, Set as Main File) for `.tex`, in any case, as the core reads it.
+func isLaTeXFile(_ path: String) -> Bool {
+    (path as NSString).pathExtension.lowercased() == "tex"
+}
+
 /// The files previewed in the source column; any other non-text file shows
 /// No Preview there.
 func isPreviewFile(_ path: String) -> Bool {

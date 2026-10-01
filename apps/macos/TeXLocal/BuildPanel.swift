@@ -15,6 +15,9 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
+                // The tabs' and the field's height in both tabs: Copy Log's bezel is
+                // 2 pt taller than Warnings', and the content moved as the tab changed.
+                .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
                 .buttonStyle(.accessoryBar)
@@ -63,12 +66,15 @@ struct BuildPanel: View {
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
-    private var items: [LogItem] {
-        let all = (project.result?.errors ?? []) + (showWarnings ? project.result?.warnings ?? [] : [])
-        guard !filter.isEmpty else { return all }
-        return all.filter { item in
-            item.message.localizedCaseInsensitiveContains(filter)
-                || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
+    /// The issues showing, each by its place in the build's errors then warnings, so
+    /// a row keeps its identity as the filter and Warnings change what shows (LaTeX
+    /// repeats identical warnings).
+    private var items: [(offset: Int, element: LogItem)] {
+        let errors = project.result?.errors ?? []
+        return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
+            (showWarnings || offset < errors.count)
+                && (filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
+                    || (item.file?.localizedCaseInsensitiveContains(filter) ?? false))
         }
     }
 
@@ -92,7 +98,10 @@ struct BuildPanel: View {
                 : text.split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { $0.localizedCaseInsensitiveContains(filter) }
                     .joined(separator: "\n")
+            // On under the status bar, as the issues' list is, its automatic insets
+            // keeping the last line clear.
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
+                .ignoresSafeArea(.container, edges: .bottom)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -102,33 +111,37 @@ struct BuildPanel: View {
 
 /// The errors and warnings; a double-click or Return opens the line.
 private struct IssueList: View {
-    let items: [LogItem]
+    let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
     @State private var selection: Int?
 
     var body: some View {
-        // By position: LaTeX repeats identical warnings.
-        List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
-            IssueRow(item: item)
-        }
+        List(items, id: \.offset, selection: $selection) { IssueRow(item: $0.element) }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: Int.self) { rows in
-            if let row = rows.first {
-                if items[row].file != nil {
-                    Button("Go to Line") { open(items[row]) }
+            if let item = rows.first.flatMap(item) {
+                if item.file != nil {
+                    Button("Go to Line") { open(item) }
                 }
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(items[row].message, forType: .string)
+                    NSPasteboard.general.setString(item.message, forType: .string)
                 }
             }
         } primaryAction: { rows in
-            if let row = rows.first { open(items[row]) }
+            if let item = rows.first.flatMap(item) { open(item) }
         }
         // Edit › Copy copies the selected issue.
-        .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
-        .onChange(of: items) { selection = nil }
+        .copyable(selection.flatMap(item).map { [$0.message] } ?? [])
+        // Kept while its row shows.
+        .onChange(of: items.map(\.offset)) { _, shown in
+            if let selection, !shown.contains(selection) { self.selection = nil }
+        }
+    }
+
+    private func item(_ id: Int) -> LogItem? {
+        items.first { $0.offset == id }?.element
     }
 
     private func open(_ item: LogItem) {

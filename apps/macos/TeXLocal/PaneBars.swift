@@ -6,8 +6,8 @@ enum BarMetrics {
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The status bar and the folded File Outline header share this height, so the
-    /// hairlines over them run on as one (Xcode's status bar).
+    /// The status bar and the File Outline header share this height, so the hairlines
+    /// over them run on as one (Xcode's status bar).
     static let secondaryBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
@@ -222,9 +222,14 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    let submit: () -> Void
+    /// The alert's title if `submit` throws: the sheet stays, with what was typed. Read
+    /// then: the toolbar keeps the button's action from its last change of state.
+    var failure: () -> String = { "" }
+    let submit: () async throws -> Void
     @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
+    @State private var submitting = false
+    @State private var alert: AppAlert?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -255,12 +260,16 @@ struct DialogSheet<Fields: View>: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button(action) {
-                    dismiss()
-                    submit()
+                    submitting = true
+                    Task {
+                        do { try await submit(); dismiss() } catch { alert = AppAlert(failure(), error) }
+                        submitting = false
+                    }
                 }
-                .disabled(!enabled)
+                .disabled(!enabled || submitting)
             }
         }
+        .alert($alert)
     }
 }
 

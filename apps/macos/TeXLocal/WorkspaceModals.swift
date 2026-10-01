@@ -97,9 +97,8 @@ private struct NewEntrySheet: View {
 
     var body: some View {
         DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
-                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/")) {
-            let path = folder.isEmpty ? trimmed : "\(folder)/\(trimmed)"
-            Task { await project.createEntry(path, directory: directory) }
+                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/"), failure: { "Couldn’t Create “\(trimmed)”" }) {
+            try await project.createEntry(folder.isEmpty ? trimmed : "\(folder)/\(trimmed)", directory: directory)
         } fields: {
             TextField("Name", text: $name, selection: $selection)
                 .focused($nameFocused)

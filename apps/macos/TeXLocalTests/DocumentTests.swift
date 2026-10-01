@@ -80,7 +80,8 @@ struct FindTests {
         #expect(FindMatches(index: 3, total: 12).label(for: "loop") == "3 of 12")
         #expect(FindMatches(index: 0, total: 12).label(for: "loop") == "12 matches")
         #expect(FindMatches(index: 0, total: 1).label(for: "loop") == "1 match")
-        #expect(FindMatches(index: 2, total: 1000, limited: true).label(for: "a") == "2 of 1000+")
+        #expect(FindMatches(index: 2, total: 1000, limited: true).label(for: "a") == "2 of 1,000+")
+        #expect(FindMatches(index: 2290, total: 2290).label(for: "a") == "2,290 of 2,290")
         #expect(FindMatches().label(for: "loop") == "Not found")
         #expect(FindMatches().label(for: "").isEmpty)
     }
@@ -166,6 +167,30 @@ struct PDFFitTests {
         #expect(top >= view.bounds.maxY - 0.5, "top \(top)")
     }
 
+    /// Under a toolbar, as in the window: a rebuilt PDF, shown at the destination of
+    /// what showed, doesn't move.
+    @Test func theShownDestinationStaysPut() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                              styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        window.toolbar = NSToolbar()
+        let view = SyncPDFView(frame: try #require(window.contentView).bounds)
+        window.contentView?.addSubview(view)
+        // The scroll view's insets for the toolbar.
+        window.layoutIfNeeded()
+        view.displayMode = .singlePageContinuous
+        view.autoScales = true
+        view.document = try pages(3)
+        view.layoutDocumentView()
+        let clip = try #require(view.documentView?.enclosingScrollView?.contentView)
+        #expect(clip.contentInsets.top > 0)
+        view.go(to: PDFDestination(page: try #require(view.document?.page(at: 1)), at: CGPoint(x: 0, y: 400)))
+        let place = clip.bounds.origin
+        for _ in 0..<3 {
+            view.go(to: try #require(view.shownDestination))
+            #expect(abs(clip.bounds.minY - place.y) < 0.5, "\(clip.bounds.origin) from \(place)")
+        }
+    }
+
     /// Dark paper draws into the tiles: white turns black, and a hue is kept.
     /// The knob follows the paper.
     @Test func darkPaperInvertsTheLightnessOnly() throws {
@@ -217,17 +242,27 @@ struct PDFFindTests {
         return document
     }
 
+    /// PDFKit searches off the main thread and posts what it finds to the main queue.
+    private func found(_ controller: PDFController, in document: PDFDocument) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while controller.matches.first?.pages.first?.document !== document, .now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
-    @Test func aRebuildFindsAgainInPlace() throws {
+    @Test func aRebuildFindsAgainInPlace() async throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.displayMode = .singlePageContinuous
-        view.document = try document(["needle", "filler", "needle", "needle"])
+        let first = try document(["needle", "filler", "needle", "needle"])
+        view.document = first
         let controller = PDFController()
         controller.view = view
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
+        try await found(controller, in: first)
         controller.step(1)
 
         let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
@@ -235,6 +270,7 @@ struct PDFFindTests {
         view.layoutDocumentView()
         let place = try #require(view.documentView).visibleRect
         controller.documentShown()
+        try await found(controller, in: rebuilt)
 
         #expect(controller.finding)
         #expect(controller.matches.count == 4)

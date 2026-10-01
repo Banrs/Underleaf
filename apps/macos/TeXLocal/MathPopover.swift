@@ -8,17 +8,16 @@ import WebKit
 final class MathPopover {
     private let popover = NSPopover()
     private let page = WebPage()
+    private let content: NSHostingController<MathView>
     private var loaded = false
     /// The maths asked for, where, and what the popover shows.
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
 
     init() {
+        content = NSHostingController(rootView: MathView(page: page))
         popover.behavior = .applicationDefined
-        // The popover's material shows through; not focusable, or it takes
-        // the source's keyboard as it shows.
-        popover.contentViewController = NSHostingController(rootView: WebView(page)
-            .webViewContentBackground(.hidden).allowsHitTesting(false).focusable(false))
+        popover.contentViewController = content
         if let folder = Bundle.main.url(forResource: "KaTeX", withExtension: nil) {
             // A failed load leaves it unloaded: no preview.
             _ = Task {
@@ -59,20 +58,21 @@ final class MathPopover {
             // Superseded meanwhile, or closed.
             guard let box, box.count == 2, let wanted, wanted.maths == asked.maths, wanted.size == asked.size else { return }
             rendered = (asked.maths, asked.size)
-            popover.contentSize = NSSize(width: box[0], height: box[1])
+            content.rootView.size = CGSize(width: box[0], height: box[1])
+            popover.contentSize = content.view.fittingSize
             present()
         }
     }
 
     /// The typeset maths in the label colour, as wide as it is (560 pt at
-    /// most, the web's), with the web tooltip's padding.
+    /// most, the web's), with no margin of its own.
     private static let html = """
         <!doctype html><meta charset="utf-8">
         <link rel="stylesheet" href="katex.min.css"><script src="katex.min.js"></script>
         <style>
           :root { color-scheme: light dark; }
           html, body { margin: 0; background: transparent; color: -apple-system-label; }
-          #m { width: max-content; max-width: 560px; padding: 8px 16px; }
+          #m { width: max-content; max-width: 560px; }
           .katex-display { margin: 0; }
         </style>
         <div id="m"></div>
@@ -89,4 +89,19 @@ final class MathPopover {
           }
         </script>
         """
+}
+
+/// The maths in the system's margins, at least as wide as it's tall: a single
+/// letter is a rounded square, not an egg. The popover's material shows
+/// through; not focusable, or it takes the source's keyboard as it shows.
+struct MathView: View {
+    let page: WebPage
+    var size = CGSize.zero
+
+    var body: some View {
+        WebView(page).webViewContentBackground(.hidden).allowsHitTesting(false).focusable(false)
+            .frame(width: size.width, height: size.height)
+            .frame(minWidth: size.height)
+            .padding()
+    }
 }

@@ -70,8 +70,7 @@ final class WorkspaceController: DetentSplitViewController {
         let files = host(FilesList(project: project))
         let filesItem = NSSplitViewItem(viewController: files)
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        // The outline's header, folded or not: its line stands for the divider under it,
-        // and folded, it's level with the status bar's.
+        // The outline's header, folded or not: its line stands for the divider under it.
         outlineBar = accessory(OutlineHeader(), hidden: !showsOutline, footOf: sidebar.splitView)
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         sidebar.header = outlineBar
@@ -119,6 +118,11 @@ final class WorkspaceController: DetentSplitViewController {
 
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
+        // AppKit (27.2) ends the last column's toolbar section at the inspector's glass
+        // divider, half a point inside the window, and gives a section its column's
+        // edge effect only when the scroll view's safe area ends exactly there; short
+        // of it, the section is opaque. The panes still run to the edge.
+        columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -573,11 +577,14 @@ enum ColumnMetrics {
     static let outlineShare: CGFloat = 0.45
     /// The splits' thin dividers (`NSSplitView.DividerStyle.thin`).
     static let divider: CGFloat = 1
-    /// The window's content at its narrowest, source | PDF: a narrowing window folds
-    /// the sidebar first (AppKit's way with sidebars), so two windows tile side by side
-    /// on the smallest Mac display. At its shortest, the columns over the build panel
-    /// and the status bar under its line.
-    static let contentMinimum = CGSize(width: sourceMinimum + divider + pdfMinimum,
+    /// The columns' trailing safe-area inset, for the last column's toolbar section
+    /// (`buildArea`). That column's minimum counts it.
+    static let toolbarInset: CGFloat = 0.5
+    /// The window's content at its narrowest, source | PDF, in the whole points the
+    /// split keeps: a narrowing window folds the sidebar first (AppKit's way with
+    /// sidebars), so two windows tile side by side on the smallest Mac display. At its
+    /// shortest, the columns over the build panel and the status bar under its line.
+    static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + toolbarInset).rounded(.up),
                                        height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight)
 }
 
