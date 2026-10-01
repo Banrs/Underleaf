@@ -141,7 +141,8 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
 /// The project file `\input{name}` reads: name.tex, which TeX tries first, or name.
 fn resolve(root: &Path, name: &str) -> Option<String> {
     let name = name.trim();
-    [format!("{name}.tex"), name.to_owned()]
+    let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+    [tex, name.to_owned()]
         .into_iter()
         .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
 }

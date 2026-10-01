@@ -39,3 +39,13 @@ fn inputs_accept_texs_unbraced_names() {
     let titles: Vec<_> = analysis.outline.iter().map(|h| h.title.as_str()).collect();
     assert_eq!(titles, ["Main", "Chapter", "End"]);
 }
+
+#[test]
+fn inputs_do_not_append_a_second_tex_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("main.tex"), "\\input{part.tex}").unwrap();
+    fs::write(dir.path().join("part.tex"), "\\section{Part}").unwrap();
+    fs::write(dir.path().join("part.tex.tex"), "\\section{Wrong}").unwrap();
+    let analysis = analyze_project(dir.path(), "main.tex", "main.tex");
+    assert_eq!(analysis.outline[0].title, "Part");
+}
