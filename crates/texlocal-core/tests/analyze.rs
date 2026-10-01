@@ -25,3 +25,17 @@ fn open_file_aliases_keep_the_whole_document() {
         );
     }
 }
+
+#[test]
+fn inputs_accept_texs_unbraced_names() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("main.tex"),
+        "\\section{Main}\n\\input chapter\n\\section{End}",
+    )
+    .unwrap();
+    fs::write(dir.path().join("chapter.tex"), "\\section{Chapter}\nbody").unwrap();
+    let analysis = analyze_project(dir.path(), "main.tex", "main.tex");
+    let titles: Vec<_> = analysis.outline.iter().map(|h| h.title.as_str()).collect();
+    assert_eq!(titles, ["Main", "Chapter", "End"]);
+}

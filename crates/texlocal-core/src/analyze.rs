@@ -42,7 +42,7 @@ static COMMENT: LazyLock<Regex> =
 // A file read in place, as TeX's \input, LaTeX's \include and \subfile read it.
 static INPUT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\\(?:input|include|subfile)[{JS_SPACE}]*\{{([^{{}}]+)\}}"
+        r"\\(?:(?:input|include|subfile)[{JS_SPACE}]*\{{([^{{}}]+)\}}|input[{JS_SPACE}]+([^{{}}\\%{JS_SPACE}]+))"
     ))
     .unwrap()
 });
@@ -177,7 +177,7 @@ fn add(
         let code = code(line);
         into.words += words(code);
         for m in INPUT.captures_iter(code) {
-            input(into, &m[1]);
+            input(into, m.get(1).or_else(|| m.get(2)).unwrap().as_str());
         }
     }
     lines
