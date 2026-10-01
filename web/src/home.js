@@ -1,6 +1,4 @@
-// The project picker: a recent-documents surface, not a web dashboard. One
-// grouped list of projects, a toolbar row that doubles as the window's drag
-// region, and no floating decoration.
+// The project picker: a recent-documents surface, not a web dashboard.
 
 import { api } from './api.js';
 import { platform, trashName, deleteLabel } from './bridge.js';
@@ -130,8 +128,6 @@ export async function renderHome() {
   const banner = el('div');
   const reload = () => renderHome();
 
-  // Welcome-window layout (the Xcode pattern): branding and primary actions on
-  // the leading side, the recents list filling the trailing side — no dead space.
   app.replaceChildren(
     el('div', { class: 'home' },
       el('header', { class: 'titlebar home-titlebar', 'data-tauri-drag-region': 'deep' },

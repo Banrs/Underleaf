@@ -4,8 +4,8 @@
 import { bridge as ipc } from './bridge.js';
 
 // Upload metadata travels in headers, which carry bytes rather than text, so a
-// UTF-8 filename has to be escaped into ASCII to survive the trip. The Rust
-// side percent-decodes it back (`upload_file` in commands.rs).
+// UTF-8 filename has to be escaped into ASCII to survive the trip. Each host's
+// `upload_file` percent-decodes it back.
 const enc = encodeURIComponent;
 
 export const api = ipc && {

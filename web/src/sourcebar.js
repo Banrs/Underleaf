@@ -1,9 +1,8 @@
-// The bar over the source, after Overleaf's editor toolbar and the macOS
-// app's (apps/macos/TeXLocal/SourceBars.swift): history; the section level
-// of the caret's line; bold and italic; math and symbols; links, references
-// and citations; figures and tables; lists; then the rest in a menu. Narrow
-// panes fold groups into that menu from the end. Under it, a location row:
-// project › folders › file › section.
+// The bar over the source, after Overleaf's editor toolbar: history; the
+// section level of the caret's line; bold and italic; math and symbols; links,
+// references and citations; figures and tables; lists; then the rest in a menu.
+// Narrow panes fold groups into that menu from the end. Under it, a location
+// row: project › folders › file › section.
 
 import { el, menuUnder, popoverUnder } from './dom.js';
 import { icon } from './icons.js';

@@ -1,13 +1,11 @@
-// One command model behind the native menu bar, keyboard shortcuts, and toolbar
-// buttons. A command is declared once — with its title, accelerator, run
-// function, and an `enabled` predicate — and every surface reads from here, so a
-// disabled command is disabled everywhere and a shortcut can't drift from its
-// menu item.
+// One command model behind the menu bar, keyboard shortcuts, and toolbar
+// buttons: a command is declared once, so a disabled command is disabled
+// everywhere and a shortcut can't drift from its menu item.
 
 import { bridge as ipc, isMac } from './bridge.js';
 
-// Every command's accelerator, one table the browser UI and the native apps
-// (their menus' shared chords) all read.
+// Every command's accelerator. The Mac reads this table too; Windows' copy is
+// checked against it (test/protocol.test.js).
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 
 export { SHORTCUTS };
@@ -53,8 +51,7 @@ const MENU = [
   },
 ];
 
-// Native menus keep readable labels even when a view has not registered the
-// command (those entries remain disabled, but should never expose internal IDs).
+// Labels for menu items whose command no view has registered (they show disabled).
 const FALLBACK_TITLES = {
   'project.new': 'New Project…',
   'file.new': 'New File…',
@@ -134,12 +131,8 @@ export function runCommand(id) {
   return true;
 }
 
-// Push the current menu spec + enabled state to the shell, which owns the
-// actual native menu. Called when app state changes (project opened, compile
-// started, PDF loaded) to re-evaluate every `enabled`/`checked` predicate.
-// Most refreshes (every appearance change, a compile
-// finishing the same way it started) leave the spec as it was; those skip the
-// IPC round trip and the shell's per-item native setters entirely.
+// Push the menu spec to the shell, which owns the native menu, whenever state
+// changes; an unchanged spec skips the IPC round trip.
 let lastSpec = '';
 export function refreshCommands() {
   const spec = MENU.map((m) => ({
@@ -231,12 +224,11 @@ const nativeMenu = () => ipc?.kind !== 'browser';
 // interface size of our own would only stack on top of it.
 const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
 
-// A native menu owns its accelerators, so on the desktop nothing here listens
-// for keys — handling them a second time would fire every command twice. In a
-// browser the listener runs in the capture phase, ahead of the editor's own
-// keymap, which is the order a native menu's key equivalents take too.
-// `nativeOnly` commands are left out: the editor's keymap has them already,
-// and catching them here would make Ctrl+Z in a search field undo the editor.
+// A native menu owns its accelerators; listening here too would run each
+// command twice. In a browser this capture-phase listener runs ahead of the
+// editor's keymap, as a menu's key equivalents would. `nativeOnly` commands are
+// the editor keymap's: caught here, Ctrl+Z in a search field would undo the
+// editor.
 export function installMenuBridge() {
   if (nativeMenu()) {
     ipc?.onCommand?.((id) => runCommand(id));

@@ -1,7 +1,7 @@
 // The pdf.js viewer as a page of its own, for the Windows app: Windows has no
 // native PDF view with selectable text and find, so the same PdfViewer the
-// browser UI uses renders here while native controls drive it. (macOS uses
-// PDFKit instead.) Same host contract as embed/editor.js.
+// browser UI uses renders here while native controls drive it. Same host
+// contract as embed/editor.js.
 
 import { PdfViewer } from '../pdfview.js';
 import { post, forwardHostKeys } from './channel.js';

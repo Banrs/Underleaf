@@ -65,10 +65,7 @@ export function migratePrefs() {
     if (v !== null && localStorage.getItem(to) === null) localStorage.setItem(to, map ? map(v) : v);
     if (v !== null) localStorage.removeItem(from);
   }
-  // `pdfdark: auto|on|off` became `pdfPaper: white|dark|auto`. The old scheme
-  // DEFAULTED to auto (dark paper in dark mode); white paper is the new default
-  // and dark is an explicit reading preference — so only an explicit "on"
-  // carries over, and the old implicit auto resets to white.
+  // The old `pdfdark` carries over only an explicit "on"; its default (auto) becomes white.
   const old = localStorage.getItem('texlocal-pdfdark');
   if (old !== null && localStorage.getItem(k('pdfPaper')) === null) {
     localStorage.setItem(k('pdfPaper'), old === 'on' ? 'dark' : 'white');
@@ -92,10 +89,8 @@ function resolveTheme() {
     : mode;
 }
 
-// The one appearance-change hook: whoever owns theme-sensitive components
-// (CodeMirror, sidebar chrome) registers here, and applyAppearance always
-// notifies it — including on system theme changes. Returns the previous
-// handler so a temporary owner (the workspace) can restore it on teardown.
+// The one appearance-change hook. Returns the previous handler, so the
+// workspace can restore it on teardown.
 let onThemeChange = () => {};
 export function setAppearanceHandler(fn) {
   const prev = onThemeChange;
@@ -110,11 +105,8 @@ function pdfPaperIsDark() {
   return mode === 'dark' || (mode === 'auto' && document.documentElement.dataset.theme === 'dark');
 }
 
-// White on the accent is what every platform draws, and it stays white here for
-// the same reason: maximising contrast would put a black label on the tokens'
-// own blue (5.97:1 against 3.52:1), which no desktop does. The label only flips
-// where white genuinely fails — a yellow or pale accent — using WCAG's 3:1 floor
-// for user-interface components.
+// White on the accent, as every platform draws it; black only where white
+// fails WCAG's 3:1 for interface components (docs/design-tokens.md).
 export function onAccent(hex) {
   const [r, g, b] = [1, 3, 5].map((i) => {
     const v = parseInt(hex.slice(i, i + 2), 16) / 255;
@@ -124,10 +116,8 @@ export function onAccent(hex) {
   return 1.05 / (l + 0.05) >= 3 ? '#ffffff' : '#000000';
 }
 
-// The accent the user picked system-wide, once the host has reported it. Set on
-// the root element so it wins over both the light and the dark token block — a
-// person chooses one accent, not one per appearance. It replaces both the text
-// accent and the fill that filled controls use.
+// The system accent, once the host reports it: inline on the root, so it wins
+// over the light and the dark tokens alike.
 export function applyAccent(hex) {
   const root = document.documentElement;
   root.style.setProperty('--accent', hex);
@@ -135,7 +125,6 @@ export function applyAccent(hex) {
   root.style.setProperty('--on-accent', onAccent(hex));
 }
 
-// Applies every appearance preference to the document.
 export function applyAppearance() {
   const root = document.documentElement;
   root.dataset.theme = resolveTheme();

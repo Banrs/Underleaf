@@ -41,9 +41,8 @@ function remapPath(candidate, from, to) {
 
 // ---------- construction ----------
 
-// `titlebarTrailing` is the sidebar-toggle button. On macOS the traffic lights
-// occupy the leading end of this band (see the UI kit's Left Pane), so the
-// toggle sits at its trailing end exactly as in a native sidebar window.
+// `titlebarTrailing` is the sidebar toggle, at the band's trailing end: the
+// Tauri Mac window's traffic lights take the leading end.
 export function buildSidebar(callbacks, titlebarTrailing) {
   host = callbacks;
   loadOpenDirs();

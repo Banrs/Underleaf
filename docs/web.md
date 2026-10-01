@@ -1,7 +1,7 @@
 # The web UI
 
 `web/` is the browser version, the Tauri app while it still ships, and the two
-pages the native apps embed (`web/embed`). The project-wide picture is in
+pages the Windows app embeds (`web/embed`). The project-wide picture is in
 `HANDOFF.md`; this file keeps the web UI's own rules. Refactor where
 responsibilities are mixed, but don't add a component framework or small
 abstractions that only add lines.
@@ -25,9 +25,9 @@ abstractions that only add lines.
   status text uses `--red-text`, `--orange-text` and `--green-text`.
 - **The menu bar works as a web menu does:** ARIA state, arrow keys and Tab, a
   trigger that toggles its menu. Recent projects are real links.
-- **The source bar matches the Mac's** (`web/src/sourcebar.js`): the same groups
-  and order, folding into ⋯ from the end, the location row under it, and
-  symbols wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in
+- **The source bar** (`web/src/sourcebar.js`), after Overleaf's: its groups
+  fold into ⋯ from the end, the location row sits under it, and symbols are
+  wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in
   `web/src/editor.js`). Files sit over a docked File Outline with a resizable
   divider (`outlineHeight`); the outline follows the top visible line.
 - **Builds:** Compile is Stop while a build runs (`stop_compile`; anything
@@ -63,8 +63,8 @@ WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 - A light variant of One Dark for Syntax Colors.
 - The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
   WebKit that also lets the system's smart dashes and quotes rewrite LaTeX
-  (`--` became an em dash in the Mac app, which turns it off in its embed
-  page). Check Safari with Substitutions on before keeping it.
+  (`--` becomes an em dash). Check Safari and the Tauri Mac app with
+  Substitutions on before keeping it.
 
 ## Parked
 

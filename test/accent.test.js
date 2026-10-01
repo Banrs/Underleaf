@@ -6,7 +6,7 @@ import { onAccent } from '../web/src/prefs.js';
 // the label drawn on top of it has to survive that.
 
 test('white stays the label on the accents desktops actually ship', () => {
-  assert.equal(onAccent('#0088ff'), '#ffffff'); // the tokens' own blue
+  assert.equal(onAccent('#0088ff'), '#ffffff'); // the kit's blue
   assert.equal(onAccent('#0091ff'), '#ffffff'); // and its dark-mode variant
   assert.equal(onAccent('#9b2393'), '#ffffff'); // purple
   assert.equal(onAccent('#ff383c'), '#ffffff'); // red

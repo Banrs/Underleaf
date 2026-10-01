@@ -34,10 +34,8 @@ let pdfFindGeneration = 0;
 const saveQueue = createSaveQueue();
 
 // Editor states of recently open files, so switching back restores the undo
-// history, selection, and scroll position instead of rebuilding from scratch.
-// An entry is only reused when the file on disk still matches its document
-// (openFile saves before switching away, so they match unless something else
-// wrote the file); a mismatch just falls back to a fresh editor.
+// history, selection, and scroll position. An entry is reused only while the
+// file on disk still matches its document.
 const EDITOR_CACHE_MAX = 8;
 const editorStateCache = new Map();   // path → { state, scrollTop }
 
@@ -103,11 +101,8 @@ export async function renderWorkspace(id) {
 
   buildChrome(id);
   disposeCommands = registerCommands(commandDefs());
-  // The interface scale is applied as `zoom` on the body, and no ResizeObserver
-  // reports that — measured in Chromium, an element's own CSS box is unchanged
-  // by it. So a scale change has to ask for the re-render itself, or the PDF
-  // keeps the pixel buffer it was rendered at and stays soft until something
-  // unrelated re-renders it.
+  // No ResizeObserver reports the body's `zoom` (an element's CSS box is
+  // unchanged by it), so a scale change re-renders the PDF, or it stays soft.
   let lastScale = prefs.uiScale;
   const previousHandler = setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
@@ -167,9 +162,7 @@ function buildChrome(id) {
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // The chrome doubles as the window's title bar. Tauri reads the attribute
-  // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
-  // and other interactive elements on its own.
+  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
@@ -330,7 +323,6 @@ function iconButton(commandId, glyph, size = '') {
   }, icon(glyph));
 }
 
-// Reflect command state onto every toolbar button that maps to a command.
 export function syncToolbarState() {
   for (const b of document.querySelectorAll('[data-command]')) {
     const id = b.dataset.command;
@@ -360,8 +352,7 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
-// Their accelerators are the shared table's (shortcuts.json), which the
-// native apps read too.
+// Their accelerators are the shared table's (shortcuts.json).
 function commandDefs() {
   return [
     { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
@@ -696,10 +687,7 @@ async function compile({ auto = false } = {}) {
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
-    // A build compiles past its errors, as Overleaf's do, and `pdf` is set
-    // whenever this run wrote one: the PDF shows, errors or not, with the
-    // count on the log button. The log takes the PDF's place only when a
-    // failed build left nothing to show.
+    // The log takes the PDF's place only when a failed build left none (docs/web.md).
     const failed = !result.ok && !result.stopped;
     state.logOpen = failed && !result.pdf;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });
