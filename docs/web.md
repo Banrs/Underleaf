@@ -1,7 +1,7 @@
 # The web UI
 
 `web/` is the browser version, the Tauri app while it still ships, and the two
-pages the native apps embed (`web/embed`). The project-wide picture is in
+pages the Windows app embeds (`web/embed`). The project-wide picture is in
 `HANDOFF.md`; this file keeps the web UI's own rules. Refactor where
 responsibilities are mixed, but don't add a component framework or small
 abstractions that only add lines.
@@ -25,9 +25,9 @@ abstractions that only add lines.
   status text uses `--red-text`, `--orange-text` and `--green-text`.
 - **The menu bar works as a web menu does:** ARIA state, arrow keys and Tab, a
   trigger that toggles its menu. Recent projects are real links.
-- **The source bar matches the Mac's** (`web/src/sourcebar.js`): the same groups
-  and order, folding into ⋯ from the end, the location row under it, and
-  symbols wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in
+- **The source bar** (`web/src/sourcebar.js`), after Overleaf's: its groups
+  fold into ⋯ from the end, the location row sits under it, and symbols are
+  wrapped in `$…$` outside math (`insertSymbol`, `mathModeAt` in
   `web/src/editor.js`). Files sit over a docked File Outline with a resizable
   divider (`outlineHeight`); the outline follows the top visible line.
 - **Builds:** Compile is Stop while a build runs (`stop_compile`; anything
@@ -43,8 +43,6 @@ abstractions that only add lines.
   not overwrite desktop visibility/width preferences. Saved widths are clamped
   to available space; separators support arrows (Shift for larger steps) and
   Home/End. Hidden panes are inert and return focus to a visible control.
-- **Sidebar density:** retain the compact 20 px desktop section band/accessories;
-  narrow overlays use 36 px bands and 28 px action targets.
 - **Small surfaces:** menus/popovers scroll within zoom-correct viewport bounds;
   settings stack by dialog width; symbol arrow keys follow the rendered grid.
 
@@ -59,14 +57,27 @@ WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 
 ## Open
 
+- **The owner finds the web over-spaced and has deferred web UI work.** A
+  spacing pass should start from PR #15's 36 px section headers, 28 px action
+  buttons and paddings.
+- Dead CSS rules: `.sidebar.collapsed + .divider` and
+  `.workspace.pdf-collapsed > .divider-sync` (PR #15 hides those dividers with
+  `hidden`).
+- `texfolder.js` marks `.folder-root.selected` with a class and no ARIA state.
+- Esc or Cancel on a dialog opened from a menu item sends focus to body.
+- The sidebar divider's grab zone right of its line is covered by the editor
+  pane.
+- Switching to Preview at 390 px lands on the last PDF page.
+- `workspace.js` passes a dead `onOpenFileGone` to `buildSidebar`.
+- `prefs.js` `migratePrefs` still migrates pre-1.0 keys.
 - The outline has no per-section folding.
 - Profile before changing: long-document text-layer rendering, re-renders
   while resizing, and whole-body CSS zoom for the interface scale.
 - A light variant of One Dark for Syntax Colors.
 - The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
   WebKit that also lets the system's smart dashes and quotes rewrite LaTeX
-  (`--` became an em dash in the Mac app, which turns it off in its embed
-  page). Check Safari with Substitutions on before keeping it.
+  (`--` becomes an em dash). Check Safari and the Tauri Mac app with
+  Substitutions on before keeping it.
 
 ## Parked
 

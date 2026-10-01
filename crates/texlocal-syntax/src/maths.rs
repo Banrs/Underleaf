@@ -177,6 +177,16 @@ static NUMBERING: LazyLock<Regex> =
 /// name if it's one, and its body.
 type Block<'a> = (usize, usize, Option<&'a str>, &'a str);
 
+fn paired_block<'a>(re: &Regex, window: &'a str, at: usize) -> Option<Block<'a>> {
+    re.captures_iter(window)
+        .map(|c| {
+            let whole = c.get(0).unwrap();
+            (whole.start(), whole.end(), None, c.get(1).unwrap().as_str())
+        })
+        .take_while(|b| b.0 <= at)
+        .find(|b| at <= b.1)
+}
+
 /// The maths the caret is in or just after: the first display block that
 /// holds it (a maths environment, then $$…$$, then \[…\]), else $…$ on its
 /// line. Only 20,000 units either side are read. None when it holds no TeX.
@@ -194,27 +204,17 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
             display,
         })
     };
-    let pairs = |re: &'static Regex| {
-        re.captures_iter(&window).map(|c| {
-            let whole = c.get(0).unwrap();
-            (whole.start(), whole.end(), None, c.get(1).unwrap().as_str())
-        })
-    };
-    let kinds: [Box<dyn Iterator<Item = Block<'_>> + '_>; 3] = [
-        Box::new(environments(&window)),
-        Box::new(pairs(&DOLLARS)),
-        Box::new(pairs(&BRACKETS)),
-    ];
-    for blocks in kinds {
-        if let Some((start, _, environment, body)) =
-            blocks.take_while(|b| b.0 <= at).find(|b| at <= b.1)
-        {
-            return preview(
-                from + utf16(&window[..start]),
-                preview_tex(environment, body),
-                true,
-            );
-        }
+    let block = environments(&window)
+        .take_while(|b| b.0 <= at)
+        .find(|b| at <= b.1)
+        .or_else(|| paired_block(&DOLLARS, &window, at))
+        .or_else(|| paired_block(&BRACKETS, &window, at));
+    if let Some((start, _, environment, body)) = block {
+        return preview(
+            from + utf16(&window[..start]),
+            preview_tex(environment, body),
+            true,
+        );
     }
     // Inline: single, unescaped dollars on the caret's line, paired in order.
     let index = text.line_index(caret);

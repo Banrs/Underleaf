@@ -7,7 +7,6 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    let controller: PDFController
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @Environment(\.colorScheme) private var colorScheme
     /// The document read for a `pdfVersion`.
@@ -15,16 +14,12 @@ struct PDFPane: View {
 
     var body: some View {
         pages
-            .onChange(of: controller.page) { _, page in project.pdfPage = page }
-            .onChange(of: controller.pageCount) { _, count in project.pdfPageCount = count }
             // Keyed on hasPDF too: the URL can arrive after the version.
             .task(id: project.hasPDF ? project.pdfVersion : 0) {
                 let version = project.pdfVersion
                 guard project.hasPDF, let url = project.pdfURL else { return }
-                if let document = await Self.loadDocument(url) {
-                    guard !Task.isCancelled, project.hasPDF, project.pdfVersion == version else { return }
-                    loaded = (version, document)
-                }
+                // A newer version's read may have finished first.
+                if let document = await Self.loadDocument(url), !Task.isCancelled { loaded = (version, document) }
             }
     }
 
@@ -48,7 +43,7 @@ struct PDFPane: View {
     @ViewBuilder
     private var pages: some View {
         if project.pdfVersion > 0 {
-            PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
+            PDFRepresentable(project: project, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
                 .ignoresSafeArea(.container, edges: [.top, .trailing])
         } else {

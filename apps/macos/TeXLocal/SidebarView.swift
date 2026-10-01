@@ -2,15 +2,13 @@ import SwiftUI
 
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// Files pane's foot so it stays put over the outline. Its height stays level with
-/// the status bar, whether the outline is folded or revealed.
+/// Files pane's foot so it stays put over the outline. It's the status bar's height,
+/// folded or not, so the split's collapse is all that moves.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
     /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    /// Native sidebar headers sit near the next row, with more room above the title.
-    private static let titleDrop: CGFloat = sidebarListRoom + headerRow - BarMetrics.secondaryBarHeight
 
     var body: some View {
         List {
@@ -20,13 +18,16 @@ struct OutlineHeader: View {
             }
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("File Outline Header")
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
         // Its room under the header too, so a drag from the header has nothing to
-        // autoscroll (scrollDisabled doesn't stop it); the bar shows its top.
+        // autoscroll (scrollDisabled doesn't stop it).
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
-        .offset(y: -Self.titleDrop)
+        // The header's row at the bar's foot, over the outline's first row: more room
+        // over the title than under it, as over Files.
+        .offset(y: BarMetrics.secondaryBarHeight - sidebarListRoom - Self.headerRow)
         .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
     }
 }
@@ -51,8 +52,7 @@ struct FilesList: View {
     @State private var rowTargeted: TreeNode?
 
     var body: some View {
-        // Two lists: one list diffed from the tree to grouped hits and back
-        // kept stale rows.
+        // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
         if project.isSearching { results } else { files }
     }
 
@@ -66,7 +66,7 @@ struct FilesList: View {
     private var files: some View {
         List(selection: $selection) {
             Section {
-                TreeRows(nodes: project.tree, expanded: $expanded) { node in
+                TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) }) { node in
                     row(node).tag(node.path)
                 }
             } header: {
@@ -82,6 +82,7 @@ struct FilesList: View {
             }
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("Files")
         // The clicked row's menu, which leaves the selection (and the open file) as
         // it is; on the list's empty space, the list's own.
         .contextMenu(forSelectionType: String.self) { paths in
@@ -92,6 +93,7 @@ struct FilesList: View {
                     Divider()
                 } else if isLaTeXFile(node.path) {
                     Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
+                        .disabled(node.path == project.settings?.mainFile)
                     Divider()
                 }
                 ItemMenuItems(actions: actions(node))
@@ -116,7 +118,19 @@ struct FilesList: View {
                 }
             }
         }
-        .onChange(of: project.openPath, initial: true) { _, path in selection = path }
+        .onChange(of: project.openPath, initial: true) { _, path in
+            selection = path
+            // The open file's folders open, so its row shows.
+            var folder = ((path ?? "") as NSString).deletingLastPathComponent
+            while !folder.isEmpty { expanded.insert(folder); folder = (folder as NSString).deletingLastPathComponent }
+        }
+        // Return renames the chosen item, as in Finder: after the key event, through
+        // which the list keeps the keyboard from the field.
+        .onKeyPress(.return) {
+            guard rename.id == nil, let node = project.tree.flattened.first(where: { $0.path == selection }) else { return .ignored }
+            Task { actions(node).rename() }
+            return .handled
+        }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
             project.tree.flattened.first { $0.path == path }.map(actions)
@@ -129,20 +143,22 @@ struct FilesList: View {
                     moveToTrash: { Task { await project.deleteEntry(node.path) } })
     }
 
-    /// Choosing a hit opens it; double-clicking or Return opens the chosen one again.
+    /// Choosing a hit shows it and leaves the keyboard in the list; double-clicking
+    /// or Return goes into the source there.
     private var results: some View {
         List(selection: $hit) { searchResults }
             .listStyle(.sidebar)
-            .onChange(of: hit) { _, id in open(id) }
-            .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first) }
+            .accessibilityLabel("Search Results")
+            .onChange(of: hit) { _, id in open(id, focus: false) }
+            .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
             .overlay {
                 if project.searchHits?.isEmpty == true { ContentUnavailableView.search(text: project.searchQuery) }
             }
     }
 
-    private func open(_ id: SearchHit.ID?) {
+    private func open(_ id: SearchHit.ID?, focus: Bool) {
         if let found = project.searchHits?.first(where: { $0.id == id }) {
-            Task { await project.open(found.file, line: found.line) }
+            Task { await project.open(found.file, line: found.line, focus: focus) }
         }
     }
 
@@ -192,7 +208,7 @@ struct FilesList: View {
                         .foregroundStyle(.yellow)
                         .imageScale(.small)
                         .help("Main File")
-                        .accessibilityLabel("Main File")
+                        .accessibilityHidden(true)
                 }
             }
         } icon: {
@@ -221,22 +237,19 @@ struct FilesList: View {
     }
 }
 
-/// The file tree, each folder open or closed as `expanded` has it.
-private struct TreeRows<Row: View>: View {
-    let nodes: [TreeNode]
-    @Binding var expanded: Set<String>
-    @ViewBuilder let row: (TreeNode) -> Row
+/// A tree's rows, each with children a disclosure group, open as `isExpanded` says:
+/// the files and the outline.
+private struct TreeRows<Node: Identifiable, Row: View>: View {
+    let nodes: [Node]
+    let children: (Node) -> [Node]?
+    let isExpanded: (Node) -> Binding<Bool>
+    @ViewBuilder let row: (Node) -> Row
 
     var body: some View {
         ForEach(nodes) { node in
-            if let children = node.children {
-                DisclosureGroup(isExpanded: Binding(
-                    get: { expanded.contains(node.path) },
-                    set: { open in
-                        if open { expanded.insert(node.path) } else { expanded.remove(node.path) }
-                    }
-                )) {
-                    TreeRows(nodes: children, expanded: $expanded, row: row)
+            if let kids = children(node) {
+                DisclosureGroup(isExpanded: isExpanded(node)) {
+                    TreeRows(nodes: kids, children: children, isExpanded: isExpanded, row: row)
                 } label: {
                     row(node)
                 }
@@ -244,6 +257,14 @@ private struct TreeRows<Row: View>: View {
                 row(node)
             }
         }
+    }
+}
+
+private extension Binding<Set<String>> {
+    /// On while the set holds `key` (`inverted`, while it doesn't); a switch that adds or removes it.
+    func contains(_ key: String, inverted: Bool = false) -> Binding<Bool> {
+        Binding<Bool>(get: { wrappedValue.contains(key) != inverted },
+                      set: { if $0 != inverted { wrappedValue.insert(key) } else { wrappedValue.remove(key) } })
     }
 }
 
@@ -256,7 +277,7 @@ private struct TreeRows<Row: View>: View {
                 TreeNode(type: "dir", name: "figures", path: "figures",
                          children: [file("figures/plot.pdf"), file("figures/diagram.png")]),
                 file("main.tex"), file("references.bib"),
-            ], expanded: $expanded) { node in
+            ], children: \.children, isExpanded: { $expanded.contains($0.path) }) { node in
                 Label(node.name, systemImage: fileSymbol(node.path, directory: node.isDirectory))
             }
         }
@@ -347,15 +368,15 @@ private func dropOperation(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool) -> 
     return urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy
 }
 
-/// The open document's sections, under `OutlineHeader`, which folds them away.
+/// The project's sections from its main file, under `OutlineHeader`, which folds them away.
 /// Takes no drops: files go into the list above.
 struct OutlineList: View {
     let project: ProjectModel
     @Environment(\.sidebarRowSize) private var rowSize
-    /// Folded headings, by file and `Outline.foldKeys`.
+    /// Folded headings, by project and `Outline.foldKeys`.
     @State private var folded = Set(UserDefaults.standard.stringArray(forKey: DefaultsKey.outlineFolded) ?? [])
     /// The line the selection follows: the caret's or the top line, whichever
-    /// changed last.
+    /// changed last; the caret's when both do, as its `onChange` runs second.
     @State private var line = 1
     /// A heading chosen in the list, shown selected until the source reaches it.
     @State private var chosen: Int?
@@ -363,16 +384,16 @@ struct OutlineList: View {
     /// A step under the files' rows: a table of contents under a list.
     private var outlineRowSize: SidebarRowSize { rowSize == .large ? .medium : .small }
 
-    private var prefix: String { "\(project.id)/\(project.openPath ?? "")\t" }
+    private var prefix: String { "\(project.id)/" }
 
     var body: some View {
         let outline = project.outline
-        let current = Outline.chain(outline, at: line).last?.id
+        let current = Outline.current(outline, file: project.openPath, line: line)
         let keys = Outline.foldKeys(outline).map { prefix + $0 }
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
-            guard let id, id != (chosen ?? current), let item = outline.first(where: { $0.id == id }) else { return }
+            guard let id, id != current, let item = outline.first(where: { $0.id == id }) else { return }
             chosen = id
             project.reveal(item)
         })
@@ -382,76 +403,45 @@ struct OutlineList: View {
                     Text("No Sections").foregroundStyle(.secondary)
                         .selectionDisabled()
                 } else {
-                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded,
-                                selected: chosen ?? current)
+                    TreeRows(nodes: Outline.tree(outline), children: \.children,
+                             isExpanded: { $folded.contains(keys[$0.id], inverted: true) }) { node in
+                        HeadingRow(project: project, item: node.item).equatable().tag(node.id)
+                    }
                 }
             }
             .listStyle(.sidebar)
+            .accessibilityLabel("File Outline")
+            // Return or a double-click goes into the source there, as in the search results.
+            .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
+                guard let item = outline.first(where: { $0.id == ids.first }) else { return }
+                Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
+            }
             // The header above stands in for a section's, so the list's room over its
             // first row goes; the scroller keeps to what shows.
             .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
             .padding(.top, -sidebarListRoom)
             .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
-            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
             .onChange(of: project.topHeading) { line = project.topLine }
-            // The current heading always shows: its sections open, then the
-            // least scroll that brings it into view.
+            .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
+            // The current heading always shows: its sections open, then it's
+            // scrolled to the middle, clear of the header.
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
-                let chain = Outline.chain(outline, at: line).dropLast()
+                let chain = Outline.chain(outline, to: id).dropLast()
                 let opened = folded.subtracting(chain.map { keys[$0.id] })
                 if opened != folded { folded = opened }
                 guard let id else { return }
-                Task { proxy.scrollTo(id) }
+                Task { proxy.scrollTo(id, anchor: .center) }
             }
             .onChange(of: folded) { _, folded in
-                // The open file's folds of headings it no longer has go.
-                let current = Set(keys)
-                let stale = outline.isEmpty ? [] : folded.filter { $0.hasPrefix(prefix) && !current.contains($0) }
+                // The shown files' folds of headings they no longer have go; a file the main
+                // file doesn't reach, shown alone, leaves the document's alone.
+                let current = Set(keys), files = Set(outline.map { "\(prefix)\($0.file)\t" })
+                let stale = folded.filter { key in !current.contains(key) && files.contains { key.hasPrefix($0) } }
                 UserDefaults.standard.set(Array(folded.subtracting(stale)).sorted(), forKey: DefaultsKey.outlineFolded)
             }
         }
-    }
-}
-
-/// The headings nested, each fold remembered by `Outline.foldKeys`.
-private struct OutlineRows: View {
-    let nodes: [OutlineNode]
-    let project: ProjectModel
-    let keys: [String]
-    @Binding var folded: Set<String>
-    let selected: Int?
-
-    var body: some View {
-        ForEach(nodes) { node in
-            if let children = node.children {
-                DisclosureGroup(isExpanded: expansion(node.item)) {
-                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded, selected: selected)
-                } label: {
-                    row(node.item)
-                }
-            } else {
-                row(node.item)
-            }
-        }
-    }
-
-    private func row(_ item: OutlineItem) -> some View {
-        HeadingRow(project: project, item: item, repeatSelection: selected == item.id)
-            .equatable()
-            .id(item.id)
-            .tag(item.id)
-    }
-
-    private func expansion(_ item: OutlineItem) -> Binding<Bool> {
-        let key = keys[item.id]
-        return Binding(
-            get: { !folded.contains(key) },
-            set: { open in
-                if open { folded.remove(key) } else { folded.insert(key) }
-            }
-        )
     }
 }
 
@@ -460,10 +450,9 @@ private struct OutlineRows: View {
 private struct HeadingRow: View, Equatable {
     let project: ProjectModel
     let item: OutlineItem
-    let repeatSelection: Bool
 
     static func == (a: Self, b: Self) -> Bool {
-        a.project === b.project && a.item == b.item && a.repeatSelection == b.repeatSelection
+        a.project === b.project && a.item == b.item
     }
 
     var body: some View {
@@ -477,11 +466,12 @@ private struct HeadingRow: View, Equatable {
         .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        // New selections are handled by List (including arrow keys). Only a
-        // click on the already selected heading needs a second way to activate.
-        .simultaneousGesture(TapGesture().onEnded { if repeatSelection { project.reveal(item) } })
+        .simultaneousGesture(TapGesture().onEnded { project.reveal(item) })
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
         .accessibilityValue(item.kind)
+        // For scrollTo, inside the row: on it, the list would take it for the row's
+        // identity, and a heading that gains subheadings would keep a leaf's closed state.
+        .id(item.id)
     }
 }

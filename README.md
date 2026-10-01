@@ -16,9 +16,10 @@ One Rust core, several clients:
 - **Tauri desktop app** (`src-tauri`) — still ships until the native apps reach
   parity, then gets retired.
 
-The native apps embed two web pages from `web/embed`: the CodeMirror editor
-(both) and the pdf.js viewer (Windows); the macOS app shows the PDF with
-PDFKit. [HANDOFF.md](HANDOFF.md) has the current status and architecture.
+The Windows app embeds two web pages from `web/embed`: the CodeMirror editor
+and the pdf.js viewer. The macOS app's editor is native (TextKit 2 over
+`crates/texlocal-syntax`), and it shows the PDF with PDFKit.
+[HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
 ## Quick start
 
@@ -38,7 +39,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
   also opens a folder, a `.zip` or a `.tex` from anywhere as a new project
 - **File tree** with folders, rename/delete, drag-and-drop import (a name that's
   taken asks Replace / Keep Both / Stop), ZIP export
-- **CodeMirror 6 editor**: LaTeX highlighting, autocomplete for ~130 commands and environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s
+- **LaTeX editor** (CodeMirror 6; native on the Mac): highlighting, autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s
 - **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
 - **Source bar** (Overleaf-style): undo/redo, section level, bold/italic, inline and display math, a symbol palette, references, figures, tables and lists, with a location row (project › folders › file › section) under it
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
@@ -84,9 +85,9 @@ apps/macos/              AppKit and SwiftUI app.
 apps/windows/            WinUI 3 app.
 src-tauri/               Tauri desktop shell (being retired).
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
-web/embed/               Editor and PDF pages the native apps embed.
+web/embed/               Editor and PDF pages the Windows app embeds.
 docs/                    design-tokens.md (extracted Apple UI-kit values) ·
-                         web.md · windows.md
+                         web.md
 build.mjs                esbuild bundler and shared asset copy
 scripts/                 Version check
 ```
@@ -98,7 +99,7 @@ npm run build                 # bundle the frontend
 npm test                      # frontend and protocol tests (node --test)
 cargo test --workspace        # Rust tests
 
-# macOS app (Xcode 27; the build runs cargo and npm itself)
+# macOS app (Xcode 27), after npm ci: the build runs cargo itself and copies from node_modules
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
@@ -119,7 +120,7 @@ push a matching `v*` tag. CI checks they agree before drafting the release.
   header on every request for project data (the page keeps it for its tab, never
   in a cookie), rejects foreign Host and Origin headers, and may not be framed.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
-- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
+- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The native apps turn it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 - A project's own `latexmkrc` (Perl that runs on every build) is read only when that project has shell escape on; your own (`~/.latexmkrc` or `~/.config/latexmk/latexmkrc`) always is.
 
 ## License

@@ -78,7 +78,7 @@ public static class TextFiles
     private static readonly HashSet<string> Extensions =
     [
         "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-        "py", "r", "dat", "def", "clo", "tikz", "svg",
+        "py", "r", "dat", "def", "clo", "tikz",
     ];
 
     public static bool IsText(string path) =>

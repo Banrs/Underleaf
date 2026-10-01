@@ -12,9 +12,7 @@ release/
 target/
 src-tauri/gen/
 
-# User data (projects live here in browser mode)
-data/
-server.log
+# Logs
 *.log
 
 # macOS

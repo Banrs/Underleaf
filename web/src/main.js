@@ -9,8 +9,7 @@ import { renderHome, destroyHome } from './home.js';
 
 // ---------- platform ----------
 
-// html.mac gates the Tauri Mac window's chrome (vibrancy, traffic-light
-// insets), which a browser tab does not have; it gets html.browser instead.
+// html.mac: the Tauri Mac window's chrome; html.browser: a browser tab (docs/web.md).
 const root = document.documentElement;
 const desktop = bridge?.kind === 'tauri';
 root.classList.toggle('mac', desktop && platform === 'darwin');

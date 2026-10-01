@@ -6,10 +6,9 @@ enum BarMetrics {
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The File Outline header, folded or revealed.
+    /// The status bar and the File Outline header share this height, so the hairlines
+    /// over them run on as one (Xcode's status bar).
     static let secondaryBarHeight: CGFloat = 36
-    /// The bottom status bar, level with the File Outline header's native hairline.
-    static let statusBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12
     /// Design: the least room a find query needs, and the widest a filter grows
@@ -223,37 +222,14 @@ struct DialogSheet<Fields: View>: View {
     var message: String?
     let action: String
     let enabled: Bool
-    private let submission: Submission
-    private let fields: Fields
+    /// The alert's title if `submit` throws: the sheet stays, with what was typed. Read
+    /// then: the toolbar keeps the button's action from its last change of state.
+    var failure: () -> String = { "" }
+    let submit: () async throws -> Void
+    @ViewBuilder var fields: Fields
     @Environment(\.dismiss) private var dismiss
-    @State private var isSubmitting = false
+    @State private var submitting = false
     @State private var alert: AppAlert?
-
-    private enum Submission {
-        case immediate(() -> Void)
-        case asynchronous(failureTitle: String, () async throws -> Void)
-    }
-
-    init(title: String, message: String? = nil, action: String, enabled: Bool,
-         submit: @escaping () -> Void, @ViewBuilder fields: () -> Fields) {
-        self.title = title
-        self.message = message
-        self.action = action
-        self.enabled = enabled
-        submission = .immediate(submit)
-        self.fields = fields()
-    }
-
-    /// Creating on disk can fail: keep the entered values until it succeeds.
-    init(title: String, message: String? = nil, action: String, enabled: Bool,
-         failureTitle: String, submit: @escaping () async throws -> Void, @ViewBuilder fields: () -> Fields) {
-        self.title = title
-        self.message = message
-        self.action = action
-        self.enabled = enabled
-        submission = .asynchronous(failureTitle: failureTitle, submit)
-        self.fields = fields()
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -276,43 +252,24 @@ struct DialogSheet<Fields: View>: View {
                 .scrollContentBackground(.hidden)
                 .scrollDisabled(true)
                 .fixedSize(horizontal: false, vertical: true)
-                .disabled(isSubmitting)
         }
         .frame(width: 390) // UI kit Dialogs
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
-        .interactiveDismissDisabled(isSubmitting)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-                    .disabled(isSubmitting)
-            }
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(action, action: confirm)
-                    .disabled(!enabled || isSubmitting)
+                Button(action) {
+                    submitting = true
+                    Task {
+                        do { try await submit(); dismiss() } catch { alert = AppAlert(failure(), error) }
+                        submitting = false
+                    }
+                }
+                .disabled(!enabled || submitting)
             }
         }
         .alert($alert)
-    }
-
-    private func confirm() {
-        guard enabled, !isSubmitting else { return }
-        switch submission {
-        case .immediate(let submit):
-            dismiss()
-            submit()
-        case .asynchronous(let failureTitle, let submit):
-            isSubmitting = true
-            Task {
-                do {
-                    try await submit()
-                    dismiss()
-                } catch {
-                    alert = AppAlert(failureTitle, error)
-                }
-                isSubmitting = false
-            }
-        }
     }
 }
 

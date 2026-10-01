@@ -1,8 +1,6 @@
-// The LaTeX editor as a page of its own, for the Windows app to embed as
-// content inside its native chrome (WebView2). The same createEditor the
-// browser UI uses — completions, math preview, find — so the editor exists
-// once on the web's side. (The Mac's editor is native, apps/macos, over the
-// same logic in crates/texlocal-syntax.)
+// The LaTeX editor as a page of its own, for the Windows app to embed in its
+// native chrome (WebView2): the browser UI's createEditor, so the editor
+// exists once on the web's side.
 //
 // Host → page: call methods on window.texlocal (ExecuteScriptAsync); their
 // return values come back as the script result. Page → host: postMessage of

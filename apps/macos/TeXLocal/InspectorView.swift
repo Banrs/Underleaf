@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The inspector: the project's build settings, then facts about the open file and
-/// its build.
+/// The inspector: the project's build settings. The file's counts and the last build
+/// show in the status bar and the build panel, so it doesn't repeat them.
 struct InspectorView: View {
     let project: ProjectModel
 
@@ -17,38 +17,9 @@ struct InspectorView: View {
                        project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
             }
             // Settings arrive from the core after the project opens.
-            .disabled(project.settings == nil || project.changingSettings)
-            if let path = project.openPath {
-                Section("Document") {
-                    LabeledContent("Name", value: (path as NSString).lastPathComponent)
-                    LabeledContent("Folder", value: folder(of: path))
-                        .textSelection(.enabled)
-                    if let counts = project.counts {
-                        LabeledContent("Words", value: counts.words.formatted())
-                        LabeledContent("Lines", value: counts.lines.formatted())
-                    }
-                    if !project.outline.isEmpty {
-                        LabeledContent("Sections", value: project.outline.count.formatted())
-                    }
-                }
-            }
-            Section("Build") {
-                if let result = project.result {
-                    LabeledContent("Last Build", value: result.stopped ? "Stopped" : result.ok ? "Succeeded" : "Failed")
-                    LabeledContent("Duration", value: result.durationText)
-                    LabeledContent("Errors", value: project.errorCount.formatted())
-                    LabeledContent("Warnings", value: project.warningCount.formatted())
-                } else {
-                    LabeledContent("Last Build", value: project.pdfVersion > 0 ? "None Yet" : "None")
-                }
-                if let freshness = project.pdfFreshness {
-                    Label(freshness.title, systemImage: freshness.systemImage)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            .disabled(project.settings == nil)
         }
         .formStyle(.grouped)
-        .monospacedDigit()
     }
 
     /// The current value is always a choice, before the settings come (nil) or the
@@ -67,12 +38,5 @@ struct InspectorView: View {
             Text(title)
             Text(detail)
         }
-        .accessibilityLabel(title)
-        .accessibilityHint(detail)
-    }
-
-    private func folder(of path: String) -> String {
-        let dir = (path as NSString).deletingLastPathComponent
-        return dir.isEmpty ? project.id : dir
     }
 }

@@ -7,11 +7,9 @@ export function post(msg) {
   globalThis.chrome?.webview?.postMessage(msg);
 }
 
-// The accelerators the host's native menu owns. With focus in the page, the
-// page sees a chord before the menu does (and the editor's keymap would take
-// some, Mod-Enter inserting a blank line), so the editor never sees these:
-// the host gets each as a `command` message. Returns the setter
-// window.texlocal.setHostKeys exposes.
+// The host menu's chords: the page sees them first (and the editor's keymap
+// would take some), so each goes to the host as a `command` message. Returns
+// the setter window.texlocal.setHostKeys exposes.
 export function forwardHostKeys() {
   let hostKeys = [];
   addEventListener('keydown', (e) => {

@@ -23,7 +23,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     init(app: AppModel) {
         self.app = app
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: WindowMetrics.projectDefault),
+        // Fits the smallest current Mac display's default resolution (1470 × 956) with the menu bar and Dock.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.identifier = Self.identifier
@@ -107,9 +108,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame and minimum, which a new content view controller resets to
-    /// its view's size and zero: the view comes at the window's size (an unsized one
-    /// squeezed the projects' bridged toolbar into broken constraints).
+    /// Keeps the window's frame and minimum, which a new content view controller resets.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
@@ -133,10 +132,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         return findEditor
     }
 
-    /// Edit › Find's items, which the system sends down the responder chain with
-    /// the `NSTextFinder.Action` as the item's tag, to the pane with the keyboard.
-    /// Nothing before the window answers them: the source's text view and the
-    /// find fields pass them on (`FindPassingTextView`), and PDFView has none.
+    /// Edit › Find's items, tagged with their `NSTextFinder.Action`, for the pane with the keyboard.
     @objc func performFindPanelAction(_ sender: Any?) {
         findAction(for: sender)?()
     }
@@ -209,10 +205,4 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
             apply(next)
         }
     }
-}
-
-enum WindowMetrics {
-    /// Fits the smallest current Mac display's default resolution (1470 × 956)
-    /// with the menu bar and Dock.
-    static let projectDefault = CGSize(width: 1200, height: 760)
 }

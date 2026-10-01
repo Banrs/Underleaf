@@ -8,7 +8,7 @@ struct SectionLevelItems: View {
     var body: some View {
         ForEach(HeadingLevel.all, id: \.self) { level in
             Toggle(level.title, isOn: Binding(get: { project?.headingLevel == level },
-                                              set: { _ in project?.format(.heading, level.command) }))
+                                              set: { _ in project?.editor.perform(.heading, level.command) }))
             if level == .normalText { Divider() }
         }
     }
@@ -22,7 +22,7 @@ struct SymbolItems: View {
             Menu(title) {
                 // The glyph over its command: the menu item's title and subtitle.
                 ForEach(symbols, id: \.1) { glyph, command in
-                    Button { project?.format(.symbol, command) } label: {
+                    Button { project?.editor.perform(.symbol, command) } label: {
                         Text(glyph)
                         Text(command)
                     }
@@ -41,7 +41,7 @@ struct InsertMenuItems<InlineMath: View>: View {
 
     var body: some View {
         inlineMath
-        Button("Display Math") { project?.format(.displayMath) }
+        Button("Display Math") { project?.editor.perform(.displayMath) }
         items(mathTemplates)
         // A section, so a symbol is one submenu down (HIG, Menus); it brings its own separators.
         Section("Symbols") { SymbolItems(project: project) }

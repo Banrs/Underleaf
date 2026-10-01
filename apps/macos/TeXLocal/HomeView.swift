@@ -57,13 +57,12 @@ struct HomeView: View {
                     // Its own view, so a row redraws only when its rename starts or ends.
                     ProjectRow(project: project, rename: rename, ended: { listFocused = true }) { commitRename(project) }
                 }
-                if shown.isEmpty { empty.selectionDisabled() }
+                if shown.isEmpty { empty.frame(maxWidth: .infinity).selectionDisabled() }
             } header: {
                 Text("Recent")
             }
             .listSectionSeparator(.hidden)
         }
-        .headerProminence(.increased)
         .listStyle(.inset)
         .contextMenu(forSelectionType: ProjectInfo.ID.self) { ids in
             if let project = app.projects.first(where: { ids.contains($0.id) }) {
@@ -108,7 +107,7 @@ struct HomeView: View {
         } else {
             ContentUnavailableView(
                 "No Projects Yet", systemImage: "text.document",
-                description: Text("Choose a template above to start writing. Your files never leave this Mac.")
+                description: Text("Choose a template above, or open or drop a folder, .tex file or .zip.")
             )
         }
     }
@@ -118,7 +117,7 @@ struct HomeView: View {
         Task { await app.rename(project, to: name) }
     }
 
-    /// Newest first, as `AppModel.refresh` sorts them.
+    /// Newest first, as the core lists them.
     private var shown: [ProjectInfo] {
         query.isEmpty ? app.projects : app.projects.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
@@ -311,10 +310,8 @@ struct NewProjectSheet: View {
 
     var body: some View {
         DialogSheet(title: "New Project", message: "Its files stay in a folder on this Mac.",
-                    action: "Create", enabled: !trimmed.isEmpty,
-                    failureTitle: "Couldn’t Create “\(trimmed)”") {
-            let (name, template) = (trimmed, template)
-            try await app.create(name: name, template: template)
+                    action: "Create", enabled: !trimmed.isEmpty, failure: { "Couldn’t Create “\(trimmed)”" }) {
+            try await app.create(name: trimmed, template: template)
         } fields: {
             TextField("Name", text: $name)
                 .focused($nameFocused)

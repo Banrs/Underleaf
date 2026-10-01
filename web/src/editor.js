@@ -9,7 +9,7 @@ import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightSty
 import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { searchKeymap, highlightSelectionMatches, openSearchPanel, findNext, findPrevious } from '@codemirror/search';
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippetCompletion } from '@codemirror/autocomplete';
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, snippet, snippetCompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { prefs } from './prefs.js';
 import {
@@ -37,14 +37,9 @@ const jumpFlashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// Xcode 27's own Default (Light) and Default (Dark), read out of
-// Xcode-beta.app/Contents/SharedFrameworks/DVTUserInterfaceKit.framework/
-// Resources/FontAndColorThemes/*.xccolortheme — not sampled by eye.
-//
-// `background` is deliberately NOT taken from the theme (Xcode's is #FFFFFF /
-// #1F1F24): the editor sits flush against this app's own panels, so it follows
-// the panel token and a one-value difference can't show up as a seam.
-// Dark comments are lightened for AA contrast on both app editor surfaces.
+// Xcode 27's Default (Light) and Default (Dark), from docs/design-tokens.md. No
+// background: the editor follows the panel token, so no seam shows. Dark
+// comments are lightened for AA contrast on both app editor surfaces.
 const XCODE_THEME = {
   light: {
     plain: '#000000', comment: '#5D6C79', keyword: '#9B2393', string: '#C41A16',
@@ -60,16 +55,8 @@ const XCODE_THEME = {
   },
 };
 
-// The LaTeX (stex) mode's tokens mapped to Xcode's categories by meaning, read
-// off the mode's source rather than guessed:
-//   tagName             \commands and \% escapes        → keyword
-//   atom                braced arguments — environment, class, package, label,
-//                       ref and cite names             → type
-//   keyword             math-mode delimiters $ $$ \[ \( → macro; they switch mode
-//                       the way a preprocessor directive does, and having them
-//                       stand out is worth more than category purity here
-//   special(variableName) identifiers inside math       → variable
-// Brackets and punctuation stay in the plain colour, as they are in Xcode.
+// The stex mode's tokens mapped to Xcode's categories by meaning
+// (docs/design-tokens.md); math delimiters take the preprocessor colour.
 const xcodeHighlight = (c) => HighlightStyle.define([
   { tag: tags.tagName, color: c.keyword },
   { tag: tags.atom, color: c.type },
@@ -97,10 +84,7 @@ const surfaceTheme = (c) => EditorView.theme({
 
 const baseTheme = EditorView.theme({
   '&': { backgroundColor: 'var(--bg-content)' },
-  // Xcode's gutter carries no fill and no rule — it is the editor surface with
-  // dimmer numbers on it, and the current line's number brightens.
-  // --label-2, not --label-3: at 25% over the panel the numbers land near 2.6:1,
-  // under the 4.5:1 they need to stay readable at this size.
+  // --label-2, not --label-3: at 25% the numbers fall to about 2.6:1, under AA's 4.5:1.
   '.cm-gutters': {
     backgroundColor: 'transparent',
     border: 'none',
@@ -119,11 +103,8 @@ const baseTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
 });
 
-// Syntax colouring is a matter of taste, so it is a preference rather than a
-// house style. One Dark is the default because it is what this editor has always
-// looked like; the Xcode set is there for anyone who wants the chrome and the code
-// to come from the same place. baseTheme goes last either way — One Dark styles
-// .cm-gutters itself, and the flush gutter should survive.
+// baseTheme goes last: One Dark styles .cm-gutters itself, and the flush gutter
+// should survive.
 const THEMES = {
   onedark: {
     // One Dark has no light counterpart, so light keeps the colours it had.
@@ -440,14 +421,18 @@ export function latexCompletions(getSymbols) {
   };
 }
 
-// A block template as inserted after `before`, the line's text ahead of the
-// caret, and where the caret goes in it ("$0", else the end). A block starts
-// a line of its own; the template ends with its own newline.
-export function blockInsertion(before, template) {
-  const newline = /\S/.test(before) ? '\n' : '';
-  const at = template.indexOf('$0');
-  const text = newline + template.replace('$0', '');
-  return { text, cursor: at === -1 ? text.length : newline.length + at };
+// A block (latex-data.js BLOCK_TEMPLATES) in place of the selection, as a
+// snippet whose fields Tab goes through; false for an id there is none of.
+// It starts a line of its own; the template ends with its own newline.
+// `target` is the view, or a state and its dispatch.
+export function placeBlock(target, id) {
+  const template = BLOCK_TEMPLATES[id];
+  if (!template) return false;
+  const { from, to } = target.state.selection.main;
+  const line = target.state.doc.lineAt(from);
+  const newline = /\S/.test(line.text.slice(0, from - line.from)) ? '\n' : '';
+  snippet(newline + template)(target, null, from, to);
+  return true;
 }
 
 // A line as a heading of `command` (`section` etc.), or as plain text given
@@ -603,15 +588,8 @@ export function createEditor({ parent, content, restore, onChange, onCursor, onS
       view.dispatch({ changes: { from: line.from, to: line.to, insert: text }, selection: { anchor: line.from + cursor } });
       view.focus();
     },
-    // Insert a block (latex-data.js BLOCK_TEMPLATES) at the cursor, on a
-    // line of its own; false for an id there is none of.
     insertBlock(id) {
-      const template = BLOCK_TEMPLATES[id];
-      if (!template) return false;
-      const { from, to } = view.state.selection.main;
-      const line = view.state.doc.lineAt(from);
-      const { text, cursor } = blockInsertion(line.text.slice(0, from - line.from), template);
-      view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + cursor } });
+      if (!placeBlock(view, id)) return false;
       view.focus();
       return true;
     },

@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import os
 import Testing
 @testable import TeXLocal
@@ -113,7 +113,7 @@ struct CoreTests {
 /// puts back the defaults `AppModel` writes and removes its projects.
 @MainActor
 final class ProjectFlowTests {
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed]
     private let kept: [Any?]
     private var folders: [URL] = []
     private let files = FileManager.default
@@ -142,8 +142,8 @@ final class ProjectFlowTests {
     }
 
     /// A new project, open.
-    private func opened() async throws -> (project: ProjectModel, folder: URL) {
-        let (info, folder) = try await project()
+    private func opened(_ text: String = "text") async throws -> (project: ProjectModel, folder: URL) {
+        let (info, folder) = try await project(text)
         await app.open(info.id)
         return (try #require(app.project), folder)
     }
@@ -179,39 +179,41 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Distinct Inspector edits that overlap must both reach the settings file.
+    /// A failed automatic build that still wrote a PDF leaves the build panel
+    /// shut while typing goes on; Compile opens it on the issues. CI has no TeX.
     @Test(.timeLimit(.minutes(1)))
-    func overlappingSettingsEditsAreKeptInOrder() async throws {
-        let (project, _) = try await opened()
-        try await project.createEntry("alternate.TEX", directory: false)
-        let changes = [Task { await project.setStopOnFirstError(true) },
-                       Task { await project.setMainFile("alternate.TEX") }]
-        for change in changes { await change.value }
-        let saved = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
-        #expect(saved.stopOnFirstError && saved.mainFile == "alternate.TEX")
-        #expect(project.settings?.stopOnFirstError == true && project.settings?.mainFile == "alternate.TEX")
-        #expect(!project.changingSettings)
+    func onlyCompileOpensThePanelOverAPDF() async throws {
+        await app.refresh()
+        if app.tex?.available != true { try Test.cancel("No TeX") }
+        let info = try await project("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}").info
+        await app.open(info.id)
+        let project = try #require(app.project)
+        await project.compile(auto: true)
+        #expect(project.result?.failed == true && project.result?.pdf != nil && !project.showLogs)
+        await project.compile()
+        #expect(project.showLogs && project.panelTab == .issues)
         await app.close()
     }
 
-    /// Uppercase extensions get the same outline and retain the editor on rename.
+    /// A clean build with nothing to list closes the panel from the issues, not from the
+    /// log, as the web's log closes. CI has no TeX.
     @Test(.timeLimit(.minutes(1)))
-    func uppercaseLaTeXHasToolsAndKeepsItsDocumentOnRename() async throws {
-        let (project, _) = try await opened()
-        try await Core.shared.perform("write_file", ["id": project.id, "path": "chapter.TEX", "text": "\\section{Chapter}\nText"])
-        await project.open("chapter.TEX")
-        try await waitUntil { project.outline.count == 1 }
-        #expect(project.isLaTeX && project.editsText)
-        let document = project.editor.textView.document
-        await project.renameEntry("chapter.TEX", to: "renamed.tex")
-        #expect(project.openPath == "renamed.tex" && project.isLaTeX)
-        #expect(project.editor.textView.document === document)
-        #expect(project.outline.first?.title == "Chapter")
+    func aCleanBuildClosesTheIssues() async throws {
+        await app.refresh()
+        if app.tex?.available != true { try Test.cancel("No TeX") }
+        let info = try await project("\\documentclass{article}\\begin{document}x\\end{document}").info
+        await app.open(info.id)
+        let project = try #require(app.project)
+        (project.showLogs, project.panelTab) = (true, .log)
+        await project.compile()
+        #expect(project.result?.ok == true && project.showLogs)
+        project.panelTab = .issues
+        await project.compile()
+        #expect(!project.showLogs)
         await app.close()
     }
 
-    /// The outline hears of a scroll only as another heading reaches the top:
-    /// told of every line, it redrew the sidebar at every step of a scroll.
+    /// The outline hears of a scroll only as another heading reaches the top, not on every line.
     @Test(.timeLimit(.minutes(1)))
     func theOutlineFollowsTheTopHeadingOnly() async throws {
         let info = try await project("\\section{A}\n1\n2\n\\section{B}\n3").info
@@ -226,6 +228,48 @@ final class ProjectFlowTests {
         #expect(!told.withLock { $0 } && project.topLine == 3)
         scrolled(4)
         #expect(told.withLock { $0 } && project.topHeading == project.outline[1].id)
+        await app.close()
+    }
+
+    /// The outline and word count are the document's, through its \input and \include;
+    /// a heading in another file opens that file at it.
+    @Test(.timeLimit(.minutes(1)))
+    func theOutlineReadsTheInputs() async throws {
+        let (info, folder) = try await project("\\section{Intro}\nOne two\n\\include{chapters/a}")
+        try files.createDirectory(at: folder.appending(path: "chapters"), withIntermediateDirectories: false)
+        try "\\section{A}\nthree".write(to: folder.appending(path: "chapters/a.tex"), atomically: false, encoding: .utf8)
+        await app.open(info.id)
+        let project = try #require(app.project)
+        try await waitUntil { project.outline.count == 2 }
+        #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
+        #expect(project.counts?.words == 6)
+        project.reveal(project.outline[1])
+        try await waitUntil { project.openPath == "chapters/a.tex" }
+        #expect(project.headingLevel.title == "Section")
+        await app.close()
+    }
+
+    /// After a jump that moves both the caret and the top line into new sections,
+    /// the File Outline selects the caret's.
+    @Test(.timeLimit(.minutes(1)))
+    func theOutlineFollowsTheCaretAfterAJump() async throws {
+        let text = ["A", "B", "C"].map { "\\section{\($0)}\n" + String(repeating: "x\n", count: 100) }.joined()
+        let project = try await opened(text).project
+        app.outlineCollapsed = false
+        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 900, height: 600))
+        let window = NSWindow(contentViewController: workspace)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.orderFront(nil)
+        defer { window.close() }
+        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
+        try await waitUntil { lists(workspace.view).last?.selectedRow == 0 }
+        let outline = try #require(lists(workspace.view).last)
+
+        // Centred two lines under C, the top line is in B at any font or window size.
+        await project.open(try #require(project.openPath), line: 205)
+        #expect(project.topHeading == project.outline[1].id)
+        try await waitUntil { outline.selectedRow == 2 } state: { "row \(outline.selectedRow), top line \(project.topLine)" }
         await app.close()
     }
 

@@ -34,10 +34,8 @@ let pdfFindGeneration = 0;
 const saveQueue = createSaveQueue();
 
 // Editor states of recently open files, so switching back restores the undo
-// history, selection, and scroll position instead of rebuilding from scratch.
-// An entry is only reused when the file on disk still matches its document
-// (openFile saves before switching away, so they match unless something else
-// wrote the file); a mismatch just falls back to a fresh editor.
+// history, selection, and scroll position. An entry is reused only while the
+// file on disk still matches its document.
 const EDITOR_CACHE_MAX = 8;
 const editorStateCache = new Map();   // path → { state, scrollTop }
 
@@ -103,11 +101,8 @@ export async function renderWorkspace(id) {
 
   buildChrome(id);
   disposeCommands = registerCommands(commandDefs());
-  // The interface scale is applied as `zoom` on the body, and no ResizeObserver
-  // reports that — measured in Chromium, an element's own CSS box is unchanged
-  // by it. So a scale change has to ask for the re-render itself, or the PDF
-  // keeps the pixel buffer it was rendered at and stays soft until something
-  // unrelated re-renders it.
+  // No ResizeObserver reports the body's `zoom` (an element's CSS box is
+  // unchanged by it), so a scale change re-renders the PDF, or it stays soft.
   let lastScale = prefs.uiScale;
   const previousHandler = setAppearanceHandler((theme) => {
     state.editor?.setTheme(theme === 'dark');
@@ -143,8 +138,9 @@ function buildChrome(id) {
     gotoLine: (line) => { ui.layout?.revealEditor(); state.editor?.gotoLine(line); },
     revealSection: (line, focus) => { if (focus) ui.layout?.revealEditor(); state.editor?.gotoLine(line, true, focus); },
     openSettings: openProjectSettings,
-    onFilesChanged: refreshSymbols,
-    onMainFileChange: () => compile({ auto: true }),
+    // A file renamed, moved or deleted may be one the document reads in.
+    onFilesChanged: () => { refreshSymbols(); refreshAnalysis(); },
+    onMainFileChange: () => { refreshAnalysis(); compile({ auto: true }); },
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
@@ -167,9 +163,7 @@ function buildChrome(id) {
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // The chrome doubles as the window's title bar. Tauri reads the attribute
-  // (WebView2 and WKWebView don't honour -webkit-app-region) and skips buttons
-  // and other interactive elements on its own.
+  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
@@ -330,7 +324,6 @@ function iconButton(commandId, glyph, size = '') {
   }, icon(glyph));
 }
 
-// Reflect command state onto every toolbar button that maps to a command.
 export function syncToolbarState() {
   for (const b of document.querySelectorAll('[data-command]')) {
     const id = b.dataset.command;
@@ -360,8 +353,7 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
-// Their accelerators are the shared table's (shortcuts.json), which the
-// native apps read too.
+// Their accelerators are the shared table's (shortcuts.json).
 function commandDefs() {
   return [
     { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
@@ -525,6 +517,7 @@ async function openFile(path) {
     }
     setSaveState('');
     updateDocMeta();
+    refreshAnalysis();
     return;
   }
 
@@ -588,6 +581,7 @@ async function openFile(path) {
   state.dirty = false;
   setSaveState('Saved');
   updateDocMeta();
+  refreshAnalysis();
   refreshCommands();
 }
 
@@ -611,7 +605,10 @@ async function doSave({ triggerCompile = true } = {}) {
       setSaveState('Saved');
       if (triggerCompile && prefs.autoCompile) compile({ auto: true });
     }
-    if (current) refreshSymbols();
+    if (current) {
+      refreshSymbols();
+      refreshAnalysis();
+    }
   } catch (err) {
     err.saveFailed = true;
     if (state.projectId === projectId && state.openPath === path && state.editor === editor) {
@@ -647,16 +644,27 @@ function scheduleDocMeta() {
 
 function updateDocMeta() {
   const show = !!(state.editor && state.openPath?.endsWith('.tex'));
-  const countWords = show && prefs.showWordCount;
-  const { outline, words, lines } = show ? analyzeDoc(state.editor.scanLines, { countWords }) : { outline: [] };
+  const { outline, lines } = show ? analyzeDoc(state.editor.scanLines) : { outline: [] };
   state.outline = outline;
   renderOutline();
   renderCrumbs();
 
   const pill = ui.wordCountPill;
   if (!pill) return;
-  pill.hidden = !countWords;
-  if (countWords) pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
+  pill.hidden = !(show && prefs.showWordCount);
+  if (!pill.hidden) pill.textContent = `${state.words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
+}
+
+// The document's outline and words, which the core reads from the saved files,
+// from the main file through its \input and \include; only a .tex file has them.
+async function refreshAnalysis() {
+  const { projectId, openPath: path } = state;
+  const generation = workspaceGeneration;
+  const analysis = path?.endsWith('.tex') ? await api.analyze(projectId, path).catch(() => null) : null;
+  if (generation !== workspaceGeneration || state.openPath !== path) return;
+  state.projectOutline = analysis?.outline ?? [];
+  state.words = analysis?.words ?? 0;
+  updateDocMeta();
 }
 
 // The source bar's section level and location row follow the caret and path.
@@ -696,10 +704,7 @@ async function compile({ auto = false } = {}) {
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
-    // A build compiles past its errors, as Overleaf's do, and `pdf` is set
-    // whenever this run wrote one: the PDF shows, errors or not, with the
-    // count on the log button. The log takes the PDF's place only when a
-    // failed build left nothing to show.
+    // The log takes the PDF's place only when a failed build left none (docs/web.md).
     const failed = !result.ok && !result.stopped;
     state.logOpen = failed && !result.pdf;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });

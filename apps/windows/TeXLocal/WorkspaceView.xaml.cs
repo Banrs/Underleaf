@@ -24,7 +24,6 @@ public sealed partial class WorkspaceView : UserControl
     private readonly Splitter inspectorSplitter;
     private readonly Splitter outlineSplitter;
 
-    // The limits the panes keep, after macOS's.
     private const double SidebarMinimum = 200;
     private const double SidebarMaximum = 360;
     private const double PaneMinimum = 240;
@@ -47,7 +46,7 @@ public sealed partial class WorkspaceView : UserControl
     private readonly List<RadioMenuFlyoutItem> engineMenuItems = [];
     private MenuFlyoutSubItem? engineMenu;
 
-    /// <summary>web/src/commands.js MENU, with macOS's Format menu and a Windows menu bar's Exit, clipboard and full screen.</summary>
+    /// <summary>web/src/commands.js MENU, plus Format and a Windows menu bar's Exit, clipboard and full screen.</summary>
     private static readonly (string Title, MenuCommand?[] Items)[] MenuLayout =
     [
         ("File", [
@@ -346,7 +345,7 @@ public sealed partial class WorkspaceView : UserControl
 
     private void OnStatusBarSizeChanged(object sender, SizeChangedEventArgs e) => FoldStatusBar();
 
-    /// <summary>A narrow status bar drops whole items, as macOS's does: the engine, then the counts, then the save state.</summary>
+    /// <summary>A narrow status bar drops whole items: the engine, then the counts, then the save state.</summary>
     private void FoldStatusBar()
     {
         var available = StatusBar.ActualWidth - StatusBar.Padding.Left - StatusBar.Padding.Right;
@@ -654,7 +653,6 @@ public sealed partial class WorkspaceView : UserControl
     }
 
     private IReadOnlyList<OutlineItem>? shownSections;
-    private string? shownOutlineFile;
     private OutlineEntry? currentSection;
 
     /// <summary>Folded headings by OutlineEntry.Key, remembered in Preferences.</summary>
@@ -665,19 +663,17 @@ public sealed partial class WorkspaceView : UserControl
     private void RenderOutline()
     {
         ShowOutline();
-        // Every save analyses the file again; an unchanged outline keeps its rows.
-        var sections = project?.Sections ?? [];
-        var file = $"{project?.Id}/{project?.OpenPath}\t";
-        if (shownSections is not null && sections.SequenceEqual(shownSections) && file == shownOutlineFile)
+        // Every save analyses the document again; an unchanged outline keeps its rows.
+        var sections = project?.Stats?.Outline ?? [];
+        if (shownSections is null || !sections.SequenceEqual(shownSections))
         {
-            return;
+            shownSections = sections;
+            var keys = sections.Zip(Outline.FoldKeys(sections)).ToDictionary(k => k.First, k => $"{project?.Id}/{k.Second}");
+            OutlineTree.ItemsSource = Outline.Tree(sections).Select(n => new OutlineEntry(n, keys, foldedSections)).ToList();
+            NoSections.Visibility = sections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            currentSection = null;
         }
-        shownSections = sections;
-        shownOutlineFile = file;
-        var keys = sections.Zip(Outline.FoldKeys(sections)).ToDictionary(k => k.First, k => file + k.Second);
-        OutlineTree.ItemsSource = Outline.Tree(sections).Select(n => new OutlineEntry(n, keys, foldedSections)).ToList();
-        NoSections.Visibility = sections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        currentSection = null;
+        // Another file open has its own current heading.
         FollowTopLine();
     }
 
@@ -688,7 +684,8 @@ public sealed partial class WorkspaceView : UserControl
         {
             return;
         }
-        var chain = Outline.Chain(p.Sections, p.TopLine);
+        var outline = p.Stats?.Outline ?? [];
+        var chain = Outline.Enclosing(outline, Outline.Current(outline, p.OpenPath, p.TopLine));
         var entries = OutlineEntries.SelectMany(e => e.SelfAndDescendants()).ToList();
         var current = chain.Count == 0 ? null : entries.FirstOrDefault(e => e.Item == chain[^1]);
         if (current == currentSection)
@@ -766,13 +763,20 @@ public sealed partial class WorkspaceView : UserControl
         }
     }
 
-    /// <summary>A heading goes to the top of the source, leaving focus here; its expander folds it.</summary>
-    private void OnOutlineInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    /// <summary>A heading goes to the top of the source, in its file, leaving focus here; its expander folds it.</summary>
+    private async void OnOutlineInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
         args.Handled = true;
-        if (args.InvokedItem is OutlineEntry entry)
+        if (args.InvokedItem is OutlineEntry { Item: var item } && project is { } p)
         {
-            project?.Reveal(entry.Item.Line, atTop: true, focus: false);
+            if (item.File != p.OpenPath)
+            {
+                await p.OpenAsync(item.File);
+            }
+            if (item.File == p.OpenPath)
+            {
+                p.Reveal(item.Line, atTop: true, focus: false);
+            }
         }
     }
 

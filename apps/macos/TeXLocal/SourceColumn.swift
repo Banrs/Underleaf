@@ -13,7 +13,8 @@ struct SourceColumn: View {
         // text and its place.
         ZStack {
             // On under the toolbar and the find bar, where AppKit draws its
-            // edge effect over the text.
+            // edge effect over the text, and past the columns' toolbar inset
+            // to the window's edge.
             EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .trailing])
             if project.openPath == nil {
@@ -29,7 +30,7 @@ struct SourceColumn: View {
         .onChange(of: EditorAppearance(palette: palette, font: font, size: fontSize), initial: true) { _, appearance in
             project.editor.setAppearance(appearance)
         }
-        .workspaceModals(project)
+        .modifier(WorkspaceModals(project: project))
         .windowModals()
     }
 }
@@ -56,8 +57,8 @@ private struct FilePreview: View {
         .task(id: url) {
             guard isPreviewFile(url.path) else { return }
             let data = await Self.read(url)
-            guard !Task.isCancelled else { return }
-            loaded = (url, data.flatMap(NSImage.init(data:)))
+            // A newer file's read may have finished first.
+            if !Task.isCancelled { loaded = (url, data.flatMap(NSImage.init(data:))) }
         }
     }
 
@@ -94,7 +95,6 @@ struct SourceFindBar: View {
     @Bindable var project: ProjectModel
     let field: FieldHandle
     @FocusState private var replaceFocused: Bool
-    @State private var replaceVisible = false
 
     var body: some View {
         FindBar(query: $project.findQuery.search, prompt: "Find", field: field, options: options,
@@ -107,18 +107,19 @@ struct SourceFindBar: View {
                         // UI kit: a capsule, as the search field over it.
                         .textFieldStyle(.bordered)
                         .textInputBorderShape(.capsule)
-                        .onSubmit { project.replace(all: false) }
+                        .onSubmit { project.editor.replace(all: false) }
                         .onExitCommand { project.closeFind() }
                         .focused($replaceFocused)
-                        .background(ReplaceVisibility { replaceVisible = $0 })
-                        .onChange(of: project.replaceFocus) { _, _ in focusReplaceIfVisible() }
-                        .onChange(of: replaceVisible) { _, visible in
-                            if visible { focusReplaceIfVisible() } else { replaceFocused = false }
+                        // Find and Replace…, whether or not the bar already shows. After
+                        // the update that adds the row: the task starts within it, and
+                        // focus asked for there is lost (27.2).
+                        .task(id: project.replaceFocus) {
+                            await Task.yield()
+                            if project.replaceFocus > 0 { replaceFocused = true }
                         }
-                        .onDisappear { replaceVisible = false; replaceFocused = false }
                     HStack {
-                        Button("Replace") { project.replace(all: false) }
-                        Button("Replace All") { project.replace(all: true) }
+                        Button("Replace") { project.editor.replace(all: false) }
+                        Button("Replace All") { project.editor.replace(all: true) }
                     }
                     .fixedSize()
                     .disabled(project.findMatches.total == 0)
@@ -134,39 +135,5 @@ struct SourceFindBar: View {
             SearchOption(title: "Whole Words", isOn: $project.findQuery.wholeWord),
             SearchOption(title: "Regular Expression", isOn: $project.findQuery.regexp),
         ]
-    }
-
-    private func focusReplaceIfVisible() {
-        if replaceVisible && project.replaceFocus > 0 { replaceFocused = true }
-    }
-}
-
-/// The replace field can be built while its AppKit split accessory is hidden.
-/// Focus it once the field is actually in a visible window.
-private struct ReplaceVisibility: NSViewRepresentable {
-    let changed: @MainActor (Bool) -> Void
-
-    func makeNSView(context: Context) -> VisibilityView {
-        let view = VisibilityView()
-        view.changed = changed
-        return view
-    }
-
-    func updateNSView(_ view: VisibilityView, context: Context) { view.changed = changed }
-
-    final class VisibilityView: NSView {
-        var changed: (@MainActor (Bool) -> Void)?
-
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
-        override func viewDidUnhide() { super.viewDidUnhide(); report() }
-        override func viewDidHide() { super.viewDidHide(); report() }
-
-        private func report() {
-            // Defer state changes until AppKit has finished this visibility update.
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                changed?(window != nil && !isHiddenOrHasHiddenAncestor)
-            }
-        }
     }
 }

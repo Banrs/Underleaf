@@ -1,16 +1,5 @@
 import AppKit
-import CoreText
 import SwiftUI
-
-/// Adds tabular digits to the existing font without changing its face, size, or traits.
-func zoomFontWithTabularNumbers(_ font: NSFont) -> NSFont? {
-    let descriptor = font.fontDescriptor
-    var features = descriptor.object(forKey: .featureSettings) as? [[NSFontDescriptor.FeatureKey: Int]] ?? []
-    features.removeAll { $0[.typeIdentifier] == kNumberSpacingType }
-    features.append([.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector])
-    let tabularDescriptor = descriptor.addingAttributes([.featureSettings: features])
-    return NSFont(descriptor: tabularDescriptor, size: font.pointSize)
-}
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
@@ -32,27 +21,21 @@ extension NSToolbarItem.Identifier {
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
-/// The project window's toolbar, AppKit's so each column's tools sit over it: the PDF's
-/// section starts at the source/PDF divider (`NSTrackingSeparatorToolbarItem`), and the
-/// PDF and inspector toggles keep to the window's edge. Short of room, zoom overflows
-/// first (with Share at the same priority, AppKit would hide both where Share still
-/// fits), Compile and the toggles last (HIG, Toolbars).
-///
-/// Each action is its own item, so the system puts neighbours on one capsule; only zoom
-/// and Math, whose middle or end segment opens a menu, are segmented controls.
+/// The project window's toolbar, a section per column: the PDF's starts at the source/PDF divider
+/// (`NSTrackingSeparatorToolbarItem`), and the PDF and inspector toggles keep to the window's edge.
+/// Short of room, zoom overflows first, Compile and the toggles last (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
-    private let pdf: PDFController
+    private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
     private var watch: Task<Void, Never>?
 
-    init(app: AppModel, project: ProjectModel, pdf: PDFController, workspace: WorkspaceController) {
+    init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
         self.app = app
         self.project = project
-        self.pdf = pdf
         self.workspace = workspace
         super.init()
         toolbar.delegate = self
@@ -61,18 +44,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.autosavesConfiguration = true
         watch = track({ [weak self] in self?.state }) { [weak self] state in
             if let state { self?.apply(state) }
-        }
-    }
-
-    /// Leave room for the native title and Insert menu in a narrow source pane.
-    /// AppKit only attempts to align tracking separators; it otherwise lets the
-    /// formatting capsule push the line past the content divider. The same
-    /// commands remain in Format and keep their keyboard shortcuts.
-    func updateLayout() {
-        guard let workspace else { return }
-        let compact = workspace.sourceItem.viewController.view.bounds.width < 400
-        for item in toolbar.items where [.bold, .italic].contains(item.itemIdentifier) {
-            if item.isHidden != compact { item.isHidden = compact }
         }
     }
 
@@ -105,9 +76,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
          .inspectorTrackingSeparator, .toggleInspector]
     }
 
-    /// The system's sidebar and inspector toggles send `toggleSidebar:` and
-    /// `toggleInspector:` down the responder chain, where the columns' own split view
-    /// controllers, which have neither, would answer first: they go to the window's split.
+    /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?["item"] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
@@ -153,24 +122,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             item = zoomItem()
             item.visibilityPriority = .low
-            // Customize Toolbar's default set squeezed its copy until the scale read
-            // "…". The toolbar's own stays compressible: held at its width, it kept
-            // the window 50 pt wider even in the overflow menu.
+            // Only Customize Toolbar's copy resists compression, or its scale reads "…"; the toolbar's must not.
             if !flag { item.view?.setContentCompressionResistancePriority(.required, for: .horizontal) }
         case .share:
             let share = NSSharingServicePickerToolbarItem(itemIdentifier: id)
             share.delegate = self
-            share.label = "Share"
             share.toolTip = "Share PDF"
             item = share
         case .compile:
-            // Its word, not a lone play symbol, which reads as media; the one
-            // prominent control, on glass of its own. In the toolbar its own view,
-            // for Stop's spinner (an item's image can't animate); Customize
-            // Toolbar draws a view without the item's style, so it gets the title.
+            // Its word, not a play symbol, which reads as media. Its own view in the toolbar, for
+            // Stop's spinner; a title in Customize Toolbar, which draws views without the style.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
-            item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
             if flag {
                 item.view = NSHostingView(rootView: compileButton(state))
             } else {
@@ -184,7 +147,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
-            item.possibleLabels = ["Show PDF", "Hide PDF"]
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -199,12 +161,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.autovalidates = false
             (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
         }
-        if flag {
-            configure(item, state)
-            if [.bold, .italic].contains(id), let workspace {
-                item.isHidden = workspace.sourceItem.viewController.view.bounds.width < 400
-            }
-        }
+        if flag { configure(item, state) }
         return item
     }
 
@@ -227,9 +184,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func mathItem() -> NSToolbarItem {
         let control = NSSegmentedControl(images: [symbol("radicand.squareroot", MenuCommand.editMath.title),
                                                   symbol("sum", "Symbols")].compactMap(\.self),
-                                         trackingMode: .momentary, target: self, action: #selector(math(_:)))
+                                         trackingMode: .momentary, target: nil, action: nil)
+        // No action, so a click opens the menu segment; the others trigger the primary action (macOS 27).
+        control.addTarget(self, action: #selector(math), for: .primaryActionTriggered)
         control.setMenu(NSHostingMenu(rootView: SymbolItems(project: project)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
+        control.setAccessibilityLabel("Math")
         let group = segmentGroup(.math, "Math", control, [MenuCommand.editMath.title, "Symbols"])
         let form = NSMenuItem(title: "Math", action: nil, keyEquivalent: "")
         form.submenu = NSHostingMenu(rootView: Group { [project, inlineMath] in
@@ -245,7 +205,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func zoomItem() -> NSToolbarItem {
         let control = NSSegmentedControl(images: [symbol("minus.magnifyingglass", "Zoom Out"), NSImage(),
                                                   symbol("plus.magnifyingglass", "Zoom In")].compactMap(\.self),
-                                         trackingMode: .momentary, target: self, action: #selector(zoom(_:)))
+                                         trackingMode: .momentary, target: nil, action: nil)
+        control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
         control.setImage(nil, forSegment: 1)
         control.setLabel(pdf.zoomLabel, forSegment: 1)
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
@@ -359,11 +320,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             let control = item.view as? NSSegmentedControl
             // Tabular digits, so Share doesn't move as the scale changes. The toolbar
-            // resets the control's font, so it's set with each label. Derive it from
-            // that native font so its face and weight survive the feature change.
-            if let font = control?.font, let tabularFont = zoomFontWithTabularNumbers(font) {
-                control?.font = tabularFont
-            }
+            // resets the control's font, so it's set with each label.
+            if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
             control?.setLabel(state.zoomLabel, forSegment: 1)
             control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
             control?.setEnabled(state.hasPDF, forSegment: 1)
@@ -384,20 +342,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.isEnabled = state.canCompile
             (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
         case .togglePDF:
-            item.label = state.pdfTitle
+            // A fixed label, as the system's toggles beside it; the tooltip says what it will do.
             item.toolTip = state.pdfTitle
-        case .pdfSeparator:
-            guard let separator = item as? NSTrackingSeparatorToolbarItem, let workspace else { return }
-            // A collapsed PDF's divider lies past the inspector partition, making
-            // AppKit join the source's scroll edge to the whole toolbar. Track
-            // that native partition instead, without rewriting the saved items.
-            let split = state.showsPDF ? workspace.columns.splitView : workspace.splitView
-            let divider = state.showsPDF ? 0 : workspace.splitViewItems.firstIndex(of: workspace.inspectorItem)! - 1
-            guard separator.splitView !== split || separator.dividerIndex != divider else { return }
-            // Index zero is valid in both splits while changing the tracked view.
-            separator.dividerIndex = 0
-            separator.splitView = split
-            separator.dividerIndex = divider
         default:
             break
         }
@@ -432,34 +378,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         project.insert(template)
     }
 
-    @objc private func math(_ control: NSSegmentedControl) {
-        if control.selectedSegment == 0 { perform(.editMath) } else { openMenu(of: control) }
-    }
+    @objc private func math() { perform(.editMath) }
 
     @objc private func zoom(_ control: NSSegmentedControl) {
-        switch control.selectedSegment {
-        case 0: pdf.zoom(in: false)
-        case 2: pdf.zoom(in: true)
-        default: openMenu(of: control)
-        }
-    }
-
-    /// A segment's menu. AppKit opens it on a click only in a control without an
-    /// action, and on a press and hold in one with: these have their other
-    /// segments' action, so a click opens it here, under the control where it was
-    /// clicked.
-    private func openMenu(of control: NSSegmentedControl) {
-        guard let menu = control.menu(forSegment: control.selectedSegment) else { return }
-        let x = if let event = NSApp.currentEvent, event.type == .leftMouseUp {
-            control.convert(event.locationInWindow, from: nil).x
-        } else {
-            control.bounds.midX
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: x, y: control.isFlipped ? control.bounds.maxY : 0), in: control)
+        pdf.zoom(in: control.selectedSegment == 2)
     }
 
     @objc private func sectionLevel(_ popUp: NSPopUpButton) {
-        project.format(.heading, HeadingLevel.all[popUp.selectedTag()].command)
+        project.editor.perform(.heading, HeadingLevel.all[popUp.selectedTag()].command)
     }
 
     @objc private func compile() {

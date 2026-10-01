@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 @testable import TeXLocal
 
 /// What a timed-out wait last saw, so a failure on a machine we can't watch says why.
@@ -20,10 +20,4 @@ func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool,
 /// Two lengths equal to within half a point, as layout rounds them.
 func isClose(_ a: CGFloat, _ b: CGFloat, within tolerance: CGFloat = 0.5) -> Bool {
     abs(a - b) <= tolerance
-}
-
-/// A regular push button's fitting height, as the system draws it.
-@MainActor
-func regularControlHeight() -> CGFloat {
-    NSHostingView(rootView: Button("Done") {}.controlSize(.regular)).fittingSize.height
 }

@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The app's user-defaults keys.
 enum DefaultsKey {
     static let sidebarVisible = "sidebarVisible"
     static let inspectorVisible = "inspectorVisible"
@@ -13,7 +12,6 @@ enum DefaultsKey {
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
     static let outlineFolded = "OutlineFolded"
-    static let settingsTab = "settingsTab"
     /// Pane sizes set by dragging a divider (`PaneSize`).
     static let paneSizes = "PaneSizes"
 }
@@ -69,8 +67,6 @@ final class AppModel {
     var searchFocusToken = 0
     /// The token lets the same action be asked for twice in a row.
     var pdfRequest: (action: PDFAction, token: Int)?
-    /// The workspace's live PDFKit limits, shared by toolbar and menu validation.
-    weak var pdfController: PDFController?
     private var pdfToken = 0
 
     // Stored here rather than as @AppStorage so the menus and models observe them.
@@ -138,7 +134,6 @@ final class AppModel {
     func refresh() async {
         do {
             projects = try await core.call("list_projects", as: [ProjectInfo].self)
-                .sorted { $0.mtime > $1.mtime }
         } catch {
             alert = AppAlert("Couldn’t Load Your Projects", error)
         }
@@ -159,11 +154,11 @@ final class AppModel {
         tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
 
-    /// The creation sheet owns failures, so its name and template remain editable.
     func create(name: String, template: String) async throws {
         let info = try await core.call("create_project", ["name": name, "template": template], as: ProjectInfo.self)
         await refresh()
-        await open(info.id)
+        // Not awaited: the sheet goes as the project opens, not after its first build.
+        Task { await open(info.id) }
     }
 
     static let openableTypes: [UTType] = [.folder, .zip] + [UTType(filenameExtension: "tex")].compactMap(\.self)
@@ -175,7 +170,7 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// Copies a folder, .tex file or .zip into the library and opens it. The
+    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it. The
     /// core removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL) async {
         do {
@@ -276,3 +271,4 @@ final class AppModel {
         return true
     }
 }
+

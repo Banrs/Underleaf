@@ -130,8 +130,9 @@
     ["  @inp",false,2,"@inproceedings"]
   ],
   "blocks": [
-    ["Some text","equation","\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n",20],
-    ["","figure","\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n",71],
-    ["  ","itemize","\\begin{itemize}\n  \\item \n\\end{itemize}\n",24]
+    ["Some text","equation","\n\\begin{equation}\n  \n  \\label{eq:}\n\\end{equation}\n",[[20,0],[33,0]]],
+    ["","figure","\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{}\n  \\caption{}\n  \\label{fig:}\n\\end{figure}\n",[[71,0],[84,0],[99,0]]],
+    ["  ","itemize","\\begin{itemize}\n    \\item \n  \\end{itemize}\n  ",[[26,0]]],
+    ["","description","\\begin{description}\n  \\item[] \n\\end{description}\n",[[28,0],[30,0]]]
   ]
 }

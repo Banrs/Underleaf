@@ -111,7 +111,6 @@ fn classify_entry(
     if !target.starts_with(root_canonical) {
         return Ok(None);
     }
-    // Following a directory link can duplicate trees or recurse forever.
     Ok(fs::metadata(entry.path())?
         .is_file()
         .then_some(EntryKind::File))
@@ -281,17 +280,26 @@ pub fn create_project(
     finish_project(clean, &root, &json!({}))
 }
 
-/// A new, empty project folder for `name`, and the name as sanitized.
+/// A new, empty project folder for `name`, or "name 2" and so on when that
+/// is taken, as Finder numbers copies; and the name it got.
 pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
     let clean = sanitize_name(name)?;
-    let root = data_dir.join(&clean);
     fs::create_dir_all(data_dir)?;
-    // One create rather than a check and then a create: it cannot race, and
-    // it refuses anything already there, a dangling link or case alias too.
-    match fs::create_dir(&root) {
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(name_taken()),
-        created => Ok(created.map(|()| (clean, root))?),
+    for n in 1.. {
+        let name = match n {
+            1 => clean.clone(),
+            n => format!("{clean} {n}"),
+        };
+        let root = data_dir.join(&name);
+        // One create rather than a check and then a create: it cannot race,
+        // and it passes over anything already there, a dangling link or case
+        // alias too.
+        match fs::create_dir(&root) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            created => return Ok(created.map(|()| (name, root))?),
+        }
     }
+    unreachable!("a free name")
 }
 
 /// Write a new project's settings, and the project as the library lists it.
@@ -418,7 +426,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
 
 const TEXT_EXT: &[&str] = &[
     "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-    "py", "r", "dat", "def", "clo", "tikz", "svg",
+    "py", "r", "dat", "def", "clo", "tikz",
 ];
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
@@ -652,24 +660,13 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 // ---------- symbols ----------
 
-// Both failure modes here are real and pull in opposite directions, so the
-// decode has to happen before the match, not after.
-//
-// Matching raw bytes in Unicode mode drops an entry outright when the file
-// carries a byte that is not valid UTF-8 — an umlaut in a Latin-1 .bib —
-// because a class like `[^,\s]` cannot step across it. Escaping that with
-// `(?-u)` narrows `\s` to ASCII instead, which swallows a non-breaking
-// space into the captured key (autocomplete then offers a key `\cite`
-// will never match) and drops the entry entirely when one sits between the
-// type and the brace. Reference managers and PDF copy-paste emit those.
-//
-// Decoding first and matching a str gets both right: invalid bytes become
-// U+FFFD and the entry survives, while `\s` keeps its Unicode meaning.
-// `from_utf8_lossy` borrows when the file is already valid UTF-8, the
-// normal case, so then nothing is copied.
+// Matched on the decoded text, not the raw bytes: in Unicode mode a byte that
+// isn't UTF-8 (a Latin-1 umlaut) drops its entry, and `(?-u)` narrows `\s` to
+// ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+/// Not a bare prefix, as an inserted block's `fig:` is until it's filled in.
+static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}:])\}").unwrap());
 /// A thebibliography entry's key, which \cite takes as a .bib key.
 static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());

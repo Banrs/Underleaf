@@ -1,5 +1,5 @@
-// The shared command surface: the JSON dispatch every non-Tauri host forwards
-// to, and the route table both URL-serving hosts use.
+// The shared command surface: the JSON dispatch every host forwards to, and
+// the route table both URL-serving hosts use.
 
 use std::path::Path;
 
@@ -171,6 +171,8 @@ fn uploads_are_validated_as_a_batch_before_any_write() {
         .is_ok());
     for batch in [
         [spec("a.png", 1), spec("a.png", 1)],
+        [spec("notes", 1), spec("notes/ch.tex", 1)],
+        [spec("notes/ch.tex", 1), spec("notes", 1)],
         [
             spec("a.png", 1),
             spec("b.png", texlocal_core::service::UPLOAD_MAX_BYTES + 1),

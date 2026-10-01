@@ -43,7 +43,7 @@ nonisolated struct ProjectSettings: Decodable {
     let stopOnFirstError: Bool
 }
 
-nonisolated struct LogItem: Decodable, Hashable {
+nonisolated struct LogItem: Decodable, Equatable {
     let type: String
     let file: String?
     let line: Int?
@@ -105,6 +105,8 @@ nonisolated struct ForwardLoc: Decodable {
 nonisolated struct InverseLoc: Decodable {
     let file: String
     let line: Int
+    /// The clicked letter's, in UTF-16 units.
+    let column: Int?
 }
 
 /// `import_files`' result: the incoming paths that already exist here.
@@ -157,7 +159,7 @@ func isTextFile(_ path: String) -> Bool {
     FileKind(path) == .text
 }
 
-/// LaTeX tools use the same case-insensitive extension as text-file detection.
+/// LaTeX's own tools (the outline, Set as Main File) for `.tex`, in any case, as the core reads it.
 func isLaTeXFile(_ path: String) -> Bool {
     (path as NSString).pathExtension.lowercased() == "tex"
 }

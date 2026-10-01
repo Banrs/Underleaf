@@ -15,6 +15,7 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
+                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
                 .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
@@ -41,7 +42,7 @@ struct BuildPanel: View {
         .pickerStyle(.tabs)
         .labelsHidden()
         .fixedSize()
-            .layoutPriority(1)
+        .layoutPriority(1)
         Spacer(minLength: 0)
         if project.panelTab == .issues {
             if project.warningCount > 0 {
@@ -49,7 +50,6 @@ struct BuildPanel: View {
                     Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
                 .toggleStyle(.button)
-                .symbolVariant(showWarnings ? .fill : .none)
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
             }
         } else {
@@ -64,9 +64,19 @@ struct BuildPanel: View {
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
-    private var items: [BuildIssue] {
-        BuildIssueRows(errors: project.result?.errors ?? [], warnings: project.result?.warnings ?? [])
-            .visible(filter: filter, showWarnings: showWarnings)
+    /// The issues showing, each by its place in the build's errors then warnings, so
+    /// a row keeps its identity as the filter and Warnings change what shows (LaTeX
+    /// repeats identical warnings).
+    private var items: [(offset: Int, element: LogItem)] {
+        let errors = project.result?.errors ?? []
+        return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
+            (showWarnings || offset < errors.count) && matches(item)
+        }
+    }
+
+    private func matches(_ item: LogItem) -> Bool {
+        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
+            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
@@ -74,6 +84,12 @@ struct BuildPanel: View {
     private var issues: some View {
         if !items.isEmpty {
             IssueList(items: items, project: project)
+        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+            ContentUnavailableView {
+                Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
+            } actions: {
+                Button("Show Warnings") { showWarnings = true }
+            }
         } else if !filter.isEmpty {
             ContentUnavailableView.search(text: filter)
         } else {
@@ -89,6 +105,8 @@ struct BuildPanel: View {
                 : text.split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { $0.localizedCaseInsensitiveContains(filter) }
                     .joined(separator: "\n")
+            // On under the status bar, as the issues' list is, its automatic insets
+            // keeping the last line clear.
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
                 .ignoresSafeArea(.container, edges: .bottom)
         } else {
@@ -98,92 +116,48 @@ struct BuildPanel: View {
     }
 }
 
-/// The errors and warnings; a double-click or Return opens the line.
+/// The errors and warnings. Choosing one shows its line and leaves the keyboard
+/// in the list, as the outline does; a double-click or Return goes into the source.
 private struct IssueList: View {
-    let items: [BuildIssue]
+    let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
-    @State private var selection: BuildIssue.ID?
+    @State private var selection: Int?
 
     var body: some View {
-        List(items, selection: $selection) { issue in
-            IssueRow(item: issue.item)
-        }
+        List(items, id: \.offset, selection: $selection) { IssueRow(item: $0.element) }
         .listStyle(.inset)
+        .accessibilityLabel("Issues")
         .scrollContentBackground(.hidden)
-        .contextMenu(forSelectionType: BuildIssue.ID.self) { rows in
-            if let id = rows.first {
-                if issue(for: id)?.item.file != nil {
-                    Button("Go to Line") { open(id) }
+        .contextMenu(forSelectionType: Int.self) { rows in
+            if let item = rows.first.flatMap(item) {
+                if item.file != nil {
+                    Button("Go to Line") { open(item) }
                 }
-                Button("Copy") { copy(id) }
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(item.message, forType: .string)
+                }
             }
         } primaryAction: { rows in
-            if let id = rows.first { open(id) }
+            if let item = rows.first.flatMap(item) { open(item) }
         }
         // Edit › Copy copies the selected issue.
-        .copyable(selection.flatMap { issue(for: $0).map { [$0.item.message] } } ?? [])
-        .onChange(of: items) { _, newItems in
-            selection = BuildIssueRows.retainedSelection(selection, in: newItems)
+        .copyable(selection.flatMap(item).map { [$0.message] } ?? [])
+        // Kept while its row shows.
+        .onChange(of: items.map(\.offset)) { _, shown in
+            if let selection, !shown.contains(selection) { self.selection = nil }
+        }
+        .onChange(of: selection) { _, id in
+            if let item = id.flatMap(item) { open(item, focus: false) }
         }
     }
 
-    private func issue(for id: BuildIssue.ID) -> BuildIssue? {
-        items.first { $0.id == id }
+    private func item(_ id: Int) -> LogItem? {
+        items.first { $0.offset == id }?.element
     }
 
-    private func open(_ id: BuildIssue.ID) {
-        guard let item = issue(for: id)?.item, let file = item.file else { return }
-        Task { await project.open(file, line: item.line) }
-    }
-
-    private func copy(_ id: BuildIssue.ID) {
-        guard let item = issue(for: id)?.item else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.message, forType: .string)
-    }
-}
-
-/// A row's identity describes its payload and its occurrence among identical
-/// entries in the original errors-then-warnings list.
-struct BuildIssue: Identifiable, Equatable {
-    struct ID: Hashable {
-        let item: LogItem
-        let occurrence: Int
-    }
-
-    let id: ID
-    let item: LogItem
-    let isWarning: Bool
-}
-
-/// Builds identities before applying the panel's warning and text filters.
-struct BuildIssueRows {
-    private let all: [BuildIssue]
-
-    init(errors: [LogItem], warnings: [LogItem]) {
-        let source: [(item: LogItem, isWarning: Bool)] =
-            errors.map { (item: $0, isWarning: false) } + warnings.map { (item: $0, isWarning: true) }
-        var occurrences: [LogItem: Int] = [:]
-        all = source.map { entry in
-            let occurrence = occurrences[entry.item, default: 0]
-            occurrences[entry.item] = occurrence + 1
-            return BuildIssue(id: BuildIssue.ID(item: entry.item, occurrence: occurrence),
-                              item: entry.item, isWarning: entry.isWarning)
-        }
-    }
-
-    func visible(filter: String, showWarnings: Bool) -> [BuildIssue] {
-        all.filter { issue in
-            (showWarnings || !issue.isWarning)
-                && (filter.isEmpty
-                    || issue.item.message.localizedCaseInsensitiveContains(filter)
-                    || (issue.item.file?.localizedCaseInsensitiveContains(filter) ?? false))
-        }
-    }
-
-    static func retainedSelection(_ selection: BuildIssue.ID?, in visible: [BuildIssue]) -> BuildIssue.ID? {
-        guard let selection, visible.contains(where: { $0.id == selection }) else { return nil }
-        return selection
+    private func open(_ item: LogItem, focus: Bool = true) {
+        if let file = item.file { Task { await project.open(file, line: item.line, focus: focus) } }
     }
 }
 
@@ -217,8 +191,7 @@ private struct IssueRow: View {
     }
 }
 
-/// The build log in NSTextView: a SwiftUI Text laid out LaTeX's megabyte logs
-/// whole on every change.
+/// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
 private struct LogTextView: NSViewRepresentable {
     let text: String
     /// Unfiltered, the log opens at its end, where the error usually is.

@@ -299,6 +299,7 @@ impl Service {
         let root = self.project_root(id)?;
         let base = root.join(paths::rel_key(dir).unwrap_or_default());
         let mut seen = HashSet::new();
+        let mut folders = HashSet::new();
         let mut rels = Vec::new();
         for file in files {
             if file.size > UPLOAD_MAX_BYTES {
@@ -307,20 +308,28 @@ impl Service {
             paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
             // Relative to `dir`, as the host names the files.
             let rel = paths::rel_key(&file.path)?;
-            if !seen.insert(fold_case(&rel)) {
+            let key = fold_case(&rel);
+            if seen.contains(&key) {
                 return Err(CoreError::bad_request(
                     "The upload contains duplicate paths",
                 ));
             }
+            if folders.contains(&key)
+                || key
+                    .match_indices('/')
+                    .any(|(i, _)| seen.contains(&key[..i]))
+            {
+                return Err(CoreError::bad_request(
+                    "The upload contains conflicting paths",
+                ));
+            }
+            folders.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
+            seen.insert(key);
             rels.push(rel);
         }
         // Names a Keep Both may not take: every path the upload creates.
-        let mut taken: HashSet<String> = rels
-            .iter()
-            .flat_map(|rel| rel.match_indices('/').map(|(i, _)| &rel[..i]))
-            .map(fold_case)
-            .chain(seen)
-            .collect();
+        seen.extend(folders);
+        let mut taken = seen;
         let mut existing: Vec<Clash> = Vec::new();
         for rel in &rels {
             let Some(path) = clash(&base, rel) else {
@@ -399,9 +408,7 @@ impl Service {
     // ---------- dispatch ----------
 
     /// Run a command by name with JSON arguments — the one table a host that
-    /// speaks JSON (the browser server, the native FFI) forwards to. Names and
-    /// argument keys match the desktop commands, so one frontend API table
-    /// serves every host.
+    /// speaks JSON (the browser server, the native FFI) forwards to.
     ///
     /// Only commands whose paths pass through the project boundary belong
     /// here. Anything that takes a host-chosen absolute path (export
@@ -448,7 +455,11 @@ impl Service {
             "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
             "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
-            "analyze" => out(analyze::analyze(&s("text")?)),
+            "analyze_project" => {
+                let root = root()?;
+                let main = settings::read_settings(&root).main_file;
+                out(analyze::analyze_project(&root, &main, &s("file")?))
+            }
             "search_project" => out(projects::search_project(
                 &root()?,
                 &s("query")?,
@@ -508,6 +519,8 @@ impl Service {
                 arg(args, "page")?,
                 arg(args, "x")?,
                 arg(args, "y")?,
+                arg::<Option<String>>(args, "word")?.as_deref(),
+                arg(args, "offset")?,
                 &self.tex_path(),
             )
             .await?),

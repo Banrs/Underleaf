@@ -10,14 +10,19 @@ public sealed class RustCoreCollection;
 [Collection("Rust core")]
 public sealed class OutlineTests
 {
-    /// <summary>The core's analyze, on a scratch library folder.</summary>
-    private static async Task<DocumentStats> AnalyzeAsync(string text)
+    /// <summary>The core's analysis of a scratch project whose main.tex holds the text, beside the other files.</summary>
+    private static async Task<DocumentStats> AnalyzeAsync(string text, params (string Name, string Text)[] others)
     {
         var data = Directory.CreateTempSubdirectory("texlocal-test-").FullName;
         Environment.SetEnvironmentVariable("TEXLOCAL_DATA", data);
         try
         {
-            return await Outline.AnalyzeAsync(new Core(), text);
+            Directory.CreateDirectory(Path.Combine(data, "P"));
+            foreach (var (name, body) in others.Prepend(("main.tex", text)))
+            {
+                File.WriteAllText(Path.Combine(data, "P", name), body);
+            }
+            return await Outline.AnalyzeAsync(new Core(), "P", "main.tex");
         }
         finally
         {
@@ -54,6 +59,27 @@ public sealed class OutlineTests
     }
 
     [Fact]
+    public async Task TheDocumentReadsItsInputsInPlace()
+    {
+        var doc = await AnalyzeAsync("\\section{Intro}\n\\input{a}\n\\section{End}", ("a.tex", "\\section{A} one"));
+        Assert.Equal(new[] { "Intro", "A", "End" }, doc.Outline.Select(i => i.Title));
+        Assert.Equal(new[] { "main.tex", "a.tex", "main.tex" }, doc.Outline.Select(i => i.File));
+        Assert.Equal(3, doc.Lines);
+    }
+
+    [Fact]
+    public void TheCurrentHeadingFollowsTheFile()
+    {
+        OutlineItem[] items = [new(1, "A", 1, "main.tex"), new(2, "A1", 3, "a.tex"), new(2, "A2", 5, "a.tex"), new(1, "B", 9, "main.tex")];
+        Assert.Equal(2, Outline.Current(items, "a.tex", 6));
+        Assert.Equal(-1, Outline.Current(items, "a.tex", 1));
+        Assert.Equal(0, Outline.Current(items, "main.tex", 8));
+        Assert.Equal(-1, Outline.Current(items, "notes.tex", 1));
+        Assert.Equal(new[] { "A", "A2" }, Outline.Enclosing(items, 2).Select(i => i.Title));
+        Assert.Empty(Outline.Enclosing(items, -1));
+    }
+
+    [Fact]
     public void TheBreadcrumbIsTheChainOfEnclosingHeadings()
     {
         OutlineItem[] outline = [new(1, "A", 1), new(2, "B", 2), new(3, "C", 3), new(2, "D", 4)];
@@ -82,7 +108,7 @@ public sealed class OutlineTests
     public void FoldKeysTellHeadingsOfTheSameNameApart()
     {
         OutlineItem[] items = [new(2, "A", 1), new(3, "B", 2), new(2, "A", 3), new(2, "(untitled)", 4)];
-        Assert.Equal(new[] { "2:A#1", "3:B#1", "2:A#2", "2:(untitled)#1" }, Outline.FoldKeys(items));
+        Assert.Equal(new[] { "\t2:A#1", "\t3:B#1", "\t2:A#2", "\t2:(untitled)#1" }, Outline.FoldKeys(items));
         // A line added above keeps every key.
         Assert.Equal(Outline.FoldKeys(items), Outline.FoldKeys(items.Select(i => i with { Line = i.Line + 1 }).ToList()));
     }

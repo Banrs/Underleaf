@@ -65,28 +65,15 @@
   --green-text: #1e7e34;
   --red-fill: #c42b1c;
 
-  /* Control sizes, standardized to two from the kit's ramp (16/20/24/28/36):
-     --h-control (28) for every interactive control below the title bar, and
-     --h-xl (36) for the title-bar row — desktop-comfortable, no mini/small UI.
-     Menu rows are 28 here (kit 24); the switch keeps its kit 54×24. */
+  /* Two control sizes from the kit's ramp (docs/design-tokens.md): 28 below the
+     title bar, 36 in it. */
   --h-control: 28px;
   --h-xl: 36px;
   --h-menu-row: 28px;
-  /* Lists use the kit's "Large" sidebar variant — 40px rows with 15pt text —
-     rather than "Medium" (32/13). Text scales with row height in the kit, and
-     Large is the comfortable desktop density; Medium reads undersized on a
-     large display. Controls stay at the 13pt control standard. */
+  /* Lists use the kit's Large variant: 40px rows, 15pt text. */
   --h-row: 40px;
 
-  /* Type roles. Five sizes, each with one job — every font-size in this file
-     refers to one of these, so nothing drifts. Sizes are the kit's; the roles
-     are what keeps 11px from leaking into places that need 13 or 15.
-       title     window + dialog titles (Bold)
-       body      lists, rows, content, form labels  ← the app's dominant size
-       header    sidebar/group section headers (Bold, kit "Large" header)
-       control   buttons, fields, menus, toolbars, breadcrumbs, status
-       small     hints, timestamps, metadata, log text
-       micro     count badges only */
+  /* Type roles (docs/design-tokens.md): every font-size in this file is one. */
   --fs-large-title: 26px; --lh-large-title: 32px;   /* welcome heading */
   --fs-title: 15px;   --lh-title: 20px;
   --fs-body: 15px;    --lh-body: 20px;
@@ -124,11 +111,8 @@
   --shadow-pane: 0 0.5px 1px rgba(0, 0, 0, 0.06), 0 4px 14px rgba(0, 0, 0, 0.1);
 
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, system-ui, sans-serif;
-  /* System monospace first: `ui-monospace` resolves to SF Mono on macOS, which is
-     what Xcode sets, and to Cascadia Mono on Windows. JetBrains Mono is bundled
-     and stays selectable in Settings, but it is no longer the default — an app
-     that should read as native shouldn't ship its own code face ahead of the
-     platform's. */
+  /* System monospace first: SF Mono on macOS, Cascadia Mono on Windows.
+     JetBrains Mono is a Settings choice. */
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --mono-jetbrains: "JetBrains Mono", var(--mono);
 }
@@ -228,9 +212,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 
 /* ---------- window chrome ---------- */
 
-/* Dragging the window by its chrome is driven by data-tauri-drag-region on the
-   title bars, not CSS: neither WKWebView nor WebView2 honours -webkit-app-region. */
-
 /* The traffic lights sit at x19/y19 in a 52px band (native insets), so the sidebar
    band keeps its leading end clear of controls. */
 .mac .sidebar-titlebar { padding-left: 96px; }
@@ -268,8 +249,7 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 .icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .icon svg { width: 16px; height: 16px; display: block; }
 
-/* XL (36) in the title bar, regular (24) inside panes — the kit's two toolbar
-   scales. Radius follows height / 4. */
+/* XL (36) in the title bar, .small (28) inside panes. Radius follows height / 4. */
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -285,9 +265,7 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 .icon-btn:disabled { color: var(--label-3); }
 .icon-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
-/* "Small" here is the in-pane toolbar size. Native pane toolbars (Preview,
-   Finder) use ~28px regular controls with 13pt labels, not the 24px small
-   size — matching that keeps our chrome from reading under-scaled. */
+/* "Small" is the in-pane toolbar size: 28px, as in Preview's and Finder's. */
 .icon-btn.small {
   width: var(--h-control);
   height: var(--h-control);
@@ -317,7 +295,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, black); }
 .btn.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 78%, black); }
 .btn.primary:disabled { background: var(--fill-2); color: var(--label-3); }
-/* Busy is not disabled: the button keeps its fill while its spinner runs. */
 
 .btn.destructive { background: var(--red-fill); color: #fff; }
 .btn.destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--red-fill) 88%, black); }
@@ -486,8 +463,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .home-titlebar { box-shadow: none; background: transparent; }
 .mac .home-titlebar { padding-left: 96px; }
 
-/* Two columns like the Xcode/Pages welcome window: branding + primary actions on
-   the leading side, recents filling the trailing side. */
+/* Two columns, as a welcome window has: brand and actions, then recents. */
 .home-body {
   flex: 1;
   min-height: 0;
@@ -583,17 +559,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    there the sidebar only needs to stay out of the way. */
 .mac .sidebar { background: transparent; }
 
-.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace.js) */
+.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace-layout.js) */
 .sidebar.collapsed + .divider { display: none; }
 
-/* Preserve the kit's compact 20px desktop section band and accessories.
-   The overlay below uses larger controls for narrow/touch layouts. */
+/* Section headers share the existing 4px rhythm and 28px action targets. */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
-  height: 20px;
+  min-height: 36px;
   margin: 0;
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
@@ -606,8 +581,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .section-header.disclosure { margin-top: var(--sp-4); }   /* section-to-section gap */
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
-.section-actions { display: flex; gap: 1px; }
-.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-control); }
+.section-actions { display: flex; gap: var(--sp-1); }
+.section-actions .icon-btn { width: 28px; height: 28px; border-radius: var(--r-control); }
 .section-actions .icon-btn svg { width: 14px; height: 14px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
@@ -954,17 +929,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* ---------- PDF ---------- */
 
 /* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
-   and fit-width re-renders in a feedback loop. Top padding = 44px bar + 12px,
+   and fit-width re-renders in a feedback loop. Top padding = the toolbar + 12px,
    which pdfview.js reads from here (#metrics). */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
    are the true content extents the pinch gesture clamps against, and so the CSS
    centring below agrees with a zero offset.
-   `position: relative` is load-bearing, not decoration: in Blink any transform —
-   even an identity one — makes an element the offsetParent of its descendants,
-   so without it every page's offsetTop would silently gain and lose this
-   scroller's 56px top padding depending on whether a pinch had run. Positioning
-   it pins offsetTop to this element in both states. */
+   `position: relative` pins the pages' offsetTop here: in Blink any transform
+   makes an element its descendants' offsetParent, so without it offsetTop would
+   gain or lose the scroller's top padding as a pinch ran. */
 .pdf-pages { position: relative; display: flex; width: max-content; min-width: 100%; min-height: 100%; flex-direction: column; justify-content: center; }
 .pdf-page-wrap { position: relative; margin: 0 auto var(--sp-2); width: fit-content; border-radius: 3px; box-shadow: 0 0 0 0.5px var(--label-4), 0 2px 8px rgba(0, 0, 0, 0.14); }
 .pdf-page-wrap:last-child { margin-bottom: 0; }
@@ -1327,7 +1300,6 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 /* Responsive workspace: preserve the desktop preferences while space is tight.
    Classes use the shell's CSS width, so interface zoom follows the same rules. */
 .workspace-switcher { display: flex; flex: none; gap: var(--sp-1); padding: var(--sp-2); background: var(--bg-content); border-bottom: 1px solid var(--separator); }
-.workspace-switcher[hidden] { display: none; }
 .workspace-switcher .btn { flex: 1; }
 .workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }
 .sidebar-backdrop { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 20%); }
@@ -1347,7 +1319,3 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
 .divider-sync::before { content: none; }
 .divider:has(.pane-resize-handle.dragging) { background: var(--accent); }
-
-.layout-overlay .section-header { height: 36px; }
-.layout-overlay .section-actions { gap: var(--sp-1); }
-.layout-overlay .section-actions .icon-btn { width: 28px; height: 28px; }

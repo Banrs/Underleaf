@@ -1,33 +1,33 @@
 namespace TeXLocal;
 
-/// <summary>A heading: Level runs from 0 for \part to 5 for \paragraph.</summary>
-public sealed record OutlineItem(int Level, string Title, int Line);
+/// <summary>A heading: Level runs from 0 for \part to 5 for \paragraph; File is the project file it's in.</summary>
+public sealed record OutlineItem(int Level, string Title, int Line, string File = "");
 
 /// <summary>A heading and the headings it encloses.</summary>
 public sealed record OutlineNode(OutlineItem Item, IReadOnlyList<OutlineNode> Children);
 
-/// <summary>A document's outline, words and lines, as the core's analyze reads them.</summary>
+/// <summary>The document's outline and words, and the open file's lines, as the core's analyze_project reads them.</summary>
 public sealed record DocumentStats(IReadOnlyList<OutlineItem> Outline, int Words, int Lines);
 
 public static class Outline
 {
     private static readonly string[] Levels = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph"];
 
-    // analyze's own shape: the web's names, depth for Level.
-    private sealed record Heading(int Depth, string Title, int Line);
+    // analyze_project's own shape: the web's names, depth for Level.
+    private sealed record Heading(int Depth, string Title, int Line, string File);
 
     private sealed record Analysis(IReadOnlyList<Heading> Outline, int Words, int Lines);
 
     /// <summary>
-    /// The outline, words and lines, from the core (crates/texlocal-core
-    /// analyze.rs, the browser version's reading ported once), so every app
-    /// counts the same. Lines break where the editor breaks them.
+    /// The document's outline and words from the main file through its \input
+    /// and \include, and the open file's lines, from the core (crates/texlocal-core
+    /// analyze.rs), so every app counts the same. Lines break where the editor breaks them.
     /// </summary>
-    public static async Task<DocumentStats> AnalyzeAsync(Core core, string text)
+    public static async Task<DocumentStats> AnalyzeAsync(Core core, string id, string file)
     {
-        var analysis = await core.CallAsync<Analysis>("analyze", new { text });
+        var analysis = await core.CallAsync<Analysis>("analyze_project", new { id, file });
         return new DocumentStats(
-            analysis.Outline.Select(h => new OutlineItem(h.Depth, h.Title, h.Line)).ToList(),
+            analysis.Outline.Select(h => new OutlineItem(h.Depth, h.Title, h.Line, h.File)).ToList(),
             analysis.Words,
             analysis.Lines);
     }
@@ -35,6 +35,14 @@ public static class Outline
     /// <summary>The headings that enclose a line, outermost first: the breadcrumb (web/src/state.js outlineChain).</summary>
     public static IReadOnlyList<OutlineItem> Chain(IReadOnlyList<OutlineItem> outline, int line) =>
         outline.TakeWhile(item => item.Line <= line).Aggregate(new List<OutlineItem>(), Enclose);
+
+    /// <summary>The heading a line of a file is under: the file's last at or above it, or -1 (apps/macos Outline.swift current).</summary>
+    public static int Current(IReadOnlyList<OutlineItem> outline, string? file, int line) =>
+        outline.Select((item, i) => item.File == file && item.Line <= line ? i : -1).DefaultIfEmpty(-1).Max();
+
+    /// <summary>The heading at an index and those enclosing it, outermost first.</summary>
+    public static IReadOnlyList<OutlineItem> Enclosing(IReadOnlyList<OutlineItem> outline, int index) =>
+        outline.Take(index + 1).Aggregate(new List<OutlineItem>(), Enclose);
 
     /// <summary>
     /// How many headings enclose each heading. A subsection before any section
@@ -76,15 +84,15 @@ public static class Outline
     }
 
     /// <summary>
-    /// A fold's key per heading, surviving renumbered lines: level, title and
-    /// which of the headings so named it is (apps/macos Outline.swift foldKeys).
+    /// A fold's key per heading, surviving renumbered lines: file, level, title and
+    /// which of the file's headings so named it is (apps/macos Outline.swift foldKeys).
     /// </summary>
     public static IReadOnlyList<string> FoldKeys(IReadOnlyList<OutlineItem> outline)
     {
         var seen = new Dictionary<string, int>();
         return outline.Select(item =>
         {
-            var key = $"{item.Level}:{item.Title}";
+            var key = $"{item.File}\t{item.Level}:{item.Title}";
             seen[key] = seen.GetValueOrDefault(key) + 1;
             return $"{key}#{seen[key]}";
         }).ToList();

@@ -17,6 +17,9 @@ pub struct Catalog {
     pub sections: Vec<String>,
     pub cite_commands: Vec<String>,
     pub ref_commands: Vec<String>,
+    /// Commands whose options and first argument are names, not prose:
+    /// classes, packages, environments, labels and files.
+    pub name_commands: Vec<String>,
     /// Environments whose body is maths, starred or not.
     pub math_environments: Vec<String>,
     pub verbatim_environments: Vec<String>,

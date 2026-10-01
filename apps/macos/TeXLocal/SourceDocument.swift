@@ -43,6 +43,13 @@ final class SourceDocument {
         }
     }
 
+    /// The names commands take (packages, citations, labels, files) in the
+    /// paragraphs a range touches, which aren't prose.
+    func notProse(in range: NSRange) -> [NSRange] {
+        let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
+        return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }
+    }
+
     /// What to offer at the caret, if anything; `explicit` when the user
     /// asked, which offers commands after a bare backslash too.
     func completions(caret: Int, explicit: Bool, symbols: Symbols) -> Completions? {
@@ -114,10 +121,11 @@ nonisolated struct TextEdit: Decodable, Equatable {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
-/// An edit and where the caret goes after it.
+/// An edit, where the caret goes after it, and where Tab goes in a block.
 nonisolated struct Insertion: Decodable {
     var edit: TextEdit
     var caret: Int
+    var fields: [SnippetField]
 }
 
 /// Completions for the text from `start` to the caret, which they replace.
@@ -140,8 +148,8 @@ nonisolated struct MathPreview: Decodable, Equatable {
     var display: Bool
 }
 
-/// A place to type in a completion's text, from its start. Fields with the
-/// same index are one field in several places.
+/// A place to type in a completion's or block's text, from its start.
+/// Fields with the same index are one field in several places.
 nonisolated struct SnippetField: Decodable {
     var start: Int
     var length: Int

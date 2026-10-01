@@ -1,6 +1,6 @@
 // Serving project files as URLs: the compiled PDF (pdf.js fetches it in
 // ranges) and raw project files (image previews). Shared by every host that
-// serves them — the desktop's texlocal:// scheme and the browser server — so
+// serves them — Tauri's texlocal:// scheme and the browser server — so
 // the route table and the sandbox rule exist once.
 
 use std::io::{Read, Seek, SeekFrom};

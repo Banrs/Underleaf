@@ -1,5 +1,5 @@
 // The browser host's contract: who may talk to it, and that each route maps
-// onto the shared service with the desktop's semantics.
+// onto the shared service.
 
 use std::sync::Arc;
 
@@ -84,7 +84,7 @@ async fn project_routes_need_the_token_header() {
         );
         assert_eq!(f.app.handle(wrong).await.status, 401, "{target}");
     }
-    // Cookies go to every port on the host, so one is no longer enough.
+    // Cookies go to every port on the host, so one isn't enough.
     let cookie = request(
         "POST",
         "/api/list_projects",
@@ -183,6 +183,19 @@ async fn no_page_may_frame_the_app() {
         Some("sandbox; default-src 'none'")
     );
     assert_eq!(raw.header("x-frame-options"), Some("DENY"));
+    // Refusals can still carry the first page's token-bearing URL.
+    let refused = f
+        .app
+        .handle(request(
+            "GET",
+            "/?token=secret",
+            &[("host", "evil.example")],
+            b"",
+        ))
+        .await;
+    assert_eq!(refused.status, 403);
+    assert_eq!(refused.header("referrer-policy"), Some("no-referrer"));
+    assert_eq!(refused.header("x-frame-options"), Some("DENY"));
 }
 
 #[tokio::test]
@@ -439,7 +452,11 @@ async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
         if let Some(head_end) = text.find("\r\n\r\n") {
             let len: usize = text
                 .lines()
-                .find_map(|l| l.strip_prefix("Content-Length: "))
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim())
+                })
                 .unwrap()
                 .parse()
                 .unwrap();
@@ -451,6 +468,14 @@ async fn read_response(stream: &mut (impl AsyncRead + Unpin)) -> String {
             return text;
         }
     }
+}
+
+async fn assert_closed(stream: &mut tokio::net::TcpStream) {
+    let mut byte = [0];
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(3), stream.read(&mut byte))
+        .await
+        .expect("the refused request kept its connection open");
+    assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
 }
 
 #[tokio::test]
@@ -467,7 +492,7 @@ async fn one_connection_carries_several_requests_with_bodies() {
     stream.write_all(post.as_bytes()).await.unwrap();
     let first = read_response(&mut stream).await;
     assert!(first.starts_with("HTTP/1.1 200 OK"), "{first}");
-    assert!(first.contains("Connection: keep-alive"));
+    assert!(!first.to_ascii_lowercase().contains("connection: close"));
 
     let get = format!("GET /__raw/P/img/a.svg HTTP/1.1\r\n{head}\r\n\r\n");
     stream.write_all(get.as_bytes()).await.unwrap();
@@ -518,7 +543,7 @@ async fn oversized_and_chunked_bodies_are_refused_before_reading() {
             response.starts_with(&format!("HTTP/1.1 {expected}")),
             "{response}"
         );
-        assert!(response.contains("Connection: close"));
+        assert_closed(&mut stream).await;
     }
 }
 
@@ -556,7 +581,7 @@ async fn unauthenticated_requests_are_answered_before_their_bodies() {
             response.starts_with(&format!("HTTP/1.1 {expected}")),
             "{response}"
         );
-        assert!(response.contains("Connection: close"), "{response}");
+        assert_closed(&mut stream).await;
     }
 }
 
@@ -616,7 +641,10 @@ async fn refusals_without_a_pending_body_keep_the_connection() {
     stream.write_all(bare.as_bytes()).await.unwrap();
     let refused = read_response(&mut stream).await;
     assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
-    assert!(refused.contains("Connection: keep-alive"), "{refused}");
+    assert!(
+        !refused.to_ascii_lowercase().contains("connection: close"),
+        "{refused}"
+    );
 
     // A small body arrives with its head, so it is skipped, not read.
     let token = format!("X-TeXLocal-Token: {TOKEN}");
@@ -627,7 +655,10 @@ async fn refusals_without_a_pending_body_keep_the_connection() {
     stream.write_all(foreign.as_bytes()).await.unwrap();
     let refused = read_response(&mut stream).await;
     assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
-    assert!(refused.contains("Connection: keep-alive"), "{refused}");
+    assert!(
+        !refused.to_ascii_lowercase().contains("connection: close"),
+        "{refused}"
+    );
 
     let page = format!("GET /?token={TOKEN} HTTP/1.1\r\n{host}\r\n\r\n");
     stream.write_all(page.as_bytes()).await.unwrap();
@@ -686,6 +717,57 @@ async fn a_head_of_endless_blank_lines_is_cut_off() {
     let closed = tokio::time::timeout(std::time::Duration::from_secs(15), reader.read(&mut chunk))
         .await
         .expect("the connection outlived the head's time limit");
-    assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
+    match closed {
+        Ok(0) | Err(_) => {}
+        Ok(n) => assert!(
+            String::from_utf8_lossy(&chunk[..n]).starts_with("HTTP/1.1 431"),
+            "{}",
+            String::from_utf8_lossy(&chunk[..n])
+        ),
+    }
+    feed.abort();
+}
+
+#[tokio::test]
+async fn a_dribbling_body_has_one_deadline() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let seen = Arc::clone(&entered);
+    tokio::spawn(texlocal_server::http::serve(
+        listener,
+        Arc::new(|_| async { Response::text(200, "complete") }),
+        Arc::new(move |_: &Request| {
+            seen.notify_one();
+            None
+        }),
+        100,
+        std::future::pending::<()>(),
+    ));
+    let stream = connect(port).await;
+    let (mut reader, mut writer) = stream.into_split();
+    writer
+        .write_all(b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nx")
+        .await
+        .unwrap();
+    entered.notified().await;
+    tokio::time::pause();
+    let feed = tokio::spawn(async move {
+        for _ in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            if writer.write_all(b"x").await.is_err() {
+                return;
+            }
+        }
+    });
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(65),
+        read_response(&mut reader),
+    )
+    .await
+    .expect("body bytes extended the total deadline");
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
     feed.abort();
 }

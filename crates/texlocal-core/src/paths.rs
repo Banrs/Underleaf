@@ -216,7 +216,6 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
     Ok(segments.join("/"))
 }
 
-/// Project-name sanitization.
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
     const STRIP: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
     let clean: String = name

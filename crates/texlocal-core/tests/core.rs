@@ -267,11 +267,13 @@ fn project_names_are_sanitized() {
         "Invalid name",
     );
     fails_with(create_project(data.path(), "   ", "blank"), "Invalid name");
-    create_project(data.path(), "dup-test", "blank").unwrap();
-    fails_with(
-        create_project(data.path(), "dup-test", "blank"),
-        "already exists",
-    );
+    // A taken name gets the first free number, so a second Untitled works.
+    for want in ["Untitled", "Untitled 2", "Untitled 3"] {
+        assert_eq!(
+            create_project(data.path(), "Untitled", "blank").unwrap().id,
+            want
+        );
+    }
 }
 
 #[test]
@@ -446,6 +448,8 @@ fn search_is_case_insensitive_in_both_folding_branches() {
     let root = project(data.path(), "search");
     fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
     fs::write(root.join("accents.tex"), "L'ÉCOLE Normale\nStraße\n").unwrap();
+    // An image, though SVG is text: its hits would open as a picture.
+    fs::write(root.join("figure.svg"), "<text>theorem</text>\n").unwrap();
     let hits = search_project(&root, "theorem", 50).unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].file, "ascii.tex");
@@ -760,8 +764,8 @@ fn a_settings_write_returns_what_a_later_read_sees() {
 fn a_new_project_never_lands_on_an_existing_entry_even_a_dangling_link() {
     let data = data_dir();
     std::os::unix::fs::symlink(data.path().join("gone"), data.path().join("linked")).unwrap();
-    let err = create_project(data.path(), "linked", "blank").unwrap_err();
-    assert_eq!(err.status, 409, "{}", err.message);
+    let info = create_project(data.path(), "linked", "blank").unwrap();
+    assert_eq!(info.id, "linked 2");
     assert!(!data.path().join("gone").exists());
 }
 
@@ -786,8 +790,8 @@ fn a_new_project_holds_its_template_and_default_settings() {
 fn zip_export_skips_its_own_archive_when_the_destination_is_spelled_through_a_link() {
     // The project is reached through one spelling and the destination through
     // another, as when a Save panel hands back /private/var for a data folder
-    // under /var. A lexical comparison missed that and archived the ZIP's own
-    // half-written temporary file into it.
+    // under /var. A lexical comparison would miss that and archive the ZIP's
+    // own half-written temporary file into it.
     let data = data_dir();
     let root = project(data.path(), "zip-alias");
     let aliases = tempfile::tempdir().unwrap();
@@ -824,12 +828,12 @@ fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
 }
 
 #[test]
-fn citations_include_bibitem_keys_and_commented_labels_are_left_out() {
+fn citations_include_bibitem_keys_and_commented_or_unfilled_labels_are_left_out() {
     let data = data_dir();
     let root = project(data.path(), "bibitems");
     fs::write(
         root.join("main.tex"),
-        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent}\n\
+        "\\label{kept} % \\label{old}\n% \\bibitem{gone}\n50\\% \\label{after-percent} \\label{fig:}\n\
          \\begin{thebibliography}{9}\n\\bibitem[K]{knuth} Knuth.\n\\bibitem {lamport} Lamport.\n",
     )
     .unwrap();

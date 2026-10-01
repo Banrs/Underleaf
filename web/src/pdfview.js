@@ -31,10 +31,8 @@ const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// The interface-scale preference is applied as `zoom` on the body, and
-// devicePixelRatio does not account for it. Measured in Chromium: at zoom 1.3 a
-// canvas with a 200px CSS width occupies 260 device px, so a buffer sized from
-// devicePixelRatio alone holds 77% of the detail the page is displayed at.
+// devicePixelRatio leaves out the body's interface-scale `zoom`, so a canvas
+// sized from it alone renders soft.
 const uiZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
 
 // A text-layer span's natural width, measured on a canvas rather than read back
@@ -92,9 +90,7 @@ export class PdfViewer {
     });
 
     // Pinch (or Command/Ctrl-scroll) keeps the content point under the fingers,
-    // and centres an axis once the content fits it. Both come out of one clamp
-    // on the content offset rather than two pivot "modes", so the transition is
-    // continuous — see #pinchOffset.
+    // and centres an axis once the content fits it (#pinchOffset).
     scrollEl.addEventListener('wheel', (e) => {
       if (!(e.ctrlKey || e.metaKey) || !this.pagesEl) return;
       e.preventDefault();
@@ -131,14 +127,10 @@ export class PdfViewer {
       this._pinchTimer = setTimeout(() => this.#settlePinch(g), PINCH_SETTLE_MS);
     }, { passive: false });
 
-    // Re-fit when the pane's width changes: a window resize, or a host's
-    // splitter beside the page. The pages already painted are stretched to the
-    // new fit at once (#previewResize), and one re-render follows once the
-    // width has held still. That render supersedes any pass still in flight —
-    // it must not wait for one: skipping resizes while a pass painted is what
-    // left a slow document stuck at a stale width once the drag ended. There
-    // is no feedback loop to guard against, since the stable scrollbar gutter
-    // (styles.css) keeps the pages from changing the scroller's width.
+    // Re-fit when the pane's width changes: the painted pages stretch at once
+    // (#previewResize), and one render follows once the width holds still,
+    // superseding any pass in flight. The stable scrollbar gutter (styles.css)
+    // keeps the pages from changing the scroller's width, so nothing loops.
     this.ro = new ResizeObserver(() => {
       if (this.scale !== null || !this.doc || this._resizing || this._pinch) return;
       const w = this.scrollEl.clientWidth;
@@ -155,10 +147,8 @@ export class PdfViewer {
     });
     this.ro.observe(scrollEl);
 
-    // A hidden or fully occluded window does not rasterize, and a page render
-    // issued while it is in that state never settles — so a reader who switches
-    // away mid-render and comes back would find blank pages. Repaint on the way
-    // back in.
+    // A page render issued while the window is hidden or occluded never
+    // settles, so repaint when it shows again.
     this._onVisible = () => { if (!document.hidden && this.doc) this.#paintNear(this.seq); };
     document.addEventListener('visibilitychange', this._onVisible);
   }
@@ -357,16 +347,10 @@ export class PdfViewer {
 
   // ---------- painting ----------
 
-  // Every page's box, read once per render — the single source for all of them.
-  // Reading them live is what cost: currentPage() runs on every scroll event and
-  // scanned all pages, and #reportPage writes the page indicator just before, so
-  // each event paid a forced layout. Measured on 200 pages in Chromium: 0.24ms
-  // per scroll event live against 0.001ms cached, same answer.
-  //
-  // Safe because layout does not move between render passes: this runs right
-  // after the page swap and before anything reads it, the only two live previews
-  // (pinch, pane resize) are CSS transforms — which do not affect offsetTop —
-  // and both end in the render that refreshes this.
+  // Every page's box, read once per render: read live, each scroll event
+  // forced a layout. Safe because layout holds between passes: the pinch and
+  // resize previews are transforms, which leave offsetTop alone, and both end
+  // in the render that refreshes this.
   #cacheGeometry() {
     for (const p of this.pages) {
       p.top = p.wrap.offsetTop;
@@ -375,12 +359,8 @@ export class PdfViewer {
     }
   }
 
-  // A new pass lays out blank shells, which would flash the viewport white on
-  // every recompile, zoom step, pinch settle and divider release. Instead the
-  // previous pass's pixels for the same page stay
-  // on top, stretched to the new size — exactly what the pinch and resize
-  // previews already show — until this pass paints underneath them. The canvas
-  // pdf.js draws into stays attached and visible, as it must.
+  // The previous pass's pixels for a page stay on top, stretched, until this
+  // pass paints under them, so a new pass's blank shells don't flash white.
   #heldPixels(old, viewport) {
     const c = old?._painted ? old.canvas : old?.held;
     if (!c?.width) return null;
@@ -397,9 +377,8 @@ export class PdfViewer {
   }
 
   // Pages within a few viewport heights of the scroll position hold a painted
-  // backing store; the rest are released. Painting the whole document is what
-  // made zooming expensive: 19 letter pages at 4x need roughly 260MB of canvas,
-  // enough to stall the compositor for seconds per zoom step.
+  // backing store; the rest are released (19 letter pages at 4x need about
+  // 260MB of canvas).
   #nearPages() {
     const top = this.scrollEl.scrollTop - this._padT;
     const vh = this.scrollEl.clientHeight;
@@ -458,11 +437,9 @@ export class PdfViewer {
       // `_failed` stops a page that genuinely can't render from being retried on
       // every scroll; a re-render builds fresh page objects, so it resets there.
       if (p._painted || p._failed) continue;
-      // One cancelled page is not a reason to abandon the others — the guard
-      // above is what decides whether this pass is still the current one. A real
-      // error is contained here too: this method is called bare from the scroll
-      // and visibilitychange handlers, where a throw would surface only as an
-      // unhandled rejection and leave the rest of the viewport blank.
+      // A cancelled page doesn't end the pass (the guard above does), and an
+      // error stays here: from the bare scroll and visibilitychange handlers a
+      // throw would leave the rest of the viewport blank.
       let ok = false;
       try {
         ok = await this.#paintCanvas(p, dpr);
@@ -486,11 +463,8 @@ export class PdfViewer {
   //
   // One equation governs the whole gesture: a content point q appears at content
   // box position `off + q * k`, where k is the gesture's scale and `off` is the
-  // pages element's offset. Driving `off` directly — rather than moving a
-  // transform-origin around and patching up the scroll afterwards — is what makes
-  // the gesture exact. Nothing here reads a bounding rect, so nothing accumulates
-  // error, and the whole thing costs two scroll reads per frame instead of a
-  // forced layout over every page.
+  // pages element's offset. Nothing here reads a bounding rect, so no error
+  // accumulates.
 
   #beginPinch(rect, e) {
     const g = { ...this.#metrics(), k: 1, offX: 0, offY: 0 };
@@ -517,10 +491,7 @@ export class PdfViewer {
 
   // `slack` is viewport minus scaled content: negative while the axis overflows
   // (so the offset is a pan, bounded by the edges), positive once it fits (so the
-  // axis is centred). The two cases meet at slack = 0, where the pan range has
-  // collapsed to exactly the centred offset — which is why the hand-off from
-  // following the fingers to pivoting on the window centre has no jump, and no
-  // mode flag that can get stuck on the wrong side of a threshold.
+  // axis is centred). The two meet at slack = 0, so the hand-off has no jump.
   #pinchOffset(want, slack) {
     return slack >= 0 ? slack / 2 : clamp(want, slack, 0);
   }
@@ -571,7 +542,7 @@ export class PdfViewer {
   // Which page owns a content point, and where on it in PDF points. Deliberately
   // unclamped: a pinch centred on the gap between two pages, or on the grey
   // margin beside one, still resolves to an exact point that survives the
-  // re-render. Clamping it into the page box was itself a visible drift.
+  // re-render.
   #pageAt(x, y) {
     const p = this.pages.find((q) => y <= q.top + q.height) ?? this.pages.at(-1);
     if (!p) return null;
@@ -926,11 +897,9 @@ export class PdfViewer {
 
   // ---------- SyncTeX ----------
 
-  // A PDF point near the top of the viewport that sits on ACTUAL text → for
-  // "find source of view". SyncTeX's inverse lookup only resolves points that
-  // land on a glyph box; a geometric guess (page-centre, view-third) usually
-  // hits whitespace and 404s. So snap to the first text-layer span at/below the
-  // viewport top and use its centre, mirroring the (working) double-click math.
+  // A PDF point near the top of the viewport on actual text: SyncTeX's inverse
+  // lookup resolves only points on a glyph box, so this takes the first
+  // text-layer span at or below the viewport top.
   async currentLocation() {
     const p = this.pages[this.currentPage() - 1];
     if (!p) return null;

@@ -2,11 +2,9 @@
 //! renderer's command model (web/src/commands.js), so a menu item can't drift
 //! from the shortcut or toolbar button that runs the same command.
 //!
-//! The renderer republishes its whole spec on every state change — a compile
-//! starting, a file opening, a pane toggling. Electron rebuilt the entire
-//! NSMenu each time; here the menu is built once and later publishes only
-//! push the changed titles, enabled flags, and check marks onto the items
-//! already on screen.
+//! The renderer republishes its whole spec on every state change; the menu is
+//! built once, and later publishes only update its items' titles, enabled
+//! flags and check marks.
 
 use std::collections::HashMap;
 
@@ -69,9 +67,8 @@ impl EntrySpec {
     }
 }
 
-/// Two spellings Electron accepts that muda does not. `Plus` is the zoom-in
-/// key, which is unshifted `=` on the layouts this ships to — the same key the
-/// browser-mode matcher in commands.js already accepts.
+/// Two accelerator spellings muda does not accept. `Plus` is the zoom-in key,
+/// unshifted `=`, as commands.js's own matcher reads it.
 fn muda_accelerator(accel: &str) -> String {
     match accel.rsplit_once('+') {
         Some((mods, "Return")) => format!("{mods}+Enter"),
@@ -209,7 +206,7 @@ fn build(app: &AppHandle, spec: &[GroupSpec]) -> tauri::Result<MenuState> {
         }
 
         // Windows and Linux have no application menu, so File carries Settings
-        // and Quit — the same fallback the Electron menu used.
+        // and Quit.
         #[cfg(not(target_os = "macos"))]
         if group.label == "File" {
             submenu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -359,9 +356,7 @@ pub fn install_fallback(app: &AppHandle) -> tauri::Result<()> {
 mod tests {
     use super::muda_accelerator;
 
-    /// Key tokens muda's parser resolves to a real key. Anything else it
-    /// silently turns into a literal character that no keypress can match, so
-    /// a new accelerator using an unlisted name would bind to nothing.
+    /// Key tokens muda's parser resolves to a real key; it binds any other to nothing.
     fn muda_knows(key: &str) -> bool {
         const NAMED: &[&str] = &[
             "Comma",
@@ -412,9 +407,7 @@ mod tests {
         assert_eq!(muda_accelerator("CmdOrCtrl+Minus"), "CmdOrCtrl+Minus");
     }
 
-    /// Reads the accelerators the renderer declares (web/src/shortcuts.json,
-    /// the one table), so adding one with a key muda can't parse fails here
-    /// rather than shipping a menu item whose shortcut does nothing.
+    /// Reads web/src/shortcuts.json, so a key muda can't parse fails here.
     #[test]
     fn every_declared_accelerator_survives_translation() {
         let table: std::collections::BTreeMap<String, String> =

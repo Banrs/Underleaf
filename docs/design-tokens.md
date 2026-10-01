@@ -1,11 +1,11 @@
 # Design tokens
 
 Every value here was read out of **Apple's macOS 27 UI Kit** (Sketch, from
-[Apple Design Resources](https://developer.apple.com/design/resources/); on the
-owner's Mac at `~/Downloads/Apple macOS 27 UI Kit.sketch`) rather than
-eyeballed. This is the spec `web/styles.css` implements for the browser and
-Tauri UI; the native apps take their metrics from the system instead
-(`BarMetrics` and `Typography` on the Mac, Fluent on Windows).
+[Apple Design Resources](https://developer.apple.com/design/resources/); kept
+locally in the gitignored `design/`) rather than eyeballed. This is the spec
+`web/styles.css` implements for the browser and Tauri UI; the native apps take
+their metrics from the system instead (`BarMetrics` and `Typography` on the Mac,
+Fluent on Windows).
 
 ## Typography — SF Pro
 
@@ -13,10 +13,8 @@ macOS's base *control* size is 13px — but see the roles below: a list-dense
 window uses 15px for its rows, and treating 13 as the app-wide size is what makes
 a Mac app look shrunken.
 
-**The scale is expressed as five roles, not five sizes** (`--fs-title`,
-`--fs-body`, `--fs-header`, `--fs-control`, `--fs-small`, `--fs-micro` plus
-`--fs-large-title`). Every `font-size` in `web/styles.css` refers to a role, so a
-value can't drift.
+**The scale is expressed as roles, not sizes** (`--fs-*`). Every `font-size` in
+`web/styles.css` refers to a role, so a value can't drift.
 
 | Role | Size | Used for |
 | --- | --- | --- |
@@ -73,11 +71,12 @@ work on both opaque panels and vibrant materials.
 | Separator | `rgba(60,60,67,.29)` | `rgba(255,255,255,.15)` |
 | Window background | `#ffffff` | `#1e1e1e` |
 
-**The accent is the user's, not this table's.** `--accent` starts at the kit's
-blue and is replaced at startup by whatever the person chose in System Settings
-— `NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
-`src-tauri/src/accent.rs`). The kit values below are the fallback for a host that
-reports nothing.
+**The accent is the user's where the host reports it.** Tauri replaces
+`--accent` at startup with the one chosen in System Settings —
+`NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
+`src-tauri/src/accent.rs`) — read once, so a change shows after a restart. The
+Windows app passes its accent to the editor page. A browser tab keeps the CSS
+fallback, a darker blue than the kit's (which misses 4.5:1).
 
 `--on-accent` stays white, which is what every desktop draws on an accent fill,
 and flips to black only where white drops under WCAG's 3:1 floor for interface
@@ -131,9 +130,6 @@ segmented controls, steppers, search). No mini/small controls anywhere.
 Components keeping their own kit spec: switch 54×24, scrollbar 12, menu text
 13 Medium (the row box follows this app's list density at 28).
 
-Touch/iPad sizing is deliberately out of scope for this build (future SwiftUI
-effort).
-
 **Corner radius is `height / 4`.** Measured off the text-field set (16→4, 20→5,
 24→6, 28→7, 36→9) and confirmed by the sidebar rows (32→8, 40→10). One rule, so
 nothing needs an ad-hoc radius.
@@ -145,9 +141,9 @@ nothing needs an ad-hoc radius.
 | Sidebar | **256** wide |
 | Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
 | Sidebar content inset | 14 (selection pill bleeds to 10) |
-| Sidebar section header | 20 tall, 13 Bold, content 16 tall centred (y=2), **no gap before the rows** |
-| Section header accessory | 20 wide (kit's `Headers - Trailing`); square here for a kinder target |
-| Sidebar footer | 44 — a toolbar band, not the 46 that asymmetric padding produced |
+| Sidebar section header | 36 tall here (the kit's is 20), 13 Bold, **no gap before the rows** |
+| Section header accessory | 28 square here (the kit's `Headers - Trailing` is 20 wide) |
+| Sidebar footer | 44, a toolbar band |
 | Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Golden Gate/macOS 27; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
 | Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
 | Switch (regular) | 54 × 24 |
@@ -177,7 +173,7 @@ read off the mode's source rather than guessed at:
 | `keyword` | math delimiters `$ $$ \[ \(` | preprocessor | `#643820` | `#FD8F3F` |
 | `special(variableName)` | identifiers inside math | identifier.variable | `#326D74` | `#67B7A4` |
 | `number` | numbers in math | number | `#1C00CF` | `#D0BF69` |
-| `comment` | `%…` | comment | `#5D6C79` | `#6C7986` |
+| `comment` | `%…` | comment | `#5D6C79` | `#8A97A5` (Xcode's `#6C7986`, lightened for AA contrast) |
 | `string` | quoted | string | `#C41A16` | `#FC6A5D` |
 | `bracket` | `{}` `[]` | *plain* — Xcode leaves punctuation uncoloured | | |
 
@@ -204,16 +200,9 @@ unnamed branding colours (`assetutil --info` will show them); the chrome is draw
 with system `NSColor`s. So the macOS 27 UI Kit stays the authority for everything
 outside the editor, and matching "Xcode" means matching the system.
 
-## Platform abstraction
+## Hosts
 
-The Tauri Mac window's chrome is gated on `html.mac`, set from the host
-platform — never assumed. Everywhere else the same tokens run on opaque
-surfaces; a browser tab also gets `html.browser` (web type sizes).
-
-- `html.mac` — vibrancy materials, traffic-light inset, accent-filled menu rows
-- `html.browser` — 14px controls, opaque menus and toasts
-
-The accent goes the other way: one concept both systems have, read through each
-one's own API and delivered as a single token, so the CSS never learns which
-platform it is on. Read once at startup — a live accent change needs a per-OS
-observer, and a restart picks it up.
+`html.mac` (the Tauri Mac window: vibrancy materials, the traffic-light inset,
+accent-filled menu rows) is set from the host platform, never assumed.
+Everywhere else the same tokens run on opaque surfaces, and a browser tab also
+gets `html.browser`: 14/20 controls and 13/18 small text.

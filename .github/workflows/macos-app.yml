@@ -1,6 +1,6 @@
 name: macOS app
 
-# The SwiftUI app in apps/macos, built with the committed Xcode project. It
+# The macOS app in apps/macos, built with the committed Xcode project. It
 # runs on push as well as on pull requests so a branch changing the app gets a
 # compile without opening a PR first; only paths the app builds from trigger it.
 on:
@@ -49,7 +49,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-app-27.0
-      # The app copies the editor's font from node_modules.
+      # The app copies JetBrains Mono and KaTeX from node_modules.
       - run: npm ci
       - name: Build
         working-directory: apps/macos

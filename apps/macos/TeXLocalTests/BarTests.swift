@@ -2,25 +2,6 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// The accessory bars measured off screen, with no window shown.
-@MainActor
-struct PaneBarLayoutTests {
-    private func height(_ view: some View) -> CGFloat { NSHostingView(rootView: view).fittingSize.height }
-
-    /// A control group draws a little taller than a button, but still inside the bar.
-    @Test func everyControlFitsTheBar() {
-        let room = regularControlHeight() + 2 * BarMetrics.inset - 2 * BarMetrics.spacing
-        let steps = ControlGroup {
-            Button("Previous Match", systemImage: "chevron.backward") {}
-            Button("Next Match", systemImage: "chevron.forward") {}
-        }.fixedSize()
-        let copy = Button("Copy Log", systemImage: "document.on.document") {}
-            .buttonStyle(.accessoryBar).labelStyle(.iconOnly)
-        #expect(height(steps) <= room)
-        #expect(height(copy) <= room)
-    }
-}
-
 @MainActor
 struct FindBarTests {
     /// One row is a pane bar's height; the replace row adds at least a control's.
@@ -34,7 +15,7 @@ struct FindBarTests {
                 Button("Replace") {}
             }
         }
-        let control = regularControlHeight()
+        let control = NSHostingView(rootView: Button("Done") {}.controlSize(.regular)).fittingSize.height
         let one = NSHostingView(rootView: find.frame(width: 400)).fittingSize.height
         let two = NSHostingView(rootView: replace.frame(width: 400)).fittingSize.height
         #expect(one == control + 2 * BarMetrics.inset)
@@ -55,7 +36,7 @@ struct RemapPathTests {
     }
 }
 
-/// The gallery's and the sidebar's rename in place.
+/// The projects screen's and the sidebar's rename in place.
 @MainActor
 struct InPlaceRenameTests {
     @Test func aRenameEndsOnceWithItsNewName() {

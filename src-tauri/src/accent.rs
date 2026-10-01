@@ -1,13 +1,8 @@
-//! The accent colour the user chose in their system settings.
+//! The accent colour the user chose in their system settings: macOS's
+//! `NSColor.controlAccentColor`, Windows' `UISettings` accent. Elsewhere there
+//! is none, and the interface keeps the UI kit's blue.
 //!
-//! Both desktops have the concept and both expose it, so this is one function
-//! with two readers rather than two features: macOS answers with
-//! `NSColor.controlAccentColor`, Windows with `UISettings`' accent. Any other
-//! platform reports nothing and the interface keeps the UI kit's blue.
-//!
-//! Read once, at startup. Both systems can change it while the app runs, but
-//! following that live needs a per-OS observer for a preference almost nobody
-//! touches mid-session; a restart picks it up, as it does for TeX discovery.
+//! Read once, at startup: a restart picks up a change, as it does for TeX discovery.
 
 /// The accent as `#rrggbb`, or `None` where the platform has none to report.
 #[cfg(target_os = "macos")]

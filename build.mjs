@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // Anchor every path to this file, not the cwd: Tauri runs this as its
-// beforeBuildCommand, and `npm run dev` runs it from the repository root.
+// beforeDevCommand and beforeBuildCommand.
 const ROOT = import.meta.dirname;
 const at = (...p) => path.join(ROOT, ...p);
 
@@ -34,10 +34,10 @@ const common = {
   sourcemap: watch,
   logLevel: 'info',
 };
-// One bundle, shared by the desktop shell and browser mode; which backend it
-// talks to is decided at runtime in web/src/bridge.js. Splitting puts the
-// dynamically imported workspace (CodeMirror, KaTeX, pdf.js) in chunks/, so the
-// home screen never parses it. Hashed names: clear the previous build's.
+// One bundle for the browser version and Tauri; bridge.js picks the backend at
+// runtime. Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
+// pdf.js) in chunks/, so the home screen never parses it. Hashed names: clear
+// the previous build's.
 fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });
 const builds = [
   {
@@ -46,9 +46,8 @@ const builds = [
     splitting: true,
     chunkNames: 'chunks/[name]-[hash]',
   },
-  // The editor and PDF viewer as standalone pages for the native apps to
-  // embed (web/embed/*.html). Each page loads exactly one of them, so no
-  // splitting.
+  // The editor and PDF pages Windows embeds (web/embed/*.html). Each page
+  // loads exactly one of them, so no splitting.
   {
     ...common,
     entryPoints: {

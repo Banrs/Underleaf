@@ -1,7 +1,6 @@
-// Settings dialog. Grouped rows in the macOS System Settings idiom, with real
-// control semantics: switches expose checked state, segmented controls are radio
-// groups, and every control has an accessible name tied to its row label. The
-// dialog shell (a native <dialog>, with focus restore) comes from dom.js.
+// Settings dialog: grouped rows with real control semantics. Switches expose
+// checked state, segmented controls are radio groups, and every control has an
+// accessible name tied to its row label.
 
 import { api } from './api.js';
 import { $, el, toast, showModal, nextId } from './dom.js';
@@ -33,7 +32,7 @@ function group(title, ...rows) {
 }
 
 // Segmented control as a radio group: arrow keys move between options and the
-// selected option is exposed, not just coloured. `options` are [value, label].
+// selected option is exposed, not just coloured. `pairs` are [value, label].
 function segmented(pairs, get, set) {
   const options = pairs.map(([value, label]) => ({ value, label }));
   const wrap = el('div', { class: 'segmented', role: 'radiogroup' });

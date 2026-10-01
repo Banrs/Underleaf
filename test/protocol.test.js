@@ -7,8 +7,7 @@ import SHORTCUTS from '../web/src/shortcuts.json' with { type: 'json' };
 
 // Windows sends the editor page its commands by name; both native apps offer
 // the web's palettes and fonts and keep its accelerators. Each copy must be
-// one the page and the web know. (The Mac's editor is its own, over the core's
-// crates/texlocal-syntax, and sends the page nothing.)
+// one the page and the web know.
 
 const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 // A declaration's body, from its opening line to the first line that closes it.
