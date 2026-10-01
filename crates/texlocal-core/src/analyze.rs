@@ -53,7 +53,7 @@ static COMMAND: LazyLock<Regex> =
 // the group after), labels and notes.
 static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\\(?:texorpdfstring|label|index|footnote)[{JS_SPACE}]*\{{(?:[^{{}}]|\{{[^{{}}]*\}})*\}}"
+        r"\\(?:texorpdfstring|label|index|footnote)[{JS_SPACE}]*\{{"
     ))
     .unwrap()
 });
@@ -236,7 +236,18 @@ fn brace_group(rest: &str) -> Option<&str> {
 /// A title as the outline shows it: styles, labels and grouping braces gone,
 /// spaces collapsed, "(untitled)" when nothing is left.
 fn plain_title(title: &str) -> String {
-    let title = TITLE_DROP.replace_all(title, "");
+    let mut rest = title;
+    let mut title = String::new();
+    while let Some(m) = TITLE_DROP.find(rest) {
+        title.push_str(&rest[..m.start()]);
+        rest = &rest[m.end()..];
+        if let Some(group) = brace_group(rest) {
+            rest = &rest[group.len() + 1..];
+        } else {
+            title.push_str(m.as_str());
+        }
+    }
+    title.push_str(rest);
     let title = TITLE_STYLE.replace_all(&title, "");
     let title = TITLE_BRACE.replace_all(&title, "$1");
     match SPACES.replace_all(&title, " ").trim_matches(' ') {
