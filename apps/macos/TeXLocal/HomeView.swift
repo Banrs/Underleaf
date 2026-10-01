@@ -311,9 +311,10 @@ struct NewProjectSheet: View {
 
     var body: some View {
         DialogSheet(title: "New Project", message: "Its files stay in a folder on this Mac.",
-                    action: "Create", enabled: !trimmed.isEmpty) {
+                    action: "Create", enabled: !trimmed.isEmpty,
+                    failureTitle: "Couldn’t Create “\(trimmed)”") {
             let (name, template) = (trimmed, template)
-            Task { await app.create(name: name, template: template) }
+            try await app.create(name: name, template: template)
         } fields: {
             TextField("Name", text: $name)
                 .focused($nameFocused)

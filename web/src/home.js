@@ -92,12 +92,11 @@ export async function newProjectFlow() {
       el('option', { value: 'blank' }, 'Blank'),
     );
     const go = () => close({ name: name.value.trim() || 'Untitled', template: tpl.value });
-    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     return dialogShell('New Project', [
       el('div', { class: 'field' }, el('label', { for: 'np-name' }, 'Name'), name),
       el('div', { class: 'field' }, el('label', { for: 'np-tpl' }, 'Template'), tpl),
     ], [
-      el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
+      el('button', { class: 'btn', type: 'button', onclick: () => close(null) }, 'Cancel'),
       el('button', { class: 'btn primary', onclick: go }, 'Create'),
     ]);
   });

@@ -48,7 +48,6 @@ jobs:
       # links for draw a linker warning each.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
           key: macos-app-27.0
       # The app copies the editor's font from node_modules.
       - run: npm ci

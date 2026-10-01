@@ -43,7 +43,7 @@ nonisolated struct ProjectSettings: Decodable {
     let stopOnFirstError: Bool
 }
 
-nonisolated struct LogItem: Decodable, Equatable {
+nonisolated struct LogItem: Decodable, Hashable {
     let type: String
     let file: String?
     let line: Int?
@@ -155,6 +155,11 @@ private nonisolated enum FileKind {
 /// The files the editor opens.
 func isTextFile(_ path: String) -> Bool {
     FileKind(path) == .text
+}
+
+/// LaTeX tools use the same case-insensitive extension as text-file detection.
+func isLaTeXFile(_ path: String) -> Bool {
+    (path as NSString).pathExtension.lowercased() == "tex"
 }
 
 /// The files previewed in the source column; any other non-text file shows

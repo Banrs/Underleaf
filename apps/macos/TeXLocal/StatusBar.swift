@@ -57,7 +57,7 @@ struct StatusBar: View {
         .controlSize(.small)
         .lineLimit(1)
         .padding(.horizontal, BarMetrics.inset)
-        .frame(height: BarMetrics.secondaryBarHeight)
+        .frame(height: BarMetrics.statusBarHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).

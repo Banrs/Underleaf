@@ -1,6 +1,6 @@
 // DOM primitives shared by every view: element building, toasts, menus, and
-// dialogs. Dialogs here own the accessibility contract (role, focus trap,
-// Escape, focus restore) so no caller has to remember it.
+// dialogs. Dialogs are native <dialog>s, which keep focus inside and cancel on
+// Escape; focus restore is here, so no caller has to remember it.
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -42,16 +42,15 @@ export function toast(msg, kind = '') {
   // Cap concurrent toasts — drop the oldest so they never stack to infinity.
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
   const t = root.appendChild(el('div', { class: `toast ${kind}`, role: 'status' }, msg));
+  if (!root.matches(':popover-open')) root.showPopover();
   setTimeout(() => t.remove(), 3200);
 }
 
 // ---------- dialogs ----------
 
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea, [href], [tabindex]:not([tabindex="-1"])';
-
-// `build(close)` returns the dialog element. Resolves with whatever `close` was
-// called with (null when dismissed). Focus is trapped inside while open and
-// returned to the invoking control afterwards.
+// `build(close)` returns the dialog's content. Resolves with whatever `close`
+// was called with (null when dismissed). The page behind is inert while it is
+// open; focus returns to the invoking control afterwards.
 let openModal = null;
 export function showModal(build) {
   return new Promise((resolve) => {
@@ -59,56 +58,45 @@ export function showModal(build) {
     // orphan the menu's window-level listeners.
     openMenu?.dismiss({ restore: false });
     // So would replacing a dialog a native-menu shortcut opened this one over:
-    // its Escape handler would stay live, its caller would never resume, and
-    // focus would return to the detached dialog. Dismiss it first.
+    // its caller would never resume, and focus would return to the detached
+    // dialog. Dismiss it first.
     openModal?.(null);
-    const root = $('#modal-root');
     const restoreTo = document.activeElement;
     const close = (value) => {
+      if (!dialog.isConnected) return;
       if (openModal === close) openModal = null;
       openMenu?.dismiss({ restore: false });
-      root.replaceChildren();
-      removeEventListener('keydown', onKey, true);
+      dialog.remove();
       if (restoreTo?.isConnected) restoreTo.focus();
       resolve(value);
     };
 
-    const dialog = build(close);
-    dialog.setAttribute('role', 'dialog');
-    dialog.setAttribute('aria-modal', 'true');
-    const heading = dialog.querySelector('h2, h3');
-    if (heading) {
-      heading.id ||= nextId('dlg-title');
-      dialog.setAttribute('aria-labelledby', heading.id);
-    }
-
-    const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(null); return; }
-      if (e.key !== 'Tab') return;
-      // Trap: cycle focus within the dialog instead of escaping to the page.
-      const items = [...dialog.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null);
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || !dialog.contains(active))) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-    };
-
-    const backdrop = el('div', {
+    const content = build(close);
+    const heading = content.querySelector('h2, h3');
+    if (heading) heading.id ||= nextId('dlg-title');
+    // The dialog is the full-window dim; the box inside is the content.
+    const dialog = el('dialog', {
       class: 'modal-backdrop',
-      onpointerdown: (e) => { if (e.target === backdrop) close(null); },
-    }, dialog);
+      'aria-labelledby': heading?.id,
+      onpointerdown: (e) => { if (e.target === dialog) close(null); },
+      oncancel: (e) => { e.preventDefault(); close(null); },
+    }, content);
 
-    root.replaceChildren(backdrop);
-    addEventListener('keydown', onKey, true);
+    $('#modal-root').replaceChildren(dialog);
+    dialog.showModal();
     openModal = close;
-    (dialog.querySelector('[autofocus]') ?? dialog.querySelector('input, select') ?? dialog.querySelector(FOCUSABLE))?.focus();
+    // The top layer stacks in opening order: lift open toasts above the dim.
+    const toasts = $('#toast-root');
+    if (toasts.matches(':popover-open')) { toasts.hidePopover(); toasts.showPopover(); }
+    // showModal() focuses the [autofocus] control, or else the first one.
+    if (!content.contains(document.activeElement)) content.querySelector('input, select, button:not(:disabled)')?.focus();
   });
 }
 
+// A form, so Enter in a field clicks the first submit button (buttons that
+// shouldn't be the default are type=button); method=dialog never navigates.
 export function dialogShell(title, body, actions) {
-  return el('div', { class: 'modal' },
+  return el('form', { class: 'modal', method: 'dialog' },
     el('h2', { class: 'modal-title' }, title),
     body,
     el('div', { class: 'modal-actions' }, actions),
@@ -118,14 +106,12 @@ export function dialogShell(title, body, actions) {
 export function promptModal({ title, label, value = '', confirm = 'OK' }) {
   return showModal((close) => {
     const id = nextId('f');
-    const input = el('input', {
-      id, value, onkeydown: (e) => { if (e.key === 'Enter') close(input.value.trim()); },
-    });
+    const input = el('input', { id, value });
     setTimeout(() => { input.focus(); input.select(); });
     return dialogShell(title,
       el('div', { class: 'field' }, label ? el('label', { for: id }, label) : null, input),
       [
-        el('button', { class: 'btn', onclick: () => close(null) }, 'Cancel'),
+        el('button', { class: 'btn', type: 'button', onclick: () => close(null) }, 'Cancel'),
         el('button', { class: 'btn primary', onclick: () => close(input.value.trim()) }, confirm),
       ]);
   });

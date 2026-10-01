@@ -1,11 +1,10 @@
 import * as esbuild from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 // Anchor every path to this file, not the cwd: Tauri runs this as its
 // beforeBuildCommand, and `npm run dev` runs it from the repository root.
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = import.meta.dirname;
 const at = (...p) => path.join(ROOT, ...p);
 
 const watch = process.argv.includes('--watch');

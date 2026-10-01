@@ -5,8 +5,8 @@ import SwiftUI
 /// text files, each file's text, undo and selection kept while another shows;
 /// the find bar's search; and the formatting commands, whose LaTeX is the core's.
 final class SourceEditor: NSObject, NSTextViewDelegate {
-    let scrollView = NSScrollView()
-    let textView = SourceTextView(usingTextLayoutManager: true)
+    let scrollView = SourceTextView.scrollableTextView()
+    let textView: SourceTextView
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
@@ -32,17 +32,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     override init() {
+        // AppKit's own plain-text scroll view: TextKit 2, sized to its text.
+        textView = scrollView.documentView as! SourceTextView
         super.init()
         let text = textView
-        text.autoresizingMask = [.width]
-        text.isVerticallyResizable = true
-        text.isHorizontallyResizable = false
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        text.textContainer?.widthTracksTextView = false
+        // Let NSTextView resize its container in the same layout pass as the view.
+        // SourceTextView expresses the gutter through the native container inset.
+        text.textContainer?.widthTracksTextView = true
         text.textContainerInset = NSSize(width: 0, height: 4)
-        text.isRichText = false
-        text.importsGraphics = false
-        text.usesFontPanel = false
         text.allowsUndo = true
         // Spelling underlined in the prose only (below), and nothing
         // corrected: smart dashes and quotes would rewrite the LaTeX (--
@@ -61,8 +58,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.setAccessibilityLabel(String(localized: "Source"))
         text.delegate = self
         text.textStorage?.delegate = text
-        scrollView.hasVerticalScroller = true
-        scrollView.documentView = text
+        // The clip shows under the toolbar above the first line, where AppKit
+        // takes the column's colour for its band and edge effect.
+        scrollView.drawsBackground = true
+        // Native elastic scrolling, including files shorter than the viewport.
+        scrollView.verticalScrollElasticity = .allowed
         scrollView.isHidden = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
@@ -140,10 +140,13 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func scroll(to offset: Int, atTop: Bool) {
-        guard let manager = textView.textLayoutManager, let whole = textView.textRange(NSRange(location: 0, length: offset)) else { return }
-        // Laid out down to the line, so its place is exact rather than estimated.
-        manager.ensureLayout(for: whole)
-        guard let fragment = manager.textLayoutFragment(for: whole.endLocation) else { return }
+        guard let manager = textView.textLayoutManager,
+              let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
+        // Let NSTextView relocate its viewport, then align the target fragment.
+        // Laying out every preceding paragraph made distant outline jumps stall.
+        textView.scrollRangeToVisible(NSRange(location: offset, length: 0))
+        manager.ensureLayout(for: target)
+        guard let fragment = manager.textLayoutFragment(for: target.location) else { return }
         let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: textView.textContainerOrigin.y)
         let clip = scrollView.contentView, insets = scrollView.contentInsets
         let shown = clip.bounds.height - insets.top - insets.bottom

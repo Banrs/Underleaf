@@ -55,6 +55,7 @@ final class WorkspaceController: DetentSplitViewController {
             return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
         }
         toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
+        app.pdfController = pdf
         watch()
     }
 
@@ -119,6 +120,9 @@ final class WorkspaceController: DetentSplitViewController {
 
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
+        // AppKit's toolbar partition reaches half a thin divider into the next
+        // column. Give its scroll-view registration the same trailing boundary.
+        columns.view.additionalSafeAreaInsets.right = columns.splitView.dividerThickness / 2
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -262,6 +266,7 @@ final class WorkspaceController: DetentSplitViewController {
         ]
         drags = [splitView, sidebar.splitView, columns.splitView, area.splitView].map { split in
             NotificationCenter.default.addObserver(of: split, for: .didResizeSubviews) { [weak self] message in
+                self?.toolbar.updateLayout()
                 if message.userResize { self?.saveSizes() }
             }
         }
@@ -401,6 +406,7 @@ final class WorkspaceController: DetentSplitViewController {
 
     /// The window is leaving the project: nothing more to watch.
     func close() {
+        if app.pdfController === pdf { app.pdfController = nil }
         watches.forEach { $0.cancel() }
         drags.forEach(NotificationCenter.default.removeObserver)
         collapses = []
@@ -577,8 +583,9 @@ enum ColumnMetrics {
     /// the sidebar first (AppKit's way with sidebars), so two windows tile side by side
     /// on the smallest Mac display. At its shortest, the columns over the build panel
     /// and the status bar under its line.
-    static let contentMinimum = CGSize(width: sourceMinimum + divider + pdfMinimum,
-                                       height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.secondaryBarHeight)
+    // Include the toolbar partition inset in the columns’ minimum room.
+    static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + divider / 2).rounded(.up),
+                                       height: columnsMinimum + divider + panelMinimum + divider + BarMetrics.statusBarHeight)
 }
 
 /// Pane sizes, kept across launches in one defaults dictionary.

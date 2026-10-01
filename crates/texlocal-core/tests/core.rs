@@ -33,10 +33,8 @@ fn fails_with<T: std::fmt::Debug>(result: Result<T, CoreError>, text: &str) {
 }
 
 fn zip_names(path: &Path) -> Vec<String> {
-    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
-    (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
-        .collect()
+    let archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    archive.file_names().map(str::to_owned).collect()
 }
 
 #[test]

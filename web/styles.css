@@ -178,6 +178,8 @@
 /* ---------- base ---------- */
 
 * { box-sizing: border-box; }
+/* Hidden means hidden, whatever display a class gives the element. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -281,7 +283,7 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 .icon-btn:hover:not(:disabled) { background: var(--fill-2); color: var(--label); }
 .icon-btn:active:not(:disabled) { background: var(--fill-1); }
 .icon-btn:disabled { color: var(--label-3); }
-.icon-btn.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.icon-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 /* "Small" here is the in-pane toolbar size. Native pane toolbars (Preview,
    Finder) use ~28px regular controls with 13pt labels, not the 24px small
@@ -581,16 +583,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    there the sidebar only needs to stay out of the way. */
 .mac .sidebar { background: transparent; }
 
-.sidebar.collapsed { width: 0 !important; opacity: 0; pointer-events: none; }
+.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace.js) */
 .sidebar.collapsed + .divider { display: none; }
 
-/* Section headers share the existing 4px rhythm and 28px action targets. */
+/* Preserve the kit's compact 20px desktop section band and accessories.
+   The overlay below uses larger controls for narrow/touch layouts. */
 .section-header {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
-  min-height: 36px;
+  height: 20px;
   margin: 0;
   padding: 0 var(--sp-2) 0 var(--sp-3);
   color: var(--label-2);
@@ -603,13 +606,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .section-header.disclosure { margin-top: var(--sp-4); }   /* section-to-section gap */
 .section-header.disclosure .twisty { margin-left: auto; justify-content: center; }
 .section-header.disclosure:hover { color: var(--label); }
-.section-actions { display: flex; gap: var(--sp-1); }
-.section-actions .icon-btn { width: 28px; height: 28px; border-radius: var(--r-control); }
+.section-actions { display: flex; gap: 1px; }
+.section-actions .icon-btn { width: 20px; height: 20px; border-radius: var(--r-control); }
 .section-actions .icon-btn svg { width: 14px; height: 14px; }
 
 .twisty { display: inline-flex; width: 16px; flex: none; color: var(--label-3); }
 .twisty svg { width: 13px; height: 13px; transition: transform 0.14s ease; }
-.twisty.open svg { transform: rotate(90deg); }
+[aria-expanded="true"] > .twisty svg { transform: rotate(90deg); }
 
 .sidebar-search {
   display: flex;
@@ -665,12 +668,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   white-space: nowrap;
   overflow: hidden;
 }
-.tree-row:hover, .outline-row:hover, .search-hit:hover { background: var(--fill-4); }
-.tree-row.selected { background: var(--fill-2); }
+.tree-row:hover, .search-hit:hover { background: var(--fill-4); }
+.tree-row[aria-current="true"] { background: var(--fill-2); }
 .tree-row[aria-expanded] .row-label { font-weight: 500; }   /* folders: kit uses Medium */
 .row-icon { display: inline-flex; justify-content: center; width: 24px; flex: none; color: var(--label-2); }
 .row-icon svg { width: 17px; height: 17px; }
-.tree-row.selected .row-icon { color: var(--accent); }
+.tree-row[aria-current="true"] .row-icon { color: var(--accent); }
 .row-label { overflow: hidden; text-overflow: ellipsis; }
 .row-badge { margin-left: auto; display: inline-flex; color: var(--yellow); }
 .row-badge svg { width: 14px; height: 14px; }
@@ -691,7 +694,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .outline-row .row-label { min-width: 0; }
 .outline-row:hover { background-color: var(--fill-4); }
-.outline-row.selected { background-color: var(--fill-2); }
+.outline-row[aria-selected="true"] { background-color: var(--fill-2); }
 /* The lists clip an outer ring. */
 .outline-row:focus-visible { outline-offset: -2px; }
 
@@ -818,7 +821,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* The source bar's LaTeX tools, in groups that fold into its ⋯ menu. */
 .latex-tools, .tool-group { display: flex; align-items: center; gap: var(--sp-1); flex: none; }
-.latex-tools[hidden], .tool-group[hidden] { display: none; }
 /* The section level: as wide as its widest value, so the bar holds still. */
 .heading-menu { padding: 0 var(--sp-2) 0 10px; font-weight: 400; }
 .heading-label { display: inline-grid; text-align: left; }
@@ -953,7 +955,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* A stable scrollbar gutter: without it, the bar appearing changes clientWidth
    and fit-width re-renders in a feedback loop. Top padding = 44px bar + 12px,
-   mirrored by V_PAD in pdfview.js. */
+   which pdfview.js reads from here (#metrics). */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
    are the true content extents the pinch gesture clamps against, and so the CSS
@@ -982,9 +984,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   transform-origin: 0 0;
   z-index: 2;
 }
-.pdf-text-layer span, .pdf-text-layer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.pdf-text-layer span { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
 .pdf-text-layer ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
-.pdf-text-layer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; cursor: default; user-select: none; }
 
 /* Search highlights live in the transparent text layer, so they tint the canvas
    glyphs underneath instead of painting any text of their own. */
@@ -1086,16 +1087,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 /* ---------- dialogs, menus, toasts ---------- */
 
+/* The <dialog> fills the window and carries the dim, so it drops its UA box. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+  color: inherit;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   padding: 12vh var(--sp-5) var(--sp-5);
   background: rgba(0, 0, 0, 0.4);
 }
+.modal-backdrop::backdrop { background: none; }
 
 .modal {
   display: flex;
@@ -1218,12 +1228,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .menubar-item:hover, .menubar-item[aria-expanded="true"] { background: var(--fill-2); }
 
+/* A manual popover, so toasts sit in the top layer above an open dialog; it
+   drops the popover's UA box (which would clip the toasts' shadows). */
 #toast-root {
   position: fixed;
-  bottom: var(--sp-6);
-  left: 50%;
+  inset: auto auto var(--sp-6) 50%;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  overflow: visible;
   transform: translateX(-50%);
-  z-index: 300;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -1314,7 +1329,7 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .workspace-switcher { display: flex; flex: none; gap: var(--sp-1); padding: var(--sp-2); background: var(--bg-content); border-bottom: 1px solid var(--separator); }
 .workspace-switcher[hidden] { display: none; }
 .workspace-switcher .btn { flex: 1; }
-.workspace-switcher .selected { background: var(--fill-2); color: var(--label); }
+.workspace-switcher [aria-pressed="true"] { background: var(--fill-2); color: var(--label); }
 .sidebar-backdrop { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 20%); }
 .layout-overlay > .sidebar { overflow-y: auto; position: absolute; inset: 0 auto 0 0; z-index: 21; max-width: calc(100% - 32px); background: var(--bg-recessed); box-shadow: var(--shadow-pane); }
 .floating .layout-overlay > .sidebar { margin: var(--sp-2); bottom: var(--sp-2); }
@@ -1325,10 +1340,14 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .layout-compact .workspace:not(.preview-active) > .pdf-pane { display: none; }
 .layout-compact .titlebar > .icon-btn { flex: none; }
 .layout-compact .titlebar { flex-wrap: wrap; height: auto; min-height: var(--h-titlebar); padding-block: var(--sp-1); }
-.layout-compact .window-title { flex: 1; min-width: 0; }
+.layout-compact .window-title { flex: 1; min-width: 120px; }
 .pdf-pane > .toolbar { flex-wrap: wrap; height: auto; min-height: var(--h-toolbar); row-gap: var(--sp-1); padding-block: var(--sp-2); }
 .layout-compact .pdf-pane .toolbar .spacer { display: none; }
 .divider:focus-visible, .pane-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; z-index: 2; }
 .pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
 .divider-sync::before { content: none; }
 .divider:has(.pane-resize-handle.dragging) { background: var(--accent); }
+
+.layout-overlay .section-header { height: 36px; }
+.layout-overlay .section-actions { gap: var(--sp-1); }
+.layout-overlay .section-actions .icon-btn { width: 28px; height: 28px; }

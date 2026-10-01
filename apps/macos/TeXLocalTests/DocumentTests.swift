@@ -121,11 +121,98 @@ struct PDFFitTests {
             #expect(controller.fit == .height)
         }
     }
+
+    private func pages(_ count: Int) throws -> PDFDocument {
+        let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let document = PDFDocument()
+        for index in 0..<count { document.insert(try #require(PDFPage(image: image)), at: index) }
+        return document
+    }
+
+    /// The first page's top, in the view.
+    private func firstTop(_ view: PDFView) throws -> CGFloat {
+        let page = try #require(view.document?.page(at: 0))
+        return view.convert(CGPoint(x: 0, y: page.bounds(for: view.displayBox).maxY), from: page).y
+    }
+
+    /// SwiftUI sets the frame again, unchanged, on each of PDFKit's scroll steps:
+    /// a step from the start stays. A new size at the start keeps the first page's
+    /// top in view as the fitted scale changes.
+    @Test func theStartKeepsOnlyOnANewSize() throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.displayMode = .singlePageContinuous
+        view.autoScales = true
+        view.document = try pages(3)
+        view.layoutDocumentView()
+        let clip = try #require(view.documentView?.enclosingScrollView?.contentView)
+        let start = clip.bounds.origin
+        clip.scroll(to: CGPoint(x: start.x, y: start.y + (clip.isFlipped ? 0.5 : -0.5)))
+        let stepped = clip.bounds.origin
+        #expect(stepped != start)
+        view.setFrameSize(view.frame.size)
+        #expect(clip.bounds.origin == stepped)
+
+        clip.scroll(to: start)
+        let scale = view.scaleFactor
+        view.setFrameSize(NSSize(width: 900, height: 500))
+        view.layoutDocumentView()
+        #expect(view.scaleFactor > scale)
+        let top = try firstTop(view)
+        #expect(top <= view.bounds.maxY + view.pageBreakMargins.top * view.scaleFactor + 0.5, "top \(top)")
+        #expect(top >= view.bounds.maxY - 0.5, "top \(top)")
+    }
+
+    /// Dark paper draws into the tiles: white turns black, and a hue is kept.
+    /// The knob follows the paper.
+    @Test func darkPaperInvertsTheLightnessOnly() throws {
+        let image = NSImage(size: NSSize(width: 20, height: 10), flipped: false) { _ in
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 10, height: 10).fill()
+            NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1).setFill()
+            NSRect(x: 10, y: 0, width: 10, height: 10).fill()
+            return true
+        }
+        let page = try #require(PDFPage(image: image))
+        let document = PDFDocument()
+        document.insert(page, at: 0)
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.document = document
+        let box = page.bounds(for: .cropBox)
+        func drawn(dark: Bool) throws -> (white: NSColor, red: NSColor) {
+            view.darkPaper = dark
+            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(box.width), pixelsHigh: Int(box.height),
+                                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                       colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap)).cgContext
+            context.translateBy(x: -box.minX, y: -box.minY)
+            view.draw(page, to: context)
+            return (try #require(bitmap.colorAt(x: 5, y: 5)), try #require(bitmap.colorAt(x: 15, y: 5)))
+        }
+        let dark = try drawn(dark: true)
+        #expect(dark.white.brightnessComponent < 0.05)
+        #expect(dark.red.redComponent > dark.red.greenComponent + 0.2, "\(dark.red)")
+        #expect(view.documentView?.enclosingScrollView?.scrollerKnobStyle == .light)
+        let white = try drawn(dark: false)
+        #expect(white.white.brightnessComponent > 0.95)
+        #expect(view.documentView?.enclosingScrollView?.scrollerKnobStyle == .dark)
+    }
 }
 
 /// Find in PDF across a rebuild, off screen.
 @MainActor
 struct PDFFindTests {
+    private func waitForMatches(_ count: Int, in controller: PDFController) async throws {
+        for _ in 0..<200 {
+            if controller.matches.count == count { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("PDFKit did not finish finding \(count) matches")
+    }
+
     /// Each page's text drawn as text, so PDFKit finds it.
     private func document(_ pages: [String]) throws -> PDFDocument {
         let document = PDFDocument()
@@ -140,7 +227,7 @@ struct PDFFindTests {
 
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
-    @Test func aRebuildFindsAgainInPlace() throws {
+    @Test func aRebuildFindsAgainInPlace() async throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.displayMode = .singlePageContinuous
         view.document = try document(["needle", "filler", "needle", "needle"])
@@ -149,6 +236,7 @@ struct PDFFindTests {
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
+        try await waitForMatches(3, in: controller)
         controller.step(1)
 
         let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
@@ -156,6 +244,7 @@ struct PDFFindTests {
         view.layoutDocumentView()
         let place = try #require(view.documentView).visibleRect
         controller.documentShown()
+        try await waitForMatches(4, in: controller)
 
         #expect(controller.finding)
         #expect(controller.matches.count == 4)
@@ -163,5 +252,22 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 1)
         #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
         #expect(try #require(view.documentView).visibleRect == place)
+    }
+
+    @Test func aNewQueryAndCloseDiscardOldResults() async throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.document = try document(["alpha beta", "alpha gamma", "beta"])
+        let controller = PDFController()
+        controller.view = view
+        controller.finding = true
+        controller.find("alpha")
+        controller.find("gamma")
+        controller.find("beta")
+        try await waitForMatches(2, in: controller)
+        #expect(controller.query == "beta")
+        #expect(controller.matches.allSatisfy { $0.string?.localizedCaseInsensitiveContains("beta") == true })
+        controller.closeFind()
+        #expect(controller.matches.isEmpty)
+        #expect(view.highlightedSelections == nil)
     }
 }

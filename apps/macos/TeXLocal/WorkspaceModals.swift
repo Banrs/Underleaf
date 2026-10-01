@@ -52,7 +52,7 @@ private struct WorkspaceModals: ViewModifier {
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
+                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                     .keyboardShortcut(.defaultAction)
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
                 Button("Cancel", role: .cancel) {}
@@ -97,9 +97,10 @@ private struct NewEntrySheet: View {
 
     var body: some View {
         DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
-                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/")) {
+                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/"),
+                    failureTitle: "Couldn’t Create “\(trimmed)”") {
             let path = folder.isEmpty ? trimmed : "\(folder)/\(trimmed)"
-            Task { await project.createEntry(path, directory: directory) }
+            try await project.createEntry(path, directory: directory)
         } fields: {
             TextField("Name", text: $name, selection: $selection)
                 .focused($nameFocused)

@@ -231,7 +231,7 @@ function buildChrome(id) {
     findCount.textContent = findInput.value.trim() ? (total ? `${index} of ${totalLabel}` : 'Not found') : '';
   };
   const stepFind = (delta) => showCount(state.pdf.findStep(delta));
-  const findBar = el('div', { class: 'pdf-find', hidden: true },
+  const findBar = el('search', { class: 'pdf-find', hidden: true },
     findInput,
     findCount,
     el('button', { class: 'icon-btn small', title: 'Previous match', onclick: () => stepFind(-1) }, icon('chevron-up')),
@@ -289,7 +289,7 @@ function buildChrome(id) {
   const editorButton = el('button', { class: 'btn small', 'aria-controls': editorPane.id }, 'Editor');
   const previewButton = el('button', { class: 'btn small', 'aria-controls': pdfPane.id }, 'Preview');
   const switcher = el('div', { class: 'workspace-switcher', role: 'group', 'aria-label': 'Workspace view', hidden: '' }, editorButton, previewButton);
-  const main = el('div', { class: 'main-column' }, titlebar, switcher, workspace);
+  const main = el('main', { class: 'main-column' }, titlebar, switcher, workspace);
   const backdrop = el('div', { class: 'sidebar-backdrop', hidden: '', 'aria-hidden': 'true' });
   const shell = el('div', { class: 'shell' }, sidebar, sidebarDivider, backdrop, main);
   $('#app').replaceChildren(shell);
@@ -339,11 +339,7 @@ export function syncToolbarState() {
     b.disabled = cmd.enabled ? !cmd.enabled() : false;
     b.title = tooltip(id);
     b.setAttribute('aria-label', commandTitle(id));
-    if (cmd.checked) {
-      const on = !!cmd.checked();
-      b.classList.toggle('selected', on);
-      b.setAttribute('aria-pressed', String(on));
-    }
+    if (cmd.checked) b.setAttribute('aria-pressed', String(!!cmd.checked()));
   }
 }
 
@@ -429,7 +425,6 @@ function openPdfFind() {
   // The log takes the PDF's place, so matches would be highlighted out of sight.
   if (state.logOpen) toggleLogs();
   ui.findBar.hidden = false;
-  ui.findBar.parentElement?.classList.add('find-open');
   ui.findInput.focus();
   ui.findInput.select();
 }
@@ -440,7 +435,6 @@ function closePdfFind() {
   pdfFindTimer = null;
   pdfFindGeneration++;
   ui.findBar.hidden = true;
-  ui.findBar.parentElement?.classList.remove('find-open');
   ui.findInput.value = '';
   state.pdf?.clearFind();
 }

@@ -11,7 +11,7 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 
 /// True for `/x`, `\\x`, and `C:...` forms — anything that doesn't stay
 /// relative to the base it's joined onto.
-fn is_absolute_like(rel: &str) -> bool {
+pub(crate) fn is_absolute_like(rel: &str) -> bool {
     let b = rel.as_bytes();
     rel.starts_with('/')
         || rel.starts_with('\\')

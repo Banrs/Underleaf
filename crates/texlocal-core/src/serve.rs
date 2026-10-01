@@ -204,7 +204,8 @@ mod tests {
 
     #[tokio::test]
     async fn reads_whole_files_and_ranges() {
-        let path = std::env::temp_dir().join(format!("texlocal-range-{}", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
         let data: Vec<u8> = (0..=255).cycle().take(100_000).collect();
         std::fs::write(&path, &data).unwrap();
         let whole = read_file_range(&path, None).await.unwrap();
@@ -213,7 +214,6 @@ mod tests {
             .await
             .unwrap();
         let past_end = read_file_range(&path, Some((99_990, 100_009))).await;
-        std::fs::remove_file(&path).unwrap();
         assert_eq!(whole, data);
         assert_eq!(part, data[10..20]);
         assert_eq!(last, data[99_999..]);

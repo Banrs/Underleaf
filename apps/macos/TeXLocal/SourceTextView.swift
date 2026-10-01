@@ -115,6 +115,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     private var lineCountDigits = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
+    private var nextFragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
 
     private var numberFont: NSFont {
         .monospacedSystemFont(ofSize: max(8, (font?.pointSize ?? NSFont.systemFontSize) - 2), weight: .regular)
@@ -129,7 +130,9 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let width = (CGFloat(lineCountDigits) * digit + 16).rounded(.up)
         guard width != gutterWidth else { return }
         gutterWidth = width
-        setFrameSize(frame.size)
+        // Native width tracking subtracts twice this inset. The overridden
+        // origin keeps the gutter on the leading side and 8 pt on the trailing.
+        textContainerInset.width = (textContainerOrigin.x + 8) / 2
         needsDisplay = true
     }
 
@@ -138,30 +141,23 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         NSPoint(x: gutterWidth + 4, y: textContainerInset.height)
     }
 
-    override func setFrameSize(_ size: NSSize) {
-        super.setFrameSize(size)
-        let width = max(0, size.width - textContainerOrigin.x - 8)
-        if textContainer?.size.width != width {
-            textContainer?.size = NSSize(width: width, height: .greatestFiniteMagnitude)
-        }
-    }
-
     // macOS 27's viewport hooks: the line numbers and colours of what shows.
 
     override func textViewportLayoutControllerWillLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerWillLayout(controller)
-        fragments.removeAll(keepingCapacity: true)
+        // Keep the completed gutter until the next viewport is ready to draw.
+        nextFragments.removeAll(keepingCapacity: true)
     }
 
     override func textViewportLayoutController(_ controller: NSTextViewportLayoutController,
                                                configureRenderingSurfaceFor fragment: NSTextLayoutFragment) {
         super.textViewportLayoutController(controller, configureRenderingSurfaceFor: fragment)
-        fragments.append((offset(fragment.rangeInElement.location), fragment))
+        nextFragments.append((offset(fragment.rangeInElement.location), fragment))
     }
 
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
-        fragments.sort { $0.offset < $1.offset }
+        fragments = nextFragments.sorted { $0.offset < $1.offset }
         colourViewport()
         needsDisplay = true
     }

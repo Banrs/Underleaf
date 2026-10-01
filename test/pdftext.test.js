@@ -48,3 +48,18 @@ test('matching stops at its requested limit', () => {
   ]);
   assert.deepEqual(matchRanges('aaaa', 'a', 0), []);
 });
+
+test('a character whose lowercase is longer does not shift later ranges', () => {
+  // 'İ'.toLowerCase() is two code units.
+  assert.deepEqual(matchRanges('İ fig', 'fig'), [{ start: 2, end: 5 }]);
+});
+
+test('every ASCII punctuation mark in a query matches literally', () => {
+  for (const c of '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~') {
+    assert.deepEqual(matchRanges(`a${c}b ab`, `a${c}b`), [{ start: 0, end: 3 }], c);
+  }
+});
+
+test('matching folds case across the alphabet, not only ASCII', () => {
+  assert.deepEqual(matchRanges('Σ ς', 'σ'), [{ start: 0, end: 1 }, { start: 2, end: 3 }]);
+});

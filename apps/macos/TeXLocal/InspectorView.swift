@@ -8,7 +8,7 @@ struct InspectorView: View {
     var body: some View {
         Form {
             Section("Project") {
-                let texFiles = project.tree.flattened.filter { !$0.isDirectory && $0.path.hasSuffix(".tex") }.map(\.path)
+                let texFiles = project.tree.flattened.filter { !$0.isDirectory && isLaTeXFile($0.path) }.map(\.path)
                 picker("Main File", project.settings?.mainFile, texFiles.map { ($0, $0) }, set: project.setMainFile)
                 picker("Engine", project.settings?.engine, texEngines, set: project.setEngine)
                 toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
@@ -17,11 +17,12 @@ struct InspectorView: View {
                        project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
             }
             // Settings arrive from the core after the project opens.
-            .disabled(project.settings == nil)
+            .disabled(project.settings == nil || project.changingSettings)
             if let path = project.openPath {
                 Section("Document") {
                     LabeledContent("Name", value: (path as NSString).lastPathComponent)
                     LabeledContent("Folder", value: folder(of: path))
+                        .textSelection(.enabled)
                     if let counts = project.counts {
                         LabeledContent("Words", value: counts.words.formatted())
                         LabeledContent("Lines", value: counts.lines.formatted())
@@ -66,6 +67,8 @@ struct InspectorView: View {
             Text(title)
             Text(detail)
         }
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
     }
 
     private func folder(of path: String) -> String {

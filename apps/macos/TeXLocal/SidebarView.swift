@@ -2,16 +2,15 @@ import SwiftUI
 
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// Files pane's foot so it stays put over the outline. Folded, it's the status bar's
-/// height, and the two read as one bar.
+/// Files pane's foot so it stays put over the outline. Its height stays level with
+/// the status bar, whether the outline is folded or revealed.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
     /// A sidebar section header's row (measured, 27.2).
     private static let headerRow: CGFloat = 19
-    /// How far under the middle of the status bar's height the list puts the title
-    /// (measured, 27.2): it's raised so the two bars' words are level and centred.
-    private static let titleDrop: CGFloat = 1.5
+    /// Native sidebar headers sit near the next row, with more room above the title.
+    private static let titleDrop: CGFloat = sidebarListRoom + headerRow - BarMetrics.secondaryBarHeight
 
     var body: some View {
         List {
@@ -28,8 +27,7 @@ struct OutlineHeader: View {
         // autoscroll (scrollDisabled doesn't stop it); the bar shows its top.
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
         .offset(y: -Self.titleDrop)
-        .frame(height: app.outlineCollapsed ? BarMetrics.secondaryBarHeight : sidebarListRoom + Self.headerRow,
-               alignment: .top)
+        .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
     }
 }
 
@@ -92,7 +90,7 @@ struct FilesList: View {
                     Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
                     Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
                     Divider()
-                } else if node.path.hasSuffix(".tex") {
+                } else if isLaTeXFile(node.path) {
                     Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
                     Divider()
                 }
@@ -374,7 +372,7 @@ struct OutlineList: View {
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
-            guard let id, id != current, let item = outline.first(where: { $0.id == id }) else { return }
+            guard let id, id != (chosen ?? current), let item = outline.first(where: { $0.id == id }) else { return }
             chosen = id
             project.reveal(item)
         })
@@ -384,7 +382,8 @@ struct OutlineList: View {
                     Text("No Sections").foregroundStyle(.secondary)
                         .selectionDisabled()
                 } else {
-                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded)
+                    OutlineRows(nodes: Outline.tree(outline), project: project, keys: keys, folded: $folded,
+                                selected: chosen ?? current)
                 }
             }
             .listStyle(.sidebar)
@@ -395,7 +394,7 @@ struct OutlineList: View {
             .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            .onChange(of: project.topLine) { _, top in line = top }
+            .onChange(of: project.topHeading) { line = project.topLine }
             // The current heading always shows: its sections open, then the
             // least scroll that brings it into view.
             .onChange(of: current, initial: true) { _, id in
@@ -422,12 +421,13 @@ private struct OutlineRows: View {
     let project: ProjectModel
     let keys: [String]
     @Binding var folded: Set<String>
+    let selected: Int?
 
     var body: some View {
         ForEach(nodes) { node in
             if let children = node.children {
                 DisclosureGroup(isExpanded: expansion(node.item)) {
-                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded)
+                    OutlineRows(nodes: children, project: project, keys: keys, folded: $folded, selected: selected)
                 } label: {
                     row(node.item)
                 }
@@ -438,7 +438,7 @@ private struct OutlineRows: View {
     }
 
     private func row(_ item: OutlineItem) -> some View {
-        HeadingRow(project: project, item: item)
+        HeadingRow(project: project, item: item, repeatSelection: selected == item.id)
             .equatable()
             .id(item.id)
             .tag(item.id)
@@ -460,9 +460,10 @@ private struct OutlineRows: View {
 private struct HeadingRow: View, Equatable {
     let project: ProjectModel
     let item: OutlineItem
+    let repeatSelection: Bool
 
     static func == (a: Self, b: Self) -> Bool {
-        a.project === b.project && a.item == b.item
+        a.project === b.project && a.item == b.item && a.repeatSelection == b.repeatSelection
     }
 
     var body: some View {
@@ -476,7 +477,9 @@ private struct HeadingRow: View, Equatable {
         .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        .simultaneousGesture(TapGesture().onEnded { project.reveal(item) })
+        // New selections are handled by List (including arrow keys). Only a
+        // click on the already selected heading needs a second way to activate.
+        .simultaneousGesture(TapGesture().onEnded { if repeatSelection { project.reveal(item) } })
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
         .accessibilityValue(item.kind)

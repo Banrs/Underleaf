@@ -82,7 +82,7 @@ pub fn indent(text: &Text, selections: &[TextRange], more: bool) -> Vec<TextEdit
 
 /// A sectioning command, to its title's opening brace: its star and short title.
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
-    let names = catalog::alternation(&catalog::get().sections);
+    let names = catalog::alternation(&catalog::CATALOG.sections);
     Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
 });
 
@@ -142,7 +142,7 @@ fn heading_line(line: &str, command: &str) -> (String, usize) {
 }
 
 pub fn insert_block(text: &Text, id: &str, selection: TextRange) -> Option<Insertion> {
-    let template = catalog::get().blocks.get(id)?;
+    let template = catalog::CATALOG.blocks.get(id)?;
     let line = text.line_index(selection.start);
     let before = &text.units[text.lines[line] as usize..selection.start as usize];
     // On a line of its own: after text, a line feed first. The template ends

@@ -1,13 +1,16 @@
-import CoreImage.CIFilterBuiltins
 import PDFKit
 import SwiftUI
+import Synchronization
 
 /// What the toolbar, the find bar and the menus ask of the PDF view.
 @Observable
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView? {
         // PDFView keeps a set scale as it resizes: Fit Height sets it again.
-        didSet { view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } } }
+        didSet {
+            if view !== oldValue { stopFind() }
+            view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } }
+        }
     }
     var page = 0
     var pageCount = 0
@@ -22,6 +25,14 @@ final class PDFController {
     var matchIndex = 0
     /// More matches exist than are kept.
     var limited = false
+    @ObservationIgnored private var findDocument: PDFDocument?
+    @ObservationIgnored private var findMatchObserver: NSObjectProtocol?
+    @ObservationIgnored private var findEndObserver: NSObjectProtocol?
+    @ObservationIgnored private var findGeneration = 0
+    @ObservationIgnored private var foundSelections: [PDFSelection] = []
+
+    isolated deinit { stopFind() }
+
     /// Whether fitting or set.
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
@@ -96,16 +107,64 @@ final class PDFController {
     /// Keeping place: a rebuilt PDF's matches, the current one kept where it still
     /// is, and the pages left where they are (a build follows every pause in typing).
     func find(_ value: String, keepingPlace: Bool = false) {
-        guard let view, let document = view.document else { return }
+        stopFind()
         query = PDFFind.normalize(value)
-        let all = query.isEmpty ? [] : document.findString(query, withOptions: .caseInsensitive)
-        matches = Array(all.prefix(PDFFind.maxMatches))
-        limited = all.count > matches.count
-        if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
+        matches = []
+        limited = false
+        if !keepingPlace { matchIndex = 0 }
+        view?.highlightedSelections = nil
+        view?.clearSelection()
+        guard !query.isEmpty, let view, let document = view.document else { return }
+
+        findDocument = document
+        let generation = findGeneration
+        let center = NotificationCenter.default
+        findMatchObserver = center.addObserver(forName: .PDFDocumentDidFindMatch, object: document, queue: .main) { [weak self] notification in
+            // Foundation guarantees the main queue; these legacy PDFKit types
+            // do not express that isolation. No payload leaves this callback.
+            nonisolated(unsafe) let selection = notification.userInfo?[PDFDocumentFoundSelectionKey] as? PDFSelection
+            MainActor.assumeIsolated {
+                guard let self, self.findGeneration == generation,
+                      self.view?.document === self.findDocument, let selection else { return }
+                if self.foundSelections.count == PDFFind.maxMatches {
+                    self.limited = true
+                    self.finishFind(keepingPlace: keepingPlace)
+                } else {
+                    self.foundSelections.append(selection)
+                }
+            }
+        }
+        findEndObserver = center.addObserver(forName: .PDFDocumentDidEndFind, object: document, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.findGeneration == generation,
+                      self.view?.document === self.findDocument else { return }
+                self.finishFind(keepingPlace: keepingPlace)
+            }
+        }
+        document.beginFindString(query, withOptions: .caseInsensitive)
+    }
+
+    private func finishFind(keepingPlace: Bool) {
+        matches = foundSelections
+        if matchIndex >= matches.count { matchIndex = 0 }
         matches.forEach { $0.color = .findHighlightColor }
-        view.highlightedSelections = matches.isEmpty ? nil : matches
-        view.clearSelection()
+        view?.highlightedSelections = matches.isEmpty ? nil : matches
         show(scrolling: !keepingPlace)
+        stopFind()
+    }
+
+    /// Invalidate queued callbacks before stopping the native operation. A cancelled
+    /// PDFKit search need not send an end notification, so nothing waits for it.
+    private func stopFind() {
+        findGeneration += 1
+        if let findMatchObserver { NotificationCenter.default.removeObserver(findMatchObserver) }
+        if let findEndObserver { NotificationCenter.default.removeObserver(findEndObserver) }
+        findMatchObserver = nil
+        findEndObserver = nil
+        foundSelections = []
+        let document = findDocument
+        findDocument = nil
+        document?.cancelFindString()
     }
 
     /// web/src/workspace.js `closePdfFind`: the bar goes, and its query and
@@ -176,6 +235,9 @@ final class SyncPDFView: PDFView {
     var onResize: () -> Void = {}
 
     override func setFrameSize(_ newSize: NSSize) {
+        // SwiftUI sets the frame again, unchanged, whenever PDFKit's own scrolling
+        // lays out the pane (each step): only a new size counts.
+        guard newSize != frame.size else { return }
         // PDFKit keeps the point at the view's top, which runs on under the
         // toolbar: at the start of the document, a new scale slid the first page
         // under it. There it stays at the start.
@@ -187,31 +249,59 @@ final class SyncPDFView: PDFView {
         }
     }
 
+    /// The first page's top no higher than the top of what shows, give or take its
+    /// page-break margin (which scales with the page, and PDFKit's own `go(to:)`
+    /// leaves). In view points.
     private var atDocumentStart: Bool {
-        guard let documentView, let scroll = documentView.enclosingScrollView else { return false }
-        let shown = scroll.contentView.bounds, inset = scroll.contentInsets.top
-        return documentView.isFlipped ? shown.minY <= -inset + 1 : shown.maxY >= documentView.frame.maxY + inset - 1
+        guard let page = document?.page(at: 0) else { return false }
+        let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
+        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
     }
 
-    /// As the web draws it (`.pdf-dark`): inverted, then turned half way round the
-    /// colour wheel so figures keep their hues. Only the pages, so the view's
-    /// background and scrollers stay the window's.
+    /// Read on PDFKit's tile queue.
+    private let pagesDark = Atomic(false)
+
+    /// As the web draws it (`.pdf-dark`): lightness inverted, hues kept. Drawn
+    /// into PDFKit's tiles, so sharp at any scale, and only the pages.
     var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
+            pagesDark.store(darkPaper, ordering: .relaxed)
             pageShadowsEnabled = !darkPaper
-            paintPages()
+            matchScroller()
+            // PDFKit keeps the tiles it drew until the box they show changes.
+            let box = displayBox
+            displayBox = box == .mediaBox ? .cropBox : .mediaBox
+            displayBox = box
         }
     }
 
-    /// Again for each document, whose pages PDFKit may put in a new view.
-    func paintPages() {
-        guard let pages = documentView else { return }
-        pages.wantsLayer = true
-        pages.layerUsesCoreImageFilters = true
-        let hue = CIFilter.hueAdjust()
-        hue.angle = .pi
-        pages.contentFilters = darkPaper ? [CIFilter.colorInvert(), hue] : []
+    /// The knob runs over the pages: light on dark paper, dark on white. Again
+    /// for the first document, which brings the scroll view (an override of
+    /// `document` would be called on PDFKit's form-filling queue).
+    func matchScroller() {
+        guard let scroll = documentView?.enclosingScrollView else { return }
+        scroll.scrollerKnobStyle = darkPaper ? .light : .dark
+        scroll.verticalScrollElasticity = .allowed
+    }
+
+    /// PDFView's own (the page on white, in the crop box it shows), then for dark
+    /// paper the page inverted and given back its own hue and saturation. PDFKit
+    /// calls this for each tile, on its own queue.
+    override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
+        let box = page.bounds(for: .cropBox)
+        context.setFillColor(.white)
+        context.fill(box)
+        page.draw(with: .cropBox, to: context)
+        guard pagesDark.load(ordering: .relaxed) else { return }
+        context.setBlendMode(.difference)
+        context.fill(box)
+        context.setBlendMode(.color)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setBlendMode(.normal)
+        context.fill(box)
+        page.draw(with: .cropBox, to: context)
+        context.endTransparencyLayer()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -255,6 +345,7 @@ struct PDFRepresentable: NSViewRepresentable {
     let current: Bool
 
     final class Coordinator {
+        weak var controller: PDFController?
         var highlightToken = 0
         /// Following the view's page and scale, until the view goes.
         var watches: [Task<Void, Never>] = []
@@ -271,6 +362,7 @@ struct PDFRepresentable: NSViewRepresentable {
             Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
         }
         controller.view = view
+        context.coordinator.controller = controller
         let center = NotificationCenter.default
         // Each read once as it starts watching too: the first fitted scale is set before.
         context.coordinator.watches = [(Notification.Name.PDFViewPageChanged, controller.pageChanged),
@@ -296,6 +388,7 @@ struct PDFRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
         coordinator.watches.forEach { $0.cancel() }
+        if coordinator.controller?.view === view { coordinator.controller?.view = nil }
     }
 
     /// A rebuilt PDF at the same place and zoom, by PDFKit's own destination.
@@ -307,7 +400,7 @@ struct PDFRepresentable: NSViewRepresentable {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
-        view.paintPages()
+        view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         // A reopened project's first PDF opens at the page it was left at.
         let restore = project.restorePDFPage

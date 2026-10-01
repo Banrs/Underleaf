@@ -1,5 +1,16 @@
 import AppKit
+import CoreText
 import SwiftUI
+
+/// Adds tabular digits to the existing font without changing its face, size, or traits.
+func zoomFontWithTabularNumbers(_ font: NSFont) -> NSFont? {
+    let descriptor = font.fontDescriptor
+    var features = descriptor.object(forKey: .featureSettings) as? [[NSFontDescriptor.FeatureKey: Int]] ?? []
+    features.removeAll { $0[.typeIdentifier] == kNumberSpacingType }
+    features.append([.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector])
+    let tabularDescriptor = descriptor.addingAttributes([.featureSettings: features])
+    return NSFont(descriptor: tabularDescriptor, size: font.pointSize)
+}
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
@@ -50,6 +61,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.autosavesConfiguration = true
         watch = track({ [weak self] in self?.state }) { [weak self] state in
             if let state { self?.apply(state) }
+        }
+    }
+
+    /// Leave room for the native title and Insert menu in a narrow source pane.
+    /// AppKit only attempts to align tracking separators; it otherwise lets the
+    /// formatting capsule push the line past the content divider. The same
+    /// commands remain in Format and keep their keyboard shortcuts.
+    func updateLayout() {
+        guard let workspace else { return }
+        let compact = workspace.sourceItem.viewController.view.bounds.width < 400
+        for item in toolbar.items where [.bold, .italic].contains(item.itemIdentifier) {
+            if item.isHidden != compact { item.isHidden = compact }
         }
     }
 
@@ -147,6 +170,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Toolbar draws a view without the item's style, so it gets the title.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
+            item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
             if flag {
                 item.view = NSHostingView(rootView: compileButton(state))
             } else {
@@ -160,6 +184,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
+            item.possibleLabels = ["Show PDF", "Hide PDF"]
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -174,7 +199,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.autovalidates = false
             (item as? NSToolbarItemGroup)?.subitems.forEach { $0.autovalidates = false }
         }
-        if flag { configure(item, state) }
+        if flag {
+            configure(item, state)
+            if [.bold, .italic].contains(id), let workspace {
+                item.isHidden = workspace.sourceItem.viewController.view.bounds.width < 400
+            }
+        }
         return item
     }
 
@@ -329,8 +359,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             let control = item.view as? NSSegmentedControl
             // Tabular digits, so Share doesn't move as the scale changes. The toolbar
-            // resets the control's font, so it's set with each label.
-            if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
+            // resets the control's font, so it's set with each label. Derive it from
+            // that native font so its face and weight survive the feature change.
+            if let font = control?.font, let tabularFont = zoomFontWithTabularNumbers(font) {
+                control?.font = tabularFont
+            }
             control?.setLabel(state.zoomLabel, forSegment: 1)
             control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
             control?.setEnabled(state.hasPDF, forSegment: 1)
@@ -353,6 +386,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             item.label = state.pdfTitle
             item.toolTip = state.pdfTitle
+        case .pdfSeparator:
+            guard let separator = item as? NSTrackingSeparatorToolbarItem, let workspace else { return }
+            // A collapsed PDF's divider lies past the inspector partition, making
+            // AppKit join the source's scroll edge to the whole toolbar. Track
+            // that native partition instead, without rewriting the saved items.
+            let split = state.showsPDF ? workspace.columns.splitView : workspace.splitView
+            let divider = state.showsPDF ? 0 : workspace.splitViewItems.firstIndex(of: workspace.inspectorItem)! - 1
+            guard separator.splitView !== split || separator.dividerIndex != divider else { return }
+            // Index zero is valid in both splits while changing the tracked view.
+            separator.dividerIndex = 0
+            separator.splitView = split
+            separator.dividerIndex = divider
         default:
             break
         }

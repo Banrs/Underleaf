@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// api.js only builds its backend when a Tauri bridge exists, so both globals
-// have to be in place before the module is imported.
-globalThis.navigator ??= { platform: '', userAgent: '' };
+// api.js only builds its backend when a Tauri bridge exists, so the window
+// global has to be in place before the module is imported.
 const calls = [];
 let existing = [];
 globalThis.window = {

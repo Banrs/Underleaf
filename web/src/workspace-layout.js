@@ -123,8 +123,6 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
     switcher.hidden = mode !== 'compact';
     editorButton.setAttribute('aria-pressed', String(surface === 'editor'));
     previewButton.setAttribute('aria-pressed', String(surface === 'preview'));
-    editorButton.classList.toggle('selected', surface === 'editor');
-    previewButton.classList.toggle('selected', surface === 'preview');
     setHidden(editorPane, mode === 'compact' && surface === 'preview', previewButton);
     setHidden(pdfPane, !pdfVisible(), mode === 'compact' ? editorButton : pdfToggle);
     if (paneDivider.contains(document.activeElement) && (mode === 'compact' || !pdfVisible())) {

@@ -15,6 +15,7 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
+                .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
                 .buttonStyle(.accessoryBar)
@@ -63,13 +64,9 @@ struct BuildPanel: View {
             .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
-    private var items: [LogItem] {
-        let all = (project.result?.errors ?? []) + (showWarnings ? project.result?.warnings ?? [] : [])
-        guard !filter.isEmpty else { return all }
-        return all.filter { item in
-            item.message.localizedCaseInsensitiveContains(filter)
-                || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
-        }
+    private var items: [BuildIssue] {
+        BuildIssueRows(errors: project.result?.errors ?? [], warnings: project.result?.warnings ?? [])
+            .visible(filter: filter, showWarnings: showWarnings)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
@@ -93,6 +90,7 @@ struct BuildPanel: View {
                     .filter { $0.localizedCaseInsensitiveContains(filter) }
                     .joined(separator: "\n")
             LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
+                .ignoresSafeArea(.container, edges: .bottom)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -102,37 +100,90 @@ struct BuildPanel: View {
 
 /// The errors and warnings; a double-click or Return opens the line.
 private struct IssueList: View {
-    let items: [LogItem]
+    let items: [BuildIssue]
     let project: ProjectModel
-    @State private var selection: Int?
+    @State private var selection: BuildIssue.ID?
 
     var body: some View {
-        // By position: LaTeX repeats identical warnings.
-        List(Array(items.enumerated()), id: \.offset, selection: $selection) { _, item in
-            IssueRow(item: item)
+        List(items, selection: $selection) { issue in
+            IssueRow(item: issue.item)
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        .contextMenu(forSelectionType: Int.self) { rows in
-            if let row = rows.first {
-                if items[row].file != nil {
-                    Button("Go to Line") { open(items[row]) }
+        .contextMenu(forSelectionType: BuildIssue.ID.self) { rows in
+            if let id = rows.first {
+                if issue(for: id)?.item.file != nil {
+                    Button("Go to Line") { open(id) }
                 }
-                Button("Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(items[row].message, forType: .string)
-                }
+                Button("Copy") { copy(id) }
             }
         } primaryAction: { rows in
-            if let row = rows.first { open(items[row]) }
+            if let id = rows.first { open(id) }
         }
         // Edit › Copy copies the selected issue.
-        .copyable(selection.flatMap { items.indices.contains($0) ? [items[$0].message] : nil } ?? [])
-        .onChange(of: items) { selection = nil }
+        .copyable(selection.flatMap { issue(for: $0).map { [$0.item.message] } } ?? [])
+        .onChange(of: items) { _, newItems in
+            selection = BuildIssueRows.retainedSelection(selection, in: newItems)
+        }
     }
 
-    private func open(_ item: LogItem) {
-        if let file = item.file { Task { await project.open(file, line: item.line) } }
+    private func issue(for id: BuildIssue.ID) -> BuildIssue? {
+        items.first { $0.id == id }
+    }
+
+    private func open(_ id: BuildIssue.ID) {
+        guard let item = issue(for: id)?.item, let file = item.file else { return }
+        Task { await project.open(file, line: item.line) }
+    }
+
+    private func copy(_ id: BuildIssue.ID) {
+        guard let item = issue(for: id)?.item else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(item.message, forType: .string)
+    }
+}
+
+/// A row's identity describes its payload and its occurrence among identical
+/// entries in the original errors-then-warnings list.
+struct BuildIssue: Identifiable, Equatable {
+    struct ID: Hashable {
+        let item: LogItem
+        let occurrence: Int
+    }
+
+    let id: ID
+    let item: LogItem
+    let isWarning: Bool
+}
+
+/// Builds identities before applying the panel's warning and text filters.
+struct BuildIssueRows {
+    private let all: [BuildIssue]
+
+    init(errors: [LogItem], warnings: [LogItem]) {
+        let source: [(item: LogItem, isWarning: Bool)] =
+            errors.map { (item: $0, isWarning: false) } + warnings.map { (item: $0, isWarning: true) }
+        var occurrences: [LogItem: Int] = [:]
+        all = source.map { entry in
+            let occurrence = occurrences[entry.item, default: 0]
+            occurrences[entry.item] = occurrence + 1
+            return BuildIssue(id: BuildIssue.ID(item: entry.item, occurrence: occurrence),
+                              item: entry.item, isWarning: entry.isWarning)
+        }
+    }
+
+    func visible(filter: String, showWarnings: Bool) -> [BuildIssue] {
+        all.filter { issue in
+            (showWarnings || !issue.isWarning)
+                && (filter.isEmpty
+                    || issue.item.message.localizedCaseInsensitiveContains(filter)
+                    || (issue.item.file?.localizedCaseInsensitiveContains(filter) ?? false))
+        }
+    }
+
+    static func retainedSelection(_ selection: BuildIssue.ID?, in visible: [BuildIssue]) -> BuildIssue.ID? {
+        guard let selection, visible.contains(where: { $0.id == selection }) else { return nil }
+        return selection
     }
 }
 

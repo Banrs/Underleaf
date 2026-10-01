@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import fixture from '../crates/texlocal-syntax/tests/fixtures/editing.json' with { type: 'json' };
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
 const { mathModeAt, mathAt } = await import('../web/src/editor.js');
 const { Text } = await import('@codemirror/state');
 
 // Shared with the core's port (crates/texlocal-syntax/tests/editing.rs):
 // each case's `|` marks the position asked about.
-const fixture = new URL('../crates/texlocal-syntax/tests/fixtures/editing.json', import.meta.url);
-const { mathMode, mathAt: previews } = JSON.parse(readFileSync(fixture, 'utf8'));
+const { mathMode, mathAt: previews } = fixture;
 
 test('each shared case: $, $$, \\( \\[, environments, text in maths, escapes, comments, verbatim, blank lines', () => {
   for (const [source, expected, note] of mathMode) {

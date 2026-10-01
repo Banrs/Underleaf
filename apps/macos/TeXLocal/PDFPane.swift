@@ -21,7 +21,10 @@ struct PDFPane: View {
             .task(id: project.hasPDF ? project.pdfVersion : 0) {
                 let version = project.pdfVersion
                 guard project.hasPDF, let url = project.pdfURL else { return }
-                if let document = await Self.loadDocument(url) { loaded = (version, document) }
+                if let document = await Self.loadDocument(url) {
+                    guard !Task.isCancelled, project.hasPDF, project.pdfVersion == version else { return }
+                    loaded = (version, document)
+                }
             }
     }
 
@@ -47,7 +50,7 @@ struct PDFPane: View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, controller: controller, darkPaper: darkPaper,
                              document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: [.top, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

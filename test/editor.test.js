@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
+// Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
+import fixture from '../crates/texlocal-syntax/tests/fixtures/editing.json' with { type: 'json' };
 
-globalThis.navigator ??= { platform: '', userAgent: '' };
 globalThis.addEventListener ??= () => {};
 const { latexCompletions, mathPreviewField, headingLine, blockInsertion } = await import('../web/src/editor.js');
 const { BLOCK_TEMPLATES } = await import('../web/src/latex-data.js');
-
-// Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
-const fixture = JSON.parse(readFileSync(new URL('../crates/texlocal-syntax/tests/fixtures/editing.json', import.meta.url), 'utf8'));
 
 // CodeMirror narrows the options itself; each case names one it must offer.
 test('completion targets the innermost open argument, else a command or entry type', () => {

@@ -302,7 +302,6 @@ async fn drive(
     timeout: Duration,
 ) -> (i32, String, String, bool) {
     let pid = child.id();
-    let deadline = tokio::time::Instant::now() + timeout;
     let out_buf = Arc::new(Mutex::new(Vec::new()));
     let err_buf = Arc::new(Mutex::new(Vec::new()));
     let mut out_task = tokio::spawn(read_capped(
@@ -316,10 +315,12 @@ async fn drive(
         err_buf.clone(),
     ));
 
-    let (status, timed_out) = tokio::select! {
-        status = child.wait() => (status.ok(), false),
-        _ = tokio::time::sleep_until(deadline) => {
-            if let Some(pid) = pid { terminate_pid_tree(pid).await; }
+    let (status, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => (status.ok(), false),
+        Err(_) => {
+            if let Some(pid) = pid {
+                terminate_pid_tree(pid).await;
+            }
             let _ = child.start_kill();
             (child.wait().await.ok(), true)
         }
@@ -836,16 +837,12 @@ fn tail(s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
-    let mut start = s.len() - max;
-    while !s.is_char_boundary(start) {
-        start += 1;
-    }
-    s[start..].to_string()
+    s[s.ceil_char_boundary(s.len() - max)..].to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{read_tail, user_latexmkrc, version_line};
+    use super::{read_tail, tail, user_latexmkrc, version_line};
     use std::ffi::OsString;
     use std::path::Path;
 
@@ -862,6 +859,13 @@ mod tests {
             read_tail(&path, 1000).unwrap(),
             std::fs::read(&path).unwrap()
         );
+    }
+
+    #[test]
+    fn a_long_log_keeps_its_last_whole_characters() {
+        assert_eq!(tail("short".into(), 10), "short");
+        assert_eq!(tail("aébc".into(), 3), "bc");
+        assert_eq!(tail("aébc".into(), 4), "ébc");
     }
 
     #[test]
