@@ -328,7 +328,8 @@ impl Service {
             rels.push(rel);
         }
         // Names a Keep Both may not take: every path the upload creates.
-        let mut taken: HashSet<String> = seen.union(&folders).cloned().collect();
+        seen.extend(folders);
+        let mut taken = seen;
         let mut existing: Vec<Clash> = Vec::new();
         for rel in &rels {
             let Some(path) = clash(&base, rel) else {

@@ -180,19 +180,17 @@ where
             head_only,
         );
     }
-    let length = match req.header("content-length") {
-        None => 0,
-        Some(value) => match value.parse::<usize>() {
-            Ok(length) if length <= max_body => length,
-            _ => return response(Response::text(413, "Body too large"), head_only),
-        },
-    };
+    if req.header("content-length").is_some_and(|value| {
+        value
+            .parse::<usize>()
+            .map_or(true, |length| length > max_body)
+    }) {
+        return response(Response::text(413, "Body too large"), head_only);
+    }
     if let Some(refused) = check(&req) {
         return response(refused, head_only);
     }
     let read = async {
-        // Reserve once; collecting into Bytes then Vec would copy a large upload twice.
-        req.body.reserve_exact(length);
         while let Some(frame) = body.frame().await {
             let frame = frame?;
             if let Ok(bytes) = frame.into_data() {
