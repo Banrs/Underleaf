@@ -95,13 +95,16 @@ pub struct Analysis {
 /// editor's file, whose lines it counts; when the main file doesn't reach it,
 /// the document is that file alone.
 pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
-    let open = paths::fold_case(open);
+    let Ok(open) = paths::rel_key(open) else {
+        return Analysis::default();
+    };
+    let key = paths::fold_case(&open);
     let mut analysis = Analysis::default();
     let mut seen = HashSet::new();
-    read(root, main, &open, &mut seen, &mut analysis);
-    if !seen.contains(&open) {
+    read(root, main, &key, &mut seen, &mut analysis);
+    if !seen.contains(&key) {
         analysis = Analysis::default();
-        read(root, &open, &open, &mut HashSet::new(), &mut analysis);
+        read(root, &open, &key, &mut HashSet::new(), &mut analysis);
     }
     analysis
 }
