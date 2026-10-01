@@ -463,12 +463,16 @@ impl Drop for Registration<'_> {
     fn drop(&mut self) {
         let mut running = self.manager.running();
         if self.is_current(&running) {
-            let pid = running.remove(self.root).and_then(|entry| entry.pid);
-            if let Some(pid) = pid.filter(|_| !self.settled) {
+            running.remove(self.root);
+        }
+        drop(running);
+        // A newer request may already have replaced this registry entry, but
+        // its kill can itself be cancelled before it reaches this child.
+        if !self.settled {
+            if let Some(pid) = self.child.as_ref().and_then(tokio::process::Child::id) {
                 kill_pid_tree(pid);
             }
         }
-        drop(running);
         self.child = None;
         // notify_one stores a permit when the successor has not begun waiting
         // yet, so a very fast completion cannot be missed.
@@ -513,9 +517,9 @@ impl CompileRun<'_> {
             .is_some_and(|time| self.before.get(ext) != Some(&time) || time >= self.started_at)
     }
 
-    /// An output this run wrote, as text, if it did.
-    fn read(&self, ext: &str) -> Option<String> {
-        self.wrote(ext)
+    /// A fresh output, or an existing one for a successful no-op build.
+    fn read(&self, ext: &str, allow_existing: bool) -> Option<String> {
+        (allow_existing || self.wrote(ext))
             .then(|| read_tail(&self.output(ext), LOG_READ_MAX).ok())
             .flatten()
             .map(crate::lossy_string)
@@ -646,10 +650,6 @@ impl CompileManager {
 
         let mut args: Vec<&str> = flags.to_vec();
         args.extend([
-            // Always run. Without -g, latexmk declines to retry a document
-            // whose last run failed until a source file changes, so a compile
-            // after installing TeX or a missing package reports the stale error.
-            "-g",
             "-interaction=batchmode",
             "-file-line-error",
             "-synctex=1",
@@ -755,14 +755,21 @@ impl CompileManager {
 }
 
 fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
-    let engine_log = run.read("log");
+    let ok = end == End::Exited(0) && run.output("pdf").exists();
+    // With incremental latexmk, a clean no-op keeps both the PDF and its log.
+    // Keep the warnings from that log; after a newly written PDF, an old log
+    // still belongs to the previous build and must not be shown.
+    let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
+    let engine_log = run.read("log", unchanged);
     let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), run.main_rel);
     // bibtex and biber report into a log of their own.
-    items.extend(run.read("blg").map_or_else(Vec::new, |blg| parse_blg(&blg)));
+    items.extend(
+        run.read("blg", unchanged)
+            .map_or_else(Vec::new, |blg| parse_blg(&blg)),
+    );
     let (mut errors, warnings): (Vec<_>, Vec<_>) =
         items.into_iter().partition(|item| item.kind == "error");
 
-    let ok = end == End::Exited(0) && run.output("pdf").exists();
     // Not from a build cut short, which may have left it half-written.
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
     match end {
@@ -840,9 +847,42 @@ fn tail(s: String, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::{base_command, CompileManager};
     use super::{read_tail, tail, user_latexmkrc, version_line};
     use std::ffi::OsString;
     use std::path::Path;
+    #[cfg(unix)]
+    use std::time::Duration;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_replaced_registration_still_kills_its_child_if_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let manager = CompileManager::default();
+        let (mut first, _) = manager.register(root);
+        let mut cmd = base_command("sh", Some(root), &std::env::var("PATH").unwrap()).unwrap();
+        cmd.args(["-c", "(sleep 1; touch late) & touch started; sleep 20"]);
+        first.child = Some(cmd.spawn().unwrap());
+        manager.running().get_mut(root).unwrap().pid = first.child.as_ref().unwrap().id();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !root.join("started").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        // The replacement has published its entry, but has not yet killed
+        // the previous run. Dropping that previous future must kill its own
+        // process group even though it no longer owns the registry entry.
+        let (second, _) = manager.register(root);
+        drop(first);
+        drop(second);
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!root.join("late").exists());
+    }
 
     #[test]
     fn a_long_log_is_read_from_its_last_whole_line() {

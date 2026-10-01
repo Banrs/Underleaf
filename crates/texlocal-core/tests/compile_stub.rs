@@ -66,14 +66,27 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 }
 
 #[tokio::test]
-async fn a_compile_reruns_even_after_a_failed_run() {
+async fn an_unchanged_compile_leaves_latexmk_free_to_skip_the_engine() {
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\necho \"$@\" > build/args\nprintf 'fake' > build/main.pdf\nexit 0\n",
     );
     compile(&mgr, &root).await;
 
     let args = fs::read_to_string(root.join("build/args")).unwrap();
-    assert!(args.split_whitespace().any(|a| a == "-g"), "{args}");
+    assert!(!args.split_whitespace().any(|a| a == "-g"), "{args}");
+}
+
+#[tokio::test]
+async fn an_incremental_no_op_keeps_the_existing_warnings() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nmkdir -p build\nif [ ! -f build/main.pdf ]; then\n  printf 'LaTeX Warning: Reference missing on input line 3.\\n' > build/main.log\n  printf 'fake' > build/main.pdf\nfi\nexit 0\n",
+    );
+    let first = compile(&mgr, &root).await;
+    let second = compile(&mgr, &root).await;
+
+    assert!(first.ok && second.ok);
+    assert_eq!(second.warnings, first.warnings);
+    assert_eq!(second.warnings.len(), 1);
 }
 
 #[tokio::test]
