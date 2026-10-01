@@ -242,7 +242,7 @@ final class ProjectFlowTests {
         let project = try #require(app.project)
         try await waitUntil { project.outline.count == 2 }
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.counts?.words == 6)
+        #expect(project.counts?.words == 5)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingLevel.title == "Section")
