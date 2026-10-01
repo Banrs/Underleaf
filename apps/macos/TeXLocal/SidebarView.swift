@@ -3,7 +3,7 @@ import SwiftUI
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
 /// Files pane's foot so it stays put over the outline. It's the status bar's height,
-/// folded or not, so the split's collapse is all that moves.
+/// folded or not, so a fold changes no height: the split's collapse moves it.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
 
@@ -25,9 +25,10 @@ struct OutlineHeader: View {
         // Its room under the header too, so a drag from the header has nothing to
         // autoscroll (scrollDisabled doesn't stop it).
         .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
-        // The header's row at the bar's foot, over the outline's first row: more room
-        // over the title than under it, as over Files.
-        .offset(y: BarMetrics.secondaryBarHeight - sidebarListRoom - Self.headerRow)
+        // Open, the header's row at the bar's foot, over the outline's first row: more room
+        // over the title than under it, as over Files. Folded, that foot is the window's, in
+        // its rounded corner: the row is centred, on the status bar's line.
+        .offset(y: (BarMetrics.secondaryBarHeight - Self.headerRow) / (app.outlineCollapsed ? 2 : 1) - sidebarListRoom)
         .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
     }
 }

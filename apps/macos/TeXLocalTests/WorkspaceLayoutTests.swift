@@ -196,7 +196,7 @@ final class WorkspaceLayoutTests {
     }
 
     /// The File Outline's header stays at the files' foot, folded or not, at one height. Open, the
-    /// line over it takes the divider's drags; folded, nothing does.
+    /// line over it takes the divider's drags; folded, nothing does, and its title leaves the corner.
     @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
         let workspace = open()
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
@@ -215,13 +215,22 @@ final class WorkspaceLayoutTests {
                                                     forDrawnRect: divider, ofDividerAt: 0))
         #expect(isClose(drag.midY, line, within: 1), "\(drag) for the line at \(line)")
         #expect(drag.height > 0 && isClose(drag.width, frame.width))
+        // The title's row, in the bar (its 36 pt under the line, from its foot up).
+        func title() -> NSRect? {
+            func list(_ view: NSView) -> NSOutlineView? { view as? NSOutlineView ?? view.subviews.lazy.compactMap(list).first }
+            return list(header.view).map { $0.convert($0.rect(ofRow: 0), to: header.view) }
+        }
+        // Open, at the bar's foot, over the outline's first row.
+        #expect(isClose(title()?.minY ?? -1, 0), "\(String(describing: title()))")
 
         workspace.app.outlineCollapsed = true
         try await waitUntil { outline.isCollapsed }
         #expect(!header.isHidden)
-        // One height, so the split's collapse is all that moves.
+        // One height, so the split's collapse is all that moves the line.
         #expect(header.view.frame.height == frame.height)
         #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
+        // Folded, the bar's foot is the window's: centred, on the status bar's line, clear of the corner.
+        try await waitUntil { isClose(title()?.midY ?? -1, BarMetrics.secondaryBarHeight / 2) } state: { "\(String(describing: title()))" }
     }
 
     /// The sidebar shows the open file: its folders open, and a heading that gains

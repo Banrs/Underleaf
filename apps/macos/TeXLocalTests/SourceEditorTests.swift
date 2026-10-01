@@ -143,6 +143,19 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
+    /// Xcode's measures at 13 pt: 18 pt from line to line, and the text 51 pt in, past
+    /// room for four digits, and a digit further at 10,000 lines.
+    @Test func theLinesAndMarginAreXcodes() throws {
+        editor.setAppearance(EditorAppearance(palette: .xcode, font: .system, size: 13))
+        let lines = try #require(text.defaultParagraphStyle)
+        #expect(lines.maximumLineHeight + lines.lineSpacing == 18)
+        let textStart = { text.textContainerOrigin.x + (text.textContainer?.lineFragmentPadding ?? 0) }
+        open("a\nb")
+        #expect(textStart() == 51)
+        open(String(repeating: "\n", count: 9_999))
+        #expect(textStart() == 57)
+    }
+
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {
@@ -267,7 +280,51 @@ struct SourceEditorTests {
         #expect(menu.items[1].isSeparatorItem)
         menu.performActionForItem(at: 0)
         #expect(went)
-        // Editing and spelling, without fonts, substitutions, transformations, speech or layout.
-        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste", "-", "Spelling and Grammar"])
+        // Editing, without Look Up, Translate, fonts, substitutions, transformations, speech or
+        // layout, nor the system's plug-ins (Ask Siri, AutoFill, Services) as it shows.
+        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste"])
+        #expect(!menu.allowsContextMenuPlugIns)
+    }
+
+    /// A double-click selects the word and goes to the PDF, once no third click follows;
+    /// not one dragged on over more words, a triple-click, or while there's no PDF.
+    @Test func aDoubleClickGoesToThePDF() async throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        open("alpha beta gamma", caret: 0)
+        var went = 0
+        text.forwardSync = { { went += 1 } }
+        func mouse(_ type: NSEvent.EventType, at location: Int, clicks: Int) throws -> NSEvent {
+            let glyph = window.convertFromScreen(text.firstRect(forCharacterRange: NSRange(location: location, length: 1), actualRange: nil))
+            return try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: glyph.midX, y: glyph.midY), modifierFlags: [],
+                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                   context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+        }
+        /// The text view's own presses, each tracked until its release, which waits in the app's queue.
+        func click(_ count: Int, dragTo end: Int? = nil) throws {
+            for n in 1...count {
+                if n == count, let end { NSApp.postEvent(try mouse(.leftMouseDragged, at: end, clicks: n), atStart: false) }
+                NSApp.postEvent(try mouse(.leftMouseUp, at: n == count ? end ?? 7 : 7, clicks: n), atStart: false)
+                text.mouseDown(with: try mouse(.leftMouseDown, at: 7, clicks: n))
+            }
+        }
+        func settle() async throws { try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.2)) }
+        try click(2)
+        #expect(text.selectedRange() == NSRange(location: 6, length: 4) && went == 0)
+        try await settle()
+        #expect(went == 1)
+        try click(2, dragTo: 13)
+        #expect(text.selectedRange() == NSRange(location: 6, length: 10))
+        try click(3)
+        #expect(text.selectedRange().length == 16)
+        try await settle()
+        #expect(went == 1)
+        text.forwardSync = { nil }
+        try click(2)
+        try await settle()
+        #expect(went == 1)
     }
 }

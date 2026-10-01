@@ -350,12 +350,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.updateGutterWidth()
     }
 
-    /// The web's line height, 1.45 × the size, with the text in the middle
-    /// of it as CSS puts it. TextKit puts a taller line's extra room above
-    /// the text, so the line takes half of it and line spacing, below, the rest.
+    /// Xcode's line height: its themes' 1.1 × the font's own, in whole points (18 at
+    /// 13 pt), with the text in the middle of it. TextKit puts a taller line's extra
+    /// room above the text, so the line takes half of it and line spacing, below, the rest.
     private static func lineStyle(for font: NSFont) -> NSParagraphStyle {
         let natural = NSLayoutManager().defaultLineHeight(for: font)
-        let extra = max(0, font.pointSize * 1.45 - natural)
+        let extra = (natural * 1.1).rounded(.up) - natural
         let style = NSMutableParagraphStyle()
         style.minimumLineHeight = natural + extra / 2
         style.maximumLineHeight = natural + extra / 2

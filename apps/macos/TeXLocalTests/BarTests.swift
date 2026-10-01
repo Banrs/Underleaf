@@ -23,6 +23,24 @@ struct FindBarTests {
     }
 }
 
+@MainActor
+struct SettingsLayoutTests {
+    /// Font Size's stepper sits beside its field, not over the field's end.
+    @Test func theStepperSitsBesideItsField() async throws {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView().environment(AppModel())))
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.orderFront(nil)
+        defer { window.close() }
+        func all<T: NSView>(_ view: NSView) -> [T] { [view as? T].compactMap(\.self) + view.subviews.flatMap { all($0) as [T] } }
+        let steppers: () -> [NSStepper] = { all(window.contentView!) }
+        try await waitUntil { !steppers().isEmpty }
+        let fields = (all(window.contentView!) as [NSTextField]).filter(\.isEditable)
+        let stepper = try #require(steppers().first), field = try #require(fields.first)
+        #expect(stepper.convert(stepper.bounds, to: nil).minX >= field.convert(field.bounds, to: nil).maxX)
+    }
+}
+
 /// Where a path is after its entry or a folder above it is renamed.
 @MainActor
 struct RemapPathTests {

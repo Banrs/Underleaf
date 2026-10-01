@@ -17,7 +17,15 @@ struct SettingsView: View {
                 Picker("Font", selection: $font) {
                     ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
                 }
-                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                // The stepper next to its field (HIG, Steppers): a form's Stepper with a format
+                // draws its arrows over its own field's end (27.2).
+                LabeledContent("Font Size") {
+                    HStack {
+                        TextField("Font Size", value: size, format: .number)
+                        Stepper("Font Size", value: size, in: Self.sizes)
+                    }
+                    .labelsHidden()
+                }
                 Picker("Syntax Colors", selection: $palette) {
                     ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
                 }
@@ -83,12 +91,10 @@ struct SettingsView: View {
         }
     }
 
-    private static let sizes: ClosedRange<Double> = 10...28
+    private static let sizes = 10...28
 
-    /// Double: the stepper's formatted value takes only floating point.
-    private var size: Binding<Double> {
-        Binding(get: { Double(fontSize) }, set: {
-            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
-        })
+    /// A typed size is kept to the stepper's range.
+    private var size: Binding<Int> {
+        Binding(get: { fontSize }, set: { fontSize = min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound) })
     }
 }

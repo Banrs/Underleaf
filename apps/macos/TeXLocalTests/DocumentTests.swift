@@ -188,15 +188,20 @@ struct PDFFitTests {
         #expect(project.saved.pdfPage == 2)
     }
 
-    /// The context menu: Go to Source Position and the zooms, without PDFKit's page
-    /// layouts and page turns.
-    @Test func theContextMenuGoesToTheSourceAndZooms() throws {
+    /// The context menu: Go to Source Position, and Copy over a selection, without PDFKit's
+    /// zooms, page layouts and page turns, or the system's plug-ins (Ask Siri, Services).
+    @Test func theContextMenuGoesToTheSource() throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.document = try pages(2)
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 300, y: 250), modifierFlags: [], timestamp: 0,
                                                     windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let menu = try #require(view.menu(for: click))
-        #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Zoom In", "Zoom Out"])
+        #expect(menu.items.map(\.title) == [MenuCommand.syncInverse.title])
+        #expect(!menu.allowsContextMenuPlugIns)
+        let label = NSTextField(labelWithString: "Some words")
+        view.document = try #require(PDFDocument(data: label.dataWithPDF(inside: NSRect(x: 0, y: 0, width: 100, height: 30))))
+        view.setCurrentSelection(view.document?.findString("words").first, animate: false)
+        #expect(try #require(view.menu(for: click)).items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Copy"])
     }
 
     private func pages(_ count: Int) throws -> PDFDocument {

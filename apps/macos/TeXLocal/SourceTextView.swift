@@ -111,33 +111,38 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 
     // MARK: the gutter
 
-    private var gutterWidth: CGFloat = 0
+    /// Where the line numbers end, and where the text starts.
+    private var numbersEnd: CGFloat = 0, gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
 
+    /// Xcode's: the system font, condensed, at the text's size.
     private var numberFont: NSFont {
-        .monospacedSystemFont(ofSize: max(8, (font?.pointSize ?? NSFont.systemFontSize) - 2), weight: .regular)
+        .systemFont(ofSize: font?.pointSize ?? NSFont.systemFontSize, weight: .regular, width: .condensed)
     }
 
-    private func digits(_ n: Int) -> Int { max(2, String(n).count) }
+    private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
-    /// Room for the largest line number, 8 pt either side of it.
+    /// Xcode's margin as it measures at 13 pt (27.2), scaled to the font: 13.8 pt, the
+    /// numbers right-aligned in room for four digits or the largest, then 11.5 pt to the text.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
+        let scale = numberFont.pointSize / 13
         let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
-        let width = (CGFloat(lineCountDigits) * digit + 16).rounded(.up)
-        guard width != gutterWidth else { return }
-        gutterWidth = width
-        // The view sizes its container, less the inset either side: the gutter and
-        // 4 pt, and 8 pt at the end, shared out.
+        let end = 13.8 * scale + CGFloat(lineCountDigits) * digit
+        guard end != numbersEnd else { return }
+        numbersEnd = end
+        gutterWidth = (end + 11.5 * scale).rounded()
+        // The view sizes its container, less the inset either side: the gutter, and
+        // 8 pt at the end, shared out.
         textContainerInset.width = (textContainerOrigin.x + 8) / 2
         needsDisplay = true
     }
 
-    /// The text starts after the gutter, and 4 pt in from it.
+    /// The text's first letter starts after the gutter: the container pads each line.
     override var textContainerOrigin: NSPoint {
-        NSPoint(x: gutterWidth + 4, y: textContainerInset.height)
+        NSPoint(x: gutterWidth - (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height)
     }
 
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
@@ -195,8 +200,8 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         needsDisplay = true
     }
 
-    /// The current line's fill, then the numbers, the current one in the
-    /// text's colour, on the first line of their paragraph's baseline.
+    /// The current line's fill, then the numbers, as Xcode's: the current one in the
+    /// text's colour, the others fainter, on the first line of their paragraph's baseline.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         let origin = textContainerOrigin
@@ -231,11 +236,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let font = numberFont
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
-            let color: NSColor = offset == current ? .textColor : .secondaryLabelColor
+            let color: NSColor = offset == current ? palette.textColor : .tertiaryLabelColor
             let number = NSAttributedString(string: "\(document.line(at: offset))",
                                             attributes: [.font: font, .foregroundColor: color])
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
-            let x = gutterWidth - 8 - number.size().width
+            let x = numbersEnd - number.size().width
             number.draw(with: NSRect(x: x, y: baseline, width: number.size().width, height: 0), options: [])
         }
     }
@@ -661,12 +666,28 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
-    /// Go to PDF Position for the clicked line (the click puts the caret there), above
-    /// the system's items, as the PDF's menu has Go to Source Position.
+    /// A double-click goes to the PDF too, at the word it selects (the system's own selection,
+    /// which tracks until the button's up): not one dragged out over more words, nor the
+    /// start of a triple-click, which selects the line.
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        let word = selectedRange()
+        guard event.clickCount == 2, forwardSync() != nil,
+              word == selectionRange(forProposedRange: NSRange(location: word.location, length: 0), granularity: .selectByWord)
+        else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
+            if self?.selectedRange() == word { self?.forwardSync()?() }
+        }
+    }
+
+    /// Go to PDF Position for the clicked word (the click selects it), above the system's
+    /// items, as the PDF's menu has Go to Source Position.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
-        // Fonts, substitutions, transformations, speech and layout are for prose, not source.
-        menu?.keep([#selector(cut(_:)), #selector(copy(_:)), #selector(paste(_:)), #selector(checkSpelling(_:))])
+        // A misspelling's guesses, then Cut, Copy and Paste: Look Up, Translate, Search With,
+        // fonts, substitutions, speech and layout are for prose, and Spelling and Grammar is Edit's.
+        menu?.keep([#selector(cut(_:)), #selector(copy(_:)), #selector(paste(_:)), Selector(("_changeSpellingFromMenu:")),
+                    Selector(("_ignoreSpellingFromMenu:")), Selector(("_learnSpellingFromMenu:"))])
         guard let menu, forwardSync() != nil else { return menu }
         let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
         item.target = self
@@ -725,17 +746,15 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 }
 
 extension NSMenu {
-    /// The system's items for the word under the pointer (its spellings, Look Up), which
-    /// come before Cut or Copy, then only those with one of these actions or a submenu
-    /// holding one, so the system's later additions stay out.
+    /// Only the items with these actions, a separator between groups, and none of the
+    /// plug-ins the system adds as the menu shows: Ask Siri, AutoFill and Services (27.2).
     func keep(_ actions: Set<Selector>) {
-        func kept(_ item: NSMenuItem) -> Bool {
-            item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true
+        var shown: [NSMenuItem] = []
+        for item in items where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : item.action.map(actions.contains) == true {
+            shown.append(item)
         }
-        let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
-        var shown = Array(items[..<word])
-        for item in items[word...] where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : kept(item) { shown.append(item) }
         if shown.last?.isSeparatorItem == true { shown.removeLast() }
         items = shown
+        allowsContextMenuPlugIns = false
     }
 }

@@ -324,17 +324,19 @@ final class SyncPDFView: PDFView {
         if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
     }
 
-    /// Go to Source Position for the clicked point, above PDFKit's own items.
+    /// Go to Source Position for the clicked point, above PDFKit's Copy when there's a selection
+    /// (a right-click on a word selects it).
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
-        // The app fixes the page layout, and scrolling turns the pages.
-        menu?.keep([#selector(copy(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:))])
+        // Copy a selection: the app fixes the page layout, scrolling turns the pages, and the
+        // zooms are the toolbar's and View's.
+        menu?.keep([#selector(copy(_:))])
         guard let menu, document != nil else { return menu }
         let item = NSMenuItem(title: MenuCommand.syncInverse.title, action: #selector(goToSource(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = convert(event.locationInWindow, from: nil)
+        if !menu.items.isEmpty { menu.insertItem(.separator(), at: 0) }
         menu.insertItem(item, at: 0)
-        menu.insertItem(.separator(), at: 1)
         return menu
     }
 
