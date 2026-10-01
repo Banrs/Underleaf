@@ -39,10 +39,11 @@ static COMMENT_LINE: LazyLock<Regex> =
 // after it starts no comment.
 static COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(^|[^\\])%[^\n\r\x{2028}\x{2029}]*$").unwrap());
-// A file read in place, as TeX's \input, LaTeX's \include and \subfile read it.
+// Input commands and the tokens that can make them literal text. Consume other
+// control sequences too, so the second slash of \\input cannot start an input.
 static INPUT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\\(?:(?:input|include|subfile)[{JS_SPACE}]*\{{([^{{}}]+)\}}|input[{JS_SPACE}]+([^{{}}\\%{JS_SPACE}]+))"
+        r"%|\\(?:(?:input|include|subfile)[{JS_SPACE}]*\{{(?P<braced>[^{{}}]+)\}}|input[{JS_SPACE}]+(?P<bare>[^{{}}\\%{JS_SPACE}]+)|begin[{JS_SPACE}]*\{{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
     ))
     .unwrap()
 });
@@ -157,6 +158,7 @@ fn add(
     input: &mut dyn FnMut(&mut Analysis, &str),
 ) -> usize {
     let mut lines = 0;
+    let mut literal = None;
     for line in text
         .split('\n')
         .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
@@ -177,11 +179,41 @@ fn add(
         }
         let code = code(line);
         into.words += words(code);
-        for m in INPUT.captures_iter(code) {
-            input(into, m.get(1).or_else(|| m.get(2)).unwrap().as_str());
-        }
+        inputs(line, &mut literal, &mut |name| input(into, name));
     }
     lines
+}
+
+/// Follow only executable input commands, keeping literal environments across
+/// lines. A percent in \verb or verbatim is text, not the start of a comment.
+fn inputs(mut line: &str, literal: &mut Option<String>, input: &mut dyn FnMut(&str)) {
+    loop {
+        if let Some(end) = literal.as_ref() {
+            let Some((_, rest)) = line.split_once(end.as_str()) else {
+                return;
+            };
+            line = rest;
+            *literal = None;
+        }
+        let Some(m) = INPUT.captures(line) else {
+            return;
+        };
+        let token = m.get(0).unwrap();
+        if token.as_str() == "%" {
+            return;
+        }
+        line = &line[token.end()..];
+        if let Some(file) = m.name("braced").or_else(|| m.name("bare")) {
+            input(file.as_str());
+        } else if let Some(environment) = m.name("literal") {
+            *literal = Some(format!("\\end{{{}}}", environment.as_str()));
+        } else if let Some(delimiter) = m.name("delimiter") {
+            let Some((_, rest)) = line.split_once(delimiter.as_str()) else {
+                return;
+            };
+            line = rest;
+        }
+    }
 }
 
 /// The brace group opened just before `rest`, up to its matching `}`, so a

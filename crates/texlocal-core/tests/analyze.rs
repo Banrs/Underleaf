@@ -49,3 +49,14 @@ fn inputs_do_not_append_a_second_tex_extension() {
     let analysis = analyze_project(dir.path(), "main.tex", "main.tex");
     assert_eq!(analysis.outline[0].title, "Part");
 }
+
+#[test]
+fn inputs_inside_literal_and_comment_environments_are_not_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("main.tex"), "\\section{Main}\n\\begin{verbatim}\n\\input{example}\n\\end{verbatim}\n\\begin{comment}\n\\input{example}\n\\end{comment}\n\\verb|\\input{example}|\n\\input{real}").unwrap();
+    fs::write(dir.path().join("example.tex"), "\\section{Example}").unwrap();
+    fs::write(dir.path().join("real.tex"), "\\section{Real}").unwrap();
+    let analysis = analyze_project(dir.path(), "main.tex", "main.tex");
+    let titles: Vec<_> = analysis.outline.iter().map(|h| h.title.as_str()).collect();
+    assert_eq!(titles, ["Main", "Real"]);
+}
