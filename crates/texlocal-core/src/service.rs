@@ -299,6 +299,7 @@ impl Service {
         let root = self.project_root(id)?;
         let base = root.join(paths::rel_key(dir).unwrap_or_default());
         let mut seen = HashSet::new();
+        let mut folders = HashSet::new();
         let mut rels = Vec::new();
         for file in files {
             if file.size > UPLOAD_MAX_BYTES {
@@ -307,20 +308,27 @@ impl Service {
             paths::safe_write_path(&root, &upload_rel(dir, &file.path))?;
             // Relative to `dir`, as the host names the files.
             let rel = paths::rel_key(&file.path)?;
-            if !seen.insert(fold_case(&rel)) {
+            let key = fold_case(&rel);
+            if seen.contains(&key) {
                 return Err(CoreError::bad_request(
                     "The upload contains duplicate paths",
                 ));
             }
+            if folders.contains(&key)
+                || key
+                    .match_indices('/')
+                    .any(|(i, _)| seen.contains(&key[..i]))
+            {
+                return Err(CoreError::bad_request(
+                    "The upload contains conflicting paths",
+                ));
+            }
+            folders.extend(key.match_indices('/').map(|(i, _)| key[..i].to_string()));
+            seen.insert(key);
             rels.push(rel);
         }
         // Names a Keep Both may not take: every path the upload creates.
-        let mut taken: HashSet<String> = rels
-            .iter()
-            .flat_map(|rel| rel.match_indices('/').map(|(i, _)| &rel[..i]))
-            .map(fold_case)
-            .chain(seen)
-            .collect();
+        let mut taken: HashSet<String> = seen.union(&folders).cloned().collect();
         let mut existing: Vec<Clash> = Vec::new();
         for rel in &rels {
             let Some(path) = clash(&base, rel) else {
