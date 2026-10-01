@@ -11,7 +11,7 @@ import Testing
 final class WorkspaceLayoutTests {
     /// The app's defaults the tests change, put back after each.
     private static let keys = [DefaultsKey.paneSizes, DefaultsKey.sidebarVisible, DefaultsKey.inspectorVisible,
-                               DefaultsKey.showPDF, DefaultsKey.outlineCollapsed]
+                               DefaultsKey.showPDF, DefaultsKey.outlineCollapsed, DefaultsKey.outlineFolded]
     private static let size = NSSize(width: 1200, height: 600)
     private let saved: [String: Any]
     private var window: NSWindow?
@@ -38,19 +38,20 @@ final class WorkspaceLayoutTests {
     }
 
     /// A project's workspace as a window's content, laid out, as the window shows it.
-    private func open(panel: Bool = false, sidebar: Bool = true, inspector: Bool = false) -> WorkspaceController {
+    private func open(panel: Bool = false, sidebar: Bool = true, inspector: Bool = false,
+                      size: NSSize = WorkspaceLayoutTests.size) -> WorkspaceController {
         let app = AppModel()
         app.sidebarVisible = sidebar
         app.inspectorVisible = inspector
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
         project.showPDF = true
         project.showLogs = panel
-        let workspace = WorkspaceController(app: app, project: project, size: Self.size)
-        let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: Self.size),
+        let workspace = WorkspaceController(app: app, project: project, size: size)
+        let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
                                      styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.contentViewController = workspace
-        window.setContentSize(Self.size)
+        window.setContentSize(size)
         window.alphaValue = 0
         window.orderFront(nil)
         window.layoutIfNeeded()
@@ -97,15 +98,28 @@ final class WorkspaceLayoutTests {
         } state: { "showing: " + state() }
     }
 
-    /// With labels shown, the PDF toggle keeps the width of its widest title, so
-    /// the items beside it stay put as it changes.
-    @Test func thePDFToggleHoldsRoomForEitherTitle() throws {
+    /// The PDF toggle keeps its label, as the system's toggles beside it do; its
+    /// tooltip says what it will do.
+    @Test func thePDFToggleKeepsItsLabel() throws {
         let workspace = open()
         let bar = workspace.toolbar!
-        let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: .togglePDF, willBeInsertedIntoToolbar: true))
         for shown in [true, false] {
             workspace.project.showPDF = shown
-            #expect(item.possibleLabels.contains(workspace.app.title(.viewTogglePdf, on: workspace.project)))
+            let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: .togglePDF, willBeInsertedIntoToolbar: true))
+            #expect(item.label == "PDF")
+            #expect(item.toolTip == workspace.app.title(.viewTogglePdf, on: workspace.project))
+        }
+    }
+
+    /// Zoom's and Math's menu segments open on a click: AppKit does that only in a
+    /// control without an action, so the others send theirs as control events.
+    @Test func theSegmentMenusOpenOnAClick() throws {
+        let bar = open().toolbar!
+        for id in [NSToolbarItem.Identifier.zoom, .math] {
+            let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true))
+            let control = try #require(item.view as? NSSegmentedControl)
+            #expect(control.action == nil)
+            #expect(control.menu(forSegment: 1) != nil)
         }
     }
 
@@ -116,6 +130,14 @@ final class WorkspaceLayoutTests {
         #expect(workspace.panelItem.isCollapsed)
         workspace.project.showLogs = true
         try await waitUntil { isClose(self.height(workspace.panelItem), 210, within: 1) }
+    }
+
+    /// Panes never dragged open on whole points, as dragged ones are kept (`PaneSize.store`).
+    @Test func firstSizesAreWholePoints() async throws {
+        let workspace = open(size: NSSize(width: Self.size.width, height: 601))
+        workspace.project.showLogs = true
+        try await waitUntil { self.height(workspace.panelItem) > 0 }
+        for item in [workspace.outlineItem!, workspace.panelItem!] { #expect(height(item) == height(item).rounded()) }
     }
 
     /// A divider dragged is kept for the next launch.
@@ -200,6 +222,33 @@ final class WorkspaceLayoutTests {
         // One height, so the split's collapse is all that moves.
         #expect(header.view.frame.height == frame.height)
         #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
+    }
+
+    /// The sidebar shows the open file: its folders open, and a heading that gains
+    /// subheadings opens as its fold says, not as the leaf it was.
+    @Test func theSidebarShowsTheOpenFile() async throws {
+        let workspace = open(), project = workspace.project
+        workspace.app.outlineCollapsed = false
+        let file = { (path: String) in TreeNode(type: "file", name: (path as NSString).lastPathComponent, path: path, children: nil) }
+        project.tree = [TreeNode(type: "dir", name: "chapters", path: "chapters", children: [file("chapters/results.tex")]),
+                        file("main.tex")]
+        project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex"),
+                           OutlineItem(id: 1, level: 1, title: "Methods", line: 9, file: "main.tex")]
+        project.openPath = "main.tex"
+        // Files, the File Outline's header, the File Outline.
+        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
+        func rows() -> [Int] { lists(workspace.view).map(\.numberOfRows) }
+        // Files: its header, the folder and main.tex.
+        try await waitUntil { rows() == [3, 1, 2] } state: { "\(rows())" }
+
+        // The folder opens. The headings come after the file, as the core's analysis does.
+        project.openPath = "chapters/results.tex"
+        try await waitUntil { rows().first == 4 } state: { "\(rows())" }
+        project.outline = [OutlineItem(id: 0, level: 1, title: "Results", line: 1, file: "chapters/results.tex"),
+                           OutlineItem(id: 1, level: 2, title: "Discussion", line: 9, file: "chapters/results.tex")]
+        let outline = try #require(lists(workspace.view).last)
+        try await waitUntil { outline.isExpandable(outline.item(atRow: 0)) }
+        #expect(outline.isItemExpanded(outline.item(atRow: 0)))
     }
 
     /// No pane's content raises the window's minimum: it goes down to the app's own,

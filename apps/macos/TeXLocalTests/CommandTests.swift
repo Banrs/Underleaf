@@ -97,12 +97,6 @@ struct MenuStructureTests {
         #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
     }
 
-    /// The system's spelling commands, which the source's text view answers.
-    @Test func spellingIsInTheEditMenu() throws {
-        _ = try item(";")
-        _ = try item(":")
-    }
-
     @Test func theAppsMenusGoBetweenViewAndWindow() throws {
         let order = try #require(NSApp.mainMenu).items.map(\.title)
         let view = try #require(order.firstIndex(of: "View")), window = try #require(order.firstIndex(of: "Window"))
@@ -131,6 +125,12 @@ struct MenuStructureTests {
         #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
         #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
         #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
+    }
+
+    /// Engine lists the engines even with no project to set one for, never an empty submenu.
+    @Test func engineListsTheEngines() throws {
+        let engine = try #require(try item("Engine", in: menu("Compile")).submenu)
+        #expect(titles(engine).starts(with: texEngines.map(\.1)))
     }
 
     /// Share… as the HIG names it, there even with nothing to share.

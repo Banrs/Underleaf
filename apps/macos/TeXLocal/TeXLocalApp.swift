@@ -96,10 +96,9 @@ private struct WindowModals: ViewModifier {
             .alert(app.pendingImport.map { "Copy “\($0.lastPathComponent)” into Your Projects?" } ?? "",
                    item: $app.pendingImport) { url in
                 Button("Copy and Open") { Task { await app.importProject(from: url) } }
-                    .keyboardShortcut(.defaultAction)
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
-                Text("TeXLocal opens the copy as a new project. The original stays where it is.")
+                Text("TeXLocal opens the copy as a new project, and a .tex brings the files in its folder. The originals stay where they are.")
             }
             // On a view of its own: a file dialog's labels reach every dialog
             // presented from the view they're set on.

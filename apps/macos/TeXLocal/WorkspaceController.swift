@@ -8,7 +8,7 @@ import SwiftUI
 final class WorkspaceController: DetentSplitViewController {
     let app: AppModel
     let project: ProjectModel
-    let pdf = PDFController()
+    var pdf: PDFController { project.pdf }
     private(set) var toolbar: WorkspaceToolbar!
 
     /// Source | PDF: the toolbar's second section follows its divider.
@@ -18,7 +18,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// The files over the File Outline.
     private let sidebar = OutlineSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
-    private var outlineItem: NSSplitViewItem!
+    private(set) var outlineItem: NSSplitViewItem!
     private(set) var sourceItem: NSSplitViewItem!
     private(set) var pdfItem: NSSplitViewItem!
     private(set) var panelItem: NSSplitViewItem!
@@ -51,7 +51,7 @@ final class WorkspaceController: DetentSplitViewController {
             let split = columns.splitView
             return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
         }
-        toolbar = WorkspaceToolbar(app: app, project: project, pdf: pdf, workspace: self)
+        toolbar = WorkspaceToolbar(app: app, project: project, workspace: self)
         watch()
     }
 
@@ -73,7 +73,7 @@ final class WorkspaceController: DetentSplitViewController {
         sidebar.header = outlineBar
 
         let outline = host(OutlineList(project: project),
-                           height: PaneSize.outline.value ?? height * ColumnMetrics.outlineShare)
+                           height: PaneSize.outline.value ?? (height * ColumnMetrics.outlineShare).rounded())
         outlineItem = NSSplitViewItem(viewController: outline)
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
         // It keeps its height as the window resizes; the files take the change.
@@ -99,7 +99,7 @@ final class WorkspaceController: DetentSplitViewController {
         let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimum.width)
         let panes = room - ColumnMetrics.divider
         let pdfWidth = keptPDFWidth(in: panes)
-        let panelHeight = PaneSize.panel.value ?? size.height * ColumnMetrics.panelShare
+        let panelHeight = PaneSize.panel.value ?? (size.height * ColumnMetrics.panelShare).rounded()
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
@@ -107,7 +107,7 @@ final class WorkspaceController: DetentSplitViewController {
                                hidden: !(project.findShown && project.editsText))
         sourceItem.addTopAlignedAccessoryViewController(sourceFind)
 
-        pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project, controller: pdf), width: pdfWidth))
+        pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
         pdfItem.isCollapsed = !project.showPDF
         pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
@@ -132,7 +132,7 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(panelItem)
 
         let areaItem = NSSplitViewItem(viewController: area)
-        areaItem.addBottomAlignedAccessoryViewController(accessory(StatusBar(project: project, pdf: pdf),
+        areaItem.addBottomAlignedAccessoryViewController(accessory(StatusBar(project: project),
                                                                    footOf: area.splitView, clearsCorners: true))
         addSplitViewItem(areaItem)
     }
@@ -340,7 +340,7 @@ final class WorkspaceController: DetentSplitViewController {
         guard shown else { return setCollapsed(panelItem, true) { panel.alphaValue = 1 } }
         let split = area.splitView
         let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
-        let height = min(PaneSize.panel.value ?? split.bounds.height * ColumnMetrics.panelShare, room)
+        let height = min(PaneSize.panel.value ?? (split.bounds.height * ColumnMetrics.panelShare).rounded(), room)
         panel.frame.size.height = height
         if #available(macOS 27.2, *) { return setCollapsed(panelItem, false) }
         panelItem.minimumThickness = max(height, ColumnMetrics.panelMinimum)

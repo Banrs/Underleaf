@@ -1,32 +1,11 @@
 import SwiftUI
 
-enum SettingsTab: String {
-    case general, editor
-}
-
+/// One pane, titled "TeXLocal Settings" by the system: six controls need no tabs (HIG, Settings).
 struct SettingsView: View {
-    @AppStorage(DefaultsKey.settingsTab) private var tab = SettingsTab.general
-
-    var body: some View {
-        TabView(selection: $tab) {
-            Tab("General", systemImage: "gearshape", value: .general) { GeneralSettings().settingsPane() }
-            Tab("Editor", systemImage: "character.cursor.ibeam", value: .editor) { EditorSettings().settingsPane() }
-        }
-    }
-}
-
-extension View {
-    /// Sized to its content so the window fits each tab; 500 wide (UI kit example forms).
-    fileprivate func settingsPane() -> some View {
-        formStyle(.grouped)
-            .scrollDisabled(true)
-            .frame(width: 500)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-private struct GeneralSettings: View {
     @Environment(AppModel.self) private var app
+    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
+    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
+    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
@@ -34,6 +13,15 @@ private struct GeneralSettings: View {
     var body: some View {
         @Bindable var app = app
         Form {
+            Section("Editor") {
+                Picker("Font", selection: $font) {
+                    ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
+                }
+                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                Picker("Syntax Colors", selection: $palette) {
+                    ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
+                }
+            }
             Section("PDF") {
                 Picker(selection: $pdfPaper) {
                     ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
@@ -70,6 +58,11 @@ private struct GeneralSettings: View {
                 }
             }
         }
+        // Sized to its content; 500 wide (UI kit example forms).
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(width: 500)
+        .fixedSize(horizontal: false, vertical: true)
         .fileImporter(isPresented: $choosingTeX, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { setTeXFolder(url.path) }
         }
@@ -89,26 +82,6 @@ private struct GeneralSettings: View {
             }
         }
     }
-}
-
-private struct EditorSettings: View {
-    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
-    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
-    @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-
-    var body: some View {
-        Form {
-            Section("Text") {
-                Picker("Font", selection: $font) {
-                    ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
-                }
-                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
-                Picker("Syntax Colors", selection: $palette) {
-                    ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
-                }
-            }
-        }
-    }
 
     private static let sizes: ClosedRange<Double> = 10...28
 
@@ -118,8 +91,4 @@ private struct EditorSettings: View {
             fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
         })
     }
-}
-
-#Preview("Editor") {
-    EditorSettings().settingsPane()
 }

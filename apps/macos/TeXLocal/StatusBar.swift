@@ -6,7 +6,6 @@ import SwiftUI
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    let pdf: PDFController
 
     var body: some View {
         HStack(spacing: BarMetrics.itemSpacing) {
@@ -21,7 +20,7 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             HStack {
                 let counts = project.editsText && app.showWordCount ? project.counts : nil
-                let pages = project.showPDF && project.pdfVersion > 0 && pdf.pageCount > 0
+                let pages = project.showPDF && project.pdfVersion > 0 && project.pdf.pageCount > 0
                 if counts != nil || pages {
                     HStack(spacing: BarMetrics.itemSpacing) {
                         if let counts {
@@ -32,7 +31,7 @@ struct StatusBar: View {
                         if pages {
                             if let freshness = project.pdfFreshness { freshnessButton(freshness) }
                             Button { app.perform(.pdfGotoPage, on: project) } label: {
-                                Text("Page \(pdf.page) of \(pdf.pageCount)").hitTarget()
+                                Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
                             }
                             .help("Go to Page")
                         }

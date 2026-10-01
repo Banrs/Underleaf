@@ -1,14 +1,8 @@
 import SwiftUI
 
-extension View {
-    /// The open project's sheets, alerts and file dialogs, on the source column:
-    /// the one pane that always shows.
-    func workspaceModals(_ project: ProjectModel) -> some View {
-        modifier(WorkspaceModals(project: project))
-    }
-}
-
-private struct WorkspaceModals: ViewModifier {
+/// The open project's sheets, alerts and file dialogs, on the source column:
+/// the one pane that always shows.
+struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
@@ -44,16 +38,15 @@ private struct WorkspaceModals: ViewModifier {
                 switch prompt {
                 case .newFile(let folder): NewEntrySheet(project: project, directory: false, folder: folder)
                 case .newFolder(let folder): NewEntrySheet(project: project, directory: true, folder: folder)
-                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.reveal(line: $0) }
+                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.editor.reveal(line: $0) }
                 case .gotoPage:
-                    GoToSheet(noun: "Page", limit: { project.pdfPageCount > 0 ? project.pdfPageCount : nil }) {
+                    GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
                     }
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
                 Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
-                    .keyboardShortcut(.defaultAction)
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
                 Button("Cancel", role: .cancel) {}
             } message: { clash in

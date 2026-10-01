@@ -42,7 +42,7 @@ struct BuildPanel: View {
         .pickerStyle(.tabs)
         .labelsHidden()
         .fixedSize()
-            .layoutPriority(1)
+        .layoutPriority(1)
         Spacer(minLength: 0)
         if project.panelTab == .issues {
             if project.warningCount > 0 {
@@ -50,7 +50,6 @@ struct BuildPanel: View {
                     Label("Warnings", systemImage: "exclamationmark.triangle")
                 }
                 .toggleStyle(.button)
-                .symbolVariant(showWarnings ? .fill : .none)
                 .help(showWarnings ? "Hide Warnings" : "Show Warnings")
             }
         } else {
@@ -71,10 +70,13 @@ struct BuildPanel: View {
     private var items: [(offset: Int, element: LogItem)] {
         let errors = project.result?.errors ?? []
         return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
-            (showWarnings || offset < errors.count)
-                && (filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
-                    || (item.file?.localizedCaseInsensitiveContains(filter) ?? false))
+            (showWarnings || offset < errors.count) && matches(item)
         }
+    }
+
+    private func matches(_ item: LogItem) -> Bool {
+        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
+            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
@@ -82,6 +84,12 @@ struct BuildPanel: View {
     private var issues: some View {
         if !items.isEmpty {
             IssueList(items: items, project: project)
+        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+            ContentUnavailableView {
+                Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
+            } actions: {
+                Button("Show Warnings") { showWarnings = true }
+            }
         } else if !filter.isEmpty {
             ContentUnavailableView.search(text: filter)
         } else {
@@ -108,7 +116,8 @@ struct BuildPanel: View {
     }
 }
 
-/// The errors and warnings; a double-click or Return opens the line.
+/// The errors and warnings. Choosing one shows its line and leaves the keyboard
+/// in the list, as the outline does; a double-click or Return goes into the source.
 private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
@@ -117,6 +126,7 @@ private struct IssueList: View {
     var body: some View {
         List(items, id: \.offset, selection: $selection) { IssueRow(item: $0.element) }
         .listStyle(.inset)
+        .accessibilityLabel("Issues")
         .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: Int.self) { rows in
             if let item = rows.first.flatMap(item) {
@@ -137,14 +147,17 @@ private struct IssueList: View {
         .onChange(of: items.map(\.offset)) { _, shown in
             if let selection, !shown.contains(selection) { self.selection = nil }
         }
+        .onChange(of: selection) { _, id in
+            if let item = id.flatMap(item) { open(item, focus: false) }
+        }
     }
 
     private func item(_ id: Int) -> LogItem? {
         items.first { $0.offset == id }?.element
     }
 
-    private func open(_ item: LogItem) {
-        if let file = item.file { Task { await project.open(file, line: item.line) } }
+    private func open(_ item: LogItem, focus: Bool = true) {
+        if let file = item.file { Task { await project.open(file, line: item.line, focus: focus) } }
     }
 }
 

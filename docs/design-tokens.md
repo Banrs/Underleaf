@@ -173,7 +173,7 @@ read off the mode's source rather than guessed at:
 | `keyword` | math delimiters `$ $$ \[ \(` | preprocessor | `#643820` | `#FD8F3F` |
 | `special(variableName)` | identifiers inside math | identifier.variable | `#326D74` | `#67B7A4` |
 | `number` | numbers in math | number | `#1C00CF` | `#D0BF69` |
-| `comment` | `%…` | comment | `#5D6C79` | `#6C7986` |
+| `comment` | `%…` | comment | `#5D6C79` | `#8A97A5` (Xcode's `#6C7986`, lightened for AA contrast) |
 | `string` | quoted | string | `#C41A16` | `#FC6A5D` |
 | `bracket` | `{}` `[]` | *plain* — Xcode leaves punctuation uncoloured | | |
 

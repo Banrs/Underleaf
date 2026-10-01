@@ -99,8 +99,29 @@ struct SourceEditorTests {
         #expect(!editor.perform(.block, "no such block"))
     }
 
+    /// VoiceOver's line is the source's, as the gutter's, not a row a long line wraps to.
+    @Test func voiceOverReadsTheSourceLine() {
+        editor.scrollView.frame = NSRect(x: 0, y: 0, width: 200, height: 400)
+        open(String(repeating: "word ", count: 100) + "\nnext")
+        #expect(text.accessibilityInsertionPointLineNumber() == 1)
+    }
+
+    /// A block's fields, as a completion's: Tab goes from a figure's file to
+    /// its caption and label.
+    @Test func blocksTabThroughTheirFields() {
+        open("")
+        #expect(editor.perform(.block, "figure"))
+        let string = text.string as NSString
+        #expect(text.selectedRange() == NSRange(location: string.range(of: "]{}").location + 2, length: 0))
+        text.insertTab(nil)
+        #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
+        text.insertTab(nil)
+        #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
+    }
+
     /// A line revealed far down is at the top exactly, and stays there as the column
-    /// narrows: TextKit 2 estimates what's above it, and the width changes that.
+    /// narrows: TextKit 2 estimates what's above it, and the width changes that. The
+    /// lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
     @Test func aRevealedLineStaysAtTheTop() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
                               backing: .buffered, defer: false)
@@ -119,6 +140,37 @@ struct SourceEditorTests {
         #expect(top(5000) == 0)
         editor.scrollView.setFrameSize(NSSize(width: 350, height: 400))
         #expect(top(5000) == 0)
+        #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
+    }
+
+    /// SyncTeX's word: an inverse search's column selects the word there, and a
+    /// forward search sends the word at the caret.
+    @Test func syncTeXGoesToTheWord() {
+        open("Ünï words \\word, the word\nnext", caret: 1)
+        #expect(editor.currentWord == "Ünï")
+        editor.reveal(line: 1, column: 21, focus: false)
+        #expect(text.selectedRange() == NSRange(location: 21, length: 4))
+        #expect(editor.currentWord == "word")
+    }
+
+    /// A file opened with the keyboard asked for takes it once the editor shows,
+    /// as a project opens; one chosen in the sidebar leaves it where it is.
+    @Test func theKeyboardFollowsTheOpen() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        // Something else with the keyboard, as the Files list.
+        let list = NSTextView()
+        window.contentView!.addSubview(list)
+        window.contentView!.addSubview(editor.scrollView)
+        window.makeFirstResponder(list)
+        editor.open(path: "a.tex", text: "one")
+        editor.shown = true
+        #expect(window.firstResponder === text)
+        editor.shown = false
+        window.makeFirstResponder(list)
+        editor.open(path: "b.tex", text: "two", focus: false)
+        editor.shown = true
+        #expect(window.firstResponder === list)
     }
 
     /// A chosen completion goes in as its snippet: typed in one place, a
@@ -144,10 +196,10 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    /// Misspellings count in the prose and comments, not in commands, labels
-    /// or maths; the results are relative to the range checked.
+    /// Misspellings count in the prose and comments, not in commands, labels,
+    /// citations, packages or maths; the results are relative to the range checked.
     @Test func spellingIsTheProses() {
-        let line = "x \\emph{wrod} \\label{sec:wrod} $wrod$ % wrod"
+        let line = "x \\emph{wrod} \\label{sec:wrod} \\cite[see]{wrod} \\usepackage[utf8]{wrod} $wrod$ % wrod"
         open(line)
         let checked = NSRange(location: 2, length: (line as NSString).length - 2)
         let text = line as NSString
@@ -164,7 +216,7 @@ struct SourceEditorTests {
                                    orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: 6)
         // The emphasised word and the comment's.
         #expect(kept.map { text.substring(with: NSRange(location: $0.range.location + checked.location, length: $0.range.length)) } == ["wrod", "wrod"])
-        #expect(kept.map { $0.range.location + checked.location } == [8, 40])
+        #expect(kept.map { $0.range.location + checked.location } == [8, 81])
     }
 
     /// The maths preview's body has SwiftUI's margins and is never narrower
@@ -199,5 +251,23 @@ struct SourceEditorTests {
         #expect(text.string == "c c")
         text.undoManager?.undo()
         #expect(text.string == "a a")
+    }
+
+    /// The text's context menu starts with Go to PDF Position, as the PDF's with
+    /// Go to Source Position, while there's somewhere to go, and holds what source needs.
+    @Test func theContextMenuGoesToThePDF() throws {
+        open("x")
+        let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                    windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        #expect(text.menu(for: click)?.items.first?.title != MenuCommand.syncForward.title)
+        var went = false
+        text.forwardSync = { { went = true } }
+        let menu = try #require(text.menu(for: click))
+        #expect(menu.items.first?.title == MenuCommand.syncForward.title)
+        #expect(menu.items[1].isSeparatorItem)
+        menu.performActionForItem(at: 0)
+        #expect(went)
+        // Editing and spelling, without fonts, substitutions, transformations, speech or layout.
+        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste", "-", "Spelling and Grammar"])
     }
 }

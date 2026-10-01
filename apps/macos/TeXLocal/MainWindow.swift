@@ -23,7 +23,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     init(app: AppModel) {
         self.app = app
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: WindowMetrics.projectDefault),
+        // Fits the smallest current Mac display's default resolution (1470 × 956) with the menu bar and Dock.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.identifier = Self.identifier
@@ -204,10 +205,4 @@ func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable 
             apply(next)
         }
     }
-}
-
-enum WindowMetrics {
-    /// Fits the smallest current Mac display's default resolution (1470 × 956)
-    /// with the menu bar and Dock.
-    static let projectDefault = CGSize(width: 1200, height: 760)
 }

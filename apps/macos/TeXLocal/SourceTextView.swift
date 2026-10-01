@@ -16,12 +16,14 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     var symbols = Symbols(citations: [], labels: [])
     /// Where the find bar's query matches, in order.
     var findMatches: [NSRange] = [] {
-        didSet { if findMatches != oldValue { recolour() } }
+        didSet { if findMatches != oldValue { needsDisplay = true } }
     }
     /// What dropping a file does, or nil to refuse it.
     var fileDrop: (URL) -> (() -> Void)? = { _ in nil }
     /// Escape, before anything of the text view's: true when it closed something.
     var escape: () -> Bool = { false }
+    /// Go to PDF Position, or nil while there's no PDF or no TeX open.
+    var forwardSync: () -> (() -> Void)? = { nil }
 
     /// The text is being replaced whole: no edit of the user's.
     private var loading = false
@@ -141,12 +143,11 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
         guard size.width != frame.width else { return super.setFrameSize(size) }
-        keepingTopLine { super.setFrameSize(size) }
-    }
-
-    /// A live resize wraps the lines again as it ends.
-    override func viewDidEndLiveResize() {
-        keepingTopLine { super.viewDidEndLiveResize() }
+        keepingTopLine {
+            super.setFrameSize(size)
+            // As it goes: scrolled down, AppKit's tracking waits for a live resize's end (27.2).
+            textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
+        }
     }
 
     private func keepingTopLine(_ change: () -> Void) {
@@ -215,6 +216,18 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
             NSColor.quaternarySystemFill.setFill()
             NSRect(x: 0, y: origin.y + top, width: bounds.width, height: bottom - top).fill(using: .sourceOver)
         }
+        // The find bar's matches, the selection's other places and the brackets, under the text and the selection.
+        if let manager = textLayoutManager, let first = fragments.first?.offset, let last = fragments.last {
+            let shown = NSRange(location: first, length: offset(last.fragment.rangeInElement.endLocation) - first)
+            for (range, color) in tints(in: shown) {
+                guard let r = textRange(range) else { continue }
+                manager.enumerateTextSegments(in: r, type: .highlight, options: []) { _, rect, _, _ in
+                    color.setFill()
+                    rect.offsetBy(dx: origin.x, dy: origin.y).fill(using: .sourceOver)
+                    return true
+                }
+            }
+        }
         let font = numberFont
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
@@ -232,7 +245,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     /// The range last coloured, which covers the viewport and a screen either side.
     private var coloured: Range<Int>?
 
-    func recolour() {
+    private func recolour() {
         coloured = nil
         colourViewport()
     }
@@ -245,29 +258,25 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         let start = max(0, shown.lowerBound - shown.count), end = min(length, shown.upperBound + shown.count)
         guard let whole = textRange(NSRange(location: start, length: end - start)) else { return }
         manager.removeRenderingAttribute(.foregroundColor, for: whole)
-        manager.removeRenderingAttribute(.backgroundColor, for: whole)
-        let mark = { (range: NSRange, key: NSAttributedString.Key, color: NSColor) in
-            if let r = self.textRange(range) { manager.addRenderingAttribute(key, value: color, for: r) }
-        }
         for run in document.highlights(in: NSRange(location: start, length: end - start)) {
-            if let color = palette.color(run.kind) { mark(run.range, .foregroundColor, color) }
+            if let color = palette.color(run.kind), let r = textRange(run.range) { manager.addRenderingAttribute(.foregroundColor, value: color, for: r) }
         }
-        let inView = { (r: NSRange) in NSMaxRange(r) > start && r.location < end }
-        for match in selectionMatches(in: start..<end) {
-            mark(match, .backgroundColor, .unemphasizedSelectedTextBackgroundColor)
-        }
+        coloured = start..<end
+    }
+
+    private func tints(in shown: NSRange) -> [(NSRange, NSColor)] {
+        let inView = { (r: NSRange) in NSIntersectionRange(r, shown).length > 0 }
         // Every match tinted; the current one is the selection.
-        for match in findMatches where inView(match) {
-            mark(match, .backgroundColor, NSColor.findHighlightColor.withAlphaComponent(0.35))
-        }
-        if window?.firstResponder === self {
-            for (range, matched) in brackets where inView(range) {
-                // CodeMirror's bracket colours.
-                mark(range, .backgroundColor, matched ? NSColor(srgbRed: 0x32 / 255, green: 0x8c / 255, blue: 0x82 / 255, alpha: 0x52 / 255)
+        var tints = findMatches.filter(inView).map { ($0, NSColor.findHighlightColor.withAlphaComponent(0.35)) }
+        // Only while typing comes here, else the selection is the same grey. CodeMirror's bracket colours.
+        if hasKeyboard {
+            tints += selectionMatches(in: shown.location..<NSMaxRange(shown)).map { ($0, NSColor.unemphasizedSelectedTextBackgroundColor) }
+            tints += brackets.filter { inView($0.0) }.map { range, matched in
+                (range, matched ? NSColor(srgbRed: 0x32 / 255, green: 0x8c / 255, blue: 0x82 / 255, alpha: 0x52 / 255)
                     : NSColor(srgbRed: 0xbb / 255, green: 0x55 / 255, blue: 0x55 / 255, alpha: 0x44 / 255))
             }
         }
-        coloured = start..<end
+        return tints
     }
 
     /// The other places the selection's text is, while it's one short run
@@ -296,7 +305,6 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     private static let pairs: [Character: Character] = ["(": ")", "[": "]", "{": "}"]
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
-        let before = selectedRange().location
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
         brackets = matchBrackets()
@@ -304,14 +312,14 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
-        coloured = nil
-        colourViewport()
-        if before != selectedRange().location { needsDisplay = true }
+        // The lines an insertion made show their colours: their first layout drops them.
+        recolour()
+        needsDisplay = true
     }
 
     override func becomeFirstResponder() -> Bool {
         defer {
-            recolour()
+            needsDisplay = true
             // Once the window has made it first responder.
             DispatchQueue.main.async { self.previewMath() }
         }
@@ -320,7 +328,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
 
     override func resignFirstResponder() -> Bool {
         defer {
-            recolour()
+            needsDisplay = true
             mathPopover?.close()
         }
         return super.resignFirstResponder()
@@ -337,8 +345,12 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     }
 
     @objc private func keyChanged() {
+        needsDisplay = true
         previewMath()
     }
+
+    /// The key window's first responder, which typing reaches.
+    private var hasKeyboard: Bool { window?.isKeyWindow == true && window?.firstResponder === self }
 
     // MARK: the maths preview
 
@@ -347,7 +359,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     /// The maths at the caret, typeset over where it starts, while the text
     /// has the keyboard and that place shows (the web's preview).
     func previewMath() {
-        guard let window, window.isKeyWindow, window.firstResponder === self, !loading,
+        guard let window, hasKeyboard, !loading,
               let maths = document.mathAt(caret: selectedRange().location),
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
@@ -558,7 +570,9 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     /// first field selected. A key typed on closes the list too, but the key
     /// is the user's text, after which the list opens again, narrowed.
     override func insertCompletion(_ word: String, forPartialWordRange range: NSRange, movement: Int, isFinal: Bool) {
-        let typedOn = movement == NSTextMovement.other.rawValue && NSApp.currentEvent?.type == .keyDown
+        // A typed key closes it with .other, or .right for punctuation and space (27.2).
+        let typedOn = NSApp.currentEvent?.type == .keyDown
+            && ![NSTextMovement.return.rawValue, NSTextMovement.tab.rawValue].contains(movement)
         guard isFinal, movement != NSTextMovement.cancel.rawValue, !typedOn,
               let item = offered?.items.first(where: { $0.label == word }) else { return }
         insertText(item.text, replacementRange: range)
@@ -584,7 +598,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
     private var mirroring = false
     private var needsMirror = false
 
-    private func startSnippet(_ fields: [SnippetField], at location: Int) {
+    func startSnippet(_ fields: [SnippetField], at location: Int) {
         let fields = fields.map { (index: $0.index, range: NSRange(location: location + $0.start, length: $0.length)) }
         guard let first = fields.first(where: { $0.index == 0 }) else { return }
         // A session only while there's somewhere to Tab to, or a field in two places.
@@ -647,6 +661,25 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
+    /// Go to PDF Position for the clicked line (the click puts the caret there), above
+    /// the system's items, as the PDF's menu has Go to Source Position.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        // Fonts, substitutions, transformations, speech and layout are for prose, not source.
+        menu?.keep([#selector(cut(_:)), #selector(copy(_:)), #selector(paste(_:)), #selector(checkSpelling(_:))])
+        guard let menu, forwardSync() != nil else { return menu }
+        let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
+        item.target = self
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func goToPDF() { forwardSync()?() }
+
+    /// VoiceOver's line is the source's, as the gutter's and LaTeX's are, not the wrapped row's.
+    override func accessibilityInsertionPointLineNumber() -> Int { document.line(at: selectedRange().location) - 1 }
+
     // MARK: file drops open
 
     private func files(_ info: any NSDraggingInfo) -> [URL] {
@@ -688,5 +721,21 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
+    }
+}
+
+extension NSMenu {
+    /// The system's items for the word under the pointer (its spellings, Look Up), which
+    /// come before Cut or Copy, then only those with one of these actions or a submenu
+    /// holding one, so the system's later additions stay out.
+    func keep(_ actions: Set<Selector>) {
+        func kept(_ item: NSMenuItem) -> Bool {
+            item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true
+        }
+        let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
+        var shown = Array(items[..<word])
+        for item in items[word...] where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : kept(item) { shown.append(item) }
+        if shown.last?.isSeparatorItem == true { shown.removeLast() }
+        items = shown
     }
 }

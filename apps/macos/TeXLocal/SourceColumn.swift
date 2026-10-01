@@ -30,7 +30,7 @@ struct SourceColumn: View {
         .onChange(of: EditorAppearance(palette: palette, font: font, size: fontSize), initial: true) { _, appearance in
             project.editor.setAppearance(appearance)
         }
-        .workspaceModals(project)
+        .modifier(WorkspaceModals(project: project))
         .windowModals()
     }
 }
@@ -107,7 +107,7 @@ struct SourceFindBar: View {
                         // UI kit: a capsule, as the search field over it.
                         .textFieldStyle(.bordered)
                         .textInputBorderShape(.capsule)
-                        .onSubmit { project.replace(all: false) }
+                        .onSubmit { project.editor.replace(all: false) }
                         .onExitCommand { project.closeFind() }
                         .focused($replaceFocused)
                         // Find and Replace…, whether or not the bar already shows. After
@@ -118,8 +118,8 @@ struct SourceFindBar: View {
                             if project.replaceFocus > 0 { replaceFocused = true }
                         }
                     HStack {
-                        Button("Replace") { project.replace(all: false) }
-                        Button("Replace All") { project.replace(all: true) }
+                        Button("Replace") { project.editor.replace(all: false) }
+                        Button("Replace All") { project.editor.replace(all: true) }
                     }
                     .fixedSize()
                     .disabled(project.findMatches.total == 0)

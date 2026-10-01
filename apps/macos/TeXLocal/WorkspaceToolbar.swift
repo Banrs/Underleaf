@@ -29,14 +29,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
-    private let pdf: PDFController
+    private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
     private var watch: Task<Void, Never>?
 
-    init(app: AppModel, project: ProjectModel, pdf: PDFController, workspace: WorkspaceController) {
+    init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
         self.app = app
         self.project = project
-        self.pdf = pdf
         self.workspace = workspace
         super.init()
         toolbar.delegate = self
@@ -128,7 +127,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             let share = NSSharingServicePickerToolbarItem(itemIdentifier: id)
             share.delegate = self
-            share.label = "Share"
             share.toolTip = "Share PDF"
             item = share
         case .compile:
@@ -149,8 +147,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
             item = button(id, "PDF", "richtext.page", #selector(togglePDF))
-            // Its label says what it will do; with labels shown, sized for either.
-            item.possibleLabels = ["Show PDF", "Hide PDF"]
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -188,7 +184,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func mathItem() -> NSToolbarItem {
         let control = NSSegmentedControl(images: [symbol("radicand.squareroot", MenuCommand.editMath.title),
                                                   symbol("sum", "Symbols")].compactMap(\.self),
-                                         trackingMode: .momentary, target: self, action: #selector(math(_:)))
+                                         trackingMode: .momentary, target: nil, action: nil)
+        // No action, so a click opens the menu segment; the others trigger the primary action (macOS 27).
+        control.addTarget(self, action: #selector(math), for: .primaryActionTriggered)
         control.setMenu(NSHostingMenu(rootView: SymbolItems(project: project)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         control.setAccessibilityLabel("Math")
@@ -207,7 +205,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func zoomItem() -> NSToolbarItem {
         let control = NSSegmentedControl(images: [symbol("minus.magnifyingglass", "Zoom Out"), NSImage(),
                                                   symbol("plus.magnifyingglass", "Zoom In")].compactMap(\.self),
-                                         trackingMode: .momentary, target: self, action: #selector(zoom(_:)))
+                                         trackingMode: .momentary, target: nil, action: nil)
+        control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
         control.setImage(nil, forSegment: 1)
         control.setLabel(pdf.zoomLabel, forSegment: 1)
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
@@ -343,7 +342,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.isEnabled = state.canCompile
             (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
         case .togglePDF:
-            item.label = state.pdfTitle
+            // A fixed label, as the system's toggles beside it; the tooltip says what it will do.
             item.toolTip = state.pdfTitle
         default:
             break
@@ -379,31 +378,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         project.insert(template)
     }
 
-    @objc private func math(_ control: NSSegmentedControl) {
-        if control.selectedSegment == 0 { perform(.editMath) } else { openMenu(of: control) }
-    }
+    @objc private func math() { perform(.editMath) }
 
     @objc private func zoom(_ control: NSSegmentedControl) {
-        switch control.selectedSegment {
-        case 0: pdf.zoom(in: false)
-        case 2: pdf.zoom(in: true)
-        default: openMenu(of: control)
-        }
-    }
-
-    /// A segment's menu, under the click: AppKit opens one on a click only in a control with no action.
-    private func openMenu(of control: NSSegmentedControl) {
-        guard let menu = control.menu(forSegment: control.selectedSegment) else { return }
-        let x = if let event = NSApp.currentEvent, event.type == .leftMouseUp {
-            control.convert(event.locationInWindow, from: nil).x
-        } else {
-            control.bounds.midX
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: x, y: control.isFlipped ? control.bounds.maxY : 0), in: control)
+        pdf.zoom(in: control.selectedSegment == 2)
     }
 
     @objc private func sectionLevel(_ popUp: NSPopUpButton) {
-        project.format(.heading, HeadingLevel.all[popUp.selectedTag()].command)
+        project.editor.perform(.heading, HeadingLevel.all[popUp.selectedTag()].command)
     }
 
     @objc private func compile() {

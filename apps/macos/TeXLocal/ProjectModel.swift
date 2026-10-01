@@ -28,16 +28,10 @@ final class ProjectModel {
     /// Why the PDF may not match the source (workspace.js `setPdfFreshness`).
     var pdfFreshness: PDFFreshness?
     /// The token lets the same spot be flashed twice.
-    var highlight: (loc: ForwardLoc, token: Int)?
+    var highlight: (loc: ForwardLoc, word: String?, token: Int)?
     var showLogs = false
-    /// 1-based, for reopening where it was.
-    var pdfPage = 0
-    /// For Go to Page's range.
-    var pdfPageCount = 0
-    /// PDFKit's limits, for View › Zoom In and Zoom Out.
-    var pdfCanZoomIn = true
-    var pdfCanZoomOut = true
-    @ObservationIgnored var restorePDFPage: Int?
+    /// The PDF view's page, scale and find, for the menus and the window.
+    let pdf = PDFController()
     var panelTab: PanelTab = .issues
 
     /// A failed build always names an issue (the core falls back to
@@ -104,7 +98,8 @@ final class ProjectModel {
     private var highlightToken = 0
     /// Bumped by each `open`, so an earlier one still in flight stands down.
     private var openGeneration = 0
-    private var compileQueued = false
+    /// The build asked for while one runs: automatic unless any request wasn't.
+    private var compileQueued: Bool?
     /// Stop while the build's save runs, before the core has a build to stop.
     private var stopRequested = false
     /// A build still running when the project closes reports nothing.
@@ -128,7 +123,7 @@ final class ProjectModel {
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
     /// The caret line's section level.
     var headingLevel: HeadingLevel {
-        outline.first { $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
+        outline.first { $0.file == openPath && $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
     }
     /// The open file is in the editor rather than a preview.
     var editsText: Bool { openPath.map(isTextFile) ?? false }
@@ -151,7 +146,7 @@ final class ProjectModel {
     private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
     var saved: SavedWorkspace {
-        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdfPage)
+        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.page)
     }
 
     // ---------- loading ----------
@@ -165,7 +160,7 @@ final class ProjectModel {
             guard let self else { return }
             topLine = line
             // The outline redraws only as a heading reaches the top.
-            let heading = Outline.chain(outline, at: line).last?.id
+            let heading = Outline.current(outline, file: openPath, line: line)
             if heading != topHeading { topHeading = heading }
         }
         editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
@@ -176,6 +171,9 @@ final class ProjectModel {
             return true
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
+        editor.textView.forwardSync = { [weak self] in
+            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync() } } : nil
+        }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
             await reloadTree()
@@ -184,7 +182,7 @@ final class ProjectModel {
             guard !closed else { return }
             if let saved {
                 showLogs = saved.buildPanel
-                restorePDFPage = saved.pdfPage
+                pdf.restorePage = saved.pdfPage
             }
             let restored = saved?.file.flatMap { file in tree.flattened.contains { $0.path == file } ? file : nil }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
@@ -201,7 +199,11 @@ final class ProjectModel {
         do {
             let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
             // Only a change redraws the sidebar: a save's temporary file asks for a reload too.
-            if files != tree, !closed { tree = files }
+            // A file renamed, moved or deleted may be one the document reads in.
+            if files != tree, !closed {
+                tree = files
+                analyze()
+            }
         } catch {
             if !quietly { report(error, "Couldn’t Read the Project’s Files") }
         }
@@ -209,7 +211,7 @@ final class ProjectModel {
 
     private func refreshSymbols() async {
         if let symbols = try? await core.call("scan_symbols", ["id": id], as: Symbols.self), !closed {
-            editor.symbols = symbols
+            editor.textView.symbols = symbols
         }
     }
 
@@ -231,7 +233,7 @@ final class ProjectModel {
 
     /// Text opens in the editor, anything else in a preview. The sidebar
     /// passes `focus: false` so the arrow keys stay in its list.
-    func open(_ path: String, line: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
         // Only the latest open carries on, so the editor can't show one file
         // while `openPath`, where autosave writes, names another. Checked
         // after the last await before the editor.
@@ -246,7 +248,7 @@ final class ProjectModel {
                 openPath = path
                 openURL = url
                 diskText = text
-                analyze(text ?? "")
+                analyze()
                 if let text {
                     editor.open(path: path, text: text, focus: focus)
                     cursorLine = editor.currentLine
@@ -256,7 +258,7 @@ final class ProjectModel {
                 return
             }
         }
-        if let line, editsText, generation == openGeneration, !closed { editor.reveal(line: line, atTop: atTop, focus: focus) }
+        if let line, editsText, generation == openGeneration, !closed { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
     }
 
     /// A file of the project on disk, to drag out; nil until its folder is watched.
@@ -326,7 +328,7 @@ final class ProjectModel {
             diskText = text
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
             writes += 1
-            analyze(text)
+            analyze()
             await refreshSymbols()
             return true
         } catch {
@@ -336,16 +338,17 @@ final class ProjectModel {
         }
     }
 
-    /// The outline and counts, for .tex files only; the latest text's wins.
-    private func analyze(_ text: String) {
+    /// The project's outline and words and the open file's lines, for a .tex file
+    /// only. The core reads the saved files; the latest reading wins.
+    private func analyze() {
         analysis?.cancel()
-        guard isLaTeX else {
+        guard isLaTeX, let path = openPath else {
             outline = []
             counts = nil
             return
         }
         analysis = Task {
-            guard let doc = try? await Outline.analyze(text), !Task.isCancelled else { return }
+            guard let doc = try? await Outline.analyze(project: id, file: path), !Task.isCancelled else { return }
             outline = doc.items
             counts = (doc.words, doc.lines)
         }
@@ -474,7 +477,7 @@ final class ProjectModel {
     private func showDiskText(_ text: String, of path: String) {
         let top = topLine
         editor.open(path: path, text: text, focus: false)
-        analyze(text)
+        analyze()
         editor.reveal(line: top, atTop: true, focus: false)
         cursorLine = editor.currentLine
     }
@@ -504,12 +507,14 @@ final class ProjectModel {
     // ---------- compile ----------
 
     /// Asked while a build runs, queues one to follow (workspace.js
-    /// `pendingCompile`). An automatic build reports failures only in the log,
-    /// not an alert after every pause in typing.
+    /// `pendingCompile`). An automatic build reports failures only in the status
+    /// bar, not an alert or the build panel after every pause in typing; with no
+    /// PDF to show, the panel opens (workspace.js `logOpen`). A clean build with
+    /// no issues to list closes it, unless it shows the log.
     func compile(auto: Bool = false) async {
         guard texAvailable, !closed else { return }
         if compiling {
-            compileQueued = true
+            compileQueued = (compileQueued ?? true) && auto
             return
         }
         // Before the save, so a second request queues instead of racing this one.
@@ -533,7 +538,8 @@ final class ProjectModel {
                 } else if !result.stopped, pdfVersion > 0 {
                     pdfFreshness = .lastSuccessful
                 }
-                if result.failed { showBuildPanel() }
+                if result.failed, !auto || result.pdf == nil { showBuildPanel() }
+                if result.ok, panelTab == .issues, (result.errors + result.warnings).isEmpty { showLogs = false }
                 if !result.stopped { notify(result) }
             } catch {
                 if !auto, !closed { report(error, "Couldn’t Compile") }
@@ -541,9 +547,9 @@ final class ProjectModel {
         }
         compiling = false
         // After a failed save the queued build would only build stale text.
-        let again = saved && compileQueued && !closed
-        compileQueued = false
-        if again { await compile(auto: true) }
+        let again = saved && !closed ? compileQueued : nil
+        compileQueued = nil
+        if let again { await compile(auto: again) }
     }
 
     private func notify(_ result: CompileResult) {
@@ -568,7 +574,7 @@ final class ProjectModel {
     /// supersede the next project's.
     func close() {
         closed = true
-        compileQueued = false
+        compileQueued = nil
         folderWatcher = nil
         treeReload?.cancel()
         diskCheck?.cancel()
@@ -577,7 +583,7 @@ final class ProjectModel {
     /// Kills the build's process group; the compile returns stopped.
     func stopCompile() {
         guard compiling else { return }
-        compileQueued = false
+        compileQueued = nil
         stopRequested = true
         Task { try? await core.perform("stop_compile", ["id": id]) }
     }
@@ -619,22 +625,24 @@ final class ProjectModel {
     func forwardSync() async {
         guard let path = openPath else { return }
         guard await saveEdits() else { return }
-        let line = editor.currentLine
+        let (line, word) = (editor.currentLine, editor.currentWord)
         do {
             let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line], as: ForwardLoc.self)
             highlightToken += 1
-            highlight = (loc, highlightToken)
-            showLogs = false
+            highlight = (loc, word, highlightToken)
             showPDF = true
         } catch {
             report(error, "Couldn’t Find This Line in the PDF")
         }
     }
 
-    func inverseSync(page: Int, x: Double, y: Double) async {
+    /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
+    func inverseSync(page: Int, x: Double, y: Double, word: (String, offset: Int)? = nil) async {
         do {
-            let loc = try await core.call("synctex_inverse", ["id": id, "page": page, "x": x, "y": y], as: InverseLoc.self)
-            await open(loc.file, line: loc.line)
+            // A nil word bridges as null, which the core reads as none.
+            let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.0 as Any, "offset": word?.offset as Any]
+            let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
+            await open(loc.file, line: loc.line, column: loc.column)
             editor.focus()
         } catch {
             report(error, "Couldn’t Find This Spot in the Source")
@@ -712,6 +720,7 @@ final class ProjectModel {
     /// The PDF is named after the main file (sidebar.js `onMainFileChange`).
     /// The old one stays on screen until the build replaces it.
     private func mainFileChanged() async {
+        analyze()
         await showPDFOnDisk()
         await compile(auto: true)
     }
@@ -776,17 +785,9 @@ final class ProjectModel {
 
     // ---------- editor commands ----------
 
-    func format(_ command: EditorCommand, _ arg: String? = nil) {
-        editor.perform(command, arg)
-    }
-
     /// With nothing to find yet, the bar opens instead.
     func findStep(_ delta: Int) {
         if !editor.findStep(delta) { showFind() }
-    }
-
-    func replace(all: Bool) {
-        editor.replace(all: all)
     }
 
     /// Opens the find bar, or gives its field the keyboard again, the selection
@@ -823,29 +824,21 @@ final class ProjectModel {
         }
     }
 
-    private func findClosed() {
+    /// Done or Escape: unmarks the matches and returns typing to the text.
+    func closeFind() {
         findShown = false
         replaceShown = false
         findFocus = 0
         replaceFocus = 0
-    }
-
-    /// Done or Escape: unmarks the matches and returns typing to the text.
-    func closeFind() {
-        findClosed()
         editor.closeFind()
         editor.focus()
     }
 
-    /// An outline heading at the top of the source; the keyboard stays where it is.
+    /// An outline heading at the top of the source, in its file; the keyboard stays where it is.
     func reveal(_ item: OutlineItem) {
         // Already there: a click chooses the row as it goes down, then taps it.
-        guard let path = openPath, cursorLine != item.line || topLine != item.line else { return }
-        Task { await open(path, line: item.line, atTop: true, focus: false) }
-    }
-
-    func reveal(line: Int) {
-        editor.reveal(line: line)
+        guard item.file != openPath || cursorLine != item.line || topLine != item.line else { return }
+        Task { await open(item.file, line: item.line, atTop: true, focus: false) }
     }
 }
 

@@ -6,10 +6,19 @@ import Synchronization
 @Observable
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView? {
-        // PDFView keeps a set scale as it resizes: Fit Height sets it again.
-        didSet { view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } } }
+        didSet {
+            // PDFView keeps a set scale as it resizes: Fit Height sets it again.
+            view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } }
+            // The scale is PDFKit's scroll view's magnification, step by step through a pinch
+            // (PDFViewScaleChanged comes only as it ends). The view has it from the start.
+            magnification = view?.subviews.lazy.compactMap { $0 as? NSScrollView }.first?
+                .observe(\.magnification, options: .initial) { [weak self] _, _ in MainActor.assumeIsolated { self?.scaleChanged() } }
+        }
     }
+    @ObservationIgnored private var magnification: NSKeyValueObservation?
     var page = 0
+    /// The page a reopened project's first PDF opens at.
+    @ObservationIgnored var restorePage: Int?
     var pageCount = 0
     /// Find in PDF: whether its bar shows, and what's typed in it (searched
     /// once typing pauses).
@@ -43,8 +52,9 @@ final class PDFController {
         scale = view.scaleFactor
         canZoomIn = view.canZoomIn
         canZoomOut = view.canZoomOut
-        // Any other change of scale (a pinch, a zoom command) ends fitting.
-        if view.autoScales {
+        // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
+        // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
+        if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
             fit = .width
         } else if fit == .width || (fit == .height && abs(view.scaleFactor - heightScale(view)) > 0.001) {
             fit = nil
@@ -83,14 +93,14 @@ final class PDFController {
     func fitWidth() {
         fit = .width
         view?.autoScales = true
-        scaleChanged()
     }
 
+    /// Sets the fit after the scale, since the scale's change ends a fit.
     func fitHeight() {
         guard let view, view.currentPage != nil else { return }
-        fit = .height
         view.autoScales = false
         view.scaleFactor = heightScale(view)
+        fit = .height
     }
 
     /// PDFKit's own search, off the main thread (a first query extracts the text:
@@ -220,11 +230,19 @@ final class PDFController {
     }
 }
 
-/// PDFView where Command-click jumps to the source (inverse search), as in the
-/// Mac's TeX apps; a double-click stays PDFKit's, selecting a word.
+/// PDFView where a double-click goes to the source (inverse search), as in
+/// Overleaf, after PDFKit's own word selection marks the word it sends.
 final class SyncPDFView: PDFView {
-    var onInverse: (Int, CGPoint) -> Void = { _, _ in }
+    var onInverse: (_ page: Int, _ point: CGPoint, _ word: (String, offset: Int)?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
+
+    /// SwiftUI sets the frame again, unchanged, as the window lays out (the toolbar's scale
+    /// changing): PDFView fits the width again on each, which would undo a pinch under way
+    /// (auto-scaling stays on until it ends).
+    override var frame: NSRect {
+        get { super.frame }
+        set { if newValue != super.frame { super.frame = newValue } }
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         // SwiftUI sets the frame again, unchanged, on each scroll step: only a new size counts.
@@ -275,9 +293,11 @@ final class SyncPDFView: PDFView {
 
     /// The knob runs over the pages: light on dark paper, dark on white. Again
     /// for the first document, which brings the scroll view (an override of
-    /// `document` would be called on PDFKit's form-filling queue).
+    /// `document` would be called on PDFKit's form-filling queue). VoiceOver
+    /// reads the scroll view's label, not the PDF view's.
     func matchScroller() {
         documentView?.enclosingScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
+        documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
     }
 
     /// PDFView's own (the page on white, in the crop box it shows), then for dark
@@ -300,17 +320,15 @@ final class SyncPDFView: PDFView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Command alone of the keys held, Caps Lock aside.
-        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, document != nil else {
-            super.mouseDown(with: event)
-            return
-        }
-        goToSource(at: convert(event.locationInWindow, from: nil))
+        super.mouseDown(with: event)
+        if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
     }
 
     /// Go to Source Position for the clicked point, above PDFKit's own items.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
+        // The app fixes the page layout, and scrolling turns the pages.
+        menu?.keep([#selector(copy(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:))])
         guard let menu, document != nil else { return menu }
         let item = NSMenuItem(title: MenuCommand.syncInverse.title, action: #selector(goToSource(_:)), keyEquivalent: "")
         item.target = self
@@ -327,13 +345,13 @@ final class SyncPDFView: PDFView {
     private func goToSource(at location: CGPoint) {
         guard let document, let page = page(for: location, nearest: true) else { return }
         let point = convert(location, to: page)
-        onInverse(document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)))
+        onInverse(document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.word(at: point))
     }
 }
 
 struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
-    let controller: PDFController
+    private var controller: PDFController { project.pdf }
     let darkPaper: Bool
     let document: PDFDocument?
     /// Whether `document` is the current build's.
@@ -341,30 +359,25 @@ struct PDFRepresentable: NSViewRepresentable {
 
     final class Coordinator {
         var highlightToken = 0
-        /// Following the view's page and scale, until the view goes.
-        var watches: [Task<Void, Never>] = []
+        /// Following the view's page, until the view goes.
+        var pages: Task<Void, Never>?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> SyncPDFView {
         let view = SyncPDFView()
-        view.displayMode = .singlePageContinuous
         view.autoScales = true
         view.backgroundColor = .underPageBackgroundColor
-        view.onInverse = { [project] page, point in
-            Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
+        view.onInverse = { [project] page, point, word in
+            Task { await project.inverseSync(page: page, x: point.x, y: point.y, word: word) }
         }
         controller.view = view
-        let center = NotificationCenter.default
-        // Each read once as it starts watching too: the first fitted scale is set before.
-        context.coordinator.watches = [(Notification.Name.PDFViewPageChanged, controller.pageChanged),
-                                       (.PDFViewScaleChanged, controller.scaleChanged)].map { name, changed in
-            Task {
-                let changes = center.notifications(named: name, object: view)
-                changed()
-                for await _ in changes { changed() }
-            }
+        // Read once as it starts watching too.
+        context.coordinator.pages = Task { [controller] in
+            let changes = NotificationCenter.default.notifications(named: .PDFViewPageChanged, object: view)
+            controller.pageChanged()
+            for await _ in changes { controller.pageChanged() }
         }
         return view
     }
@@ -375,12 +388,12 @@ struct PDFRepresentable: NSViewRepresentable {
         // Only on the current build's pages: the jump would be lost to the swap.
         if current, let highlight = project.highlight, highlight.token != context.coordinator.highlightToken {
             context.coordinator.highlightToken = highlight.token
-            flash(highlight.loc, in: view)
+            flash(highlight.loc, word: highlight.word, in: view)
         }
     }
 
     static func dismantleNSView(_ view: SyncPDFView, coordinator: Coordinator) {
-        coordinator.watches.forEach { $0.cancel() }
+        coordinator.pages?.cancel()
     }
 
     /// A rebuilt PDF at the same place and zoom.
@@ -394,26 +407,28 @@ struct PDFRepresentable: NSViewRepresentable {
         view.document = document
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
-        // A reopened project's first PDF opens at the page it was left at.
-        let restore = project.restorePDFPage
-        project.restorePDFPage = nil
+        let restore = controller.restorePage
+        controller.restorePage = nil
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: place.point))
         } else if let restore {
             controller.go(toPage: restore)
         }
-        controller.pageCount = document.pageCount
         controller.pageChanged()
-        controller.scaleChanged()
         controller.documentShown()
     }
 
-    /// Scroll to a forward-search result and flash it.
-    private func flash(_ loc: ForwardLoc, in view: SyncPDFView) {
+    /// Scroll to a forward-search result and flash it: `word`, the word at the
+    /// caret, where it is nearest SyncTeX's box, else the whole box.
+    private func flash(_ loc: ForwardLoc, word: String?, in view: SyncPDFView) {
         guard let page = view.document?.page(at: Int(loc.page) - 1) else { return }
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        let mark = PDFAnnotation(bounds: rect, forType: .highlight, withProperties: nil)
+        let box = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        let rect = word.flatMap { page.bounds(of: $0, near: box) } ?? box
+        // A filled square: PDFKit multiplies a highlight, which dark paper hides.
+        let mark = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
         mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
+        mark.interiorColor = mark.color
+        mark.border = nil
         page.addAnnotation(mark)
         // A third of the way down what shows: a destination lands below the toolbar, a rect under it.
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
@@ -422,6 +437,37 @@ struct PDFRepresentable: NSViewRepresentable {
             try? await Task.sleep(for: .seconds(2.2))
             page.removeAnnotation(mark)
         }
+    }
+}
+
+extension PDFPage {
+    /// The word at `point`, and where in it the point falls (in UTF-16 units), as
+    /// PDF text may run together words TeX sets close. By each letter's selection:
+    /// `characterIndex(at:)` is letters out in pdfTeX's T1 fonts (27.2).
+    func word(at point: CGPoint) -> (String, offset: Int)? {
+        guard let word = selectionForWord(at: point), let text = word.string else { return nil }
+        let range = word.range(at: 0, on: self)
+        let offset = (0..<range.length).first { i in
+            selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
+        }
+        return (text, offset ?? 0)
+    }
+
+    /// The bounds of `word` nearest `box` on this page: on its line, or one either
+    /// side (SyncTeX gives the first of a source line's boxes). PDF text runs
+    /// together words TeX sets close, so on a line a whole word comes first, then
+    /// one run into others.
+    func bounds(of word: String, near box: CGRect) -> CGRect? {
+        guard let text = string else { return nil }
+        let found = text.ranges(of: word).compactMap { range -> (CGRect, Int)? in
+            let joined = text[..<range.lowerBound].last?.isLetter == true || text[range.upperBound...].first?.isLetter == true
+            return selection(for: NSRange(range, in: text)).map { ($0.bounds(for: self), joined ? 1 : 0) }
+        }
+        // Above or below the box, whether run into others, then beside the box.
+        func rank(_ hit: (rect: CGRect, joined: Int)) -> (CGFloat, Int, CGFloat) {
+            (max(0, box.minY - hit.rect.maxY, hit.rect.minY - box.maxY), hit.joined, max(0, box.minX - hit.rect.maxX, hit.rect.minX - box.maxX))
+        }
+        return found.filter { rank($0).0 < box.height }.min { rank($0) < rank($1) }?.0
     }
 }
 

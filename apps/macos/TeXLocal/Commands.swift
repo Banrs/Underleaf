@@ -117,7 +117,7 @@ enum MenuCommand: String, CaseIterable {
         case .projectClose: "CmdOrCtrl+Shift+W"
         // Pages' Insert › Equation.
         case .editMath: "CmdOrCtrl+Alt+E"
-        // As the Mac's VS Code LaTeX extension; the PDF answers ⌘-click for the other way.
+        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
         case .syncForward: "CmdOrCtrl+Alt+J"
         case .syncInverse: nil
         // ⌥⌘G is Go to Page in the Mac's PDF readers; ⌘L is Go to Line.
@@ -181,11 +181,11 @@ extension AppModel {
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
-        case .viewZoomIn: project.map { $0.hasPDF && $0.pdfCanZoomIn } ?? false
-        case .viewZoomOut: project.map { $0.hasPDF && $0.pdfCanZoomOut } ?? false
+        case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
+        case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
         case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitHeight, .syncInverse:
             project?.hasPDF == true
-        case .syncForward: project.map { $0.hasPDF && $0.editsText } ?? false
+        case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         default: project != nil
         }
     }
@@ -234,10 +234,10 @@ extension AppModel {
         case .filePageSetup: NSApp.runPageLayout(nil)
         // The PDF, not the first responder (usually the source).
         case .filePrint: requestPDF(.print)
-        case .editBold: project?.format(.bold)
-        case .editItalic: project?.format(.italic)
-        case .editMath: project?.format(.math)
-        case .editComment: project?.format(.comment)
+        case .editBold: project?.editor.perform(.bold)
+        case .editItalic: project?.editor.perform(.italic)
+        case .editMath: project?.editor.perform(.math)
+        case .editComment: project?.editor.perform(.comment)
         case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
@@ -389,8 +389,7 @@ struct AppCommands: Commands {
                     if !texEngines.contains(where: { $0.0 == engine }) { Text(engine).tag(engine) }
                 }
             } else {
-                Menu("Engine") {}
-                    .disabled(true)
+                Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
             }
             // The open file; the files' context menu has it for any .tex file.
             Button("Set as Main File") {

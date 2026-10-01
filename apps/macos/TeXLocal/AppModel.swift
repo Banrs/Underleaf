@@ -12,7 +12,6 @@ enum DefaultsKey {
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
     static let outlineFolded = "OutlineFolded"
-    static let settingsTab = "settingsTab"
     /// Pane sizes set by dragging a divider (`PaneSize`).
     static let paneSizes = "PaneSizes"
 }
@@ -135,7 +134,6 @@ final class AppModel {
     func refresh() async {
         do {
             projects = try await core.call("list_projects", as: [ProjectInfo].self)
-                .sorted { $0.mtime > $1.mtime }
         } catch {
             alert = AppAlert("Couldn’t Load Your Projects", error)
         }
@@ -172,7 +170,7 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// Copies a folder, .tex file or .zip into the library and opens it. The
+    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it. The
     /// core removes a project it couldn't finish, so a bad zip leaves none.
     func importProject(from url: URL) async {
         do {

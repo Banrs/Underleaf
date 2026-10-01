@@ -105,6 +105,8 @@ nonisolated struct ForwardLoc: Decodable {
 nonisolated struct InverseLoc: Decodable {
     let file: String
     let line: Int
+    /// The clicked letter's, in UTF-16 units.
+    let column: Int?
 }
 
 /// `import_files`' result: the incoming paths that already exist here.

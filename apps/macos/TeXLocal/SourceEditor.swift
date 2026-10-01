@@ -23,13 +23,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     /// Whether the column shows the editor rather than a preview or placeholder.
     /// Hidden, the text hands the keyboard on and leaves the key view loop;
-    /// shown while nothing has the keyboard (as the project opens), it takes it.
+    /// shown after a file opened with the keyboard asked for (as the project opens), it takes it.
     var shown = false {
         didSet {
             scrollView.isHidden = !shown
-            if shown, !oldValue, let window = scrollView.window, window.firstResponder === window { focus() }
+            if shown, !oldValue, focusWhenShown { focus() }
         }
     }
+    private var focusWhenShown = false
 
     override init() {
         // AppKit's own plain-text scroll view: TextKit 2, sized to its text.
@@ -81,6 +82,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scrollView.reflectScrolledClipView(scrollView.contentView)
         refreshFind()
         reportCursor()
+        focusWhenShown = focus
         if focus { self.focus() }
     }
 
@@ -101,11 +103,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         path = path.map { remapPath($0, from: from, to: to) }
     }
 
-    var symbols: Symbols {
-        get { textView.symbols }
-        set { textView.symbols = newValue }
-    }
-
     func focus() {
         guard shown else { return }
         textView.window?.makeFirstResponder(textView)
@@ -117,19 +114,31 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.document.line(at: textView.selectedRange().location)
     }
 
+    /// The word at the caret, as the system's word selection takes it.
+    var currentWord: String? {
+        let caret = NSRange(location: textView.selectedRange().location, length: 0)
+        let range = textView.selectionRange(forProposedRange: caret, granularity: .selectByWord)
+        let word = (textView.string as NSString).substring(with: range).trimmingCharacters(in: .alphanumerics.inverted)
+        return word.isEmpty ? nil : word
+    }
+
     /// `atTop` puts the line at the top of the view, as an outline's jump to a
-    /// heading does; otherwise it's centred, with the lines round it. The
-    /// system's find indicator shows where it went.
-    func reveal(line: Int, atTop: Bool = false, focus: Bool = true) {
+    /// heading does; otherwise it's centred, with the lines round it. A `column`
+    /// selects the word there. The system's find indicator shows where it went.
+    func reveal(line: Int, column: Int? = nil, atTop: Bool = false, focus: Bool = true) {
         let document = textView.document
         let start = document.lineStart(line)
         let end = line < document.lineCount ? document.lineStart(line + 1) - 1 : (textView.string as NSString).length
-        textView.setSelectedRange(NSRange(location: start, length: 0))
+        let word = column.map {
+            textView.selectionRange(forProposedRange: NSRange(location: min(start + $0, end), length: 0), granularity: .selectByWord)
+        }
+        textView.setSelectedRange(word ?? NSRange(location: start, length: 0))
         scroll(to: start, atTop: atTop)
         if focus { self.focus() }
-        if end > start {
+        let shown = word ?? NSRange(location: start, length: end - start)
+        if shown.length > 0 {
             // Once the scroll's layout is done.
-            DispatchQueue.main.async { self.textView.showFindIndicator(for: NSRange(location: start, length: end - start)) }
+            DispatchQueue.main.async { self.textView.showFindIndicator(for: shown) }
         }
     }
 
@@ -164,18 +173,18 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         onChanged()
     }
 
-    /// Misspellings in the prose only: not in a command, a technical
-    /// argument (a label, package or environment) or maths, which the core
-    /// colours; comments are prose.
+    /// Misspellings in the prose only: not in a command or maths, which the
+    /// core colours, nor in a name a command takes (a package, citation or
+    /// file); comments are prose.
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
-        // The results count from the start of the range checked (27.2).
-        let code = textView.document.highlights(in: range)
-            .filter { $0.kind != .comment }
-            .map { NSRange(location: $0.range.location - range.location, length: $0.range.length) }
+        let document = textView.document
+        let code = document.highlights(in: range).filter { $0.kind != .comment }.map(\.range) + document.notProse(in: range)
         return results.filter { result in
-            result.resultType != .spelling || !code.contains { NSIntersectionRange($0, result.range).length > 0 }
+            // The results count from the start of the range checked (27.2).
+            let found = NSRange(location: range.location + result.range.location, length: result.range.length)
+            return result.resultType != .spelling || !code.contains { NSIntersectionRange($0, found).length > 0 }
         }
     }
 
@@ -194,6 +203,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }
             self.textView.apply([insertion.edit], named: name, select: NSRange(location: insertion.caret, length: 0))
+            self.textView.startSnippet(insertion.fields, at: insertion.edit.start)
             return true
         }
         switch command {
@@ -399,8 +409,8 @@ enum EditorPalette: String, CaseIterable, Identifiable {
     }
 
     /// A kind's colour: the web editor's, CodeMirror's own in light and One
-    /// Dark in dark for the default, Xcode's for Xcode (web/src/editor.js).
-    /// Nil leaves the text's colour.
+    /// Dark in dark for the default, Xcode's for Xcode, its dark comments
+    /// lighter (web/src/editor.js). Nil leaves the text's colour.
     func color(_ kind: HighlightKind) -> NSColor? {
         if self == .xcode, kind == .invalid { return .systemRed }
         let (light, dark): (UInt32?, UInt32?) = switch (self, kind) {
@@ -418,7 +428,7 @@ enum EditorPalette: String, CaseIterable, Identifiable {
         case (.xcode, .mathDelimiter): (0x643820, 0xfd8f3f)
         case (.xcode, .mathIdentifier), (.xcode, .builtin): (0x326d74, 0x67b7a4)
         case (.xcode, .number): (0x1c00cf, 0xd0bf69)
-        case (.xcode, .comment): (0x5d6c79, 0x6c7986)
+        case (.xcode, .comment): (0x5d6c79, 0x8a97a5)
         case (.xcode, .stringLiteral): (0xc41a16, 0xfc6a5d)
         case (.xcode, .invalid): (nil, nil)
         }
