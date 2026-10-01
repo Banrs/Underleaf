@@ -78,13 +78,18 @@ fn commands_round_trip_through_the_c_abi() {
         "x"
     );
 
+    call(
+        handle,
+        "write_file",
+        Some(json!({ "id": "P", "path": "main.tex", "text": "\\section{Intro}\nHello world" })),
+    );
     assert_eq!(
         call(
             handle,
-            "analyze",
-            Some(json!({ "text": "\\section{Intro}\nHello world" }))
+            "analyze_project",
+            Some(json!({ "id": "P", "file": "main.tex" }))
         )["ok"],
-        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1 }], "words": 3, "lines": 2 })
+        json!({ "outline": [{ "depth": 2, "title": "Intro", "line": 1, "file": "main.tex" }], "words": 3, "lines": 2 })
     );
 
     // Errors come back as an envelope with the core's status, never a crash.
@@ -305,7 +310,9 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         );
         assert_eq!(
             symbol,
-            Some(json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8 }))
+            Some(
+                json!({ "edit": { "start": 0, "length": 1, "text": "$\\alpha$" }, "caret": 8, "fields": [] })
+            )
         );
         let maths = call("math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");

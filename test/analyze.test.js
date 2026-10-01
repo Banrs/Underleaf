@@ -11,6 +11,8 @@ for (const { name, text, expected } of cases) {
   test(`analyzeDoc: ${name}`, () => {
     // Lines as CodeMirror splits them.
     const scanLines = (cb) => text.split(/\r\n?|\n/).forEach((line, i) => cb(line, i + 1));
-    assert.deepEqual(analyzeDoc(scanLines, { countWords: true }), expected);
+    // Words are the core's alone: the browser shows the project's (analyze_project).
+    const { outline, lines } = expected;
+    assert.deepEqual(analyzeDoc(scanLines), { outline, lines });
   });
 }

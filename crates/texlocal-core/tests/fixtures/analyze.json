@@ -157,18 +157,68 @@
     }
   },
   {
-    "name": "nested braces end the title early",
-    "text": "\\section{The {\\em best} way}",
+    "name": "a title keeps its nested groups, as plain text",
+    "text": "\\section{The \\emph{Real} Problem}\n\\subsection{Sets \\{x\\} and {\\em y}}\n\\section{Unclosed {group}",
     "expected": {
       "outline": [
         {
           "depth": 2,
-          "title": "The {\\em best",
+          "title": "The Real Problem",
           "line": 1
+        },
+        {
+          "depth": 3,
+          "title": "Sets {x} and y",
+          "line": 2
         }
       ],
-      "words": 3,
-      "lines": 1
+      "words": 9,
+      "lines": 3
+    }
+  },
+  {
+    "name": "a title shows as plain text: PDF strings, styles, labels and notes",
+    "text": "\\section{\\texorpdfstring{$\\mathbf{E}$-fields}{E-fields} and \\textbf{More}}\n\\subsection{A {\\bfseries Bold} \\textit{and} {\\itshape Slanted} Heading\\label{sec:a}}\n\\section{Notes\\footnote{See \\cite{x}.}}\n\\section{\\label{sec:only}}\n\\section{  Spaced\t  \\LaTeX\\ and \\emphasis  }\n\\section{\\texorpdfstring{{\\cjkfont 中文}}{中文} — Chinese}\n\\section{R\\&D at 50\\% \\{set\\}}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "E-fields and More",
+          "line": 1
+        },
+        {
+          "depth": 3,
+          "title": "A Bold and Slanted Heading",
+          "line": 2
+        },
+        {
+          "depth": 2,
+          "title": "Notes",
+          "line": 3
+        },
+        {
+          "depth": 2,
+          "title": "(untitled)",
+          "line": 4
+        },
+        {
+          "depth": 2,
+          "title": "Spaced \\LaTeX\\ and \\emphasis",
+          "line": 5
+        },
+        {
+          "depth": 2,
+          "title": "中文 — Chinese",
+          "line": 6
+        },
+        {
+          "depth": 2,
+          "title": "R&D at 50% {set}",
+          "line": 7
+        }
+      ],
+      "words": 24,
+      "lines": 7
     }
   },
   {
@@ -208,11 +258,11 @@
     }
   },
   {
-    "name": "accented letters are letters",
-    "text": "Café naïve Ωmega ſ",
+    "name": "letters of any script are letters",
+    "text": "Café naïve ſ Ελληνικά κείμενο Русский 中文 123",
     "expected": {
       "outline": [],
-      "words": 3,
+      "words": 7,
       "lines": 1
     }
   },

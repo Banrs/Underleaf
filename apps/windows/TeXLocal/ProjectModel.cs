@@ -40,9 +40,11 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     public IReadOnlyList<TreeNode> Tree { get; private set => Set(ref field, value); } = [];
     public string? OpenPath { get; private set => Set(ref field, value); }
 
-    /// <summary>The open .tex file's outline, words and lines, read on open and on save; null for other files, as in the web.</summary>
+    /// <summary>The document's outline and words and the open file's lines, read on open and on save; null for a file other than .tex, as in the web.</summary>
     public DocumentStats? Stats { get; private set => Set(ref field, value); }
-    public IReadOnlyList<OutlineItem> Sections => Stats?.Outline ?? [];
+
+    /// <summary>The open file's headings.</summary>
+    public IReadOnlyList<OutlineItem> Sections => Stats?.Outline.Where(s => s.File == OpenPath).ToList() ?? [];
 
     public int CursorLine { get; private set => Set(ref field, value); } = 1;
 
@@ -242,7 +244,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         CursorLine = TopLine = 1;
         diskText = file.Text;
         _ = WatchOpenFileAsync();
-        _ = AnalyzeAsync(path, file.Text);
+        _ = AnalyzeAsync(path);
         await editor.OpenAsync($"{Id}/{path}", file.Text);
         return true;
     }
@@ -250,10 +252,10 @@ internal sealed class ProjectModel : INotifyPropertyChanged
     private int analysis;
 
     /// <summary>
-    /// The outline, breadcrumb and word count, from the core; as in the web,
-    /// only a .tex file has them. The latest reading of the open file wins.
+    /// The outline, breadcrumb and word count, from the core, which reads the saved
+    /// files; as in the web, only a .tex file has them. The latest reading wins.
     /// </summary>
-    private async Task AnalyzeAsync(string path, string text)
+    private async Task AnalyzeAsync(string path)
     {
         var request = ++analysis;
         DocumentStats? stats = null;
@@ -261,7 +263,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         {
             try
             {
-                stats = await Outline.AnalyzeAsync(core, text);
+                stats = await Outline.AnalyzeAsync(core, Id, path);
             }
             catch (CoreException)
             {
@@ -389,7 +391,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
             writes++;
             if (path == OpenPath)
             {
-                _ = AnalyzeAsync(path, text);
+                _ = AnalyzeAsync(path);
             }
             await RefreshSymbolsAsync();
             return true;
@@ -566,7 +568,7 @@ internal sealed class ProjectModel : INotifyPropertyChanged
         var top = TopLine;
         autosave?.Cancel();
         Dirty = false;
-        _ = AnalyzeAsync(path, text);
+        _ = AnalyzeAsync(path);
         await editor.OpenAsync($"{Id}/{path}", text, focus: false);
         await editor.RevealAsync(top, atTop: true, focus: false);
         CursorLine = await editor.CurrentLineAsync();

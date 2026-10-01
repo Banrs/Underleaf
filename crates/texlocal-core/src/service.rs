@@ -455,7 +455,11 @@ impl Service {
             "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
             "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
-            "analyze" => out(analyze::analyze(&s("text")?)),
+            "analyze_project" => {
+                let root = root()?;
+                let main = settings::read_settings(&root).main_file;
+                out(analyze::analyze_project(&root, &main, &s("file")?))
+            }
             "search_project" => out(projects::search_project(
                 &root()?,
                 &s("query")?,

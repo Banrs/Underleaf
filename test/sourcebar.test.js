@@ -6,18 +6,25 @@ const { foldCount, headingAt, HEADING_LEVELS, paletteMove, SYMBOL_GROUPS } = awa
 const { sectionIndexAt } = await import('../web/src/state.js');
 
 const outline = [
-  { depth: 2, title: 'Introduction', line: 5 },
-  { depth: 3, title: 'Background', line: 12 },
-  { depth: 2, title: 'Method', line: 30 },
+  { depth: 2, title: 'Introduction', line: 5, file: 'main.tex' },
+  { depth: 3, title: 'Background', line: 12, file: 'main.tex' },
+  { depth: 2, title: 'Method', line: 30, file: 'main.tex' },
 ];
 
 test('the outline follows the section at the top of the source', () => {
-  assert.equal(sectionIndexAt(outline, 1), -1, 'above the first heading nothing is selected');
-  assert.equal(sectionIndexAt(outline, 5), 0, 'a heading at the top line is its own section');
-  assert.equal(sectionIndexAt(outline, 11), 0);
-  assert.equal(sectionIndexAt(outline, 29), 1, 'a subsection is selected, not its parent');
-  assert.equal(sectionIndexAt(outline, 500), 2);
-  assert.equal(sectionIndexAt([], 10), -1);
+  assert.equal(sectionIndexAt(outline, 'main.tex', 1), -1, 'above the first heading nothing is selected');
+  assert.equal(sectionIndexAt(outline, 'main.tex', 5), 0, 'a heading at the top line is its own section');
+  assert.equal(sectionIndexAt(outline, 'main.tex', 11), 0);
+  assert.equal(sectionIndexAt(outline, 'main.tex', 29), 1, 'a subsection is selected, not its parent');
+  assert.equal(sectionIndexAt(outline, 'main.tex', 500), 2);
+  assert.equal(sectionIndexAt([], 'main.tex', 10), -1);
+});
+
+test('in a file read in, the outline follows that file\'s headings', () => {
+  const project = [outline[0], { depth: 3, title: 'Data', line: 3, file: 'data.tex' }, outline[2]];
+  assert.equal(sectionIndexAt(project, 'data.tex', 1), -1, 'above its first heading');
+  assert.equal(sectionIndexAt(project, 'data.tex', 40), 1);
+  assert.equal(sectionIndexAt(project, 'main.tex', 20), 0, 'past the file read in');
 });
 
 test('toolbar groups fold into the overflow menu from the end', () => {

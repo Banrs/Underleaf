@@ -138,8 +138,9 @@ function buildChrome(id) {
     gotoLine: (line) => { ui.layout?.revealEditor(); state.editor?.gotoLine(line); },
     revealSection: (line, focus) => { if (focus) ui.layout?.revealEditor(); state.editor?.gotoLine(line, true, focus); },
     openSettings: openProjectSettings,
-    onFilesChanged: refreshSymbols,
-    onMainFileChange: () => compile({ auto: true }),
+    // A file renamed, moved or deleted may be one the document reads in.
+    onFilesChanged: () => { refreshSymbols(); refreshAnalysis(); },
+    onMainFileChange: () => { refreshAnalysis(); compile({ auto: true }); },
     onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
@@ -516,6 +517,7 @@ async function openFile(path) {
     }
     setSaveState('');
     updateDocMeta();
+    refreshAnalysis();
     return;
   }
 
@@ -579,6 +581,7 @@ async function openFile(path) {
   state.dirty = false;
   setSaveState('Saved');
   updateDocMeta();
+  refreshAnalysis();
   refreshCommands();
 }
 
@@ -602,7 +605,10 @@ async function doSave({ triggerCompile = true } = {}) {
       setSaveState('Saved');
       if (triggerCompile && prefs.autoCompile) compile({ auto: true });
     }
-    if (current) refreshSymbols();
+    if (current) {
+      refreshSymbols();
+      refreshAnalysis();
+    }
   } catch (err) {
     err.saveFailed = true;
     if (state.projectId === projectId && state.openPath === path && state.editor === editor) {
@@ -638,16 +644,27 @@ function scheduleDocMeta() {
 
 function updateDocMeta() {
   const show = !!(state.editor && state.openPath?.endsWith('.tex'));
-  const countWords = show && prefs.showWordCount;
-  const { outline, words, lines } = show ? analyzeDoc(state.editor.scanLines, { countWords }) : { outline: [] };
+  const { outline, lines } = show ? analyzeDoc(state.editor.scanLines) : { outline: [] };
   state.outline = outline;
   renderOutline();
   renderCrumbs();
 
   const pill = ui.wordCountPill;
   if (!pill) return;
-  pill.hidden = !countWords;
-  if (countWords) pill.textContent = `${words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
+  pill.hidden = !(show && prefs.showWordCount);
+  if (!pill.hidden) pill.textContent = `${state.words.toLocaleString()} words · ${lines.toLocaleString()} lines`;
+}
+
+// The document's outline and words, which the core reads from the saved files,
+// from the main file through its \input and \include; only a .tex file has them.
+async function refreshAnalysis() {
+  const { projectId, openPath: path } = state;
+  const generation = workspaceGeneration;
+  const analysis = path?.endsWith('.tex') ? await api.analyze(projectId, path).catch(() => null) : null;
+  if (generation !== workspaceGeneration || state.openPath !== path) return;
+  state.projectOutline = analysis?.outline ?? [];
+  state.words = analysis?.words ?? 0;
+  updateDocMeta();
 }
 
 // The source bar's section level and location row follow the caret and path.

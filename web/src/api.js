@@ -25,6 +25,7 @@ export const api = ipc && {
   tree: (id) => ipc.invoke('file_tree', { id }),
   symbols: (id) => ipc.invoke('scan_symbols', { id }),
   search: (id, q) => ipc.invoke('search_project', { id, query: q }),
+  analyze: (id, file) => ipc.invoke('analyze_project', { id, file }),
   readFile: (id, p) => ipc.invoke('read_file', { id, path: p }),
   // A URL an <img> can show the file from: a blob: one in a browser, whose
   // server wants a header no <img> sends; revoke it once the image has loaded.

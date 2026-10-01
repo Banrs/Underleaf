@@ -468,14 +468,14 @@ export function renderOutline() {
   nodes.outlineSplit.hidden = box.hidden;
   if (box.hidden) return;
 
-  if (!state.outline.length) {
+  if (!state.projectOutline.length) {
     box.replaceChildren(el('p', { class: 'placeholder' }, 'No sections'));
     return;
   }
   // A rebuild (every edit) keeps keyboard focus on the same row.
   const focused = [...box.children].indexOf(document.activeElement);
-  const minDepth = Math.min(...state.outline.map((o) => o.depth));
-  box.replaceChildren(...state.outline.map((o, i) => {
+  const minDepth = Math.min(...state.projectOutline.map((o) => o.depth));
+  box.replaceChildren(...state.projectOutline.map((o, i) => {
     const rd = o.depth - minDepth;
     // One vertical guide rail per ancestor level, painted as stacked background
     // gradients so nesting reads at a glance without extra elements. (Not one
@@ -505,8 +505,8 @@ export function renderOutline() {
 // keep it in view; keyboard focus stays where it is.
 export function updateOutlineSelection() {
   const box = nodes.outline;
-  if (!box || box.hidden || !state.outline.length) return;
-  const index = sectionIndexAt(state.outline, state.topLine);
+  if (!box || box.hidden || !state.projectOutline.length) return;
+  const index = sectionIndexAt(state.projectOutline, state.openPath, state.topLine);
   const rows = [...box.children];
   const focused = rows.includes(document.activeElement);
   rows.forEach((r, i) => {
@@ -522,12 +522,13 @@ export function updateOutlineSelection() {
   }
 }
 
-// Choosing a section brings it to the top of the source. Focus stays in the
-// list unless asked for (Enter), so the arrow keys keep walking it.
-function chooseSection(i, focusEditor = false) {
-  const entry = state.outline[i];
+// Choosing a section brings it to the top of the source, in its file. Focus
+// stays in the list unless asked for (Enter), so the arrow keys keep walking it.
+async function chooseSection(i, focusEditor = false) {
+  const entry = state.projectOutline[i];
+  if (entry && entry.file !== state.openPath) await host.openFile(entry.file);
   const row = nodes.outline?.children[i];
-  if (!entry || !row) return;
+  if (!entry || !row || entry.file !== state.openPath) return;
   for (const r of nodes.outline.children) r.tabIndex = r === row ? 0 : -1;
   row.focus();
   state.topLine = entry.line;
