@@ -153,11 +153,25 @@ pub async fn synctex_inverse(
         // again for: TeX wrote "<its old folder>/./<file>".
         .or_else(|| safe_rel_file(root, file.split_once("/./")?.1).ok())
         .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    if Path::new(&rel).starts_with(BUILD_DIR) || !root.join(&rel).exists() {
+    let no_source = || CoreError::not_found("No source file at this location");
+    let rel = safe_rel_file(root, &rel).map_err(|_| no_source())?;
+    let source = std::fs::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
+    let physical = rel_to_root(&std::fs::canonicalize(root)?, &source)
+        .and_then(|rel| safe_rel_file(root, &rel).ok())
+        .ok_or_else(no_source)?;
+    // Links within the project can still lead to generated output, and the
+    // reserved build name is case-insensitive on every platform.
+    if !source.is_file()
+        || [&rel, &physical].iter().any(|path| {
+            path.split('/')
+                .next()
+                .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
+        })
+    {
         return Err(CoreError::not_found("No source file at this location"));
     }
     let found = word.and_then(|word| {
-        let text = crate::lossy_string(std::fs::read(root.join(&rel)).ok()?);
+        let text = crate::lossy_string(std::fs::read(&source).ok()?);
         find_word(&text, line, word, offset.unwrap_or(0))
     });
     let (line, column) = found.map_or((line, None), |(line, column)| (line, Some(column)));

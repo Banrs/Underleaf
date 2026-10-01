@@ -12,6 +12,7 @@ import { trashName, deleteLabel } from './bridge.js';
 
 let host = {};          // the workspace's callbacks
 let nodes = {};         // elements of the mounted sidebar
+let outlineRequest = 0;
 
 // Expansion state is per project — one shared list would apply project A's
 // expanded folders to project B.
@@ -525,10 +526,11 @@ export function updateOutlineSelection() {
 // Choosing a section brings it to the top of the source, in its file. Focus
 // stays in the list unless asked for (Enter), so the arrow keys keep walking it.
 async function chooseSection(i, focusEditor = false) {
+  const request = ++outlineRequest;
   const entry = state.projectOutline[i];
   if (entry && entry.file !== state.openPath) await host.openFile(entry.file);
   const row = nodes.outline?.children[i];
-  if (!entry || !row || entry.file !== state.openPath) return;
+  if (request !== outlineRequest || !entry || !row || entry.file !== state.openPath) return;
   for (const r of nodes.outline.children) r.tabIndex = r === row ? 0 : -1;
   row.focus();
   state.topLine = entry.line;
@@ -658,6 +660,7 @@ async function runSearch() {
 // debounced search can update a newly mounted sidebar with an old project's
 // response.
 export function destroySidebar() {
+  outlineRequest++;
   clearTimeout(searchTimer);
   searchTimer = undefined;
   host = {};

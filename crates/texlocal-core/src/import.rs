@@ -66,7 +66,7 @@ fn collect(
             }
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !hidden(&name) {
+            if !hidden(&name) && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR)) {
                 // DirEntry::metadata does not follow links.
                 let meta = entry.metadata()?;
                 let rel = if rel.is_empty() {

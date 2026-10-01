@@ -39,10 +39,11 @@ static COMMENT_LINE: LazyLock<Regex> =
 // after it starts no comment.
 static COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(^|[^\\])%[^\n\r\x{2028}\x{2029}]*$").unwrap());
-// A file read in place, as TeX's \input, LaTeX's \include and \subfile read it.
+// Input commands and the tokens that can make them literal text. Consume other
+// control sequences too, so the second slash of \\input cannot start an input.
 static INPUT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\\(?:input|include|subfile)[{JS_SPACE}]*\{{([^{{}}]+)\}}"
+        r"%|\\(?:(?:input|include|subfile)[{JS_SPACE}]*\{{(?P<braced>[^{{}}]+)\}}|input[{JS_SPACE}]+(?P<bare>[^{{}}\\%{JS_SPACE}]+)|begin[{JS_SPACE}]*\{{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
     ))
     .unwrap()
 });
@@ -52,7 +53,7 @@ static COMMAND: LazyLock<Regex> =
 // the group after), labels and notes.
 static TITLE_DROP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\\(?:texorpdfstring|label|index|footnote)[{JS_SPACE}]*\{{(?:[^{{}}]|\{{[^{{}}]*\}})*\}}"
+        r"\\(?:texorpdfstring|label|index|footnote)[{JS_SPACE}]*\{{"
     ))
     .unwrap()
 });
@@ -95,13 +96,16 @@ pub struct Analysis {
 /// editor's file, whose lines it counts; when the main file doesn't reach it,
 /// the document is that file alone.
 pub fn analyze_project(root: &Path, main: &str, open: &str) -> Analysis {
-    let open = paths::fold_case(open);
+    let Ok(open) = paths::rel_key(open) else {
+        return Analysis::default();
+    };
+    let key = paths::fold_case(&open);
     let mut analysis = Analysis::default();
     let mut seen = HashSet::new();
-    read(root, main, &open, &mut seen, &mut analysis);
-    if !seen.contains(&open) {
+    read(root, main, &key, &mut seen, &mut analysis);
+    if !seen.contains(&key) {
         analysis = Analysis::default();
-        read(root, &open, &open, &mut HashSet::new(), &mut analysis);
+        read(root, &open, &key, &mut HashSet::new(), &mut analysis);
     }
     analysis
 }
@@ -138,7 +142,8 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
 /// The project file `\input{name}` reads: name.tex, which TeX tries first, or name.
 fn resolve(root: &Path, name: &str) -> Option<String> {
     let name = name.trim();
-    [format!("{name}.tex"), name.to_owned()]
+    let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+    [tex, name.to_owned()]
         .into_iter()
         .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
 }
@@ -153,6 +158,7 @@ fn add(
     input: &mut dyn FnMut(&mut Analysis, &str),
 ) -> usize {
     let mut lines = 0;
+    let mut literal = None;
     for line in text
         .split('\n')
         .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
@@ -173,11 +179,41 @@ fn add(
         }
         let code = code(line);
         into.words += words(code);
-        for m in INPUT.captures_iter(code) {
-            input(into, &m[1]);
-        }
+        inputs(line, &mut literal, &mut |name| input(into, name));
     }
     lines
+}
+
+/// Follow only executable input commands, keeping literal environments across
+/// lines. A percent in \verb or verbatim is text, not the start of a comment.
+fn inputs(mut line: &str, literal: &mut Option<String>, input: &mut dyn FnMut(&str)) {
+    loop {
+        if let Some(end) = literal.as_ref() {
+            let Some((_, rest)) = line.split_once(end.as_str()) else {
+                return;
+            };
+            line = rest;
+            *literal = None;
+        }
+        let Some(m) = INPUT.captures(line) else {
+            return;
+        };
+        let token = m.get(0).unwrap();
+        if token.as_str() == "%" {
+            return;
+        }
+        line = &line[token.end()..];
+        if let Some(file) = m.name("braced").or_else(|| m.name("bare")) {
+            input(file.as_str());
+        } else if let Some(environment) = m.name("literal") {
+            *literal = Some(format!("\\end{{{}}}", environment.as_str()));
+        } else if let Some(delimiter) = m.name("delimiter") {
+            let Some((_, rest)) = line.split_once(delimiter.as_str()) else {
+                return;
+            };
+            line = rest;
+        }
+    }
 }
 
 /// The brace group opened just before `rest`, up to its matching `}`, so a
@@ -200,7 +236,18 @@ fn brace_group(rest: &str) -> Option<&str> {
 /// A title as the outline shows it: styles, labels and grouping braces gone,
 /// spaces collapsed, "(untitled)" when nothing is left.
 fn plain_title(title: &str) -> String {
-    let title = TITLE_DROP.replace_all(title, "");
+    let mut rest = title;
+    let mut title = String::new();
+    while let Some(m) = TITLE_DROP.find(rest) {
+        title.push_str(&rest[..m.start()]);
+        rest = &rest[m.end()..];
+        if let Some(group) = brace_group(rest) {
+            rest = &rest[group.len() + 1..];
+        } else {
+            title.push_str(m.as_str());
+        }
+    }
+    title.push_str(rest);
     let title = TITLE_STYLE.replace_all(&title, "");
     let title = TITLE_BRACE.replace_all(&title, "$1");
     match SPACES.replace_all(&title, " ").trim_matches(' ') {

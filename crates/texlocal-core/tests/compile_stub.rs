@@ -523,6 +523,50 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
 }
 
+#[tokio::test]
+async fn inverse_sync_rejects_unsafe_sources_before_reading_words() {
+    let tmp = TempDir::new().unwrap();
+    let root = project(tmp.path());
+    fs::create_dir_all(root.join("build")).unwrap();
+    fs::write(root.join("build/main.pdf"), "fake").unwrap();
+    fs::write(root.join("build/generated.tex"), "secret").unwrap();
+    fs::create_dir_all(root.join("Build")).unwrap();
+    fs::write(root.join("Build/generated.tex"), "secret").unwrap();
+    let outside = tmp.path().join("outside.tex");
+    fs::write(&outside, "secret").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("linked.tex")).unwrap();
+    std::os::unix::fs::symlink(root.join("build"), root.join("generated")).unwrap();
+    let bin = tmp.path().join("bin");
+    let path = stub_env(&bin, "#!/bin/sh\nexit 0\n");
+    let synctex = bin.join("synctex");
+    fs::write(&synctex, "").unwrap();
+    fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut accepted = Vec::new();
+    for input in [
+        "linked.tex",
+        "generated/generated.tex",
+        ".texlocal.json",
+        "build/generated.tex",
+        "Build/generated.tex",
+        "/old/Paper/./../outside.tex",
+        "/old/Paper/./linked.tex",
+        "/old/Paper/./generated/generated.tex",
+        "/old/Paper/./Build/generated.tex",
+    ] {
+        fs::write(
+            &synctex,
+            format!("#!/bin/sh\nprintf 'Input:{input}\\nLine:1\\n'\n"),
+        )
+        .unwrap();
+        if let Ok(loc) =
+            synctex_inverse(&root, 1.0, 10.0, 20.0, Some("secret"), Some(2), &path).await
+        {
+            accepted.push((input, loc.file, loc.column));
+        }
+    }
+    assert!(accepted.is_empty(), "unsafe sources accepted: {accepted:?}");
+}
+
 static FORKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 extern "C" fn forked() {

@@ -2,8 +2,9 @@
 
 ## Status (2026-10-01)
 
-- **Branch `claude/native-finish`:** a PR on `main` after PR #16 (Codex's `codex/finish-native-workflows`, merged). It keeps #16's fixes, rewrites the features it kept at their smallest, and drops the rest.
-- **Last full check (2026-10-01, `claude/native-finish`):** the Mac's 64 tests in 17 suites and the CI typecheck, with no Swift warnings; `npm test` (116) and `npm run build`; `cargo fmt --check`, clippy `-D warnings` and 148 Rust tests. On screen (check copies): the toolbar glass, PDF scrolling, rebuilds and find, outline jumps and folding, the build panel, the creation sheets, Find and Replace, zoom limits; the web against `main` at every width (#15's states included).
+- **Native finish:** PR #17 (`claude/native-finish`, through `20ac587`) is merged into `main`, after PR #16. It keeps #16's fixes, rewrites the features it kept at their smallest, and drops the rest.
+- **Last full check (2026-10-01, `codex/adversarial-native-review`):** the Mac's 80 tests in 16 suites and the Swift 6 typecheck targeting macOS 27.0, with no Swift warnings; `npm test` (120) and `npm run build`; `cargo fmt --all --check`, workspace clippy `-D warnings` and 166 Rust tests. Xcode 27.1 on macOS 27.2 rebuilt the separate `com.texlocal.mac.check` app; the installed app was not used as evidence.
+- **Earlier on-screen checks** (check copies, before this review): the toolbar glass, PDF scrolling, rebuilds and find, outline jumps and folding, the build panel, the creation sheets, Find and Replace, zoom limits; the web against `main` at every width (#15's states included).
 - **Windows is a work in progress** (the owner's). It may change in the same commit as the core or the web; CI is its only check, since it can't be built here.
 - **The native frontend study:** https://claude.ai/artifact/7ZvNe2J8nNvsG8vBxTxVVm.
 - **Owner decisions are marked "(owner's decision)".** Don't reverse one without asking.

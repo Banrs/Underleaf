@@ -310,5 +310,30 @@
       "words": 2,
       "lines": 1
     }
+  },
+  {
+    "name": "title arguments balance nested and escaped braces",
+    "text": "\\section{\\texorpdfstring{\\textbf{\\emph{TeX}}}{PDF}}\n\\section{A\\footnote{An \\emph{inner \\textbf{note}}}}\n\\section{A\\footnote{brace \\} still a note}}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "PDF",
+          "line": 1
+        },
+        {
+          "depth": 2,
+          "title": "A",
+          "line": 2
+        },
+        {
+          "depth": 2,
+          "title": "A",
+          "line": 3
+        }
+      ],
+      "words": 11,
+      "lines": 3
+    }
   }
 ]

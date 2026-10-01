@@ -64,8 +64,17 @@ function braceGroup(rest) {
 // string is the group after), labels and notes dropped; \emph and the like and
 // font switches as plain text; grouping braces gone and spaces collapsed.
 function plainTitle(title) {
-  return title
-    .replace(/\\(?:texorpdfstring|label|index|footnote)\s*\{(?:[^{}]|\{[^{}]*\})*\}/g, '')
+  let rest = title, plain = '';
+  for (;;) {
+    const m = rest.match(/\\(?:texorpdfstring|label|index|footnote)\s*\{/);
+    if (!m) break;
+    plain += rest.slice(0, m.index);
+    rest = rest.slice(m.index + m[0].length);
+    const group = braceGroup(rest);
+    if (group != null) rest = rest.slice(group.length + 1);
+    else plain += m[0];
+  }
+  return (plain + rest)
     .replace(/\\(?:emph|text(?:bf|it|sl|sc|tt|sf|rm|up|md|normal)|underline|em|bf|it|sl|sc|tt|sf|rm|normalfont|(?:bf|md)series|(?:it|sl|sc|up)shape|(?:rm|sf|tt)family)\b\s*/g, '')
     .replace(/\\([{}&%$#_])|[{}]/g, '$1')
     .replace(/\s+/g, ' ')
