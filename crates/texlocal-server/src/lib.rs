@@ -101,7 +101,7 @@ impl App {
         // `http::serve` has already run the guard on the head, before reading
         // the body; it runs again for anyone handing a whole request in.
         if let Some(refused) = self.guard(&req) {
-            return refused;
+            return refused.secured();
         }
         let path = req.path().to_string();
         let read = matches!(req.method.as_str(), "GET" | "HEAD");
@@ -120,19 +120,7 @@ impl App {
         } else {
             Response::text(405, "Method not allowed")
         };
-        // No page may frame the app: a clickjacked frame could turn on shell
-        // escape and compile. A sandboxed project file already has its own
-        // CSP, and no frame shows one.
-        let response = if response.header("content-security-policy").is_none() {
-            response.with("Content-Security-Policy", "frame-ancestors 'none'")
-        } else {
-            response
-        };
-        response
-            .with("X-Frame-Options", "DENY")
-            .with("X-Content-Type-Options", "nosniff")
-            // The first page's URL holds the token until its script drops it.
-            .with("Referrer-Policy", "no-referrer")
+        response.secured()
     }
 
     /// Host, Origin and the token, from the request head alone: the server
