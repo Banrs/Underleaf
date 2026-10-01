@@ -57,6 +57,19 @@ WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 
 ## Open
 
+- **The owner finds the web over-spaced and has deferred web UI work.** A
+  spacing pass should start from PR #15's 36 px section headers, 28 px action
+  buttons and paddings.
+- Dead CSS rules: `.sidebar.collapsed + .divider` and
+  `.workspace.pdf-collapsed > .divider-sync` (PR #15 hides those dividers with
+  `hidden`).
+- `texfolder.js` marks `.folder-root.selected` with a class and no ARIA state.
+- Esc or Cancel on a dialog opened from a menu item sends focus to body.
+- The sidebar divider's grab zone right of its line is covered by the editor
+  pane.
+- Switching to Preview at 390 px lands on the last PDF page.
+- `workspace.js` passes a dead `onOpenFileGone` to `buildSidebar`.
+- `prefs.js` `migratePrefs` still migrates pre-1.0 keys.
 - The outline has no per-section folding.
 - Profile before changing: long-document text-layer rendering, re-renders
   while resizing, and whole-body CSS zoom for the interface scale.

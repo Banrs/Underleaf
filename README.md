@@ -87,7 +87,7 @@ src-tauri/               Tauri desktop shell (being retired).
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
 web/embed/               Editor and PDF pages the Windows app embeds.
 docs/                    design-tokens.md (extracted Apple UI-kit values) ·
-                         web.md · windows.md
+                         web.md
 build.mjs                esbuild bundler and shared asset copy
 scripts/                 Version check
 ```
