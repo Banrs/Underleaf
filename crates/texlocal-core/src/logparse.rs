@@ -53,10 +53,14 @@ fn has_error(items: &[LogItem]) -> bool {
     items.iter().any(|item| item.kind == "error")
 }
 
-/// A path relative to the project, without its "./"; None for an absolute
-/// one, which is one of TeX's own files.
-fn project_path(path: &str) -> Option<&str> {
-    (!is_absolute_like(path)).then(|| path.strip_prefix("./").unwrap_or(path))
+/// A forward-slash project path; None for an absolute TeX distribution path.
+fn project_path(path: &str) -> Option<String> {
+    (!is_absolute_like(path)).then(|| {
+        path.strip_prefix("./")
+            .or_else(|| path.strip_prefix(".\\"))
+            .unwrap_or(path)
+            .replace('\\', "/")
+    })
 }
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
@@ -103,11 +107,11 @@ fn locate(
         return (Some(main_file.to_string()), Some(line));
     };
     if let Some(rel) = project_path(path) {
-        return (Some(rel.to_string()), Some(line));
+        return (Some(rel), Some(line));
     }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     *message = format!("{name}: {message}");
-    (files.find_map(project_path).map(str::to_string), None)
+    (files.find_map(project_path), None)
 }
 
 /// Add the line after `prev` to a message. After a line TeX broke at its
@@ -257,7 +261,7 @@ pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     blg.lines()
         .filter_map(|line| {
             if let Some(m) = BIBTEX_ERROR.captures(line) {
-                let file = project_path(m[3].trim()).map(str::to_string);
+                let file = project_path(m[3].trim());
                 Some(LogItem {
                     kind: "error",
                     line: file.as_ref().and(m[2].parse().ok()),
@@ -524,8 +528,15 @@ mod tests {
 
     #[test]
     fn tex_distribution_paths_are_not_the_projects() {
-        assert_eq!(project_path("./main.tex"), Some("main.tex"));
-        assert_eq!(project_path("chapters/a.tex"), Some("chapters/a.tex"));
+        assert_eq!(project_path("./main.tex"), Some("main.tex".into()));
+        assert_eq!(
+            project_path("chapters/a.tex"),
+            Some("chapters/a.tex".into())
+        );
+        assert_eq!(
+            project_path(r".\chapters\a.tex"),
+            Some("chapters/a.tex".into())
+        );
         for path in [
             "/usr/local/texlive/a.sty",
             "C:/texlive/a.sty",
@@ -534,5 +545,16 @@ mod tests {
         ] {
             assert_eq!(project_path(path), None);
         }
+    }
+
+    #[test]
+    fn windows_relative_log_and_bibliography_paths_use_forward_slashes() {
+        let log = "(./main.tex\n(.\\chapters\\a.tex\nLaTeX Warning: Missing on input line 3.\n.\\chapters\\a.tex:4: Bad command.\nl.4 x\n";
+        let items = parse_log(log, "main.tex");
+        assert_eq!(items[0].file.as_deref(), Some("chapters/a.tex"));
+        assert_eq!(items[1].file.as_deref(), Some("chapters/a.tex"));
+
+        let items = parse_blg("Bad entry---line 5 of file .\\refs\\works.bib\n");
+        assert_eq!(items[0].file.as_deref(), Some("refs/works.bib"));
     }
 }
