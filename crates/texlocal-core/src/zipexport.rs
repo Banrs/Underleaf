@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::atomic::{create_temp, replace};
+use crate::atomic::create_temp;
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
@@ -37,7 +37,7 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         };
         export.add_dir(root, &root_canonical, "")?;
         export.writer.finish()?.sync_all()?;
-        Ok(replace(&temp_path, dest)?)
+        Ok(fs::rename(&temp_path, dest)?)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);

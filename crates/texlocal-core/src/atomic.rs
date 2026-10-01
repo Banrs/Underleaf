@@ -3,66 +3,18 @@
 //! or a crash part-way leaves the old file as it was, where writing in place
 //! would leave it empty or cut short.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// A fresh hidden name beside `path`, ending in `.{ext}`. Hidden, so the
-/// project walks never show one left behind by a crash.
-fn sibling(path: &Path, ext: &str) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    // Shortened, so a name near the volume's 255-byte limit still has room.
-    let name: String = path
-        .file_name()
-        .map(|n| n.to_string_lossy().chars().take(64).collect())
-        .unwrap_or_default();
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(".{name}.texlocal-{}-{n}.{ext}", std::process::id()))
-}
 
 /// A new, empty temporary file beside `path`, and its name.
 pub(crate) fn create_temp(path: &Path) -> io::Result<(PathBuf, File)> {
-    loop {
-        let candidate = sibling(path, "tmp");
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((candidate, file)),
-            // Left by an earlier process with this pid; the counter moves on.
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-/// Move the completed `temp` over `dest`. Windows refuses to rename over a
-/// file some other program holds open without sharing; there the old file
-/// steps aside first and comes back if the move still fails.
-pub(crate) fn replace(temp: &Path, dest: &Path) -> io::Result<()> {
-    match fs::rename(temp, dest) {
-        #[cfg(windows)]
-        Err(err)
-            if dest.exists()
-                && matches!(
-                    err.kind(),
-                    io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
-                ) =>
-        {
-            let backup = sibling(dest, "bak");
-            fs::rename(dest, &backup)?;
-            fs::rename(temp, dest).inspect_err(|_| {
-                let _ = fs::rename(&backup, dest);
-            })?;
-            let _ = fs::remove_file(backup);
-            Ok(())
-        }
-        result => result,
-    }
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let temp = tempfile::Builder::new()
+        .prefix(".texlocal-")
+        .tempfile_in(parent.unwrap_or(Path::new(".")))?;
+    let (file, path) = temp.keep().map_err(|err| err.error)?;
+    Ok((path, file))
 }
 
 /// Replace `path`'s contents with `bytes`, or create it. A symlinked file is
@@ -91,7 +43,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         file.sync_all()?;
         // Closed before the rename, which Windows needs.
         drop(file);
-        replace(&temp, &target)
+        fs::rename(&temp, &target)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
@@ -163,6 +115,16 @@ mod tests {
     fn a_file_with_a_long_name_saves() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join(format!("{}.tex", "n".repeat(240)));
+        write(&file, b"one").unwrap();
+        write(&file, b"two").unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"two");
+        assert_eq!(names(dir.path()).len(), 1);
+    }
+
+    #[test]
+    fn a_file_with_a_long_unicode_name_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(format!("{}.tex", "🦀".repeat(60)));
         write(&file, b"one").unwrap();
         write(&file, b"two").unwrap();
         assert_eq!(fs::read(&file).unwrap(), b"two");
