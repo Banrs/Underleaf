@@ -254,7 +254,8 @@ The editor is native on the Mac (TextKit 2 over `crates/texlocal-syntax`; the Ma
 - **In a test, a file's undo steps are one group:** `groupsByEvent` closes a group only as the run loop turns. Check one step per opened file.
 
 **PDF**
-- **PDFKit is left to itself:** no insets of the app's round its fit-width layout. A rebuild goes back to `currentDestination`; `loadDocument` hides hyperref's boxes.
+- **PDFKit is left to itself:** no insets of the app's round its fit-width layout. `loadDocument` hides hyperref's boxes.
+- **A rebuild goes back to `SyncPDFView.shownDestination`,** the point under the toolbar and find bar, where `go(to:)` puts a destination. `currentDestination` is the view's top, behind them, so a round trip through it moved the pages down by their height on every build.
 - **The pages keep PDFKit's own margins** (set ones scroll the pages on every resize step). They scale with the page, so Fit Height counts them, and PDFView keeps a set scale as it resizes, so `SyncPDFView.onResize` fits the height again.
 - **Command-click in the PDF jumps to the source,** as in the Mac's TeX apps; a double-click stays PDFKit's word selection. The web and Windows viewers use a double-click.
 - **Dark paper is PDFView's `draw(_:to:)` (`drawPage:toContext:`),** which PDFKit calls per tile on its tile queue: the override is `nonisolated` (a main-actor one crashes) and reads the paper from an `Atomic`. Filters on `documentView` render at one pixel per page point, soft over 50% zoom.
