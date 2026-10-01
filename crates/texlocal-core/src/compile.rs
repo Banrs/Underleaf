@@ -398,8 +398,8 @@ pub struct CompileOverrides {
 }
 
 /// A build's outcome. `ok`: latexmk finished cleanly and the PDF exists.
-/// `pdf`: set whenever this build wrote the PDF, errors or not, since a build
-/// carries on past errors as Overleaf's does. `stopped`: Stop, a newer build
+/// `pdf`: the successful build's PDF, or one a failed build wrote while
+/// compiling past errors. `stopped`: Stop, a newer build
 /// of the same project, or quitting ended it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -808,8 +808,7 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
         ok,
         stopped: end == End::Stopped,
         duration_ms: run.request_started.elapsed().as_millis() as u64,
-        // Never a PDF this run didn't write: the UI keeps its old preview
-        // visible but does not reload it as fresh output.
+        // A failed run can only advertise a PDF it actually wrote.
         pdf: (ok || wrote_pdf).then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
         errors,
         warnings,
