@@ -40,6 +40,8 @@ static FILE_LINE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(.+?\.(?:tex|ltx|sty|cls|bib|bbl|aux|toc|lof|lot|out|ind|nav|snm|def|clo|cfg|fd|tikz|pgf)):(\d+):\s*(.*)$").unwrap()
 });
 static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap());
+static LAST_CS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(LaTeX(?: Font| NFSS)?|Package (\S+)|Class (\S+)) Warning:\s*(.*)$").unwrap()
 });
@@ -143,6 +145,22 @@ fn echo_line(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
+/// "Undefined control sequence." with the one TeX means: the last token of
+/// the first context line from the error on line `i` to its echo that ends
+/// in one ("<recently read> \foo", "\x ->\foo", the echo itself).
+fn name_undefined(message: &mut String, lines: &[&str], i: usize, echo: Option<usize>) {
+    let named = echo
+        .filter(|_| message.starts_with("Undefined control sequence."))
+        .and_then(|j| {
+            lines[i + 1..=j]
+                .iter()
+                .find_map(|line| LAST_CS.captures(line))
+        });
+    if let Some(m) = named {
+        *message = format!("Undefined control sequence: {}", &m[1]);
+    }
+}
+
 /// The first blank line from `from`, or the end.
 fn blank_from(lines: &[&str], from: usize) -> usize {
     (from..lines.len())
@@ -163,17 +181,19 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
 
     for (i, &line) in lines.iter().enumerate() {
         if let Some(m) = FILE_LINE.captures(line) {
-            // Error detail often continues on following lines up to the "l.<n>" echo.
+            // Error detail often continues on following lines, up to TeX's
+            // context ("<inserted text>", "<read *>") or the "l.<n>" echo.
             let mut message = m[3].to_string();
             let mut prev = line;
             for next in &lines[(i + 1)..(i + 4).min(lines.len())] {
-                if next.trim().is_empty() || next.starts_with('!') || L_NO.is_match(next) {
+                if next.trim().is_empty() || next.starts_with(['!', '<']) || L_NO.is_match(next) {
                     break;
                 }
                 append(&mut message, prev, next);
                 prev = next;
             }
-            quiet_until = echo_line(&lines, i).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
+            let echo = echo_line(&lines, i);
+            quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             // TeX's closing "==> Fatal error occurred" takes the place of
             // the error that stopped it: that error names the place, and
             // the summary names none of its own. After that error it is
@@ -182,6 +202,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             if summary && has_error(&items) {
                 continue;
             }
+            name_undefined(&mut message, &lines, i, echo);
             let line_no = (!summary).then(|| m[2].parse().ok()).flatten();
             let (file, line_no) = locate(Some(&m[1]), line_no, &open, main_file, &mut message);
             items.push(LogItem {
@@ -200,6 +221,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
                 .and_then(|j| L_NO.captures(lines[j]))
                 .and_then(|lm| lm[1].parse().ok());
             let mut message = message.trim().to_string();
+            name_undefined(&mut message, &lines, i, echo);
             let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
             items.push(LogItem {
                 kind: "error",
@@ -340,13 +362,45 @@ mod tests {
         assert_eq!(items, parse_log(lf, "main.tex"));
         // The log's ./main.tex, without its ./
         assert_eq!(items[0].file.as_deref(), Some("main.tex"));
-        assert_eq!(
-            items[0].message,
-            "Undefined control sequence. <recently read> \\foo"
-        );
+        assert_eq!(items[0].message, "Undefined control sequence: \\foo");
         assert_eq!(items[1].message, "Emergency stop.");
         assert_eq!(items[1].line, Some(9));
         assert_eq!(items[2].line, Some(44));
+    }
+
+    #[test]
+    fn messages_name_the_undefined_control_sequence_without_tex_context() {
+        let log = "./main.tex:19: Undefined control sequence.\n\
+                   l.19 ...ndefined control sequence: \\undefinedmacro\n\
+                   \x20                                                 .\n\
+                   \n\
+                   ./main.tex:21: Missing $ inserted.\n\
+                   <inserted text> \n\
+                   \x20               $\n\
+                   l.21 x^\n\
+                   \n\
+                   ./main.tex:24: Undefined control sequence.\n\
+                   \\x ->\\foo\n\
+                   \x20        \n\
+                   l.24 \\x\n\
+                   \n\
+                   ./main.tex:5: Emergency stop.\n\
+                   <read *> \n\
+                   \x20        \n\
+                   l.5 \\input{chapters/intro}\n";
+        let messages: Vec<_> = parse_log(log, "main.tex")
+            .into_iter()
+            .map(|it| it.message)
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "Undefined control sequence: \\undefinedmacro",
+                "Missing $ inserted.",
+                "Undefined control sequence: \\foo",
+                "Emergency stop.",
+            ]
+        );
     }
 
     #[test]
@@ -473,7 +527,7 @@ mod tests {
         );
         assert_eq!(
             items[0].message,
-            "graphicx.sty: Undefined control sequence."
+            "graphicx.sty: Undefined control sequence: \\foo"
         );
     }
 

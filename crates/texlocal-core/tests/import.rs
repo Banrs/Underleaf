@@ -6,7 +6,7 @@ use std::path::Path;
 
 use texlocal_core::import::import_project;
 use texlocal_core::projects::file_tree;
-use texlocal_core::service::Service;
+use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
 use zip::write::SimpleFileOptions;
 
 fn names(root: &Path) -> Vec<String> {
@@ -82,26 +82,64 @@ fn a_zip_of_one_folder_brings_that_folders_contents() {
 }
 
 #[test]
-fn a_single_file_is_the_project_and_its_main_file_if_it_is_tex() {
+fn a_tex_brings_its_folder_and_is_its_main_file() {
     let dir = tempfile::tempdir().unwrap();
     let service = Service::new(dir.path().join("data"));
-    let tex = dir.path().join("notes.tex");
-    fs::write(&tex, "\\documentclass{article}").unwrap();
-    let info = import_project(&service, &tex).unwrap();
+    let src = dir.path().join("Paper");
+    for (path, text) in [
+        ("main.tex", "\\documentclass{article}"),
+        ("paper.tex", "\\documentclass{article}\\input{chapters/a}"),
+        ("chapters/a.tex", "\\section{A}"),
+        ("refs.bib", "@book{k,}"),
+    ] {
+        fs::create_dir_all(src.join(path).parent().unwrap()).unwrap();
+        fs::write(src.join(path), text).unwrap();
+    }
+    let info = import_project(&service, &src.join("paper.tex")).unwrap();
     assert_eq!(
         (info.id.as_str(), info.main_file.as_str()),
-        ("notes", "notes.tex")
+        ("Paper", "paper.tex")
+    );
+    assert_eq!(
+        names(&service.data_dir.join("Paper")),
+        ["chapters/a.tex", "main.tex", "paper.tex", "refs.bib"]
     );
 
-    // Without TeX, the blank template's main file joins it.
-    let bib = dir.path().join("refs.bib");
-    fs::write(&bib, "@book{k,}").unwrap();
+    // Any other file comes alone; without TeX, the blank template's main
+    // file joins it.
+    let bib = src.join("refs.bib");
     let info = import_project(&service, &bib).unwrap();
     assert_eq!(info.main_file, "main.tex");
     assert_eq!(
         names(&service.data_dir.join("refs")),
         ["main.tex", "refs.bib"]
     );
+}
+
+#[test]
+fn a_tex_in_a_folder_larger_than_a_project_comes_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Service::new(dir.path().join("data"));
+    let downloads = dir.path().join("Downloads");
+    fs::create_dir_all(&downloads).unwrap();
+    fs::write(downloads.join("notes.tex"), "\\documentclass{article}").unwrap();
+    // Sparse: past one upload's bytes without writing them.
+    let big = fs::File::create(downloads.join("big.dmg")).unwrap();
+    big.set_len(UPLOAD_MAX_BYTES as u64 + 1).unwrap();
+    let info = import_project(&service, &downloads.join("notes.tex")).unwrap();
+    assert_eq!(
+        (info.id.as_str(), info.main_file.as_str()),
+        ("notes", "notes.tex")
+    );
+    assert_eq!(names(&service.data_dir.join("notes")), ["notes.tex"]);
+
+    // As is more than 2000 files.
+    fs::remove_file(downloads.join("big.dmg")).unwrap();
+    for i in 0..2000 {
+        fs::write(downloads.join(format!("{i}.txt")), "").unwrap();
+    }
+    let info = import_project(&service, &downloads.join("notes.tex")).unwrap();
+    assert_eq!(names(&service.data_dir.join(&info.id)), ["notes.tex"]);
 }
 
 #[cfg(unix)]

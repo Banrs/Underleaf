@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use zip::ZipArchive;
 
+use crate::paths::sanitize_name;
 use crate::projects::{self, ProjectInfo};
 use crate::service::{keep_both, Clash, Service, UploadSpec, UPLOAD_MAX_BYTES};
 use crate::{templates, CoreError, BUILD_DIR};
@@ -41,14 +42,15 @@ fn hidden(name: &str) -> bool {
 
 /// Files under a dropped path, with project-relative names that keep a
 /// dropped folder's own name (none for an empty `rel`), and where to read
-/// each. Inside a folder, hidden entries stay behind and symlinks are
-/// skipped, not followed: a drop imports what was dropped, never what a link
-/// inside it points at.
+/// each, stopping once there are more than `max`. Inside a folder, hidden
+/// entries stay behind and symlinks are skipped, not followed: a drop imports
+/// what was dropped, never what a link inside it points at.
 fn collect(
     abs: &Path,
     rel: String,
     meta: fs::Metadata,
     files: &mut Vec<(UploadSpec, PathBuf)>,
+    max: usize,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
         let spec = UploadSpec {
@@ -59,6 +61,9 @@ fn collect(
         files.push((spec, abs.to_path_buf()));
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs)? {
+            if files.len() > max {
+                break;
+            }
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !hidden(&name) {
@@ -69,7 +74,7 @@ fn collect(
                 } else {
                     format!("{rel}/{name}")
                 };
-                collect(&entry.path(), rel, meta, files)?;
+                collect(&entry.path(), rel, meta, files, max)?;
             }
         }
     }
@@ -92,7 +97,8 @@ pub fn import_files(
     for abs in paths {
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
-        collect(abs, name.into_owned(), fs::metadata(abs)?, &mut files)?;
+        let meta = fs::metadata(abs)?;
+        collect(abs, name.into_owned(), meta, &mut files, usize::MAX)?;
     }
     let (mut specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
     let existing = service.validate_uploads(id, dir, &specs)?.existing;
@@ -155,23 +161,53 @@ fn zip_files(archive: &mut ZipArchive<File>) -> Result<Vec<(UploadSpec, Source)>
     Ok(files)
 }
 
+/// A folder's files, read no further than `max`.
+fn folder_files(dir: &Path, max: usize) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
+    let mut found = Vec::new();
+    collect(dir, String::new(), fs::metadata(dir)?, &mut found, max)?;
+    Ok(found
+        .into_iter()
+        .map(|(s, p)| (s, Source::File(p)))
+        .collect())
+}
+
+/// Overleaf's limit on a project's files.
+const TEX_FOLDER_FILES: usize = 2000;
+
 /// File › Open: a folder, a .zip or a single file from anywhere, copied into
 /// a new project named after it ("Name 2" when that is taken), which is
-/// returned. Only visible files come, as a drop brings them, and a top-level
-/// `build` stays behind as the old project's compile output. The main file is
-/// the chosen .tex, else the likeliest top-level one; with no TeX at all, the
-/// blank template's main.tex.
+/// returned. A .tex brings its folder, named after that, for what it inputs,
+/// includes and cites, unless the folder can't be read, is larger than a
+/// project (Downloads, a home folder: more than 2000 files or one upload's
+/// bytes) or has no name a project can take: then the .tex comes alone. Only
+/// visible files come, as a drop brings them, and a top-level `build` stays
+/// behind as the old project's compile output. The main file is the chosen
+/// .tex, else the likeliest top-level one; with no TeX at all, the blank
+/// template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
     let meta = fs::metadata(src)?;
     let is_dir = meta.is_dir();
     let named =
         |name: Option<&std::ffi::OsStr>| name.unwrap_or_default().to_string_lossy().into_owned();
     let ext = named(src.extension()).to_lowercase();
-    let (base, mut zip, mut files) = if is_dir {
-        let mut found = Vec::new();
-        collect(src, String::new(), meta, &mut found)?;
-        let found = found.into_iter().map(|(s, p)| (s, Source::File(p)));
-        (named(src.file_name()), None, found.collect())
+    let tex = (!is_dir && ext == "tex").then(|| named(src.file_name()));
+    let folder = if is_dir {
+        Some((src, folder_files(src, usize::MAX)?))
+    } else {
+        src.parent().zip(tex.as_ref()).and_then(|(dir, tex)| {
+            let files = folder_files(dir, TEX_FOLDER_FILES).ok()?;
+            let bytes = files
+                .iter()
+                .fold(0, |sum, (s, _)| s.size.saturating_add(sum));
+            (files.len() <= TEX_FOLDER_FILES
+                && bytes <= UPLOAD_MAX_BYTES
+                && files.iter().any(|(s, _)| &s.path == tex)
+                && sanitize_name(&named(dir.file_name())).is_ok())
+            .then_some((dir, files))
+        })
+    };
+    let (base, mut zip, mut files) = if let Some((dir, found)) = folder {
+        (named(dir.file_name()), None, found)
     } else if ext == "zip" {
         let mut archive = ZipArchive::new(File::open(src)?)?;
         let found = zip_files(&mut archive)?;
@@ -192,14 +228,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
         !top.eq_ignore_ascii_case(BUILD_DIR)
     });
 
-    let (id, root) = (1..)
-        .map(|n| match n {
-            1 => base.clone(),
-            n => format!("{base} {n}"),
-        })
-        .map(|name| projects::new_project_dir(&service.data_dir, &name))
-        .find(|made| !made.as_ref().is_err_and(|err| err.status == 409))
-        .expect("a free name")?;
+    let (id, root) = projects::new_project_dir(&service.data_dir, &base)?;
     let result = (|| {
         let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
         service.validate_uploads(&id, "", &specs)?;
@@ -218,7 +247,7 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             };
             service.upload_file(&id, "", &spec.path, &bytes, false)?;
         }
-        let main = match (!is_dir && ext == "tex").then(|| named(src.file_name())) {
+        let main = match tex {
             None => projects::guess_main_file(&root)?,
             chosen => chosen,
         };

@@ -280,17 +280,26 @@ pub fn create_project(
     finish_project(clean, &root, &json!({}))
 }
 
-/// A new, empty project folder for `name`, and the name as sanitized.
+/// A new, empty project folder for `name`, or "name 2" and so on when that
+/// is taken, as Finder numbers copies; and the name it got.
 pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, PathBuf), CoreError> {
     let clean = sanitize_name(name)?;
-    let root = data_dir.join(&clean);
     fs::create_dir_all(data_dir)?;
-    // One create rather than a check and then a create: it cannot race, and
-    // it refuses anything already there, a dangling link or case alias too.
-    match fs::create_dir(&root) {
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(name_taken()),
-        created => Ok(created.map(|()| (clean, root))?),
+    for n in 1.. {
+        let name = match n {
+            1 => clean.clone(),
+            n => format!("{clean} {n}"),
+        };
+        let root = data_dir.join(&name);
+        // One create rather than a check and then a create: it cannot race,
+        // and it passes over anything already there, a dangling link or case
+        // alias too.
+        match fs::create_dir(&root) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            created => return Ok(created.map(|()| (name, root))?),
+        }
     }
+    unreachable!("a free name")
 }
 
 /// Write a new project's settings, and the project as the library lists it.
@@ -417,7 +426,7 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
 
 const TEXT_EXT: &[&str] = &[
     "tex", "bib", "cls", "sty", "bst", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "lua",
-    "py", "r", "dat", "def", "clo", "tikz", "svg",
+    "py", "r", "dat", "def", "clo", "tikz",
 ];
 
 pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
@@ -656,7 +665,8 @@ fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // ASCII, which swallows a non-breaking space into the key.
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@[0-9A-Za-z_]+\s*\{\s*([^,\s]+)\s*,").unwrap());
-static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]+)\}").unwrap());
+/// Not a bare prefix, as an inserted block's `fig:` is until it's filled in.
+static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\label\{([^}]*[^}:])\}").unwrap());
 /// A thebibliography entry's key, which \cite takes as a .bib key.
 static BIBITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}").unwrap());
