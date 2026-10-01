@@ -47,9 +47,9 @@ class ProbeTests(unittest.TestCase):
     def test_sends_utf8_byte_edit_and_receives_flush(self):
         result = probe_module.probe([sys.executable, str(self.fake)],
                                     self.root, "Hello", "Hi", 2, 2)
-        self.assertIn("append-lines", result["edit_events"])
-        self.assertGreaterEqual(result["edit_flush_ms"], 0)
-        self.assertIsNotNone(result["edit_first_output_ms"])
+        self.assertIn("append-lines", result["events_after_send"])
+        self.assertGreaterEqual(result["after_send_next_flush_ms"], 0)
+        self.assertIsNotNone(result["after_send_next_output_ms"])
 
     def test_timeout_reaps_child(self):
         prior = os.environ.get("FAKE_HANG")

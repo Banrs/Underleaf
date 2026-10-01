@@ -102,7 +102,7 @@ def probe(command, root, find, replace, startup_timeout, edit_timeout):
     try:
         started = time.monotonic()
         initial = until_flush(startup_timeout)
-        # A pending initial event cannot be mistaken for the edit's response.
+        # Discard events already read; asynchronous events may still be in flight.
         while not events.empty():
             events.get_nowait()
         # The root exists in TeXpresso's file table after the initial pass.
@@ -113,11 +113,11 @@ def probe(command, root, find, replace, startup_timeout, edit_timeout):
         first_output = next((at for at, verb in changed
                              if verb in ("append", "append-lines", "truncate", "truncate-lines")), None)
         return {
-            "startup_ms": round((initial[-1][0] - started) * 1000),
-            "edit_first_output_ms": round((first_output - edited_at) * 1000) if first_output else None,
-            "edit_flush_ms": round((changed[-1][0] - edited_at) * 1000),
-            "edit_events": [verb for _, verb in changed],
-            "note": "Protocol events only; PDF correctness and RSS are not measured.",
+            "launch_to_first_flush_ms": round((initial[-1][0] - started) * 1000),
+            "after_send_next_output_ms": round((first_output - edited_at) * 1000) if first_output else None,
+            "after_send_next_flush_ms": round((changed[-1][0] - edited_at) * 1000),
+            "events_after_send": [verb for _, verb in changed],
+            "note": "Asynchronous events are not correlated to the edit; PDF correctness and RSS are not measured.",
         }
     except Exception as error:
         raise RuntimeError(f"{error}; stderr tail: {' | '.join(stderr_tail)}") from error

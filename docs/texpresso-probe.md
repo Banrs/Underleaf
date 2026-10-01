@@ -3,7 +3,7 @@
 This is an isolated experiment. `scripts/texpresso-probe.py` launches an installed
 TeXpresso, waits for its first editor-protocol `flush`, opens the root file in
 TeXpresso's virtual file system, sends one precise UTF-8 byte edit, and times
-the next output event and `flush`. It terminates the child process group on
+the next observed output event and `flush`. It terminates the child process group on
 success, timeout, or error. It never changes the source file or TeXLocal's
 compile command, ABI, or clients.
 
@@ -19,10 +19,13 @@ python3 -m unittest discover -s scripts -p 'test_texpresso_probe.py'
 ```
 
 `--find` must occur exactly once in the UTF-8 root file. TeXpresso opens its
-own SDL preview window; the probe does not extract a PDF. The reported times
-measure protocol responsiveness for one edit, not a complete or correct PDF.
-Use the same representative document and edit for repeated comparisons with
-TeXLocal's `CompileResult.durationMs`; also record total process-tree RSS and
+own SDL preview window; the probe does not extract a PDF. The editor protocol
+is asynchronous: a `flush` is not an acknowledgement of the preceding edit.
+Events already in flight may be counted after the edit is sent. The reported
+times are only intervals until the next observed events, not edit completion
+or a valid performance benchmark. Before comparing with TeXLocal's
+`CompileResult.durationMs`, independently verify the rendered edit and measure
+a representative document repeatedly. Also record total process-tree RSS and
 whether the output, logs, references, fonts, and SyncTeX agree. TeXpresso's
 driver retains up to 32 forked engine checkpoints, so a parent PID's RSS alone
 would undercount memory.
@@ -52,6 +55,11 @@ Current integration boundaries, from upstream source:
   currently does not execute commands. TeXLocal supports shell escape and
   latexmk-managed BibTeX/Biber/MakeIndex. Validate these workflows before any
   production use.
+- TeXpresso's [root license](https://github.com/let-def/texpresso/blob/main/LICENSE)
+  is MIT; that does not cover MuPDF, whose
+  [COPYING](https://github.com/ArtifexSoftware/mupdf/blob/master/COPYING)
+  specifies AGPL or a commercial license. Resolve dependency licensing before
+  distributing a bundled previewer.
 
 If the real probe shows a clear gain, the next step is a separate opt-in
 XeLaTeX preview trial on macOS with latexmk kept for authoritative builds.
