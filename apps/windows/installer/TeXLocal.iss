@@ -1,6 +1,6 @@
 ; The Windows installer: Inno Setup 6, per user and without admin rights, into
 ; %LOCALAPPDATA%\Programs\TeXLocal with a Start-menu shortcut. Build it from
-; a Release publish (see HANDOFF.md) with
+; a Release publish with
 ;   iscc /DSource=<publish folder> /DAppVersion=<version> apps\windows\installer\TeXLocal.iss
 ; Projects (~\TeXLocal) and settings (%LOCALAPPDATA%\TeXLocal) are the user's
 ; and stay when the app is uninstalled.

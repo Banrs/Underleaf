@@ -163,7 +163,7 @@ function buildChrome(id) {
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
+  // Tauri's drag region; it skips interactive elements itself.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
@@ -704,7 +704,7 @@ async function compile({ auto = false } = {}) {
     const result = await api.compile(projectId);
     if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
     state.lastResult = result;
-    // The log takes the PDF's place only when a failed build left none (docs/web.md).
+    // The log takes the PDF's place only when a failed build left none.
     const failed = !result.ok && !result.stopped;
     state.logOpen = failed && !result.pdf;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });

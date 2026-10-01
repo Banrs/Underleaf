@@ -37,7 +37,7 @@ const jumpFlashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// Xcode 27's Default (Light) and Default (Dark), from docs/design-tokens.md. No
+// Xcode 27's Default (Light) and Default (Dark). No
 // background: the editor follows the panel token, so no seam shows. Dark
 // comments are lightened for AA contrast on both app editor surfaces.
 const XCODE_THEME = {
@@ -55,8 +55,8 @@ const XCODE_THEME = {
   },
 };
 
-// The stex mode's tokens mapped to Xcode's categories by meaning
-// (docs/design-tokens.md); math delimiters take the preprocessor colour.
+// The stex mode's tokens mapped to Xcode's categories by meaning;
+// math delimiters take the preprocessor colour.
 const xcodeHighlight = (c) => HighlightStyle.define([
   { tag: tags.tagName, color: c.keyword },
   { tag: tags.atom, color: c.type },
