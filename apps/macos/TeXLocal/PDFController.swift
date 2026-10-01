@@ -46,7 +46,7 @@ final class PDFController {
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
-    @ObservationIgnored private var applyingFit = false
+    @ObservationIgnored fileprivate var applyingFit = false
 
     func pageChanged() {
         guard let view, let document = view.document, let page = view.currentPage else { return }
@@ -68,13 +68,20 @@ final class PDFController {
     /// Explicit fits follow layout; native autoscaling's best fit is a separate choice.
     func applyFit() {
         guard !applyingFit, let fit, let view, let page = view.currentPage else { return }
-        let row = view.rowSize(for: page), viewport = view.viewportSize
-        let ratio = fit == .width ? viewport.width / row.width : viewport.height / row.height
-        guard ratio.isFinite, ratio > 0 else { return }
         applyingFit = true
         view.autoScales = false
-        let scale = min(max(view.scaleFactor * ratio, view.minScaleFactor), view.maxScaleFactor)
-        if abs(view.scaleFactor - scale) > 0.0001 { view.scaleFactor = scale }
+        // Let native layout settle autohiding legacy scrollbars, then remeasure.
+        // Keep the settling bounded when fitting changes scrollbar visibility.
+        for _ in 0..<4 {
+            view.documentView?.enclosingScrollView?.layoutSubtreeIfNeeded()
+            let row = view.rowSize(for: page), viewport = view.viewportSize
+            let ratio = fit == .width ? viewport.width / row.width : viewport.height / row.height
+            guard ratio.isFinite, ratio > 0 else { break }
+            let scale = min(max(view.scaleFactor * ratio, view.minScaleFactor), view.maxScaleFactor)
+            guard abs(view.scaleFactor - scale) > 0.0001 else { break }
+            view.scaleFactor = scale
+            view.layoutDocumentView()
+        }
         scaleChanged()
         applyingFit = false
     }
@@ -254,7 +261,6 @@ final class PDFController {
 /// PDFKit's selection and gestures, with explicit SyncTeX navigation.
 final class SyncPDFView: PDFView {
     weak var controller: PDFController?
-    private var priorViewportSize = NSSize.zero, pageRowSize = NSSize.zero
 
     /// The unobscured viewport, excluding any non-overlay scrollbars.
     var viewportSize: NSSize {
@@ -273,13 +279,10 @@ final class SyncPDFView: PDFView {
     }
 
     private func refitAfterLayout() {
-        guard let page = currentPage, scaleFactor > 0 else { return }
-        let size = viewportSize, row = rowSize(for: page)
-        let unscaled = NSSize(width: row.width / scaleFactor, height: row.height / scaleFactor)
-        guard size != priorViewportSize || abs(unscaled.width - pageRowSize.width) > 0.001 || abs(unscaled.height - pageRowSize.height) > 0.001 else { return }
-        priorViewportSize = size
-        pageRowSize = unscaled
-        controller?.applyFit()
+        guard let controller, !controller.applyingFit else { return }
+        // A native zoom may alter the scrollbars before its scale notification.
+        if abs(scaleFactor - controller.scale) > 0.0001 { controller.scaleChanged() }
+        controller.applyFit()
     }
 
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: (String, offset: Int)?) -> Void = { _, _, _ in }

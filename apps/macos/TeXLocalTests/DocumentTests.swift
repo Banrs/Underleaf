@@ -108,11 +108,13 @@ struct FindTests {
 @MainActor
 struct PDFFitTests {
     /// Both fits follow viewport and native layout changes; a user zoom leaves the fit.
-    @Test(arguments: [PDFDisplayMode.singlePageContinuous, .singlePage, .twoUpContinuous, .twoUp])
-    func fittingAndZoomingUsePDFKit(_ mode: PDFDisplayMode) throws {
+    @Test(arguments: [PDFDisplayMode.singlePageContinuous, .singlePage, .twoUpContinuous, .twoUp],
+          [NSScroller.Style.overlay, .legacy])
+    func fittingAndZoomingUsePDFKit(_ mode: PDFDisplayMode, _ scrollbars: NSScroller.Style) throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.displayMode = mode
         view.document = try pages(3)
+        try #require(view.documentView?.enclosingScrollView).scrollerStyle = scrollbars
         let controller = PDFController()
         controller.view = view
         for fit in [PDFController.Fit.width, .height] {
@@ -138,7 +140,8 @@ struct PDFFitTests {
             controller.setDocument(try pages(2))
             #expect(controller.fit == fit)
         }
-        view.scaleFactor *= 1.2
+        // Native zoom can cross an autohiding legacy scrollbar's threshold.
+        view.scaleFactor = 0.2
         #expect(controller.fit == nil && controller.scale == view.scaleFactor)
         controller.setScale(1.5)
         #expect(view.scaleFactor == 1.5 && controller.scale == 1.5)
