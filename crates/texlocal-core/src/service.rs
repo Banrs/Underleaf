@@ -519,6 +519,8 @@ impl Service {
                 arg(args, "page")?,
                 arg(args, "x")?,
                 arg(args, "y")?,
+                arg::<Option<String>>(args, "word")?.as_deref(),
+                arg(args, "offset")?,
                 &self.tex_path(),
             )
             .await?),

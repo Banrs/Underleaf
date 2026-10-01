@@ -485,11 +485,42 @@ async fn inverse_sync_finds_the_source_through_a_linked_data_dir() {
     .unwrap();
     fs::set_permissions(&synctex, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, &path)
+    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, &path)
         .await
         .unwrap();
     assert_eq!(loc.file, "chapter.tex");
-    assert_eq!(loc.line, 7);
+    assert_eq!((loc.line, loc.column), (7, None));
+
+    // The clicked word, on the line TeX recorded or a nearby one: whole, not a
+    // command's name, run together with its neighbours as PDF text may be,
+    // with its ligatures spelt out; its clicked letter's column in UTF-16 units.
+    let text = "\n\n\n\nÜnï words \\word, the\nword next\nfinal\n";
+    fs::write(root.join("chapter.tex"), text).unwrap();
+    for (word, offset, line, column) in [
+        ("“word,”", 0, 6, Some(0)),
+        ("theword", 0, 5, Some(17)),
+        ("theword", 4, 6, Some(1)),
+        ("wordnext", 5, 6, Some(6)),
+        ("Ünï", 2, 5, Some(2)),
+        ("ﬁnal", 1, 7, Some(2)),
+        ("absent", 0, 7, None),
+    ] {
+        let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, Some(word), Some(offset), &path)
+            .await
+            .unwrap();
+        assert_eq!((loc.line, loc.column), (line, column), "{word}");
+    }
+
+    // A build made before the project was renamed or moved names its old folder.
+    fs::write(
+        &synctex,
+        "#!/bin/sh\nprintf 'Input:/old/Paper/./chapter.tex\\nLine:7\\n'\n",
+    )
+    .unwrap();
+    let loc = synctex_inverse(&root, 1.0, 10.0, 20.0, None, None, &path)
+        .await
+        .unwrap();
+    assert_eq!((loc.file.as_str(), loc.line), ("chapter.tex", 7));
 }
 
 static FORKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
