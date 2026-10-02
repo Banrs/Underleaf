@@ -97,8 +97,9 @@ final class PDFController {
     /// Sets the fit after the scale, since the scale's change ends a fit.
     func fitHeight() {
         guard let view, view.currentPage != nil else { return }
-        view.autoScales = false
-        view.scaleFactor = heightScale(view)
+        if view.autoScales { view.autoScales = false }
+        let scale = heightScale(view)
+        if view.scaleFactor != scale { view.scaleFactor = scale }
         fit = .height
     }
 
@@ -245,13 +246,15 @@ final class SyncPDFView: PDFView {
 
     override func setFrameSize(_ newSize: NSSize) {
         // SwiftUI sets the frame again, unchanged, on each scroll step: only a new size counts.
-        guard newSize != frame.size else { return super.setFrameSize(newSize) }
+        guard newSize != frame.size else { return }
         // PDFKit holds the view's top, which runs on under the toolbar, in place; at the
-        // document's start, the first page's top stays in view instead.
+        // document's start, a width change keeps the first page's top in view. Height-only
+        // layout already keeps it there, unless Fit Height's scale change loses the top.
+        let widthChanged = newSize.width != frame.width
         let atStart = atDocumentStart
         super.setFrameSize(newSize)
         onResize()
-        if atStart, let page = document?.page(at: 0) {
+        if atStart, widthChanged || !atDocumentStart, let page = document?.page(at: 0) {
             go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
         }
     }
@@ -528,7 +531,6 @@ private nonisolated struct SyncText {
 }
 
 private extension PDFView {
-    /// The height the pages show in: the view runs on under the toolbar and the
-    /// find bar, which the system's scroll edge effect covers.
-    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top }
+    /// The height clear of the toolbar, find bar and bottom status bar.
+    var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
 }

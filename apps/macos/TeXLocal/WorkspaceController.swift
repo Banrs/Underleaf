@@ -122,7 +122,11 @@ final class WorkspaceController: DetentSplitViewController {
         // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
         columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
-        panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: panelHeight))
+        let panelState = BuildPanelState()
+        panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project, state: panelState), height: panelHeight))
+        let panelHeader = accessory(BuildPanelHeader(project: project, state: panelState), translucent: true)
+        panelHeader.preferredScrollEdgeEffectStyle = .soft
+        panelItem.addTopAlignedAccessoryViewController(panelHeader)
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
         // It keeps its height as the window resizes; the columns take the change.
         panelItem.holdingPriority = .defaultLow + 1
@@ -136,8 +140,9 @@ final class WorkspaceController: DetentSplitViewController {
         area.addSplitViewItem(panelItem)
 
         let areaItem = NSSplitViewItem(viewController: area)
-        areaItem.addBottomAlignedAccessoryViewController(accessory(StatusBar(project: project),
-                                                                   footOf: area.splitView, clearsCorners: true))
+        let statusBar = accessory(StatusBar(project: project), footOf: area.splitView, clearsCorners: true, translucent: true)
+        statusBar.preferredScrollEdgeEffectStyle = .soft
+        areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)
     }
 
@@ -179,15 +184,21 @@ final class WorkspaceController: DetentSplitViewController {
     /// content under the line; with `clearsCorners` its ends keep clear of the
     /// window's rounded corners where they meet them (the status bar's).
     private func accessory(_ content: some View, hidden: Bool = false, footOf split: NSSplitView? = nil,
-                           clearsCorners: Bool = false, topAligned: Bool = false) -> NSSplitViewItemAccessoryViewController {
+                           clearsCorners: Bool = false, topAligned: Bool = false,
+                           translucent: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
         let host = NSHostingView(rootView: content.environment(app))
         host.sizingOptions = [.intrinsicContentSize]
         // Its height from its content; its width is the pane's.
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The system's inline header/footer material keeps controls legible over
+        // scrolling content and follows the window's appearance and accessibility settings.
+        let material = translucent ? NSVisualEffectView() : nil
+        material?.material = .headerView
+        material?.blendingMode = .withinWindow
         if let split {
-            let bar = NSView()
+            let bar: NSView = material ?? NSView()
             let hairline = Hairline(split: split)
             for view in [host, hairline] {
                 view.translatesAutoresizingMaskIntoConstraints = false
@@ -217,6 +228,16 @@ final class WorkspaceController: DetentSplitViewController {
                 leading, trailing,
             ])
             accessory.view = bar
+        } else if let material {
+            host.translatesAutoresizingMaskIntoConstraints = false
+            material.addSubview(host)
+            NSLayoutConstraint.activate([
+                host.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+                host.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+                host.topAnchor.constraint(equalTo: material.topAnchor),
+                host.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+            ])
+            accessory.view = material
         } else {
             accessory.view = host
         }
@@ -286,7 +307,9 @@ final class WorkspaceController: DetentSplitViewController {
             ? (collapsed ? BarMetrics.secondaryBarHeight : OutlineHeader.expandedHeight) + sidebar.splitView.dividerThickness : nil
         // Repeated model notifications must not snap an animation already heading here.
         guard item.isCollapsed != collapsed else { return done?() ?? () }
-        guard animates else {
+        // AppKit's split animation marks descendants as live-resizing, revealing
+        // their scrollers. A build-panel toggle changes layout without that cue.
+        guard animates, item !== panelItem else {
             if let headerHeight { outlineBarHeight.constant = headerHeight }
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
@@ -341,18 +364,12 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     /// Show Build Panel brings it back at its kept height: its frame on 27.2, its minimum too on 27.0.
-    /// It fades, rising from and sinking under the status bar's glass.
+    /// Its layout updates directly; resizing the window or dragging its divider
+    /// still uses AppKit's normal live-resize behavior.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let panel = panelItem.viewController.view
-        if animates {
-            panel.alphaValue = shown ? 0 : 1
-            NSAnimationContext.runAnimationGroup { context in
-                context.timingFunction = CAMediaTimingFunction(name: shown ? .easeIn : .easeOut)
-                panel.animator().alphaValue = shown ? 1 : 0
-            }
-        }
-        guard shown else { return setCollapsed(panelItem, true) { panel.alphaValue = 1 } }
+        guard shown else { return setCollapsed(panelItem, true) }
         let split = area.splitView
         let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
         let height = min(PaneSize.panel.value ?? (split.bounds.height * ColumnMetrics.panelShare).rounded(), room)

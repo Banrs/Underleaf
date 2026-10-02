@@ -5,63 +5,28 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log"
 }
 
+/// Filtering is shared by the native accessory header and the scrolling content.
+@Observable
+final class BuildPanelState {
+    var filter = ""
+    var showWarnings = true
+}
+
 /// The build panel below the editors: the build's issues, or its whole log.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
-    @Bindable var project: ProjectModel
-    @State private var filter = ""
-    @State private var showWarnings = true
+    let project: ProjectModel
+    let state: BuildPanelState
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack { header }
-                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
-                .frame(height: 24)
-                .padding(.vertical, BarMetrics.inset)
-                .paneBarControls()
-                .buttonStyle(.accessoryBar)
-                .labelStyle(.iconOnly)
-            Group {
-                switch project.panelTab {
-                case .issues: issues
-                case .log: log
-                }
+        Group {
+            switch project.panelTab {
+            case .issues: issues
+            case .log: log
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
         }
-    }
-
-    /// The tabs, then what acts on the one showing; the build's summary is the
-    /// status bar's.
-    @ViewBuilder
-    private var header: some View {
-        Picker("Build Panel", selection: $project.panelTab) {
-            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
-        }
-        .pickerStyle(.tabs)
-        .labelsHidden()
-        .fixedSize()
-        .layoutPriority(1)
-        Spacer(minLength: 0)
-        if project.panelTab == .issues {
-            if project.warningCount > 0 {
-                Toggle(isOn: $showWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
-                }
-                .toggleStyle(.button)
-                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-            }
-        } else {
-            Button("Copy Log", systemImage: "document.on.document") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
-            }
-            .help("Copy Log")
-            .disabled(project.result?.log.isEmpty ?? true)
-        }
-        SearchField(text: $filter, prompt: "Filter")
-            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     /// The issues showing, each by its place in the build's errors then warnings, so
@@ -70,13 +35,13 @@ struct BuildPanel: View {
     private var items: [(offset: Int, element: LogItem)] {
         let errors = project.result?.errors ?? []
         return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
-            (showWarnings || offset < errors.count) && matches(item)
+            (state.showWarnings || offset < errors.count) && matches(item)
         }
     }
 
     private func matches(_ item: LogItem) -> Bool {
-        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
-            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
+        state.filter.isEmpty || item.message.localizedCaseInsensitiveContains(state.filter)
+            || (item.file?.localizedCaseInsensitiveContains(state.filter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
@@ -84,14 +49,14 @@ struct BuildPanel: View {
     private var issues: some View {
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !state.showWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
-                Button("Show Warnings") { showWarnings = true }
+                Button("Show Warnings") { state.showWarnings = true }
             }
-        } else if !filter.isEmpty {
-            ContentUnavailableView.search(text: filter)
+        } else if !state.filter.isEmpty {
+            ContentUnavailableView.search(text: state.filter)
         } else {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
@@ -100,19 +65,62 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            let lines = filter.isEmpty
+            let lines = state.filter.isEmpty
                 ? text
                 : text.split(separator: "\n", omittingEmptySubsequences: false)
-                    .filter { $0.localizedCaseInsensitiveContains(filter) }
+                    .filter { $0.localizedCaseInsensitiveContains(state.filter) }
                     .joined(separator: "\n")
-            // On under the status bar, as the issues' list is, its automatic insets
-            // keeping the last line clear.
-            LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
-                .ignoresSafeArea(.container, edges: .bottom)
+            // The native scroll view extends beneath both bars; its automatic
+            // insets keep the first and last lines clear when scrolling ends.
+            LogTextView(text: lines, scrollsToEnd: state.filter.isEmpty)
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
         }
+    }
+}
+
+/// Controls in the panel's native top accessory, above its scrolling content.
+struct BuildPanelHeader: View {
+    @Bindable var project: ProjectModel
+    @Bindable var state: BuildPanelState
+
+    var body: some View {
+        HStack {
+            Picker("Build Panel", selection: $project.panelTab) {
+                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.tabs)
+            .labelsHidden()
+            .fixedSize()
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+            if project.panelTab == .issues {
+                if project.warningCount > 0 {
+                    Toggle(isOn: $state.showWarnings) {
+                        Label("Warnings", systemImage: "exclamationmark.triangle")
+                    }
+                    .toggleStyle(.button)
+                    .help(state.showWarnings ? "Hide Warnings" : "Show Warnings")
+                }
+            } else {
+                Button("Copy Log", systemImage: "document.on.document") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+                }
+                .help("Copy Log")
+                .disabled(project.result?.log.isEmpty ?? true)
+            }
+            SearchField(text: $state.filter, prompt: "Filter")
+                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
+        }
+        // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
+        .frame(height: 24)
+        .padding(.vertical, BarMetrics.inset)
+        .paneBarControls()
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.iconOnly)
     }
 }
 
@@ -199,11 +207,12 @@ private struct LogTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
-        scroll.drawsBackground = false
+        scroll.drawsBackground = true
+        scroll.backgroundColor = .textBackgroundColor
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
-        view.drawsBackground = false
+        view.backgroundColor = .textBackgroundColor
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         // Lines the text up with the header's controls; the fragment padding

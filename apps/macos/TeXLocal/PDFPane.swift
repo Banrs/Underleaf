@@ -39,7 +39,7 @@ struct PDFPane: View {
     private var pages: some View {
         if project.pdfVersion > 0 {
             PDFRepresentable(project: project, document: loaded?.document, current: loaded?.version == project.pdfVersion)
-                .ignoresSafeArea(.container, edges: [.top, .trailing])
+                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

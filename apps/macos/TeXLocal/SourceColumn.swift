@@ -12,11 +12,11 @@ struct SourceColumn: View {
         // The editor stays under a preview or the placeholder, keeping the
         // text and its place.
         ZStack {
-            // On under the toolbar and the find bar, where AppKit draws its
+            // On under the toolbar, find bar and status bar, where AppKit draws its
             // edge effect over the text, and past the columns' toolbar inset
             // to the window's edge.
             EditorView(editor: project.editor, shown: project.editsText)
-                .ignoresSafeArea(.container, edges: [.top, .trailing])
+                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))

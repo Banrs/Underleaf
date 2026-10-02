@@ -107,10 +107,56 @@ struct FindTests {
 /// The PDF view's fits, off screen.
 @MainActor
 struct PDFFitTests {
+    /// A bottom panel changes height, while PDFKit already preserves the page's top.
+    @Test(arguments: [NSScroller.Style.overlay, .legacy])
+    func heightOnlyResizeKeepsPDFKitsScrollPosition(_ style: NSScroller.Style) throws {
+        let document = try pages(3)
+        let native = PDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        let view = SyncPDFView(frame: native.frame)
+        for pdf in [native, view] {
+            pdf.document = document
+            try #require(pdf.documentView?.enclosingScrollView).scrollerStyle = style
+            pdf.autoScales = true
+            pdf.layoutDocumentView()
+        }
+        let nativeClip = try #require(native.documentView?.enclosingScrollView?.contentView)
+        let clip = try #require(view.documentView?.enclosingScrollView?.contentView)
+        for height in [500.0, 350, 500] {
+            native.setFrameSize(NSSize(width: 600, height: height))
+            view.setFrameSize(NSSize(width: 600, height: height))
+            #expect(isClose(clip.bounds.minX, nativeClip.bounds.minX))
+            #expect(isClose(clip.bounds.minY, nativeClip.bounds.minY))
+            #expect(isClose(view.scaleFactor, native.scaleFactor))
+        }
+    }
+
+    @Test func fittingHeightAgainAtTheSameSizeDoesNotRewritePDFKitState() throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.document = try pages(3)
+        let controller = PDFController()
+        controller.view = view
+        controller.fitHeight()
+        var automaticWrites = 0, scaleWrites = 0
+        let automatic = view.observe(\.autoScales, options: .new) { _, _ in
+            MainActor.assumeIsolated { automaticWrites += 1 }
+        }
+        let scale = view.observe(\.scaleFactor, options: .new) { _, _ in
+            MainActor.assumeIsolated { scaleWrites += 1 }
+        }
+        controller.fitHeight()
+        view.setFrameSize(view.frame.size)
+        view.setFrameSize(NSSize(width: 800, height: 500))
+        #expect(automaticWrites == 0 && scaleWrites == 0)
+        #expect(controller.fit == .height)
+        withExtendedLifetime((automatic, scale)) {}
+    }
+
     /// Fit Height shows the whole page, its page-break margins too, and keeps it
     /// whole as the view resizes.
-    @Test func fitHeightKeepsTheWholePageInView() throws {
+    @Test(arguments: [0.0, 37.0])
+    func fitHeightKeepsTheWholePageInView(_ bottomInset: CGFloat) throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.additionalSafeAreaInsets.bottom = bottomInset
         // The pane's mode is PDFView's default.
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
@@ -123,7 +169,7 @@ struct PDFFitTests {
             view.layoutDocumentView()
             // In page space, magnified by the scale.
             let shown = try #require(view.documentView).frame.height * view.scaleFactor
-            #expect(isClose(shown, height, within: 1), "pages \(shown) in \(height)")
+            #expect(isClose(shown, height - bottomInset, within: 1), "pages \(shown) in \(height - bottomInset)")
             #expect(controller.fit == .height)
         }
     }
