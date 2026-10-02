@@ -16,6 +16,18 @@ struct InspectorView: View {
                     toggle("Stop on First Error", "Ends the build at its first error.",
                            settings.stopOnFirstError, set: project.setStopOnFirstError)
                 }
+                if let path = project.openPath {
+                    Section("Document") {
+                        let sections = project.outline.filter { $0.file == path }.count
+                        LabeledContent("Location", value: path)
+                        if let counts = project.counts {
+                            LabeledContent("Lines", value: counts.lines.formatted())
+                        }
+                        if sections > 0 {
+                            LabeledContent("Sections", value: sections.formatted())
+                        }
+                    }
+                }
             } else {
                 ProgressView("Loading Project Settings…")
             }

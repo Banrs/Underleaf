@@ -18,6 +18,7 @@ struct SourceEditorTests {
     @Test func sourceViewUsesPlainTextAndOpensFileDrops() {
         #expect(!text.isRichText)
         #expect(!text.usesFontPanel)
+        #expect(!text.isAutomaticSpellingCorrectionEnabled)
         #expect(text.acceptableDragTypes.contains(.fileURL))
     }
 
@@ -186,27 +187,101 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    /// Misspellings count in the prose and comments, not in commands, labels,
-    /// citations, packages or maths; result ranges remain absolute in a subrange check.
+    /// Native result ranges are relative to the checked substring; formatted
+    /// prose and comments remain eligible while TeX names stay protected.
     @Test func spellingIsTheProses() {
-        let line = "x \\emph{wrod} \\label{sec:wrod} \\cite[see]{wrod} \\usepackage[utf8]{wrod} $wrod$ % wrod"
+        let line = "🙂 \\emph{wrod} \\label{sec:wrod} \\cite[see]{wrod} \\usepackage[utf8]{wrod} \\includegraphics{wrod.pdf} $wrod$ % wrod"
         open(line)
-        let checked = NSRange(location: 2, length: (line as NSString).length - 2)
+        let checked = NSRange(location: 3, length: (line as NSString).length - 3)
         let text = line as NSString
         let misspelt = ["emph", "wrod"].flatMap { word in
             var ranges: [NSRange] = [], from = checked.location
             while case let r = text.range(of: word, range: NSRange(location: from, length: text.length - from)), r.location != NSNotFound {
-                ranges.append(r)
+                ranges.append(NSRange(location: r.location - checked.location, length: r.length))
                 from = NSMaxRange(r)
             }
             return ranges
         }
-        let results = misspelt.map { NSTextCheckingResult.spellCheckingResult(range: $0) }
+        let results = misspelt.flatMap { range in
+            [NSTextCheckingResult.spellCheckingResult(range: range),
+             NSTextCheckingResult.correctionCheckingResult(range: range, replacementString: "word"),
+             NSTextCheckingResult.replacementCheckingResult(range: range, replacementString: "word")]
+        }
         let kept = editor.textView(self.text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
                                    orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: 6)
         // The emphasised word and the comment's.
-        #expect(kept.map { text.substring(with: $0.range) } == ["wrod", "wrod"])
-        #expect(kept.map(\.range.location) == [8, 81])
+        let expected = [text.range(of: "wrod"), text.range(of: "wrod", options: .backwards)]
+            .map { NSRange(location: $0.location - checked.location, length: $0.length) }
+        #expect(kept.map(\.range) == expected.flatMap { Array(repeating: $0, count: 3) })
+        #expect(kept.map(\.resultType) == expected.flatMap { _ in [.spelling, .correction, .replacement] })
+    }
+
+    /// A check can start inside a multiline environment. Text arguments and
+    /// comments are still prose, including non-ASCII words inside dollar maths.
+    @Test func spellingDistinguishesMathAndVerbatimFromTheirProse() {
+        let source = """
+        🙂
+        \\begin{align}
+        mathwrod &= \\text{prosewrod} % commentwrod
+        \\end{align}
+        $\\text{naïvve} + dollarwrod$
+        \\verb|verbwrod|
+        \\begin{verbatim}
+        codewrod
+        \\end{verbatim}
+        afterwrod
+        """
+        open(source)
+        let string = source as NSString
+        let start = string.range(of: "mathwrod").location
+        let checked = NSRange(location: start, length: string.length - start)
+        let words = ["mathwrod", "prosewrod", "commentwrod", "naïvve", "dollarwrod", "verbwrod", "codewrod", "afterwrod"]
+        let relative = { (word: String) in
+            let range = string.range(of: word)
+            return NSRange(location: range.location - checked.location, length: range.length)
+        }
+        let results = words.map { NSTextCheckingResult.correctionCheckingResult(range: relative($0), replacementString: "word") }
+        let kept = editor.textView(text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
+                                   orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: words.count)
+        #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
+    }
+
+    /// AppKit checks a nonzero paragraph and applies its annotations in a real
+    /// TextKit 2 view. Calling the delegate directly cannot establish its offsets.
+    @Test func nativeSpellingMarksProseButNotCommandsAfterAPrefix() async throws {
+        // Isolate this request from a simultaneous automatic whole-document check.
+        text.isContinuousSpellCheckingEnabled = false
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        let prefix = String(repeating: "🙂 Correct prose.\n", count: 20)
+        let paragraph = "This is a speling word. \\newpage\n"
+        open(prefix + paragraph, caret: (prefix as NSString).length)
+        window.makeFirstResponder(text)
+        window.contentView!.layoutSubtreeIfNeeded()
+        let checked = NSRange(location: (prefix as NSString).length, length: (paragraph as NSString).length)
+        text.checkText(in: checked, types: NSTextCheckingResult.CheckingType.spelling.rawValue,
+                       options: [.orthography: NSOrthography.defaultOrthography(forLanguage: "en_US")])
+        let client = try #require(text as? NSTextCheckingClient)
+        let source = text.string as NSString
+        let prose = source.range(of: "speling"), command = source.range(of: "newpage")
+        func state(at offset: Int) -> Int {
+            var actual = NSRange()
+            guard let string = client.annotatedSubstring(forProposedRange: checked, actualRange: &actual),
+                  NSLocationInRange(offset, actual) else { return 0 }
+            let value = string.attribute(.spellingState, at: offset - actual.location, effectiveRange: nil)
+            return (value as? NSNumber)?.intValue ?? (value as? NSString)?.integerValue ?? 0
+        }
+        // The system spell server replies asynchronously; wait for a real prose mark.
+        for _ in 0..<100 {
+            if state(at: prose.location) & 1 != 0 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(state(at: prose.location) & 1 != 0)
+        #expect(state(at: command.location) == 0)
+        #expect(text.string == prefix + paragraph)
     }
 
     @Test func findSelectsAsYouTypeAndReplaces() {
@@ -256,23 +331,30 @@ struct SourceEditorTests {
             .matches(in: "xfoo", range: NSRange(location: 1, length: 3), limit: 1).ranges.isEmpty)
     }
 
-    /// The text's context menu starts with Go to PDF Position, as the PDF's with
-    /// Go to Source Position, while there's somewhere to go, and holds what source needs.
+    /// The source menu keeps standard editing actions and adds PDF navigation when available.
     @Test func theContextMenuGoesToThePDF() throws {
         open("x")
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
                                                     windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        #expect(text.menu(for: click)?.items.first?.title != MenuCommand.syncForward.title)
+        let editingTitles = [String(localized: "Cut"), String(localized: "Copy"), String(localized: "Paste")]
+        let editingActions = [#selector(NSText.cut(_:)), #selector(NSText.copy(_:)), #selector(NSText.paste(_:))]
+        let editingMenu = try #require(text.menu(for: click))
+        #expect(editingMenu.items.map(\.title) == editingTitles)
+        #expect(editingMenu.items.compactMap(\.action) == editingActions)
+        #expect(editingMenu.items.allSatisfy { $0.target == nil })
+        #expect(!editingMenu.allowsContextMenuPlugIns)
+
         var went = false
         text.forwardSync = { { went = true } }
         let menu = try #require(text.menu(for: click))
-        #expect(menu.items.first?.title == MenuCommand.syncForward.title)
+        #expect(menu.items.map(\.title) == [MenuCommand.syncForward.title, ""] + editingTitles)
         #expect(menu.items[1].isSeparatorItem)
+        #expect(menu.items[0].target === text)
         menu.performActionForItem(at: 0)
         #expect(went)
-        // Keep the native editing menu and its system integrations.
-        for action in [#selector(NSTextView.cut(_:)), #selector(NSTextView.copy(_:)), #selector(NSTextView.paste(_:))] {
-            #expect(menu.items.contains { $0.action == action })
+        for (index, action) in editingActions.enumerated() {
+            #expect(menu.items[index + 2].action == action)
+            #expect(menu.items[index + 2].target == nil)
         }
         #expect(!menu.allowsContextMenuPlugIns)
     }

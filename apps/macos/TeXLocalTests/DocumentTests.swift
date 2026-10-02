@@ -156,6 +156,56 @@ struct PDFFitTests {
         #expect(controller.fit == nil)
     }
 
+    /// PDFKit's scroll magnification changes its scale without a PDF scale notification.
+    /// The model and AppKit toolbar callback must update before another layout or run-loop turn.
+    @Test(arguments: [NSScroller.Style.overlay, .legacy])
+    func nativeMagnificationIsReadBeforeLayout(_ scrollbars: NSScroller.Style) throws {
+        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        let controller = PDFController()
+        controller.view = view
+        controller.setDocument(try pages(3))
+        let scroll = try #require(view.documentView?.enclosingScrollView)
+        scroll.scrollerStyle = scrollbars
+        var published: CGFloat?
+        controller.onScaleChanged = { published = controller.scale }
+        defer { controller.onScaleChanged = nil }
+        for fit in [PDFController.Fit.width, .height] {
+            if fit == .width { controller.fitWidth() } else { controller.fitHeight() }
+            let fitted = view.scaleFactor
+            for ratio: CGFloat in [0.97, 1.03] {
+                published = nil
+                scroll.magnification = fitted * ratio
+                let magnified = view.scaleFactor
+                #expect(controller.scale == magnified && published == magnified)
+                #expect(controller.zoomLabel == Double(magnified).formatted(.percent.precision(.fractionLength(0))))
+                #expect(controller.fit == nil)
+                view.layoutSubtreeIfNeeded()
+                #expect(view.scaleFactor == magnified)
+            }
+        }
+        controller.setDocument(try pages(2))
+        published = nil
+        try #require(view.documentView?.enclosingScrollView).magnification = 1.25
+        #expect(controller.scale == 1.25 && published == 1.25 && controller.fit == nil)
+    }
+
+    @Test func aReplacedViewStopsPublishingMagnification() throws {
+        let old = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        old.document = try pages(2)
+        let controller = PDFController()
+        controller.view = old
+        let replacement = SyncPDFView(frame: old.frame)
+        replacement.document = try pages(2)
+        controller.view = replacement
+        var published: CGFloat?
+        controller.onScaleChanged = { published = controller.scale }
+        defer { controller.onScaleChanged = nil }
+        try #require(old.documentView?.enclosingScrollView).magnification = 1.5
+        #expect(published == nil)
+        try #require(replacement.documentView?.enclosingScrollView).magnification = 1.25
+        #expect(controller.scale == 1.25 && published == 1.25 && controller.fit == nil)
+    }
+
     /// The menus and the saved workspace read the project's own PDF view: Zoom In
     /// stops at PDFKit's limit, Go to PDF Position needs a .tex file, and a
     /// reopened project returns to the page shown.

@@ -145,6 +145,7 @@ private struct IssueList: View {
         .onChange(of: items.map(\.offset)) { _, shown in
             if let selection, !shown.contains(selection) { self.selection = nil }
         }
+        .onChange(of: project.result.map { $0.errors + $0.warnings }) { selection = nil }
         .onChange(of: selection) { _, id in
             if let item = id.flatMap(item) { open(item, focus: false) }
         }

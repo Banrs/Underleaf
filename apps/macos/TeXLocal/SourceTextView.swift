@@ -250,7 +250,7 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         guard selectedRanges.count == 1, (1...200).contains(selection.length), findMatches.isEmpty else { return [] }
         let text = string as NSString
         let selected = text.substring(with: selection)
-        guard !selected.contains("\n") else { return [] }
+        guard !selected.contains("\n"), selected.contains(where: { !$0.isWhitespace }) else { return [] }
         var matches: [NSRange] = []
         var from = window.lowerBound
         while from < window.upperBound, matches.count < 100 {
@@ -627,15 +627,25 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
-    /// Add document navigation to AppKit's standard editing menu.
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let proposed = super.menu(for: event)
-        proposed?.allowsContextMenuPlugIns = false
-        guard let menu = proposed, forwardSync() != nil else { return proposed }
-        let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
-        item.target = self
-        menu.insertItem(item, at: 0)
-        menu.insertItem(.separator(), at: 1)
+    /// The delegate uses this after AppKit prepares its native contextual menu.
+    /// Keep source editing focused; spelling remains available from the Edit menu.
+    func sourceMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.allowsContextMenuPlugIns = false
+        if forwardSync() != nil {
+            let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
+        for (title, action) in [
+            (String(localized: "Cut"), #selector(NSText.cut(_:))),
+            (String(localized: "Copy"), #selector(NSText.copy(_:))),
+            (String(localized: "Paste"), #selector(NSText.paste(_:)))
+        ] {
+            // A nil target lets AppKit route each standard action through the view's responder chain.
+            menu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
         return menu
     }
 

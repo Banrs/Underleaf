@@ -2,13 +2,10 @@ import SwiftUI
 
 /// The File Outline's header: the system's collapsible sidebar section (so it folds,
 /// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// outline pane's top so it stays put over the outline. It keeps one height,
-/// folded or not, so a fold changes no height: the split's collapse moves it.
+/// Files pane's foot. The native List supplies the same title spacing in either
+/// state; the lower split item's collapse moves the persistent header up or down.
 struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
-
-    /// A sidebar section header's row (measured, 27.2).
-    private static let headerRow: CGFloat = 19
 
     var body: some View {
         List {
@@ -22,32 +19,15 @@ struct OutlineHeader: View {
         // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
-        // Its room under the header too, so a drag from the header has nothing to
-        // autoscroll (scrollDisabled doesn't stop it).
-        .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
-        // Keep the same room above the title whether the outline is open or folded.
-        .offset(y: (BarMetrics.secondaryBarHeight - Self.headerRow) / 2 - sidebarListRoom)
-        .frame(height: BarMetrics.secondaryBarHeight, alignment: .top)
+        .contentMargins(.bottom, 0, for: .scrollContent)
+        // 10pt native inset + the 19pt section row + 10pt inset; centring its
+        // natural height puts the disclosure row at the middle of the 36pt strip.
+        .frame(height: 39)
+        .frame(height: BarMetrics.secondaryBarHeight, alignment: .center)
+        .clipped()
+        .overlay(alignment: .top) { Divider().allowsHitTesting(false) }
     }
 }
-
-/// The disclosure remains in the lower pane when its list folds away. Its top
-/// edge is the real split divider, so AppKit owns the resize cursor and drag.
-struct OutlinePane: View {
-    @Environment(AppModel.self) private var app
-    let project: ProjectModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            OutlineHeader()
-            if !app.outlineCollapsed { OutlineList(project: project) }
-        }
-    }
-}
-
-/// The room a sidebar list leaves over its first row and under its last, inside
-/// its table (measured, 27.2).
-private let sidebarListRoom: CGFloat = 10
 
 /// The project's files, or the project search's results while there is a
 /// query.
@@ -424,16 +404,12 @@ struct OutlineList: View {
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
+            .contentMargins(.top, 0, for: .scrollContent)
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let item = outline.first(where: { $0.id == ids.first }) else { return }
                 Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
             }
-            // The header above stands in for a section's, so the list's room over its
-            // first row goes; the scroller keeps to what shows.
-            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
-            .padding(.top, -sidebarListRoom)
-            .clipped()
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.topHeading) { line = project.topLine }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }

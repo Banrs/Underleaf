@@ -43,8 +43,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.textContainer?.widthTracksTextView = true
         text.updateDragTypeRegistration()
-        // Spelling underlined in the prose only (below), and nothing corrected: smart dashes
-        // and quotes would rewrite the LaTeX (-- to an em dash).
+        // Underline prose misspellings without silently rewriting source. Native
+        // spelling commands remain available; typographic substitutions corrupt TeX.
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
@@ -186,22 +186,33 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         onChanged()
     }
 
-    /// Misspellings in the prose only: not in a command or maths, which the
-    /// core colours, nor in a name a command takes (a package, citation or
-    /// file); comments are prose.
+    /// Spell checking and replacements in prose only; the core protects commands,
+    /// maths, verbatim and names such as packages, citations and files.
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {
         let code = nonProse(in: range)
+        // AppKit's results are relative to the checked substring. Rebase only
+        // the comparison; return native results unchanged for AppKit to apply.
         return results.filter { result in
-            // AppKit result ranges are absolute document offsets, including for a subrange check.
-            return result.resultType != .spelling || !code.contains { NSIntersectionRange($0, result.range).length > 0 }
+            let found = NSRange(location: range.location + result.range.location, length: result.range.length)
+            return !code.contains { NSIntersectionRange($0, found).length > 0 }
         }
     }
 
     private func nonProse(in range: NSRange) -> [NSRange] {
         let document = textView.document
-        return document.highlights(in: range).filter { $0.kind != .comment }.map(\.range) + document.notProse(in: range)
+        // Highlighting colours letters inside \text{…} as maths too. The prose
+        // scan knows those words are text, so only take syntax names from colours.
+        let names = document.highlights(in: range).filter {
+            [.command, .argument, .stringLiteral, .builtin].contains($0.kind)
+        }.map(\.range)
+        return names + document.notProse(in: range)
+    }
+
+    /// Customize after AppKit prepares the clicked word and its editing context.
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        textView.sourceMenu()
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {

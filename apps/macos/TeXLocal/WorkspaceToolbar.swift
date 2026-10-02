@@ -43,10 +43,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         watch = track({ [weak self] in self?.state }) { [weak self] state in
             if let state { self?.apply(state) }
         }
+        pdf.onScaleChanged = { [weak self] in
+            guard let self, let zoom = toolbar.items.first(where: { $0.itemIdentifier == .zoom }) else { return }
+            configure(zoom, state)
+        }
     }
 
     func close() {
         watch?.cancel()
+        pdf.onScaleChanged = nil
     }
 
     // ---------- items ----------

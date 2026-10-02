@@ -16,7 +16,7 @@ final class WorkspaceController: NSSplitViewController {
     /// The columns over the build panel.
     let area = NSSplitViewController()
     /// The files over the File Outline.
-    private let sidebar = NSSplitViewController()
+    private let sidebar = SidebarSplitController()
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var outlineItem: NSSplitViewItem!
     private(set) var sourceItem: NSSplitViewItem!
@@ -24,6 +24,9 @@ final class WorkspaceController: NSSplitViewController {
     private(set) var panelItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
+    private var outlineBar: NSSplitViewItemAccessoryViewController!
+    private var outlineHeight: CGFloat = 0
+    private var outlineTransition = 0
     private var sourceFind: NSSplitViewItemAccessoryViewController!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private let sourceFindField = FieldHandle()
@@ -58,21 +61,27 @@ final class WorkspaceController: NSSplitViewController {
     /// Search over the files over the File Outline. A pane's size is its view's frame
     /// as it's added: the split opens it there, and a collapsed one shows there first.
     private func buildSidebar(height: CGFloat) {
+        sidebar.splitView = SidebarSplitView()
         sidebar.splitView.isVertical = false
         sidebar.splitView.dividerStyle = .thin
         let files = host(FilesList(project: project))
         let filesItem = NSSplitViewItem(viewController: files)
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        let height = app.outlineCollapsed ? BarMetrics.secondaryBarHeight
-            : PaneSize.outline.value ?? (height * ColumnMetrics.outlineShare).rounded()
-        let outline = host(OutlinePane(project: project), height: height)
+        outlineBar = accessory(OutlineHeader(), hidden: !showsOutline)
+        // The sidebar List owns its native section-header spacing, once.
+        outlineBar.automaticallyAppliesContentInsets = false
+        filesItem.addBottomAlignedAccessoryViewController(outlineBar)
+
+        outlineHeight = PaneSize.outline.value ?? (height * ColumnMetrics.outlineShare).rounded()
+        let outline = host(OutlineList(project: project), height: outlineHeight)
         outlineItem = NSSplitViewItem(viewController: outline)
-        outlineItem.minimumThickness = app.outlineCollapsed ? BarMetrics.secondaryBarHeight
-            : BarMetrics.secondaryBarHeight + ColumnMetrics.outlineMinimum
-        if app.outlineCollapsed { outlineItem.maximumThickness = BarMetrics.secondaryBarHeight }
+        outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
+        // A reveal capped to the available space must not grow the window using
+        // the larger height AppKit remembered before it was collapsed.
+        outlineItem.collapseBehavior = .useConstraints
         // It keeps its height as the window resizes; the files take the change.
         outlineItem.holdingPriority = .defaultLow + 1
-        outlineItem.isCollapsed = !showsOutline
+        outlineItem.isCollapsed = !showsOutline || app.outlineCollapsed
 
         sidebar.addSplitViewItem(filesItem)
         sidebar.addSplitViewItem(outlineItem)
@@ -127,7 +136,9 @@ final class WorkspaceController: NSSplitViewController {
         area.addSplitViewItem(panelItem)
 
         let areaItem = NSSplitViewItem(viewController: area)
-        areaItem.addBottomAlignedAccessoryViewController(accessory(StatusBar(project: project)))
+        let statusBar = accessory(StatusBar(project: project))
+        statusBar.automaticallyAppliesContentInsets = false
+        areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)
     }
 
@@ -173,20 +184,49 @@ final class WorkspaceController: NSSplitViewController {
     private var showsOutline: Bool { !project.isSearching && project.isLaTeX }
 
     private func updateOutline() {
-        let folded = app.outlineCollapsed
-        let header = BarMetrics.secondaryBarHeight
-        // Relax the old limit before installing a smaller maximum or a larger minimum.
+        setHidden(outlineBar, !showsOutline)
+        let collapsed = !showsOutline || app.outlineCollapsed
+        guard outlineItem.isCollapsed != collapsed else { return }
+        if collapsed, outlineItem.minimumThickness == ColumnMetrics.outlineMinimum {
+            outlineHeight = max(outlineItem.viewController.view.frame.height, ColumnMetrics.outlineMinimum)
+        } else if !collapsed {
+            // Supply the destination while hidden, before the one native slide.
+            let split = sidebar.splitView
+            let room = split.bounds.height - split.arrangedSubviews[0].fittingSize.height - split.dividerThickness
+            let height = min(outlineHeight, max(room, ColumnMetrics.outlineMinimum))
+            outlineItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+            outlineItem.minimumThickness = height
+            outlineItem.maximumThickness = height
+        }
+        outlineTransition += 1
+        let transition = outlineTransition
+        // Only the lower native split item moves. Its header remains at the Files
+        // pane's foot, with the same content and insets throughout the slide.
+        if view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            NSAnimationContext.runAnimationGroup { _ in
+                outlineItem.animator().isCollapsed = collapsed
+            } completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.finishOutlineTransition(transition, collapsed: collapsed)
+                }
+            }
+        } else {
+            outlineItem.isCollapsed = collapsed
+            view.layoutSubtreeIfNeeded()
+            finishOutlineTransition(transition, collapsed: collapsed)
+        }
+    }
+
+    private func finishOutlineTransition(_ transition: Int, collapsed: Bool) {
+        guard outlineTransition == transition else { return }
+        if !collapsed {
+            // Commit the position already reached, without moving the divider;
+            // otherwise AppKit's old holding size wins when the minimum relaxes.
+            let split = sidebar.splitView
+            split.setPosition(split.arrangedSubviews[0].frame.maxY, ofDividerAt: 0)
+        }
+        outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
         outlineItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
-        outlineItem.minimumThickness = folded ? header : header + ColumnMetrics.outlineMinimum
-        if folded { outlineItem.maximumThickness = header }
-        outlineItem.viewController.view.layoutSubtreeIfNeeded()
-        setCollapsed(outlineItem, !showsOutline)
-        guard showsOutline else { return }
-        let split = sidebar.splitView
-        let height = folded ? header : max(PaneSize.outline.value ?? split.bounds.height * ColumnMetrics.outlineShare,
-                                           outlineItem.minimumThickness)
-        split.setPosition(split.bounds.height - height - split.dividerThickness, ofDividerAt: 0)
-        split.layoutSubtreeIfNeeded()
     }
 
     // ---------- the models drive the panes ----------
@@ -366,6 +406,24 @@ final class WorkspaceController: NSSplitViewController {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
+    }
+}
+
+/// The header draws the sidebar's one separator, above its title. AppKit still
+/// owns the split's dragging and cursor, at that same visible boundary.
+private final class SidebarSplitView: NSSplitView {
+    override func drawDivider(in rect: NSRect) {}
+}
+
+private final class SidebarSplitController: NSSplitViewController {
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        let rect = super.splitView(splitView, effectiveRect: proposedEffectiveRect,
+                                  forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+        guard !rect.isEmpty, let header = splitViewItems.first?.bottomAlignedAccessoryViewControllers.first,
+              !header.isHidden else { return rect }
+        let headerFrame = header.view.convert(header.view.bounds, to: splitView)
+        return rect.offsetBy(dx: 0, dy: headerFrame.minY - drawnRect.minY)
     }
 }
 

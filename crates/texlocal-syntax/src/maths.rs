@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, is, letter, space, utf16, Text};
+use crate::{catalog, is, letter, space, utf16, Text, TextRange};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
@@ -22,6 +22,19 @@ static ENVIRONMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\{([^{}]
 /// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
 /// pair, the caret between) is maths.
 pub fn math_mode_at(src: &[u16]) -> bool {
+    scan(src, false).0
+}
+
+/// The UTF-16 ranges that are math or literal code, using the same scan as
+/// `math_mode_at`. Math comments and the text arguments of \text-like
+/// commands stay out of these ranges so they remain ordinary prose.
+pub(crate) fn non_prose_ranges(src: &[u16]) -> Vec<TextRange> {
+    scan(src, true).1
+}
+
+/// Scan once for both the math mode at EOF and non-prose math/code runs.
+/// Keeping ranges here makes collection follow `math_mode_at`'s parsing rules.
+fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
     let catalog = &*catalog::CATALOG;
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
     // Open groups, innermost last: whether they're maths, and what closes
@@ -37,12 +50,16 @@ pub fn math_mode_at(src: &[u16]) -> bool {
         |stack: &mut Vec<(bool, String)>, math: bool, end: &str| stack.push((math, end.into()));
     // The next { opens a text argument (\text{).
     let mut text_argument = false;
+    let mut ranges = RangeCollector::new(collect_ranges);
     let n = src.len();
     let mut i = 0;
     while i < n {
+        let token_start = i;
+        let was_math = math(&stack);
         let c = src[i];
         if is(c, '%') {
             // The line feed itself is read next, for the blank-line rule.
+            ranges.end_math(i);
             let Some(eol) = find(src, i, &['\n' as u16]) else {
                 break;
             };
@@ -63,6 +80,8 @@ pub fn math_mode_at(src: &[u16]) -> bool {
                 text_argument = false;
             }
             i += 1;
+            ranges.transition(was_math, math(&stack), token_start, i);
+            ranges.resume(math(&stack), i);
             continue;
         }
         if is(c, '$') {
@@ -83,6 +102,7 @@ pub fn math_mode_at(src: &[u16]) -> bool {
                 }
             }
             text_argument = false;
+            ranges.transition(was_math, math(&stack), token_start, i);
             continue;
         }
         if is(c, '{') {
@@ -90,12 +110,14 @@ pub fn math_mode_at(src: &[u16]) -> bool {
             open(&mut stack, maths, "}");
             text_argument = false;
             i += 1;
+            ranges.transition(was_math, math(&stack), token_start, i);
             continue;
         }
         if is(c, '}') {
             // The innermost open brace, and anything unclosed inside it.
             close(&mut stack, "}");
             i += 1;
+            ranges.transition(was_math, math(&stack), token_start, i);
             continue;
         }
         if !is(c, '\\') {
@@ -114,6 +136,7 @@ pub fn math_mode_at(src: &[u16]) -> bool {
             }
             text_argument = false;
             i += 2;
+            ranges.transition(was_math, math(&stack), token_start, i);
             continue;
         }
         let j = i + 1 + src[i + 1..].iter().take_while(|&&u| letter(u)).count();
@@ -122,11 +145,18 @@ pub fn math_mode_at(src: &[u16]) -> bool {
         text_argument = false;
         if name == "verb" {
             i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
-            let Some(&delimiter) = src.get(i) else { break };
+            let Some(&delimiter) = src.get(i) else {
+                ranges.code(token_start, n);
+                ranges.finish(n);
+                return (math(&stack), ranges.into_ranges());
+            };
             let Some(close) = find(src, i + 1, &[delimiter]) else {
-                return false; // inside \verb|…
+                ranges.code(token_start, n);
+                ranges.finish(n);
+                return (false, ranges.into_ranges()); // inside \verb|…
             };
             i = close + 1;
+            ranges.code(token_start, i);
         } else if name == "begin" || name == "end" {
             let window = String::from_utf16_lossy(&src[i..n.min(i + 64)]);
             let Some(m) = ENVIRONMENT.captures(&window) else {
@@ -139,9 +169,12 @@ pub fn math_mode_at(src: &[u16]) -> bool {
             } else if listed(&catalog.verbatim_environments, environment) {
                 let end: Vec<u16> = format!("\\end{{{environment}}}").encode_utf16().collect();
                 let Some(at) = find(src, i, &end) else {
-                    return false; // inside verbatim
+                    ranges.code(token_start, n);
+                    ranges.finish(n);
+                    return (false, ranges.into_ranges()); // inside verbatim
                 };
                 i = at + end.len();
+                ranges.code(token_start, i);
             } else {
                 let bare = environment.strip_suffix('*').unwrap_or(environment);
                 let maths = listed(&catalog.math_environments, bare) || math(&stack);
@@ -150,8 +183,83 @@ pub fn math_mode_at(src: &[u16]) -> bool {
         } else if listed(&catalog.text_commands, &name) && math(&stack) {
             text_argument = true;
         }
+        ranges.transition(was_math, math(&stack), token_start, i);
     }
-    math(&stack)
+    ranges.finish(n);
+    (math(&stack), ranges.into_ranges())
+}
+
+/// Collects ordered UTF-16 math and literal-code ranges while the shared
+/// scanner moves through the source. A math run absorbs code nested inside it.
+struct RangeCollector {
+    enabled: bool,
+    math_start: Option<u32>,
+    ranges: Vec<TextRange>,
+}
+
+impl RangeCollector {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            math_start: None,
+            ranges: Vec::new(),
+        }
+    }
+
+    fn transition(&mut self, was_math: bool, is_math: bool, token_start: usize, token_end: usize) {
+        if !self.enabled {
+            return;
+        }
+        match (was_math, is_math) {
+            (false, true) => self.math_start = Some(token_start as u32),
+            (true, false) => self.end_math(token_end),
+            _ => {}
+        }
+    }
+
+    fn end_math(&mut self, end: usize) {
+        if let Some(start) = self.math_start.take() {
+            self.push(start as usize, end);
+        }
+    }
+
+    fn resume(&mut self, is_math: bool, at: usize) {
+        if self.enabled && is_math && self.math_start.is_none() {
+            self.math_start = Some(at as u32);
+        }
+    }
+
+    fn code(&mut self, start: usize, end: usize) {
+        if self.enabled && self.math_start.is_none() {
+            self.push(start, end);
+        }
+    }
+
+    fn finish(&mut self, end: usize) {
+        self.end_math(end);
+    }
+
+    fn push(&mut self, start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
+        let (start, end) = (start as u32, end as u32);
+        if let Some(last) = self.ranges.last_mut() {
+            let last_end = last.start.saturating_add(last.length);
+            if start <= last_end {
+                last.length = last_end.max(end).saturating_sub(last.start);
+                return;
+            }
+        }
+        self.ranges.push(TextRange {
+            start,
+            length: end - start,
+        });
+    }
+
+    fn into_ranges(self) -> Vec<TextRange> {
+        self.ranges
+    }
 }
 
 /// Maths to preview: where it starts, its TeX as KaTeX reads it, and

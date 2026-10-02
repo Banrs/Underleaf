@@ -45,8 +45,8 @@ final class SourceDocument {
         }
     }
 
-    /// The names commands take (packages, citations, labels, files) in the
-    /// paragraphs a range touches, which aren't prose.
+    /// Absolute ranges of TeX names, maths and literal code touching this range;
+    /// comments and text arguments inside maths remain prose.
     func notProse(in range: NSRange) -> [NSRange] {
         let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
         return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }

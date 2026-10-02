@@ -43,6 +43,8 @@ final class PDFController {
     /// PDFKit's own limits.
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
+    /// The AppKit toolbar updates in the native magnification callback, including tracking loops.
+    @ObservationIgnored var onScaleChanged: (() -> Void)?
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
@@ -62,6 +64,7 @@ final class PDFController {
         canZoomOut = view.canZoomOut
         // The fit's own layout changes keep its mode; native pinch and menu zoom leave it.
         if !applyingFit { fit = nil }
+        onScaleChanged?()
     }
 
     /// PDFKit measures a row, including rotated pages, spreads and page-break margins.
@@ -260,7 +263,26 @@ final class PDFController {
 
 /// PDFKit's selection and gestures, with explicit SyncTeX navigation.
 final class SyncPDFView: PDFView {
-    weak var controller: PDFController?
+    weak var controller: PDFController? {
+        didSet { observeMagnification() }
+    }
+    private var magnificationObservation: NSKeyValueObservation?
+    private weak var observedScrollView: NSScrollView?
+
+    /// The native scroll view can change PDFView.scaleFactor without posting
+    /// PDFViewScaleChanged. Read the actual scale after the public scroll property changes.
+    private func observeMagnification() {
+        let scroll = controller == nil ? nil : documentView?.enclosingScrollView
+        guard scroll !== observedScrollView else { return }
+        magnificationObservation = nil
+        observedScrollView = scroll
+        magnificationObservation = scroll?.observe(\.magnification) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, let controller = self.controller, self.scaleFactor != controller.scale else { return }
+                controller.scaleChanged()
+            }
+        }
+    }
 
     /// The unobscured viewport, excluding any non-overlay scrollbars.
     var viewportSize: NSSize {
@@ -270,11 +292,13 @@ final class SyncPDFView: PDFView {
 
     override func layout() {
         super.layout()
+        observeMagnification()
         refitAfterLayout()
     }
 
     override func layoutDocumentView() {
         super.layoutDocumentView()
+        observeMagnification()
         refitAfterLayout()
     }
 

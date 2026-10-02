@@ -36,6 +36,7 @@ struct StatusBar: View {
                             .help("Go to Page")
                         }
                     }
+                    Divider().frame(height: 12)
                 }
                 // At the far end, as a panel's toggle sits at its window's edge.
                 Toggle(isOn: $project.showLogs) {
@@ -50,7 +51,9 @@ struct StatusBar: View {
         .monospacedDigit()
         .controlSize(.small)
         .lineLimit(1)
+        .frame(height: BarMetrics.secondaryBarHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .top) { Divider().allowsHitTesting(false) }
         .buttonStyle(.accessoryBar)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
