@@ -28,7 +28,7 @@ final class ProjectModel {
     /// Why the PDF may not match the source (workspace.js `setPdfFreshness`).
     var pdfFreshness: PDFFreshness?
     /// The token lets the same spot be flashed twice.
-    var highlight: (loc: ForwardLoc, word: String?, token: Int)?
+    var highlight: (loc: ForwardLoc, word: SyncTeXWord?, token: Int)?
     var showLogs = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
@@ -96,6 +96,7 @@ final class ProjectModel {
     private var searchTask: Task<Void, Never>?
     private var analysis: Task<Void, Never>?
     private var highlightToken = 0
+    @ObservationIgnored private var syncGeneration = 0
     /// Bumped by each `open`, so an earlier one still in flight stands down.
     private var openGeneration = 0
     /// The build asked for while one runs: automatic unless any request wasn't.
@@ -233,18 +234,20 @@ final class ProjectModel {
 
     /// Text opens in the editor, anything else in a preview. The sidebar
     /// passes `focus: false` so the arrow keys stay in its list.
-    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true,
+              stillCurrent: (@MainActor () -> Bool)? = nil) async {
+        guard stillCurrent?() != false else { return }
         // Only the latest open carries on, so the editor can't show one file
         // while `openPath`, where autosave writes, names another. Checked
         // after the last await before the editor.
         openGeneration += 1
         let generation = openGeneration
         if path != openPath {
-            guard await saveEdits(), generation == openGeneration else { return }
+            guard await saveEdits(), generation == openGeneration, stillCurrent?() != false else { return }
             do {
                 let text = isTextFile(path) ? try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text : nil
                 let url = await fileURL(path)
-                guard generation == openGeneration, !closed else { return }
+                guard generation == openGeneration, !closed, stillCurrent?() != false else { return }
                 openPath = path
                 openURL = url
                 diskText = text
@@ -254,7 +257,7 @@ final class ProjectModel {
                     cursorLine = editor.currentLine
                 }
             } catch {
-                if !closed { report(error, "Couldn’t Open “\(name(path))”") }
+                if !closed, stillCurrent?() != false { report(error, "Couldn’t Open “\(name(path))”") }
                 return
             }
         }
@@ -624,28 +627,46 @@ final class ProjectModel {
 
     func forwardSync() async {
         guard let path = openPath else { return }
-        guard await saveEdits() else { return }
-        let (line, word) = (editor.currentLine, editor.currentWord)
+        syncGeneration += 1
+        let generation = syncGeneration, opened = openGeneration, version = pdfVersion
+        let selection = editor.textView.selectedRange(), text = editor.textView.string
+        let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
+        func current() -> Bool {
+            !closed && generation == syncGeneration && opened == openGeneration && version == pdfVersion
+                && app?.project === self && openPath == path && editor.textView.selectedRange() == selection && editor.textView.string == text
+        }
+        guard await saveEdits(), current() else { return }
         do {
-            let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line], as: ForwardLoc.self)
+            let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
+            guard current() else { return }
             highlightToken += 1
             highlight = (loc, word, highlightToken)
             showPDF = true
         } catch {
-            report(error, "Couldn’t Find This Line in the PDF")
+            if current() { report(error, "Couldn’t Find This Line in the PDF") }
         }
     }
 
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
-    func inverseSync(page: Int, x: Double, y: Double, word: (String, offset: Int)? = nil) async {
+    func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
+        syncGeneration += 1
+        let generation = syncGeneration, opened = openGeneration, version = pdfVersion, path = openPath
+        let selection = editor.textView.selectedRange(), text = editor.textView.string
+        func current(checkOpen: Bool = true) -> Bool {
+            !closed && generation == syncGeneration && (!checkOpen || opened == openGeneration) && version == pdfVersion
+                && app?.project === self && openPath == path && editor.textView.selectedRange() == selection && editor.textView.string == text
+        }
         do {
             // A nil word bridges as null, which the core reads as none.
-            let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.0 as Any, "offset": word?.offset as Any]
+            let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
+                                       "context": word?.context as Any, "contextOffset": word?.contextOffset as Any]
             let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
-            await open(loc.file, line: loc.line, column: loc.column)
-            editor.focus()
+            guard current() else { return }
+            let opening = openGeneration + 1
+            await open(loc.file, line: loc.line, column: loc.column, stillCurrent: { current(checkOpen: false) })
+            if generation == syncGeneration, opening == openGeneration, !closed, app?.project === self, openPath == loc.file { editor.focus() }
         } catch {
-            report(error, "Couldn’t Find This Spot in the Source")
+            if current() { report(error, "Couldn’t Find This Spot in the Source") }
         }
     }
 

@@ -153,6 +153,17 @@ struct SourceEditorTests {
         #expect(editor.currentWord == "word")
     }
 
+    @Test func syncTeXRetainsTheClickedOccurrenceAndUTF16Column() throws {
+        let source = "before\n😀 echo echo echo\n"
+        let range = (source as NSString).range(of: "echo", options: .backwards)
+        open(source, caret: range.location + 2)
+        let word = try #require(editor.currentSyncWord)
+        #expect(word.text == "echo" && word.offset == 2)
+        #expect(word.context == "😀 echo echo echo\n")
+        #expect(word.contextOffset == 13)
+        #expect(editor.currentLine == 2 && editor.currentColumn == 15)
+    }
+
     /// A file opened with the keyboard asked for takes it once the editor shows,
     /// as a project opens; one chosen in the sidebar leaves it where it is.
     @Test func theKeyboardFollowsTheOpen() {

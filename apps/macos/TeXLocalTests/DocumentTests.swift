@@ -275,6 +275,8 @@ struct PDFFitTests {
         document.insert(page, at: 0)
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         let native = PDFView(frame: view.frame)
+        view.backgroundColor = .windowBackgroundColor
+        native.backgroundColor = .windowBackgroundColor
         view.appearance = NSAppearance(named: appearance)
         native.appearance = view.appearance
         view.document = document
@@ -300,10 +302,10 @@ struct PDFFitTests {
 @MainActor
 struct PDFFindTests {
     /// Each page's text drawn as text, so PDFKit finds it.
-    private func document(_ pages: [String]) throws -> PDFDocument {
+    private func document(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
         let document = PDFDocument()
         for text in pages {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
             view.string = text
             let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
             document.insert(page, at: document.pageCount)
@@ -332,6 +334,66 @@ struct PDFFindTests {
         let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
         let word = try #require(page.word(at: CGPoint(x: letter.midX, y: letter.midY)))
         #expect(word.0 == "beta" && word.offset == 1)
+    }
+
+    /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
+    @Test func forwardSearchRetainsRepeatedWordsAcrossWrappedRows() throws {
+        let source = String(repeating: "An echo repeats in this sentence. ", count: 8)
+        let pdf = try document([source], width: 180), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string)
+        let sourceRanges = source.ranges(of: "echo"), renderedRanges = rendered.ranges(of: "echo")
+        #expect(sourceRanges.count == 8 && renderedRanges.count == 8)
+        let lines = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).selectionsByLine()
+        let boxes = lines.map { line -> ForwardLoc in
+            let rect = line.bounds(for: page)
+            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        }
+        #expect(boxes.count > 3)
+        let nativeOrder = Array(boxes.dropFirst(boxes.count / 2)) + Array(boxes.prefix(boxes.count / 2))
+        for index in [0, 3, 7] {
+            let word = SyncTeXWord(text: "echo", offset: 0, context: source, contextOffset: NSRange(sourceRanges[index], in: source).location)
+            let hit = try #require(pdf.bounds(of: word, near: nativeOrder))
+            let expected = try #require(page.selection(for: NSRange(renderedRanges[index], in: rendered))).bounds(for: page)
+            #expect(hit.page === page && hit.rect == expected)
+        }
+    }
+
+    @Test func forwardSearchUsesTheReportedParagraphForIdenticalText() throws {
+        let paragraph = "An echo repeats. An echo repeats. An echo repeats."
+        let pdf = try document([paragraph + "\n\n" + paragraph], width: 180), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string), occurrences = rendered.ranges(of: "echo")
+        #expect(occurrences.count == 6)
+        let expected = try #require(page.selection(for: NSRange(occurrences[5], in: rendered))).bounds(for: page)
+        let loc = ForwardLoc(page: 1, h: expected.minX, v: page.bounds(for: .cropBox).maxY - expected.minY,
+                             width: expected.width, height: expected.height)
+        let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
+                              contextOffset: (paragraph as NSString).range(of: "echo", options: .backwards).location)
+        let hit = try #require(pdf.bounds(of: word, near: [loc]))
+        #expect(hit.page === page && hit.rect == expected)
+        let inverse = try #require(page.syncWord(at: CGPoint(x: expected.midX, y: expected.midY)))
+        #expect(inverse.text == "echo" && inverse.context == rendered)
+        #expect(inverse.contextOffset == NSRange(occurrences[5], in: rendered).location)
+        let start = NSRange(occurrences[3], in: rendered).location - 3 // "An " before this paragraph’s first echo.
+        let lines = try #require(page.selection(for: NSRange(location: start, length: (rendered as NSString).length - start))).selectionsByLine()
+        let boxes = lines.map { line -> ForwardLoc in
+            let rect = line.bounds(for: page)
+            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        }
+        for index in 0..<3 {
+            let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
+                                  contextOffset: NSRange(paragraph.ranges(of: "echo")[index], in: paragraph).location)
+            let hit = try #require(pdf.bounds(of: word, near: boxes))
+            #expect(hit.rect == (try #require(page.selection(for: NSRange(occurrences[index + 3], in: rendered)))).bounds(for: page))
+        }
+    }
+
+    @Test func forwardSearchKeepsTheNativeBoxWhenMacroContextIsAmbiguous() throws {
+        let pdf = try document(["echo echo"]), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string)
+        let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
+        let loc = ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        let word = SyncTeXWord(text: "echo", offset: 0, context: "\\LaTeX echo", contextOffset: 7)
+        #expect(pdf.bounds(of: word, near: [loc]) == nil)
     }
 
     /// PDFKit searches off the main thread and posts what it finds to the main queue.

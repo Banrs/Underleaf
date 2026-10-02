@@ -195,8 +195,8 @@ final class WorkspaceLayoutTests {
         #expect(isClose(width(workspace.sourceItem) - width(workspace.pdfItem), 80, within: 1.5))
     }
 
-    /// The File Outline's header stays at the files' foot, folded or not, at one height. Open, the
-    /// line over it takes the divider's drags; folded, nothing does.
+    /// The File Outline's header stays at the files' foot. Open, its native section spacing
+    /// follows the title and its line takes the divider's drags; folded, it aligns with the status bar.
     @Test func theOutlineHeadersLineTakesTheDividersDrags() async throws {
         let workspace = open()
         let sidebar = try #require(workspace.sidebarItem.viewController as? NSSplitViewController)
@@ -205,7 +205,10 @@ final class WorkspaceLayoutTests {
         let outline = try #require(sidebar.splitViewItems.last)
         workspace.project.openPath = "main.tex"
         workspace.app.outlineCollapsed = false
-        try await waitUntil { !outline.isCollapsed && !header.isHidden }
+        try await waitUntil {
+            !outline.isCollapsed && !header.isHidden
+                && isClose(header.view.frame.height, OutlineHeader.expandedHeight + split.dividerThickness)
+        }
         split.layoutSubtreeIfNeeded()
 
         let frame = header.view.convert(header.view.bounds, to: split)
@@ -219,8 +222,8 @@ final class WorkspaceLayoutTests {
         workspace.app.outlineCollapsed = true
         try await waitUntil { outline.isCollapsed }
         #expect(!header.isHidden)
-        // One height, so the split's collapse is all that moves.
-        #expect(header.view.frame.height == frame.height)
+        try await waitUntil { isClose(header.view.frame.height, BarMetrics.secondaryBarHeight + split.dividerThickness) }
+        #expect(frame.height < header.view.frame.height)
         #expect(delegate.splitView?(split, effectiveRect: divider, forDrawnRect: divider, ofDividerAt: 0) == .zero)
     }
 

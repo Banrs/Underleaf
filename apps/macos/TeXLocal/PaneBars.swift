@@ -6,8 +6,8 @@ enum BarMetrics {
     static let inset: CGFloat = 8
     /// UI kit: a symbol and its words 4 pt apart.
     static let spacing: CGFloat = 4
-    /// The status bar and the File Outline header share this height, so the hairlines
-    /// over them run on as one (Xcode's status bar).
+    /// The status bar and folded File Outline header share this height, so the
+    /// hairlines over them run on as one (Xcode's status bar).
     static let secondaryBarHeight: CGFloat = 36
     /// UI kit, Unified Compact toolbar: items 12 pt apart.
     static let itemSpacing: CGFloat = 12

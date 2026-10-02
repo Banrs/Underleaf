@@ -507,20 +507,23 @@ impl Service {
             // The project's own build, which reports itself stopped; true
             // when one was running.
             "stop_compile" => out(self.compile.stop(&root()?).await),
-            "synctex_forward" => out(synctex::synctex_forward(
+            "synctex_forward" => out(synctex::synctex_forward_at(
                 &root()?,
                 &s("file")?,
                 arg(args, "line")?,
+                arg(args, "column")?,
                 &self.tex_path(),
             )
             .await?),
-            "synctex_inverse" => out(synctex::synctex_inverse(
+            "synctex_inverse" => out(synctex::synctex_inverse_with_context(
                 &root()?,
                 arg(args, "page")?,
                 arg(args, "x")?,
                 arg(args, "y")?,
                 arg::<Option<String>>(args, "word")?.as_deref(),
                 arg(args, "offset")?,
+                arg::<Option<String>>(args, "context")?.as_deref(),
+                arg(args, "contextOffset")?,
                 &self.tex_path(),
             )
             .await?),

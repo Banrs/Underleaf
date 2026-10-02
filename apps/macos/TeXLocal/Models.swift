@@ -100,6 +100,8 @@ nonisolated struct ForwardLoc: Decodable {
     let v: Double?
     let width: Double?
     let height: Double?
+    /// Every matching line box, in page order; older cores return only the box above.
+    var matches: [ForwardLoc]? = nil
 }
 
 nonisolated struct InverseLoc: Decodable {

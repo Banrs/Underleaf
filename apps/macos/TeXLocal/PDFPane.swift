@@ -23,8 +23,16 @@ struct PDFPane: View {
 
     /// Read whole: the next build rewrites the file in place.
     @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return PDFDocument(data: data)
+        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return nil }
+        // Keep hyperlinks active without hyperref's visible annotation boxes.
+        for index in 0..<document.pageCount {
+            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
+                let border = PDFBorder()
+                border.lineWidth = 0
+                annotation.border = border
+            }
+        }
+        return document
     }
 
     @ViewBuilder

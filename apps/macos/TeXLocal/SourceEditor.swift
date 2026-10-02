@@ -1,6 +1,14 @@
 import AppKit
 import SwiftUI
 
+/// A word plus its occurrence in source/PDF text. Offsets are UTF-16, as AppKit/PDFKit use.
+nonisolated struct SyncTeXWord: Equatable, Sendable {
+    let text: String
+    let offset: Int
+    let context: String
+    let contextOffset: Int
+}
+
 /// A project's source editor: one native text view (`SourceTextView`) for its
 /// text files, each file's text, undo and selection kept while another shows;
 /// the find bar's search; and the formatting commands, whose LaTeX is the core's.
@@ -117,12 +125,24 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     /// The word at the caret, as the system's word selection takes it.
-    var currentWord: String? {
-        let caret = NSRange(location: textView.selectedRange().location, length: 0)
+    var currentWord: String? { currentSyncWord?.text }
+
+    /// SyncTeX needs the occurrence within the source line, not just its spelling.
+    var currentSyncWord: SyncTeXWord? {
+        let source = textView.string as NSString
+        let position = textView.selectedRange().location
+        let caret = NSRange(location: position, length: 0)
         let range = textView.selectionRange(forProposedRange: caret, granularity: .selectByWord)
-        let word = (textView.string as NSString).substring(with: range).trimmingCharacters(in: .alphanumerics.inverted)
-        return word.isEmpty ? nil : word
+        let selected = source.substring(with: range)
+        let word = selected.trimmingCharacters(in: .alphanumerics.inverted)
+        guard !word.isEmpty else { return nil }
+        let start = range.location + (selected as NSString).range(of: word).location
+        let line = source.lineRange(for: caret)
+        return SyncTeXWord(text: word, offset: min(max(position - start, 0), (word as NSString).length - 1),
+                           context: source.substring(with: line), contextOffset: start - line.location)
     }
+
+    var currentColumn: Int { textView.selectedRange().location - textView.document.lineStart(currentLine) }
 
     /// `atTop` puts the line at the top of the view, as an outline's jump to a
     /// heading does; otherwise it's centred, with the lines round it. A `column`

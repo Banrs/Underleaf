@@ -24,6 +24,7 @@ final class WorkspaceController: DetentSplitViewController {
     private(set) var panelItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
     private var outlineBar: NSSplitViewItemAccessoryViewController!
+    private var outlineBarHeight: NSLayoutConstraint!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     private var sourceFind: NSSplitViewItemAccessoryViewController!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
@@ -68,7 +69,10 @@ final class WorkspaceController: DetentSplitViewController {
         let filesItem = NSSplitViewItem(viewController: files)
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
         // The outline's header, folded or not: its line stands for the divider under it.
-        outlineBar = accessory(OutlineHeader(), hidden: !showsOutline, footOf: sidebar.splitView)
+        outlineBar = accessory(OutlineHeader(), hidden: !showsOutline, footOf: sidebar.splitView, topAligned: true)
+        outlineBarHeight = outlineBar.view.heightAnchor.constraint(equalToConstant:
+            (app.outlineCollapsed ? BarMetrics.secondaryBarHeight : OutlineHeader.expandedHeight) + sidebar.splitView.dividerThickness)
+        outlineBarHeight.isActive = true
         filesItem.addBottomAlignedAccessoryViewController(outlineBar)
         sidebar.header = outlineBar
 
@@ -175,7 +179,7 @@ final class WorkspaceController: DetentSplitViewController {
     /// content under the line; with `clearsCorners` its ends keep clear of the
     /// window's rounded corners where they meet them (the status bar's).
     private func accessory(_ content: some View, hidden: Bool = false, footOf split: NSSplitView? = nil,
-                           clearsCorners: Bool = false) -> NSSplitViewItemAccessoryViewController {
+                           clearsCorners: Bool = false, topAligned: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
         let host = NSHostingView(rootView: content.environment(app))
         host.sizingOptions = [.intrinsicContentSize]
@@ -208,7 +212,8 @@ final class WorkspaceController: DetentSplitViewController {
                 hairline.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
                 hairline.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
                 host.topAnchor.constraint(equalTo: hairline.bottomAnchor),
-                host.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+                topAligned ? host.bottomAnchor.constraint(lessThanOrEqualTo: bar.bottomAnchor)
+                           : host.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
                 leading, trailing,
             ])
             accessory.view = bar
@@ -277,15 +282,25 @@ final class WorkspaceController: DetentSplitViewController {
     /// With AppKit's collapse animation, unless the window isn't on screen or
     /// Reduce Motion is on. `done` runs once the pane is at its size.
     private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: (@MainActor () -> Void)? = nil) {
+        let headerHeight = item === outlineItem
+            ? (collapsed ? BarMetrics.secondaryBarHeight : OutlineHeader.expandedHeight) + sidebar.splitView.dividerThickness : nil
+        // Repeated model notifications must not snap an animation already heading here.
         guard item.isCollapsed != collapsed else { return done?() ?? () }
         guard animates else {
+            if let headerHeight { outlineBarHeight.constant = headerHeight }
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
             done?()
             return
         }
-        NSAnimationContext.runAnimationGroup { _ in
+        NSAnimationContext.runAnimationGroup { context in
+            // One AppKit animation owns the split and the header's lower padding.
+            if let headerHeight {
+                context.allowsImplicitAnimation = true
+                outlineBarHeight.animator().constant = headerHeight
+            }
             item.animator().isCollapsed = collapsed
+            if headerHeight != nil { sidebar.view.layoutSubtreeIfNeeded() }
         } completionHandler: {
             MainActor.assumeIsolated { done?() }
         }

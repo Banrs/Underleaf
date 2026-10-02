@@ -661,6 +661,12 @@ final class SourceTextView: FindPassingTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
+    override func mouseDown(with event: NSEvent) {
+        // Let AppKit select the word before SyncTeX reads the source position.
+        super.mouseDown(with: event)
+        if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync()?() }
+    }
+
     /// Go to PDF Position for the clicked line (the click puts the caret there), above
     /// the system's items, as the PDF's menu has Go to Source Position.
     override func menu(for event: NSEvent) -> NSMenu? {
