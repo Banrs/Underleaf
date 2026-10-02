@@ -14,7 +14,7 @@ struct StatusBar: View {
             Button {
                 if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
             } label: {
-                buildStatus
+                buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             Spacer(minLength: 0)
@@ -31,19 +31,23 @@ struct StatusBar: View {
                         if pages {
                             if let freshness = project.pdfFreshness { freshnessButton(freshness) }
                             Button { app.perform(.pdfGotoPage, on: project) } label: {
-                                Text("Page \(project.pdf.page) of \(project.pdf.pageCount)")
+                                Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
                             }
                             .help("Go to Page")
                         }
                     }
+                    // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
                     Divider().frame(height: 12)
                 }
                 // At the far end, as a panel's toggle sits at its window's edge.
                 Toggle(isOn: $project.showLogs) {
-                    Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle")
+                    Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
                 }
                 .labelStyle(.iconOnly)
                 .toggleStyle(.button)
+                // Laid out by its symbol, as a text button is by its words, so the bar's
+                // inset and spacing reach the symbol: its 20 pt hit area reaches past.
+                .padding(.horizontal, -3)
                 .help(app.title(.viewToggleLogs, on: project))
             }
         }
@@ -51,10 +55,10 @@ struct StatusBar: View {
         .monospacedDigit()
         .controlSize(.small)
         .lineLimit(1)
+        .padding(.horizontal, BarMetrics.inset)
         .frame(height: BarMetrics.secondaryBarHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Divider().allowsHitTesting(false) }
-        .buttonStyle(.accessoryBar)
+        .buttonStyle(.borderless)
         // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
@@ -69,6 +73,7 @@ struct StatusBar: View {
         } label: {
             Label(freshness.title, systemImage: freshness.systemImage)
                 .labelStyle(.titleAndIcon)
+                .hitTarget()
         }
         .help(freshness == .edited ? "The preview doesn’t reflect the current source. Compile"
                                    : "The latest build failed; this is the last one that succeeded. Show Issues")
@@ -102,7 +107,7 @@ struct StatusBar: View {
                     .accessibilityLabel(Text("^[\(project.warningCount) warning](inflect: true)"))
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
+        .fixedSize()
     }
 
     /// Errors and warnings in the symbols' own colours; success in green, which
@@ -117,4 +122,10 @@ struct StatusBar: View {
         }
         .labelStyle(.titleAndIcon)
     }
+}
+
+private extension View {
+    /// The HIG's least control size, 20 × 20 pt: a small borderless button is
+    /// otherwise only as tall as its words.
+    func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
 }

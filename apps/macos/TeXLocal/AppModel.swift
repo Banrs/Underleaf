@@ -130,21 +130,14 @@ final class AppModel {
     }
 
     private let core = Core.shared
-    @ObservationIgnored private var refreshGeneration = 0
-    @ObservationIgnored private var texGeneration = 0
-    @ObservationIgnored private var lastTeXChange: Task<Void, Error>?
 
     func refresh() async {
-        refreshGeneration += 1
-        let generation = refreshGeneration, probeGeneration = texGeneration
         do {
-            let projects = try await core.call("list_projects", as: [ProjectInfo].self)
-            if generation == refreshGeneration { self.projects = projects }
+            projects = try await core.call("list_projects", as: [ProjectInfo].self)
         } catch {
-            if generation == refreshGeneration { alert = AppAlert("Couldn’t Load Your Projects", error) }
+            alert = AppAlert("Couldn’t Load Your Projects", error)
         }
-        let status = try? await core.call("status", as: TexStatus.self)
-        if generation == refreshGeneration, probeGeneration == texGeneration { tex = status }
+        tex = try? await core.call("status", as: TexStatus.self)
     }
 
     /// Polls while TeX is missing, so installing it needs no relaunch.
@@ -152,25 +145,13 @@ final class AppModel {
         while tex?.available == false, !Task.isCancelled {
             // Each look runs `status`, which searches the disk for latexmk.
             try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled else { return }
-            let generation = texGeneration
-            let status = try? await core.call("status", as: TexStatus.self)
-            if !Task.isCancelled, generation == texGeneration { tex = status }
+            tex = try? await core.call("status", as: TexStatus.self)
         }
     }
 
     /// Nil finds TeX automatically. The core refuses a folder without latexmk.
     func setTeXFolder(_ path: String?) async throws {
-        texGeneration += 1
-        let previous = lastTeXChange
-        let task = Task {
-            _ = try? await previous?.value
-            let status = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
-            texGeneration += 1
-            tex = status
-        }
-        lastTeXChange = task
-        try await task.value
+        tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
     }
 
     func create(name: String, template: String) async throws {
@@ -261,12 +242,6 @@ final class AppModel {
         await model.load(restoring: saved?.project == id ? saved : nil)
     }
 
-    /// Settings and source writes must reach disk before Quit is answered.
-    func flushForQuit() async -> Bool {
-        _ = try? await lastTeXChange?.value
-        return await project?.flush() ?? true
-    }
-
     /// False, staying, when the save fails: the editor holds the only copy.
     @discardableResult
     func close() async -> Bool {
@@ -296,3 +271,4 @@ final class AppModel {
         return true
     }
 }
+

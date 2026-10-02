@@ -32,12 +32,9 @@ void tl_close(TlHandle *handle);
 typedef struct TlSource TlSource;
 
 TlSource *tl_source_new(const char *text);
-/* Byte-counted UTF-8 preserves embedded NULs; NULL means empty. */
-TlSource *tl_source_new_utf8(const char *text, size_t byte_count);
 
 /* The editor replaced length units at start with text. */
 void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const char *text);
-void tl_source_edit_utf8(TlSource *source, uint32_t start, uint32_t length, const char *text, size_t byte_count);
 
 uint32_t tl_source_line_at(const TlSource *source, uint32_t offset);
 uint32_t tl_source_line_start(const TlSource *source, uint32_t line);

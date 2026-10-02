@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// One pane, titled "TeXLocal Settings" by the system: six controls need no tabs (HIG, Settings).
+/// One pane, titled "TeXLocal Settings" by the system.
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
-    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
 
@@ -17,25 +16,9 @@ struct SettingsView: View {
                 Picker("Font", selection: $font) {
                     ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
                 }
-                // The stepper next to its field (HIG, Steppers): a form's Stepper with a format
-                // draws its arrows over its own field's end (27.2).
-                LabeledContent("Font Size") {
-                    HStack {
-                        TextField("Font Size", value: size, format: .number)
-                        Stepper("Font Size", value: size, in: Self.sizes)
-                    }
-                    .labelsHidden()
-                }
+                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
                 Picker("Syntax Colors", selection: $palette) {
                     ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
-                }
-            }
-            Section("PDF") {
-                Picker(selection: $pdfPaper) {
-                    ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
-                } label: {
-                    Text("Document Paper")
-                    Text("Dark paper inverts the rendered PDF for night reading.")
                 }
             }
             Section("Compiling") {
@@ -66,12 +49,13 @@ struct SettingsView: View {
                 }
             }
         }
+        // Sized to its content; 500 wide (UI kit example forms).
         .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(width: 500)
+        .fixedSize(horizontal: false, vertical: true)
         .fileImporter(isPresented: $choosingTeX, allowedContentTypes: [.folder]) { result in
-            switch result {
-            case .success(let url): setTeXFolder(url.path)
-            case .failure(let error): alert = AppAlert("Couldn’t Choose the TeX Folder", error)
-            }
+            if case .success(let url) = result { setTeXFolder(url.path) }
         }
         .fileDialogConfirmationLabel("Choose")
         .fileDialogMessage("Choose the folder latexmk is in, such as a TeX distribution’s bin folder.")
@@ -90,10 +74,12 @@ struct SettingsView: View {
         }
     }
 
-    private static let sizes = 10...28
+    private static let sizes: ClosedRange<Double> = 10...28
 
-    /// A typed size is kept to the stepper's range.
-    private var size: Binding<Int> {
-        Binding(get: { fontSize }, set: { fontSize = min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound) })
+    /// Double: the stepper's formatted value takes only floating point.
+    private var size: Binding<Double> {
+        Binding(get: { Double(fontSize) }, set: {
+            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        })
     }
 }

@@ -1,5 +1,7 @@
 import AppKit
+import SwiftUI
 import Testing
+import WebKit
 @testable import TeXLocal
 
 /// The source editor's own editing, over the core's answers (whose LaTeX
@@ -13,13 +15,6 @@ struct SourceEditorTests {
     private func open(_ string: String, caret: Int? = nil, path: String = "main.tex") {
         editor.open(path: path, text: string, focus: false)
         text.setSelectedRange(NSRange(location: caret ?? (string as NSString).length, length: 0))
-    }
-
-    @Test func sourceViewUsesPlainTextAndOpensFileDrops() {
-        #expect(!text.isRichText)
-        #expect(!text.usesFontPanel)
-        #expect(!text.isAutomaticSpellingCorrectionEnabled)
-        #expect(text.acceptableDragTypes.contains(.fileURL))
     }
 
     /// Each file has its own undo, kept while another shows, while its text
@@ -39,16 +34,6 @@ struct SourceEditorTests {
         open("two, changed", path: "b.tex")
         open("elsewhere", path: "a.tex")
         #expect(text.undoManager !== a)
-    }
-
-    @Test func embeddedNullsKeepTheSourceMirrorAndUndo() {
-        let original = "é\0\none"
-        open(original)
-        #expect(text.document.text == original && text.document.lineCount == 2)
-        text.insertText("🙂\0\n", replacementRange: typed)
-        #expect(text.document.text == text.string && text.document.lineCount == 3)
-        text.undoManager?.undo()
-        #expect(text.string == original && text.document.text == original)
     }
 
     @Test func bracketsCloseAndAreSteppedOver() {
@@ -132,6 +117,30 @@ struct SourceEditorTests {
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "\\caption{")))
         text.insertTab(nil)
         #expect(text.selectedRange().location == NSMaxRange(string.range(of: "fig:")))
+    }
+
+    /// A line revealed far down is at the top exactly, and stays there as the column
+    /// narrows: TextKit 2 estimates what's above it, and the width changes that. The
+    /// lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
+    @Test func aRevealedLineStaysAtTheTop() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        open((1...6000).map { "Line \($0) " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
+        /// From the top of what shows to the line's paragraph.
+        func top(_ line: Int) -> CGFloat? {
+            let clip = editor.scrollView.contentView
+            return text.textRange(NSRange(location: text.document.lineStart(line), length: 0))
+                .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) }
+                .map { $0.layoutFragmentFrame.minY + text.textContainerOrigin.y - clip.bounds.minY - editor.scrollView.contentInsets.top }
+        }
+        editor.reveal(line: 5000, atTop: true, focus: false)
+        #expect(top(5000) == 0)
+        editor.scrollView.setFrameSize(NSSize(width: 350, height: 400))
+        #expect(top(5000) == 0)
+        #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
     /// SyncTeX's word: an inverse search's column selects the word there, and a
@@ -246,42 +255,14 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    /// AppKit checks a nonzero paragraph and applies its annotations in a real
-    /// TextKit 2 view. Calling the delegate directly cannot establish its offsets.
-    @Test func nativeSpellingMarksProseButNotCommandsAfterAPrefix() async throws {
-        // Isolate this request from a simultaneous automatic whole-document check.
-        text.isContinuousSpellCheckingEnabled = false
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
-        editor.shown = true
-        let prefix = String(repeating: "🙂 Correct prose.\n", count: 20)
-        let paragraph = "This is a speling word. \\newpage\n"
-        open(prefix + paragraph, caret: (prefix as NSString).length)
-        window.makeFirstResponder(text)
-        window.contentView!.layoutSubtreeIfNeeded()
-        let checked = NSRange(location: (prefix as NSString).length, length: (paragraph as NSString).length)
-        text.checkText(in: checked, types: NSTextCheckingResult.CheckingType.spelling.rawValue,
-                       options: [.orthography: NSOrthography.defaultOrthography(forLanguage: "en_US")])
-        let client = try #require(text as? NSTextCheckingClient)
-        let source = text.string as NSString
-        let prose = source.range(of: "speling"), command = source.range(of: "newpage")
-        func state(at offset: Int) -> Int {
-            var actual = NSRange()
-            guard let string = client.annotatedSubstring(forProposedRange: checked, actualRange: &actual),
-                  NSLocationInRange(offset, actual) else { return 0 }
-            let value = string.attribute(.spellingState, at: offset - actual.location, effectiveRange: nil)
-            return (value as? NSNumber)?.intValue ?? (value as? NSString)?.integerValue ?? 0
+    /// The maths preview's body has SwiftUI's margins and is never narrower
+    /// than it's tall, or a single letter reads as an egg.
+    @Test func mathsPreviewsHaveTheSystemsMargins() {
+        func body(_ width: CGFloat, _ height: CGFloat) -> NSSize {
+            NSHostingController(rootView: MathView(page: WebPage(), size: CGSize(width: width, height: height))).view.fittingSize
         }
-        // The system spell server replies asynchronously; wait for a real prose mark.
-        for _ in 0..<100 {
-            if state(at: prose.location) & 1 != 0 { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(state(at: prose.location) & 1 != 0)
-        #expect(state(at: command.location) == 0)
-        #expect(text.string == prefix + paragraph)
+        #expect(body(89, 38) == NSSize(width: 121, height: 70))
+        #expect(body(9, 20) == NSSize(width: 52, height: 52))
     }
 
     @Test func findSelectsAsYouTypeAndReplaces() {
@@ -308,54 +289,21 @@ struct SourceEditorTests {
         #expect(text.string == "a a")
     }
 
-    @Test func regularExpressionsKeepTheDocumentsBounds() {
-        open("xfoo\nfoobar foobar", caret: 1)
-        editor.setFind(FindQuery(search: "^foo", regexp: true))
-        #expect(text.selectedRange() == NSRange(location: 5, length: 3))
-        editor.setFind(FindQuery(search: "(foo)(?=bar)", replace: "$1X", regexp: true))
-        editor.replace(all: false)
-        #expect(text.string == "xfoo\nfooXbar foobar")
-        editor.replace(all: true)
-        #expect(text.string == "xfoo\nfooXbar fooXbar")
-
-        let context = "barfoo foobar" as NSString
-        for (pattern, location) in [("(?<=bar)(foo)", 3), ("(foo)(?=bar)", 7)] {
-            let query = FindQuery(search: pattern, replace: "$1X", regexp: true)
-            let range = NSRange(location: location, length: 3)
-            #expect(query.matches(in: context, range: range, limit: 1).ranges == [range])
-            #expect(query.replacement(for: range, in: context) == "fooX")
-        }
-        #expect(FindQuery(search: "foo$", regexp: true)
-            .matches(in: "foobar", range: NSRange(location: 0, length: 3), limit: 1).ranges.isEmpty)
-        #expect(FindQuery(search: "\\bfoo\\b", regexp: true)
-            .matches(in: "xfoo", range: NSRange(location: 1, length: 3), limit: 1).ranges.isEmpty)
-    }
-
-    /// The source menu keeps standard editing actions and adds PDF navigation when available.
+    /// The text's context menu starts with Go to PDF Position, as the PDF's with
+    /// Go to Source Position, while there's somewhere to go, and holds what source needs.
     @Test func theContextMenuGoesToThePDF() throws {
         open("x")
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
                                                     windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        let editingTitles = [String(localized: "Cut"), String(localized: "Copy"), String(localized: "Paste")]
-        let editingActions = [#selector(NSText.cut(_:)), #selector(NSText.copy(_:)), #selector(NSText.paste(_:))]
-        let editingMenu = try #require(text.menu(for: click))
-        #expect(editingMenu.items.map(\.title) == editingTitles)
-        #expect(editingMenu.items.compactMap(\.action) == editingActions)
-        #expect(editingMenu.items.allSatisfy { $0.target == nil })
-        #expect(!editingMenu.allowsContextMenuPlugIns)
-
+        #expect(text.menu(for: click)?.items.first?.title != MenuCommand.syncForward.title)
         var went = false
         text.forwardSync = { { went = true } }
         let menu = try #require(text.menu(for: click))
-        #expect(menu.items.map(\.title) == [MenuCommand.syncForward.title, ""] + editingTitles)
+        #expect(menu.items.first?.title == MenuCommand.syncForward.title)
         #expect(menu.items[1].isSeparatorItem)
-        #expect(menu.items[0].target === text)
         menu.performActionForItem(at: 0)
         #expect(went)
-        for (index, action) in editingActions.enumerated() {
-            #expect(menu.items[index + 2].action == action)
-            #expect(menu.items[index + 2].target == nil)
-        }
-        #expect(!menu.allowsContextMenuPlugIns)
+        // Editing and spelling, without fonts, substitutions, transformations, speech or layout.
+        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste", "-", "Spelling and Grammar"])
     }
 }

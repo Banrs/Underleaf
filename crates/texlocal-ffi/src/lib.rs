@@ -173,31 +173,11 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
 /// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
 pub struct TlSource(SourceDocument);
 
-unsafe fn utf8_arg<'a>(text: *const c_char, byte_count: usize) -> &'a str {
-    if text.is_null() || byte_count == 0 {
-        return "";
-    }
-    std::str::from_utf8(std::slice::from_raw_parts(text.cast(), byte_count)).unwrap_or_default()
-}
-
 /// # Safety
 /// `text` is null (empty) or a NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_new(text: *const c_char) -> *mut TlSource {
     let text = str_arg(text).unwrap_or_default();
-    tl_source_new_utf8(text.as_ptr().cast(), text.len())
-}
-
-/// Create a source mirror from UTF-8 bytes, preserving embedded NULs.
-///
-/// # Safety
-/// `text` is null (empty) or readable for `byte_count` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn tl_source_new_utf8(
-    text: *const c_char,
-    byte_count: usize,
-) -> *mut TlSource {
-    let text = utf8_arg(text, byte_count);
     Box::into_raw(Box::new(TlSource(SourceDocument::new(text))))
 }
 
@@ -213,24 +193,9 @@ pub unsafe extern "C" fn tl_source_edit(
     length: u32,
     text: *const c_char,
 ) {
-    let text = str_arg(text).unwrap_or_default();
-    tl_source_edit_utf8(source, start, length, text.as_ptr().cast(), text.len());
-}
-
-/// Replace a UTF-16 range with UTF-8 bytes, preserving embedded NULs.
-///
-/// # Safety
-/// `source` is an unfreed source mirror; `text` is null (empty) or readable
-/// for `byte_count` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn tl_source_edit_utf8(
-    source: *mut TlSource,
-    start: u32,
-    length: u32,
-    text: *const c_char,
-    byte_count: usize,
-) {
-    (*source).0.edit(start, length, utf8_arg(text, byte_count));
+    (*source)
+        .0
+        .edit(start, length, str_arg(text).unwrap_or_default());
 }
 
 /// # Safety

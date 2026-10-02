@@ -8,7 +8,7 @@ final class SourceDocument {
     private let raw: OpaquePointer
 
     init(text: String) {
-        raw = text.utf8CString.withUnsafeBufferPointer { tl_source_new_utf8($0.baseAddress, $0.count - 1) }
+        raw = tl_source_new(text)
     }
 
     isolated deinit {
@@ -16,9 +16,7 @@ final class SourceDocument {
     }
 
     func edit(_ range: NSRange, with text: String) {
-        text.utf8CString.withUnsafeBufferPointer {
-            tl_source_edit_utf8(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count - 1)
-        }
+        tl_source_edit(raw, UInt32(range.location), UInt32(range.length), text)
     }
 
     /// The line an offset is on, from 1.
@@ -45,8 +43,8 @@ final class SourceDocument {
         }
     }
 
-    /// Absolute ranges of TeX names, maths and literal code touching this range;
-    /// comments and text arguments inside maths remain prose.
+    /// The names commands take (packages, citations, labels, files) in the
+    /// paragraphs a range touches, which aren't prose.
     func notProse(in range: NSRange) -> [NSRange] {
         let ranges: [[String: Int]] = call("not_prose", ["selection": Self.json(range)]) ?? []
         return ranges.map { NSRange(location: $0["start"] ?? 0, length: $0["length"] ?? 0) }

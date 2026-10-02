@@ -15,6 +15,8 @@ struct BuildPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack { header }
+                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
+                .frame(height: 24)
                 .padding(.vertical, BarMetrics.inset)
                 .paneBarControls()
                 .buttonStyle(.accessoryBar)
@@ -145,7 +147,6 @@ private struct IssueList: View {
         .onChange(of: items.map(\.offset)) { _, shown in
             if let selection, !shown.contains(selection) { self.selection = nil }
         }
-        .onChange(of: project.result.map { $0.errors + $0.warnings }) { selection = nil }
         .onChange(of: selection) { _, id in
             if let item = id.flatMap(item) { open(item, focus: false) }
         }

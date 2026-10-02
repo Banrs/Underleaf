@@ -139,16 +139,13 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
     }
 }
 
-/// The project file `\input{name}` reads: name.tex, which TeX tries first, or
-/// name, spelt as on disk, since a volume that ignores case finds it in any.
+/// The project file `\input{name}` reads: name.tex, which TeX tries first, or name.
 fn resolve(root: &Path, name: &str) -> Option<String> {
-    let (name, root) = (name.trim(), fs::canonicalize(root).ok()?);
+    let name = name.trim();
     let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
     [tex, name.to_owned()]
         .into_iter()
-        .filter_map(|rel| paths::safe_path(&root, &rel).ok())
-        .find(|path| path.is_file())
-        .and_then(|path| paths::rel_to_root(&root, &fs::canonicalize(path).ok()?))
+        .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
 }
 
 /// Adds a file's headings and words to `into`, reading each file a line names
@@ -181,13 +178,8 @@ fn add(
             }
         }
         let code = code(line);
-        // An input's file name is no word.
-        let mut names = 0;
-        inputs(line, &mut literal, &mut |name| {
-            names += words(name);
-            input(into, name)
-        });
-        into.words += words(code).saturating_sub(names);
+        into.words += words(code);
+        inputs(line, &mut literal, &mut |name| input(into, name));
     }
     lines
 }
@@ -342,25 +334,9 @@ mod tests {
                 at("End", "main.tex", 6)
             ]
         );
-        assert_eq!((project.words, project.lines), (8, 3));
+        assert_eq!((project.words, project.lines), (12, 3));
         let loose = analyze_project(dir.path(), "main.tex", "loose.tex");
         assert_eq!(headings(&loose), [at("Loose", "loose.tex", 1)]);
         assert_eq!((loose.words, loose.lines), (2, 2));
-    }
-
-    /// On a volume that ignores case, an input spelt in another case is read,
-    /// under the file's own spelling.
-    #[test]
-    #[cfg(any(windows, target_os = "macos"))]
-    fn an_input_takes_the_files_own_spelling() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir(dir.path().join("Chapters")).unwrap();
-        fs::write(dir.path().join("main.tex"), "\\input{chapters/INTRO}").unwrap();
-        fs::write(dir.path().join("Chapters/Intro.tex"), "\\section{Intro}").unwrap();
-        let project = analyze_project(dir.path(), "main.tex", "main.tex");
-        assert_eq!(
-            project.outline[0].file.as_deref(),
-            Some("Chapters/Intro.tex")
-        );
     }
 }

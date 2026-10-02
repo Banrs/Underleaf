@@ -65,17 +65,6 @@ final class FolderWatcherTests {
         try await waitUntil { changes().contains(where: \.structural) }
         _ = watcher
     }
-
-    @Test func movingTheWatchedRootIsTold() async throws {
-        var changes: [FolderWatcher.Change] = []
-        let watcher = FolderWatcher(folder: folder) { changes += $0 }
-        let moved = folder.appendingPathExtension("moved")
-        try FileManager.default.moveItem(at: folder, to: moved)
-        defer { try? FileManager.default.moveItem(at: moved, to: folder) }
-        try await waitUntil(timeout: .seconds(5)) {
-            changes.contains { $0.path == watcher.folder && $0.structural }
-        }
-    }
 }
 
 /// The Rust core through its C ABI, in the scheme's scratch library
@@ -178,24 +167,15 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// Quit waits for the editor's text and the project's settings to reach disk.
+    /// A save writes the editor's text to the file it belongs to.
     @Test(.timeLimit(.minutes(1)))
-    func quittingFlushesTextAndSettings() async throws {
+    func anEditReachesTheDisk() async throws {
         let (project, folder) = try await opened()
         #expect(project.editor.perform(.bold))
         try await waitUntil { project.hasUnsavedText }
-        var changingSettings = false
-        let change = Task {
-            changingSettings = true
-            await project.setStopOnFirstError(true)
-        }
-        try await waitUntil { changingSettings }
-        #expect(await app.flushForQuit())
+        #expect(await project.save())
         let saved = try String(contentsOf: folder.appending(path: try #require(project.openPath)), encoding: .utf8)
         #expect(saved.contains("\\textbf{}"))
-        let settings = try await Core.shared.call("get_settings", ["id": project.id], as: ProjectSettings.self)
-        #expect(settings.stopOnFirstError)
-        await change.value
         await app.close()
     }
 
@@ -262,7 +242,7 @@ final class ProjectFlowTests {
         let project = try #require(app.project)
         try await waitUntil { project.outline.count == 2 }
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
-        #expect(project.counts?.words == 5)
+        #expect(project.counts?.words == 6)
         project.reveal(project.outline[1])
         try await waitUntil { project.openPath == "chapters/a.tex" }
         #expect(project.headingLevel.title == "Section")

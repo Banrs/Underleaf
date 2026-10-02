@@ -1,27 +1,20 @@
 import PDFKit
 import SwiftUI
-import Synchronization
 
 /// What the toolbar, the find bar and the menus ask of the PDF view.
 @Observable
 final class PDFController {
     @ObservationIgnored weak var view: SyncPDFView? {
         didSet {
-            oldValue?.controller = nil
-            if let scaleObserver { NotificationCenter.default.removeObserver(scaleObserver) }
-            scaleObserver = nil
-            guard let view else { return }
-            view.controller = self
-            applyingFit = true
-            scaleChanged()
-            applyingFit = false
-            scaleObserver = NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: view, queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scaleChanged() }
-            }
-            applyFit()
+            // PDFView keeps a set scale as it resizes: Fit Height sets it again.
+            view?.onResize = { [weak self] in if self?.fit == .height { self?.fitHeight() } }
+            // The scale is PDFKit's scroll view's magnification, step by step through a pinch
+            // (PDFViewScaleChanged comes only as it ends). The view has it from the start.
+            magnification = view?.subviews.lazy.compactMap { $0 as? NSScrollView }.first?
+                .observe(\.magnification, options: .initial) { [weak self] _, _ in MainActor.assumeIsolated { self?.scaleChanged() } }
         }
     }
-    @ObservationIgnored private var scaleObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var magnification: NSKeyValueObservation?
     var page = 0
     /// The page a reopened project's first PDF opens at.
     @ObservationIgnored var restorePage: Int?
@@ -43,18 +36,14 @@ final class PDFController {
     /// PDFKit's own limits.
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
-    /// The AppKit toolbar updates in the native magnification callback, including tracking loops.
-    @ObservationIgnored var onScaleChanged: (() -> Void)?
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
-    @ObservationIgnored fileprivate var applyingFit = false
 
     func pageChanged() {
         guard let view, let document = view.document, let page = view.currentPage else { return }
         self.page = document.index(for: page) + 1
         pageCount = document.pageCount
-        applyFit()
     }
 
     func scaleChanged() {
@@ -62,31 +51,20 @@ final class PDFController {
         scale = view.scaleFactor
         canZoomIn = view.canZoomIn
         canZoomOut = view.canZoomOut
-        // The fit's own layout changes keep its mode; native pinch and menu zoom leave it.
-        if !applyingFit { fit = nil }
-        onScaleChanged?()
+        // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
+        // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
+        if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
+            fit = .width
+        } else if fit == .width || (fit == .height && abs(view.scaleFactor - heightScale(view)) > 0.001) {
+            fit = nil
+        }
     }
 
-    /// PDFKit measures a row, including rotated pages, spreads and page-break margins.
-    /// Explicit fits follow layout; native autoscaling's best fit is a separate choice.
-    func applyFit() {
-        guard !applyingFit, let fit, let view, let page = view.currentPage else { return }
-        applyingFit = true
-        view.autoScales = false
-        // Let native layout settle autohiding legacy scrollbars, then remeasure.
-        // Keep the settling bounded when fitting changes scrollbar visibility.
-        for _ in 0..<4 {
-            view.documentView?.enclosingScrollView?.layoutSubtreeIfNeeded()
-            let row = view.rowSize(for: page), viewport = view.viewportSize
-            let ratio = fit == .width ? viewport.width / row.width : viewport.height / row.height
-            guard ratio.isFinite, ratio > 0 else { break }
-            let scale = min(max(view.scaleFactor * ratio, view.minScaleFactor), view.maxScaleFactor)
-            guard abs(view.scaleFactor - scale) > 0.0001 else { break }
-            view.scaleFactor = scale
-            view.layoutDocumentView()
-        }
-        scaleChanged()
-        applyingFit = false
+    /// The page and its page-break margins, which scale with it, the height it shows in.
+    private func heightScale(_ view: PDFView) -> CGFloat {
+        guard let page = view.currentPage else { return view.scaleFactor }
+        let margins = view.pageBreakMargins
+        return view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
     }
 
     func setScale(_ scale: CGFloat) {
@@ -110,27 +88,18 @@ final class PDFController {
         view.go(to: page)
     }
 
+    /// In a continuous single-page layout, auto-scaling fits the page width.
     func fitWidth() {
         fit = .width
-        applyFit()
+        view?.autoScales = true
     }
 
+    /// Sets the fit after the scale, since the scale's change ends a fit.
     func fitHeight() {
+        guard let view, view.currentPage != nil else { return }
+        view.autoScales = false
+        view.scaleFactor = heightScale(view)
         fit = .height
-        applyFit()
-    }
-
-    /// A rebuild preserves explicit fitting or the user's native zoom choice.
-    func setDocument(_ document: PDFDocument) {
-        guard let view else { return }
-        applyingFit = true
-        let scale = view.scaleFactor, autoScales = view.autoScales
-        view.document = document
-        if fit == nil {
-            if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
-        }
-        applyingFit = false
-        applyFit()
     }
 
     /// PDFKit's own search, off the main thread (a first query extracts the text:
@@ -140,7 +109,6 @@ final class PDFController {
 
     isolated deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
-        if let scaleObserver { NotificationCenter.default.removeObserver(scaleObserver) }
         search?.document.cancelFindString()
     }
 
@@ -261,55 +229,42 @@ final class PDFController {
     }
 }
 
-/// PDFKit's selection and gestures, with explicit SyncTeX navigation.
+/// PDFView where a double-click goes to the source (inverse search), as in
+/// Overleaf, after PDFKit's own word selection marks the word it sends.
 final class SyncPDFView: PDFView {
-    weak var controller: PDFController? {
-        didSet { observeMagnification() }
-    }
-    private var magnificationObservation: NSKeyValueObservation?
-    private weak var observedScrollView: NSScrollView?
+    var onInverse: (_ page: Int, _ point: CGPoint, _ word: (String, offset: Int)?) -> Void = { _, _, _ in }
+    var onResize: () -> Void = {}
 
-    /// The native scroll view can change PDFView.scaleFactor without posting
-    /// PDFViewScaleChanged. Read the actual scale after the public scroll property changes.
-    private func observeMagnification() {
-        let scroll = controller == nil ? nil : documentView?.enclosingScrollView
-        guard scroll !== observedScrollView else { return }
-        magnificationObservation = nil
-        observedScrollView = scroll
-        magnificationObservation = scroll?.observe(\.magnification) { [weak self] _, _ in
-            MainActor.assumeIsolated {
-                guard let self, let controller = self.controller, self.scaleFactor != controller.scale else { return }
-                controller.scaleChanged()
-            }
+    /// SwiftUI sets the frame again, unchanged, as the window lays out (the toolbar's scale
+    /// changing): PDFView fits the width again on each, which would undo a pinch under way
+    /// (auto-scaling stays on until it ends).
+    override var frame: NSRect {
+        get { super.frame }
+        set { if newValue != super.frame { super.frame = newValue } }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        // SwiftUI sets the frame again, unchanged, on each scroll step: only a new size counts.
+        guard newSize != frame.size else { return super.setFrameSize(newSize) }
+        // PDFKit holds the view's top, which runs on under the toolbar, in place; at the
+        // document's start, the first page's top stays in view instead.
+        let atStart = atDocumentStart
+        super.setFrameSize(newSize)
+        onResize()
+        if atStart, let page = document?.page(at: 0) {
+            go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
         }
     }
 
-    /// The unobscured viewport, excluding any non-overlay scrollbars.
-    var viewportSize: NSSize {
-        let safe = safeAreaRect.size, clip = documentView?.enclosingScrollView?.contentSize ?? safe
-        return NSSize(width: min(safe.width, clip.width), height: min(safe.height, clip.height))
+    /// The first page's top no higher than the top of what shows, give or take its
+    /// page-break margin (which scales with the page, and PDFKit's own `go(to:)`
+    /// leaves). In view points.
+    private var atDocumentStart: Bool {
+        guard let page = document?.page(at: 0) else { return false }
+        let top = convert(CGPoint(x: 0, y: page.bounds(for: displayBox).maxY), from: page).y
+        return top <= bounds.maxY - safeAreaInsets.top + pageBreakMargins.top * scaleFactor
     }
 
-    override func layout() {
-        super.layout()
-        observeMagnification()
-        refitAfterLayout()
-    }
-
-    override func layoutDocumentView() {
-        super.layoutDocumentView()
-        observeMagnification()
-        refitAfterLayout()
-    }
-
-    private func refitAfterLayout() {
-        guard let controller, !controller.applyingFit else { return }
-        // A native zoom may alter the scrollbars before its scale notification.
-        if abs(scaleFactor - controller.scale) > 0.0001 { controller.scaleChanged() }
-        controller.applyFit()
-    }
-
-    var onInverse: (_ page: Int, _ point: CGPoint, _ word: (String, offset: Int)?) -> Void = { _, _, _ in }
     /// The top of what shows, under the toolbar and the find bar, where `go(to:)` puts a destination
     /// (in a page break, at the page's edge: a margin off, once); `currentDestination` is behind them.
     var shownDestination: PDFDestination? {
@@ -317,62 +272,22 @@ final class SyncPDFView: PDFView {
         return page(for: top, nearest: true).map { PDFDestination(page: $0, at: convert(top, to: $0)) }
     }
 
-    /// Read on PDFKit's tile queue.
-    private let pagesDark = Atomic(false)
-
-    /// As the web draws it (`.pdf-dark`): lightness inverted, hues kept. Drawn
-    /// into PDFKit's tiles, so sharp at any scale, and only the pages.
-    var darkPaper = false {
-        didSet {
-            guard darkPaper != oldValue else { return }
-            pagesDark.store(darkPaper, ordering: .relaxed)
-            pageShadowsEnabled = !darkPaper
-            matchScroller()
-            // PDFKit keeps the tiles it drew until the box they show changes.
-            let box = displayBox
-            displayBox = box == .mediaBox ? .cropBox : .mediaBox
-            displayBox = box
-        }
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
     }
 
-    /// The knob runs over the pages: light on dark paper, dark on white. Again
-    /// for the first document, which brings the scroll view (an override of
-    /// `document` would be called on PDFKit's form-filling queue). VoiceOver
-    /// reads the scroll view's label, not the PDF view's.
-    func matchScroller() {
-        documentView?.enclosingScrollView?.scrollerKnobStyle = darkPaper ? .light : .dark
-        documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
-    }
-
-    /// PDFView's own (the page on white, in the crop box it shows), then for dark
-    /// paper the page inverted and given back its own hue and saturation. PDFKit
-    /// calls this for each tile, on its own queue.
-    override nonisolated func draw(_ page: PDFPage, to context: CGContext) {
-        let box = page.bounds(for: .cropBox)
-        context.setFillColor(.white)
-        context.fill(box)
-        page.draw(with: .cropBox, to: context)
-        guard pagesDark.load(ordering: .relaxed) else { return }
-        context.setBlendMode(.difference)
-        context.fill(box)
-        context.setBlendMode(.color)
-        context.beginTransparencyLayer(auxiliaryInfo: nil)
-        context.setBlendMode(.normal)
-        context.fill(box)
-        page.draw(with: .cropBox, to: context)
-        context.endTransparencyLayer()
-    }
-
-    /// Go to Source Position for the clicked point, above PDFKit's Copy when there's a selection
-    /// (a right-click on a word selects it).
+    /// Go to Source Position for the clicked point, above PDFKit's own items.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
+        // The app fixes the page layout, and scrolling turns the pages.
+        menu?.keep([#selector(copy(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:))])
         guard let menu, document != nil else { return menu }
         let item = NSMenuItem(title: MenuCommand.syncInverse.title, action: #selector(goToSource(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = convert(event.locationInWindow, from: nil)
-        if !menu.items.isEmpty { menu.insertItem(.separator(), at: 0) }
         menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
         return menu
     }
 
@@ -390,7 +305,6 @@ final class SyncPDFView: PDFView {
 struct PDFRepresentable: NSViewRepresentable {
     let project: ProjectModel
     private var controller: PDFController { project.pdf }
-    let darkPaper: Bool
     let document: PDFDocument?
     /// Whether `document` is the current build's.
     let current: Bool
@@ -405,7 +319,7 @@ struct PDFRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SyncPDFView {
         let view = SyncPDFView()
-        view.backgroundColor = .underPageBackgroundColor
+        view.autoScales = true
         view.onInverse = { [project] page, point, word in
             Task { await project.inverseSync(page: page, x: point.x, y: point.y, word: word) }
         }
@@ -420,7 +334,6 @@ struct PDFRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ view: SyncPDFView, context: Context) {
-        view.darkPaper = darkPaper
         if let document, view.document !== document { show(document, in: view) }
         // Only on the current build's pages: the jump would be lost to the swap.
         if current, let highlight = project.highlight, highlight.token != context.coordinator.highlightToken {
@@ -439,8 +352,11 @@ struct PDFRepresentable: NSViewRepresentable {
         let place = view.shownDestination.flatMap { destination in
             destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
         }
-        controller.setDocument(document)
-        view.matchScroller()
+        let autoScales = view.autoScales
+        let scale = view.scaleFactor
+        view.document = document
+        view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
+        if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         let restore = controller.restorePage
         controller.restorePage = nil
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
@@ -458,7 +374,7 @@ struct PDFRepresentable: NSViewRepresentable {
         guard let page = view.document?.page(at: Int(loc.page) - 1) else { return }
         let box = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         let rect = word.flatMap { page.bounds(of: $0, near: box) } ?? box
-        // A filled square: PDFKit multiplies a highlight, which dark paper hides.
+        // A transient SyncTeX marker, removed after the navigation flash.
         let mark = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
         mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
         mark.interiorColor = mark.color

@@ -1,0 +1,208 @@
+# Design tokens
+
+Every value here was read out of **Apple's macOS 27 UI Kit** (Sketch, from
+[Apple Design Resources](https://developer.apple.com/design/resources/); kept
+locally in the gitignored `design/`) rather than eyeballed. This is the spec
+`web/styles.css` implements for the browser and Tauri UI; the native apps take
+their metrics from the system instead (`BarMetrics` and `Typography` on the Mac,
+Fluent on Windows).
+
+## Typography — SF Pro
+
+macOS's base *control* size is 13px — but see the roles below: a list-dense
+window uses 15px for its rows, and treating 13 as the app-wide size is what makes
+a Mac app look shrunken.
+
+**The scale is expressed as roles, not sizes** (`--fs-*`). Every `font-size` in
+`web/styles.css` refers to a role, so a value can't drift.
+
+| Role | Size | Used for |
+| --- | --- | --- |
+| large-title | 26 / 32 | welcome heading |
+| title | 15 / 20 Bold | window title, dialog titles |
+| **body** | **15 / 20** | **lists, rows, content, form rows** |
+| header | 13 / 16 Bold | section headers (kit Large header, 20px box) |
+| control | 13 / 16 | buttons, fields, menus, toolbars, breadcrumb, status |
+| small | 12 / 15 | hints, timestamps, metadata, log text |
+| micro | 11 / 14 | count badges only |
+
+Section headers scale with the variant too: Small/Medium use 11 Bold in an 18px
+box, **Large uses 13 Bold in a 20px box** — pairing an 11px header with 15px rows
+is the mismatch that reads wrong.
+
+**Row height follows the text size, so one sidebar gets one row height:** the
+kit's Large `Items` master, which carries 15/20, is 40, so the file tree and the
+outline both use 40.
+
+**Measured component text** (weights matter as much as sizes — most control text
+is *Medium*, not Regular, and titles are heavier than web defaults):
+
+| Component text | Kit spec |
+| --- | --- |
+| Window title | **15 Bold** (subtitle: 11 Medium) |
+| Toolbar pop-up/pull-down label, search field | 13 Medium |
+| Toolbar button symbol | 13pt SF Symbol (≈16px optical) |
+| Sidebar file row | 13 Regular; folder rows 13 **Medium** |
+| Sidebar section header | 11 **Bold**, 14px box in an 18px band |
+| Menu item | 13 Medium in a 24px row; menu header 13 Bold |
+| Text-field value | 13 Medium |
+| Dialog form label | 13 Regular (primary color, not dimmed) |
+| Alert title / informative | 14–15 Bold / 11 Medium |
+
+The kit's full named ramp, for reference when a new role is needed:
+Large Title 26/32 · Title 1 22/26 · Title 2 17/22 · Title 3 15/20 ·
+Headline 13/16 Bold · Body 13/16 · Callout 12/15 · Subheadline 11/14 ·
+Footnote & Caption 10/13. Note that "Body 13" is the *control* text size; a
+list-based app at the Large density uses Title 3 (15/20) for its rows, which is
+why `--fs-body` here is 15 rather than 13.
+
+## Color — semantic, not literal
+
+Labels and fills are alpha over the window background, which is what makes them
+work on both opaque panels and vibrant materials.
+
+| Role | Light | Dark |
+| --- | --- | --- |
+| Label primary | `rgba(0,0,0,.85)` | `#fff` |
+| Label secondary | `rgba(0,0,0,.50)` (`.60` here, for AA) | `rgba(255,255,255,.55)` |
+| Label tertiary | `rgba(0,0,0,.25)` | `rgba(255,255,255,.25)` |
+| Label quaternary | `rgba(0,0,0,.10)` | `rgba(255,255,255,.10)` |
+| Fill primary → quinary | black `.10 .08 .05 .03 .02` | white, same ramp |
+| Separator | `rgba(60,60,67,.29)` | `rgba(255,255,255,.15)` |
+| Window background | `#ffffff` | `#1e1e1e` |
+
+**The accent is the user's where the host reports it.** Tauri replaces
+`--accent` at startup with the one chosen in System Settings —
+`NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
+`src-tauri/src/accent.rs`) — read once, so a change shows after a restart. The
+Windows app passes its accent to the editor page. A browser tab keeps the CSS
+fallback, a darker blue than the kit's (which misses 4.5:1).
+
+`--on-accent` stays white, which is what every desktop draws on an accent fill,
+and flips to black only where white drops under WCAG's 3:1 floor for interface
+components — a yellow or pale accent. Maximising contrast instead would put a
+black label on the kit's own blue (5.97:1 against 3.52:1), which no platform
+does; Windows makes the same trade by moving the accent *shade*
+(`UIColorType::AccentDark1-3` / `AccentLight1-3`) rather than the label.
+
+System colors (light / dark): blue `#0088FF` / `#0091FF`, red `#FF383C` /
+`#FF4245`, orange `#FF8D28` / `#FF9230`, yellow `#FFCC00` / `#FFD600`, green
+`#34C759` / `#30D158`, gray `#8E8E93` / `#98989D`.
+
+Materials (the fill behind a `backdrop-filter`), light / dark:
+
+| | Light | Dark |
+| --- | --- | --- |
+| Ultra thin | `rgba(236,236,236,.38)` | `rgba(41,41,41,.40)` |
+| Thin | `rgba(236,236,236,.50)` | `rgba(41,41,41,.49)` |
+| Regular | `rgba(236,236,236,.63)` | `rgba(44,44,44,.61)` |
+| Thick | `rgba(236,236,236,.76)` | `rgba(44,44,44,.71)` |
+
+## Geometry
+
+**Control size ramp** — mini 16, small 20, regular 24, large 28, XL 36.
+
+**Sidebar/list variants — text scales with row height.** This is the decision
+that sets the app's overall legibility:
+
+| Variant | Row | Leading icon | Title |
+| --- | --- | --- | --- |
+| Small | 24 | 16 | 11 Medium |
+| Medium | 32 | 20 | 13 Regular |
+| **Large ← used here** | **40** | **24** | **15 Regular** |
+
+**Toolbar band heights**, measured off every window style in the kit — these are
+the only correct values, so "what height should the toolbar be?" has one answer
+per style:
+
+| Window style | Bands |
+| --- | --- |
+| Default (title only) | titlebar 52 (32 without title) |
+| **Unified toolbar ← title bar here** | one band, **52** |
+| Unified *compact* | one band, 40 |
+| **Expanded toolbar ← in-pane bars here** | titlebar 32 + toolbar **44** |
+| Utility panel | 56 |
+
+**Standardization (this app):** two control sizes — **36 (XL)** in the 52px title
+bar, **28** for every interactive control below it (toolbar buttons, inputs,
+segmented controls, steppers, search). No mini/small controls anywhere.
+
+Components keeping their own kit spec: switch 54×24, scrollbar 12, menu text
+13 Medium (the row box follows this app's list density at 28).
+
+**Corner radius is `height / 4`.** Measured off the text-field set (16→4, 20→5,
+24→6, 28→7, 36→9) and confirmed by the sidebar rows (32→8, 40→10). One rule, so
+nothing needs an ad-hoc radius.
+
+| Element | Value |
+| --- | --- |
+| Unified titlebar + toolbar | **52** tall, XL (36) controls inset 8 |
+| In-pane toolbar | **44** tall, 28 controls (kit's Expanded-toolbar band) |
+| Sidebar | **256** wide |
+| Sidebar row | 40 tall, radius 10, icon 24, icon→label gap 4 |
+| Sidebar content inset | 14 (selection pill bleeds to 10) |
+| Sidebar section header | 36 tall here (the kit's is 20), 13 Bold, **no gap before the rows** |
+| Section header accessory | 28 square here (the kit's `Headers - Trailing` is 20 wide) |
+| Sidebar footer | 44, a toolbar band |
+| Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Golden Gate/macOS 27; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
+| Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
+| Switch (regular) | 54 × 24 |
+| Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
+| Scrollbar | 12 |
+
+## The editor: Xcode 27's Default themes
+
+Syntax colours are a Settings choice: One Dark (the default; CodeMirror's
+`defaultHighlightStyle` in light) or **Xcode 27's own Default (Light) and
+Default (Dark)**, read out of the installed beta rather than sampled by eye:
+
+```
+/Applications/Xcode-beta.app/Contents/SharedFrameworks/
+  DVTUserInterfaceKit.framework/Versions/A/Resources/FontAndColorThemes/
+    Default (Light).xccolortheme      # plists; DVTSourceTextSyntaxColors
+    Default (Dark).xccolortheme       # holds "r g b a" component strings
+```
+
+The LaTeX (`stex`) mode's tokens are mapped to Xcode's categories **by meaning**,
+read off the mode's source rather than guessed at:
+
+| stex token | What it is in LaTeX | Xcode category | Light | Dark |
+| --- | --- | --- | --- | --- |
+| `tagName` | `\commands`, `\%` escapes | keyword | `#9B2393` | `#FC5FA3` |
+| `atom` | braced args — environment, class, package, label, ref, cite | identifier.type | `#1C464A` | `#9EF1DD` |
+| `keyword` | math delimiters `$ $$ \[ \(` | preprocessor | `#643820` | `#FD8F3F` |
+| `special(variableName)` | identifiers inside math | identifier.variable | `#326D74` | `#67B7A4` |
+| `number` | numbers in math | number | `#1C00CF` | `#D0BF69` |
+| `comment` | `%…` | comment | `#5D6C79` | `#8A97A5` (Xcode's `#6C7986`, lightened for AA contrast) |
+| `string` | quoted | string | `#C41A16` | `#FC6A5D` |
+| `bracket` | `{}` `[]` | *plain* — Xcode leaves punctuation uncoloured | | |
+
+Math delimiters get the preprocessor colour because they switch mode the way a
+preprocessor directive does, and having them stand out is worth more here than
+category purity.
+
+Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
+invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's
+(`#FFFFFF`/`#1F1F24`) — the editor sits flush against this app's panels, so it
+follows `--bg-content` and a one-value difference can't show as a seam.
+
+Gutter: no fill, no rule, dim numbers, and the current line's number brightens —
+Xcode's treatment.
+
+**Monospace: the platform's, not a bundled one.** `--mono` starts at
+`ui-monospace`, which resolves to SF Mono on macOS (what Xcode sets) and Cascadia
+Mono on Windows. JetBrains Mono stays bundled and selectable in Settings, but an
+app that should read as native shouldn't ship its own code face ahead of the
+platform's. Leading is 1.45 — code wants tighter than prose; Xcode's is about 1.3.
+
+**Xcode has no semantic colour catalogue to copy.** Its `Assets.car` holds only 27
+unnamed branding colours (`assetutil --info` will show them); the chrome is drawn
+with system `NSColor`s. So the macOS 27 UI Kit stays the authority for everything
+outside the editor, and matching "Xcode" means matching the system.
+
+## Hosts
+
+`html.mac` (the Tauri Mac window: vibrancy materials, the traffic-light inset,
+accent-filled menu rows) is set from the host platform, never assumed.
+Everywhere else the same tokens run on opaque surfaces, and a browser tab also
+gets `html.browser`: 14/20 controls and 13/18 small text.

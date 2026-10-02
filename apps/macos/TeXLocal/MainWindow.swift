@@ -32,7 +32,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
-        window.autorecalculatesKeyViewLoop = true
         window.collectionBehavior.insert(.fullScreenPrimary)
         super.init(window: window)
         window.delegate = self

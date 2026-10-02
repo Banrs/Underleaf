@@ -14,10 +14,13 @@ struct MenuCommandTests {
         #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F") == KeyboardShortcut("f", modifiers: [.command, .option]))
     }
 
-    @Test func everyAcceleratorParses() {
-        // These shared entries also prove the build copied the web's table in.
+    /// The build copies the shared table in; without it every shared chord is gone.
+    @Test func theSharedTableIsInTheApp() {
         #expect(MenuCommand.compileRun.accel == "CmdOrCtrl+Return")
         #expect(MenuCommand.editBold.shortcut == KeyboardShortcut("b", modifiers: .command))
+    }
+
+    @Test func everyAcceleratorParses() {
         for command in MenuCommand.allCases {
             for accel in [command.accel, command.macAccel].compactMap(\.self) {
                 #expect(MenuCommand.shortcut(for: accel) != nil, "\(command.rawValue)")

@@ -19,6 +19,7 @@ One Rust core, several clients:
 The Windows app embeds two web pages from `web/embed`: the CodeMirror editor
 and the pdf.js viewer. The macOS app's editor is native (TextKit 2 over
 `crates/texlocal-syntax`), and it shows the PDF with PDFKit.
+[HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
 ## Quick start
 
@@ -85,6 +86,8 @@ apps/windows/            WinUI 3 app.
 src-tauri/               Tauri desktop shell (being retired).
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
 web/embed/               Editor and PDF pages the Windows app embeds.
+docs/                    design-tokens.md (extracted Apple UI-kit values) ·
+                         web.md
 build.mjs                esbuild bundler and shared asset copy
 scripts/                 Version check
 ```

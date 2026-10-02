@@ -7,8 +7,6 @@ import SwiftUI
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
-    @Environment(\.colorScheme) private var colorScheme
     /// The document read for a `pdfVersion`.
     @State private var loaded: (version: Int, document: PDFDocument)?
 
@@ -25,26 +23,14 @@ struct PDFPane: View {
 
     /// Read whole: the next build rewrites the file in place.
     @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return nil }
-        // pdf.js (browser, Windows) leaves out hyperref's link boxes; the links still work.
-        for index in 0..<document.pageCount {
-            // PDFAnnotation.type: the subtype without its slash.
-            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                annotation.border = border
-            }
-        }
-        return document
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return PDFDocument(data: data)
     }
-
-    private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     @ViewBuilder
     private var pages: some View {
         if project.pdfVersion > 0 {
-            PDFRepresentable(project: project, darkPaper: darkPaper,
-                             document: loaded?.document, current: loaded?.version == project.pdfVersion)
+            PDFRepresentable(project: project, document: loaded?.document, current: loaded?.version == project.pdfVersion)
                 .ignoresSafeArea(.container, edges: [.top, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -142,25 +128,4 @@ enum PDFFind {
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
-}
-
-/// The PDF's paper; raw values shared with web/src/prefs.js.
-enum PDFPaper: String, CaseIterable, Identifiable {
-    case white, dark, auto
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .white: "White"
-        case .dark: "Dark"
-        case .auto: "Match Appearance"
-        }
-    }
-}
-
-/// The PDF's setting, shared by Settings and the pane.
-enum PDFPrefs {
-    static let paperKey = "pdfPaper"
-    static let paper = PDFPaper.white
 }

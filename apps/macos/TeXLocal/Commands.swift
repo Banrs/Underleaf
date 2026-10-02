@@ -117,7 +117,7 @@ enum MenuCommand: String, CaseIterable {
         case .projectClose: "CmdOrCtrl+Shift+W"
         // Pages' Insert › Equation.
         case .editMath: "CmdOrCtrl+Alt+E"
-        // Matches the familiar source-to-PDF shortcut used by LaTeX editors.
+        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
         case .syncForward: "CmdOrCtrl+Alt+J"
         case .syncInverse: nil
         // ⌥⌘G is Go to Page in the Mac's PDF readers; ⌘L is Go to Line.
@@ -390,7 +390,6 @@ struct AppCommands: Commands {
                 }
             } else {
                 Menu("Engine") { ForEach(texEngines, id: \.0) { Text($0.1) } }
-                    .disabled(true)
             }
             // The open file; the files' context menu has it for any .tex file.
             Button("Set as Main File") {
