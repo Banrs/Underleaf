@@ -57,20 +57,26 @@ PDF is one persistent PDFKit view owned by `PDFController`.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
 
-## Design direction (agreed 3 October 2026)
+## Design direction (as of 3 October 2026)
 
-- Native macOS 27: system controls, HIG, design resources, WWDC and SDK guidance. Legacy-looking
-  AppKit UI is not acceptable even when stock.
-- Xcode is the reference for the text editor (font, 18 pt lines, gutter, rounded current line,
-  selection, completion list), the bottom bar's metrics, the File Outline header and the
-  sidebar's width (256 pt, 222 pt minimum). Not for the rest of the chrome.
-- Preview for the PDF side, Mail for split-view logic. Overleaf, Texifier and TeXstudio for
-  functions and positioning, not visual design.
-- The editor stays on TextKit 2; no TextKit 1 fallback.
-- The File Outline and status bar look and animate as at commit 6342673, built from system
-  parts. Treat visible drift from an existing look as a regression: capture it first, then match.
-- Visible UI changes are proposed first; commits are pushed to this branch, never as a PR.
-- The Rust core is left for a later session, except bugs that show in the Mac app.
+Starting points, not fixed constraints. Explore first: look at how Apple's own apps, the HIG,
+the design resources, WWDC sessions and the SDK handle a problem, and at what TeX editors do,
+before settling on an answer. Any Apple app or guideline may turn out to be the better
+reference for a given part; say which you used and why.
+
+- The aim is a native macOS 27 app that feels like Apple built it: system controls and
+  behaviour, nothing that reads as legacy AppKit even if it is stock.
+- References that have worked so far: Xcode for the text editor (font, line height, gutter,
+  rounded current line, completion list) and for the bottom bar's and sidebar's metrics;
+  Preview for the PDF side; Mail for split-view logic; Overleaf, Texifier and TeXstudio for
+  what a TeX editor does and where it puts it, more than for how it looks. Xcode's chrome as a
+  whole is busier than this app should be.
+- Daniel liked the File Outline's and status bar's look and animation as they were at commit
+  6342673. When rebuilding something from system parts, capture how it looks and moves first;
+  he reads unplanned visible drift as a regression.
+- The editor is on TextKit 2 and stays there.
+- Working agreements: propose visible UI changes before making them; commit and push to this
+  branch, no PR; the Rust core waits for its own session, except bugs that show in the Mac app.
 
 ## State at 87574f9
 
