@@ -79,6 +79,10 @@ final class WorkspaceLayoutTests {
         guard !view.isHidden else { return [] }
         return [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
     }
+    /// The scrollers in a view, hidden panes' too.
+    private static func scrollers(_ view: NSView) -> [NSScroller] {
+        [view as? NSScroller].compactMap(\.self) + view.subviews.flatMap(scrollers)
+    }
     private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
@@ -132,6 +136,51 @@ final class WorkspaceLayoutTests {
         try await waitUntil { !workspace.panelItem.isCollapsed && isClose(self.height(workspace.panelItem), panelHeight, within: 1) } state: {
             "panel \(self.height(workspace.panelItem)), was \(panelHeight)"
         }
+    }
+
+    /// Show Build Panel rises from the status bar through AppKit's animation, the first time
+    /// too in a window with a source and a PDF open: its header over the status bar and at
+    /// the panel's width throughout, the status bar still, and the scrollers it kept out of
+    /// sight back after a toggle reversed midway.
+    @Test func thePanelRisesFromTheStatusBar() async throws {
+        let workspace = open(), project = workspace.project
+        project.openPath = "main.tex"
+        project.editor.open(path: "main.tex", text: String(repeating: "Some text.\n", count: 200), focus: false)
+        let document = PDFDocument()
+        for index in 0..<3 { document.insert(PDFPage(), at: index) }
+        project.pdfURL = URL(filePath: "/dev/null")
+        project.pdf.show(document)
+        // A moment after the window opens, its first rise would often miss its layouts,
+        // holding over the status bar, then jumping (27.2).
+        try await Task.sleep(for: .milliseconds(1100))
+        let panel = pane(workspace.panelItem), header = workspace.panelItem.topAlignedAccessoryViewControllers[0].view
+        let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
+        let bar = status.convert(status.bounds, to: nil)
+        var heights: [CGFloat] = []
+        project.showLogs = true
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < .seconds(0.6) {
+            if !panel.isHidden {
+                heights.append(panel.frame.height)
+                let place = header.convert(header.bounds, to: nil)
+                #expect(place.minY >= bar.maxY, "header \(place), status bar \(bar)")
+                #expect(isClose(header.frame.width, panel.frame.width - 2 * ColumnMetrics.barSideInset))
+            }
+            #expect(status.convert(status.bounds, to: nil) == bar)
+            try await Task.sleep(for: .milliseconds(4))
+        }
+        let height = try #require(heights.last)
+        #expect(heights.contains { $0 > heights[0] + 1 && $0 < height - 1 }, "heights \(heights)")
+
+        project.showLogs = false
+        try await Task.sleep(for: .milliseconds(80))
+        project.showLogs = true
+        try await waitUntil { !workspace.panelItem.isCollapsed && isClose(panel.frame.height, height) }
+        // Past the animation's end.
+        try await Task.sleep(for: .milliseconds(400))
+        let scrollers = Self.scrollers(workspace.view)
+        #expect(!scrollers.isEmpty && scrollers.allSatisfy { $0.alphaValue == 1 })
+        #expect(header.alphaValue == 1 && workspace.panelItem.viewController.view.alphaValue == 1)
     }
 
     /// The next window opens with the dividers where this one left them.
