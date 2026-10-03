@@ -34,6 +34,19 @@ struct SourceEditorTests {
         #expect(text.undoManager !== a)
     }
 
+    /// A rename onto a name whose file went outside the app keeps the renamed file's undo.
+    @Test func aRenameOntoAFileGoneElsewhereKeepsItsUndo() throws {
+        open("one", caret: 0, path: "a.tex")
+        text.insertText("x", replacementRange: typed)
+        let a = try #require(text.undoManager)
+        open("two", path: "b.tex")
+        open("main", path: "main.tex")
+        // b.tex deleted in the Finder, so its kept state stays; a.tex takes its name.
+        editor.rename(from: "a.tex", to: "b.tex")
+        open("xone", path: "b.tex")
+        #expect(text.undoManager === a)
+    }
+
     @Test func bracketsCloseAndAreSteppedOver() {
         open("")
         text.insertText("{", replacementRange: typed)

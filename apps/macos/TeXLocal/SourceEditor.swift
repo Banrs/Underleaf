@@ -107,7 +107,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     /// Preserve file state, including undo, across file or folder renames.
+    /// Whatever is kept at the new name is stale, a file gone outside the app: the name was free.
     func rename(from: String, to: String) {
+        if to != from { forget(path: to) }
         kept = Dictionary(uniqueKeysWithValues: kept.map { (remapPath($0.key, from: from, to: to), $0.value) })
         path = path.map { remapPath($0, from: from, to: to) }
     }
