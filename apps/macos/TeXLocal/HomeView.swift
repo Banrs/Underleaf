@@ -8,29 +8,15 @@ struct HomeView: View {
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
     @State private var query = ""
-    @State private var dropTargeted = false
 
     var body: some View {
         // Over the list, which runs on under it and the toolbar with one edge effect.
         list.safeAreaBar(edge: .top) {
             if app.tex?.available == false { texMissing }
         }
-        // Copied in, as the Open panel says; anything else is refused.
-        .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
-            guard urls.count == 1, let url = urls.first else {
-                app.alert = AppAlert("Drop One Project at a Time", "Choose a single folder, .tex file or .zip to copy.")
-                return
-            }
-            Task { await app.importProject(from: url) }
-        }
-        .overlay(alignment: .bottom) {
-            if dropTargeted {
-                Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
-                    .padding()
-                    .glassEffect(.regular, in: .capsule)
-                    .padding()
-                    .allowsHitTesting(false)
-            }
+        // One project, copied in, as the Open panel says; anything else is refused.
+        .fileDrop(accepts: AppModel.canOpen, limit: 1) { urls in
+            if let url = urls.first { Task { await app.importProject(from: url) } }
         }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
@@ -149,14 +135,14 @@ private struct ProjectRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
                 if rename.id == project.id {
                     RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
                 } else {
-                    Text(project.name).font(Typography.itemTitle)
+                    Text(project.name).font(.headline)
                 }
                 Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
-                    .font(Typography.secondary)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         } icon: {
@@ -179,118 +165,43 @@ struct GetMacTeXButton: View {
 
 /// A template the core makes projects from (crates/texlocal-core templates.rs).
 struct ProjectTemplate: Identifiable {
-    enum Page { case blank, article, report, slides }
-
     let id: String
     let title: String
     let detail: String
-    let page: Page
+    let symbol: String
 
     static let all = [
-        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document", page: .blank),
-        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections", page: .article),
-        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", page: .report),
-        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", page: .slides),
+        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document", symbol: "document"),
+        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections", symbol: "text.document"),
+        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", symbol: "book.closed"),
+        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", symbol: "rectangle.on.rectangle"),
     ]
 }
 
-/// A template's card: a drawing of its first page, then its name.
+/// A template's card: its symbol, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    /// A US Letter page, 120 pt wide; its corner is drawn to look like paper, not to the kit.
-    private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
-    private static let corner: CGFloat = 6
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                page
-                VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
-                    Text(template.title).font(Typography.itemTitle)
+                Image(systemName: template.symbol)
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                    // The card reads as its name ("Blank", not "Document, Blank").
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.title).font(.headline)
                     Text(template.detail)
-                        .font(Typography.secondary)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2, reservesSpace: true)
-                        .frame(width: Self.page.width, alignment: .leading)
                 }
             }
+            .frame(width: 120, alignment: .leading)
         }
         .contentShape(.rect)
-        // The focus ring on the group box's corners, not a square.
-        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous)) // UI kit: Group Boxes
         .accessibilityElement(children: .combine)
-    }
-
-    private var page: some View {
-        PagePreview(page: template.page)
-            .frame(width: Self.page.width, height: Self.page.height)
-            // White paper in either appearance, dimmed a little in dark mode;
-            // the drawing in light colours, which are made for paper.
-            .background(Color.white.opacity(colorScheme == .dark ? 0.88 : 1),
-                        in: .rect(cornerRadius: Self.corner, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                    .strokeBorder(.separator)
-            }
-            .environment(\.colorScheme, .light)
-            // The card reads as its name ("Blank", not "Add, Blank").
-            .accessibilityHidden(true)
-    }
-}
-
-/// Bars where the text would be, laid out like the template's first page.
-/// Its numbers are the drawing's, in points of the 120 pt page, not layout.
-private struct PagePreview: View {
-    let page: ProjectTemplate.Page
-
-    var body: some View {
-        switch page {
-        case .blank:
-            Image(systemName: "plus")
-                .font(.largeTitle)
-                .fontWeight(.light)
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .article:
-            VStack(spacing: 5) {
-                bar(64, 5).padding(.top, 16)
-                bar(40, 3)
-                bar(52, 3).padding(.bottom, 6)
-                ForEach(0..<2, id: \.self) { _ in bar(78, 2) }
-                bar(60, 2).padding(.bottom, 4)
-                HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
-                ForEach(0..<4, id: \.self) { _ in bar(88, 2) }
-                bar(50, 2)
-                Spacer(minLength: 0)
-            }
-        case .report:
-            VStack(spacing: 6) {
-                Spacer()
-                bar(70, 6)
-                bar(46, 3)
-                bar(36, 3)
-                Spacer()
-                bar(30, 2).padding(.bottom, 18)
-            }
-        case .slides:
-            VStack(spacing: 0) {
-                Spacer()
-                VStack(spacing: 6) {
-                    Rectangle().fill(.tint.opacity(0.6)).frame(height: 14)
-                    bar(60, 4)
-                    bar(40, 3)
-                    Spacer()
-                }
-                .frame(width: 104, height: 58)
-                .overlay(Rectangle().strokeBorder(.separator))
-                Spacer()
-            }
-        }
-    }
-
-    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {
-        Capsule().fill(.tertiary).frame(width: width, height: height)
     }
 }
 

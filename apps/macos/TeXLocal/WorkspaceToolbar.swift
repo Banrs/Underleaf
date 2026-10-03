@@ -23,7 +23,7 @@ extension NSToolbarItem.Identifier {
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Editing tools and Share overflow before Zoom; Compile and window toggles take priority.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSToolbarItemValidation, NSMenuItemValidation {
+                              NSToolbarItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
@@ -87,12 +87,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Back leads the title; there is no forward history.
             item.isNavigational = true
         case .undo:
-            item = button(id, MenuCommand.editUndo.title, "arrow.uturn.backward", Selector(("undo:")))
+            item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")))
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
             item.target = nil
             item.visibilityPriority = .low
         case .redo:
-            item = button(id, MenuCommand.editRedo.title, "arrow.uturn.forward", Selector(("redo:")))
+            item = button(id, "Redo", "arrow.uturn.forward", Selector(("redo:")))
             item.target = nil
             item.visibilityPriority = .low
         case .format:
@@ -120,19 +120,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.visibilityPriority = .low
             item = share
         case .compile:
-            // Use a word, since a play symbol reads as media. Customize Toolbar
-            // gets a title because it draws custom views without their toolbar style.
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.compileRun.title
-            if flag {
-                item.view = NSHostingView(rootView: compileButton(state))
-            } else {
-                item.title = MenuCommand.compileRun.title
-            }
+            // Xcode's Run and Stop: one symbol in its place, so the item keeps its width.
+            item = button(id, MenuCommand.compileRun.title, "play.fill", #selector(compile))
             item.style = .prominent
-            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
-            form.target = self
-            item.menuFormRepresentation = form
             item.visibilityPriority = .high
         case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
@@ -145,7 +135,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.visibilityPriority = .low
         }
         // Plain buttons and their overflow copies validate through their targets.
-        // Custom views and other controls take their state from the models (`apply`).
+        // Other controls take their state from the models (`apply`).
         if (item.target !== self && ![.undo, .redo].contains(id)) || item.view != nil {
             item.autovalidates = false
         }
@@ -238,7 +228,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canZoomIn: Bool
         let canZoomOut: Bool
         let compiling: Bool
-        let canCompile: Bool
         let pdfTitle: String
     }
 
@@ -246,7 +235,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, showsPDF: project.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling, canCompile: canCompile,
+              compiling: project.compiling,
               pdfTitle: app.title(.viewTogglePdf, on: project))
     }
 
@@ -271,15 +260,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .share:
             item.isEnabled = state.hasPDF
         case .compile:
-            // Stop in its place while a build runs, on clear glass: still prominent,
-            // whose glass stays its own, where a plain item's joins its neighbours'.
-            let title = state.compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title
-            item.label = title
-            item.toolTip = title
-            item.menuFormRepresentation?.title = title
-            item.backgroundTintColor = state.compiling ? .clear : nil
-            item.isEnabled = state.canCompile
-            (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(state)
+            let command = state.compiling ? MenuCommand.compileStop : .compileRun
+            item.label = command.title
+            item.toolTip = command.title
+            item.image = symbol(state.compiling ? "stop.fill" : "play.fill", command.title)
         case .togglePDF:
             item.toolTip = state.pdfTitle
         default:
@@ -290,6 +274,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
         case .bold, .italic: project.isLaTeX
+        case .compile: canCompile
         default: item.action != #selector(insertTemplate(_:)) || project.isLaTeX
         }
     }
@@ -324,53 +309,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         perform(project.compiling ? .compileStop : .compileRun)
     }
 
-    private func compileButton(_ state: State) -> CompileButton {
-        CompileButton(compiling: state.compiling, enabled: state.canCompile) { [weak self] in
-            self?.compile()
-        }
-    }
-
-    /// The overflow menu's Compile, which the item's own view doesn't enable.
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard menuItem.action == #selector(compile) else { return true }
-        return canCompile
-    }
-
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []
-    }
-}
-
-/// Keep Compile's width while Stop shows a spinner. Fill the toolbar item's
-/// glass, which does not forward clicks to an undersized custom view.
-private struct CompileButton: View {
-    let compiling: Bool
-    let enabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Text(MenuCommand.compileRun.title)
-                    .opacity(compiling ? 0 : 1)
-                HStack(spacing: BarMetrics.spacing) {
-                    // The button stays a button to VoiceOver; the status bar says Compiling.
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text(MenuCommand.compileStop.title)
-                }
-                .opacity(compiling ? 1 : 0)
-            }
-            // The native item's glass is 36 pt high with 12 pt horizontal inset.
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 }

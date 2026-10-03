@@ -3,8 +3,8 @@ import SwiftUI
 import WebKit
 
 /// The maths at the caret, typeset, in the system's popover over where it
-/// starts, as the web's editor shows it: KaTeX (Resources/KaTeX, the web's
-/// build) in a web view that never takes a click or the keyboard.
+/// starts: KaTeX (Resources/KaTeX) in a web view that never takes a click or
+/// the keyboard.
 final class MathPopover {
     private let popover = NSPopover()
     private let page = WebPage()
@@ -71,7 +71,7 @@ final class MathPopover {
     }
 
     /// The typeset maths in the label colour, as wide as it is (560 pt at
-    /// most, the web's), with no margin of its own.
+    /// most), with no margin of its own.
     private static let html = """
         <!doctype html><meta charset="utf-8">
         <link rel="stylesheet" href="katex.min.css"><script src="katex.min.js"></script>

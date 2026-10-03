@@ -2,31 +2,9 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Shared shortcut parsing and the Mac's native key equivalents.
+/// The Mac's native key equivalents.
 @MainActor
 struct MenuCommandTests {
-    @Test func acceleratorsBecomeMenuShortcuts() {
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Return") == KeyboardShortcut(.return, modifiers: .command))
-        #expect(MenuCommand.shortcut(for: "Ctrl+Shift+Return") == KeyboardShortcut(.return, modifiers: [.control, .shift]))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Plus") == KeyboardShortcut("=", modifiers: .command))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Shift+\\") == KeyboardShortcut("\\", modifiers: [.command, .shift]))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F") == KeyboardShortcut("f", modifiers: [.command, .option]))
-    }
-
-    /// The build copies the shared table in; without it every shared chord is gone.
-    @Test func theSharedTableIsInTheApp() {
-        #expect(MenuCommand.compileRun.accel == "CmdOrCtrl+Return")
-        #expect(MenuCommand.editBold.shortcut == KeyboardShortcut("b", modifiers: .command))
-    }
-
-    @Test func everyAcceleratorParses() {
-        for command in MenuCommand.allCases {
-            for accel in [command.accel, command.macAccel].compactMap(\.self) {
-                #expect(MenuCommand.shortcut(for: accel) != nil, "\(command.rawValue)")
-            }
-        }
-    }
-
     @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
@@ -78,7 +56,7 @@ struct MenuStructureTests {
         #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
     }
 
-    /// The chords the Mac relies on, its own (`MenuCommand.macAccel`, HIG Keyboards) and the system's.
+    /// The chords the Mac relies on, its own (`MenuCommand.shortcut`, HIG Keyboards) and the system's.
     @Test func eachChordHasItsItem() throws {
         let chords: [(String, NSEvent.ModifierFlags, String)] = [
             ("g", .command, "Find Next"), ("g", [.command, .shift], "Find Previous"),

@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The app's commands, with the web's ids (web/src/workspace.js `commandDefs`)
-/// and its accelerators, which drive the menu's key equivalents.
+/// The app's commands and their key equivalents.
 enum MenuCommand: String, CaseIterable {
     case projectNew = "project.new"
     case projectOpen = "project.open"
@@ -16,15 +15,12 @@ enum MenuCommand: String, CaseIterable {
     case pdfSave = "pdf.save"
     case filePageSetup = "file.pageSetup"
     case filePrint = "file.print"
-    case editUndo = "edit.undo"
-    case editRedo = "edit.redo"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
     case editMath = "edit.math"
     case editComment = "edit.comment"
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
-    /// Mac only: the web's viewer has no page field to go to.
     case pdfGotoPage = "pdf.gotoPage"
     case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
@@ -38,10 +34,10 @@ enum MenuCommand: String, CaseIterable {
     case viewFitHeight = "view.fitHeight"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
-    case compileToggleAuto = "compile.toggleAuto"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
 
+    /// The toggles' titles name what they show; the menus say Show or Hide (`AppModel.title`).
     var title: String {
         switch self {
         case .projectNew: "New Project…"
@@ -56,8 +52,6 @@ enum MenuCommand: String, CaseIterable {
         case .pdfSave: "Save PDF As…"
         case .filePageSetup: "Page Setup…"
         case .filePrint: "Print…"
-        case .editUndo: "Undo"
-        case .editRedo: "Redo"
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
@@ -65,11 +59,11 @@ enum MenuCommand: String, CaseIterable {
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
         case .pdfGotoPage: "Go to Page…"
-        case .viewToggleSidebar: "Hide Sidebar"
-        case .viewTogglePdf: "Hide PDF"
-        case .viewToggleInspector: "Hide Inspector"
+        case .viewToggleSidebar: "Sidebar"
+        case .viewTogglePdf: "PDF"
+        case .viewToggleInspector: "Inspector"
         case .viewToggleLogs: "Build Panel"
-        case .viewToggleWordCount: "Hide Word Count"
+        case .viewToggleWordCount: "Word Count"
         case .viewZoomIn: "Zoom In"
         case .viewZoomOut: "Zoom Out"
         case .viewActualSize: "Actual Size"
@@ -77,76 +71,48 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitHeight: "Fit Height"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
-        case .compileToggleAuto: "Compile Automatically"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
         }
     }
 
-    /// The shared accelerator (web/src/shortcuts.json, which the build copies into the app).
-    var accel: String? { Self.sharedAccels[rawValue] }
-
-    private static let sharedAccels: [String: String] = {
-        guard let url = Bundle.main.url(forResource: "shortcuts", withExtension: "json"),
-              let data = try? Data(contentsOf: url) else { return [:] }
-        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
-    }()
-
-    /// Departs from the shared table where the HIG reserves its key (HIG, Keyboards); Sync
-    /// and Inline Math leave the table's Control and ⇧⌘M (Minimize plus Shift) chords.
-    var macAccel: String? {
-        switch self {
-        case .projectOpen: "CmdOrCtrl+O"
-        case .filePageSetup: "CmdOrCtrl+Shift+P"
-        case .filePrint: "CmdOrCtrl+P"
-        case .viewToggleSidebar: "Ctrl+CmdOrCtrl+S"
-        case .viewToggleInspector: "CmdOrCtrl+Alt+I"
-        case .viewActualSize: "CmdOrCtrl+0"
-        case .viewFitWidth: "CmdOrCtrl+9"
-        case .viewFitHeight: "CmdOrCtrl+Alt+9"
-        case .compileStop: "CmdOrCtrl+."
-        case .projectClose: "CmdOrCtrl+Shift+W"
-        // Pages' Insert › Equation.
-        case .editMath: "CmdOrCtrl+Alt+E"
-        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
-        case .syncForward: "CmdOrCtrl+Alt+J"
-        case .syncInverse: nil
-        // ⌥⌘G is Go to Page in the Mac's PDF readers; ⌘L is Go to Line.
-        case .pdfGotoPage: "CmdOrCtrl+Alt+G"
-        // ⌘F finds in the PDF when it has the keyboard.
-        case .pdfFind: nil
-        default: accel
-        }
-    }
-
+    /// The menus' key equivalents, clear of the system's (HIG, Keyboards). ⌥⌘G is Go to
+    /// Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF
+    /// while it has the keyboard.
     var shortcut: KeyboardShortcut? {
-        macAccel.flatMap(Self.shortcut(for:))
-    }
-
-    /// "CmdOrCtrl+Shift+Z" → ⇧⌘Z.
-    static func shortcut(for accel: String) -> KeyboardShortcut? {
-        var parts = accel.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
-        guard let key = parts.popLast() else { return nil }
-        var modifiers: EventModifiers = []
-        for part in parts {
-            switch part {
-            case "CmdOrCtrl": modifiers.insert(.command)
-            case "Ctrl": modifiers.insert(.control)
-            case "Alt": modifiers.insert(.option)
-            case "Shift": modifiers.insert(.shift)
-            default: return nil
-            }
+        switch self {
+        case .projectNew: KeyboardShortcut("n", modifiers: [.command, .shift])
+        case .projectOpen: KeyboardShortcut("o")
+        case .projectClose: KeyboardShortcut("w", modifiers: [.command, .shift])
+        case .projectSearch: KeyboardShortcut("f", modifiers: [.command, .shift])
+        case .fileNew: KeyboardShortcut("n")
+        case .fileNewFolder: KeyboardShortcut("n", modifiers: [.command, .shift, .option])
+        case .fileSave: KeyboardShortcut("s")
+        case .pdfSave: KeyboardShortcut("s", modifiers: [.command, .shift])
+        case .filePageSetup: KeyboardShortcut("p", modifiers: [.command, .shift])
+        case .filePrint: KeyboardShortcut("p")
+        case .editBold: KeyboardShortcut("b")
+        case .editItalic: KeyboardShortcut("i")
+        // Pages' Insert › Equation.
+        case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
+        case .editComment: KeyboardShortcut("/")
+        case .editGotoLine: KeyboardShortcut("l")
+        case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
+        case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
+        case .viewTogglePdf: KeyboardShortcut("\\", modifiers: [.command, .shift])
+        case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
+        case .viewToggleLogs: KeyboardShortcut("l", modifiers: [.command, .shift])
+        case .viewZoomIn: KeyboardShortcut("=")
+        case .viewZoomOut: KeyboardShortcut("-")
+        case .viewActualSize: KeyboardShortcut("0")
+        case .viewFitWidth: KeyboardShortcut("9")
+        case .viewFitHeight: KeyboardShortcut("9", modifiers: [.command, .option])
+        case .compileRun: KeyboardShortcut(.return)
+        case .compileStop: KeyboardShortcut(".")
+        // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
+        case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
+        case .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
         }
-        let equivalent: KeyEquivalent
-        switch key {
-        case "Return": equivalent = .return
-        case "Plus": equivalent = "="
-        case "Minus": equivalent = "-"
-        default:
-            guard key.count == 1, let c = key.lowercased().first else { return nil }
-            equivalent = KeyEquivalent(c)
-        }
-        return KeyboardShortcut(equivalent, modifiers: modifiers)
     }
 }
 
@@ -181,17 +147,18 @@ extension AppModel {
 
     /// View-menu titles say what the item will do (HIG, The menu bar).
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
-        switch command {
-        case .viewToggleSidebar: sidebarVisible ? "Hide Sidebar" : "Show Sidebar"
-        case .viewTogglePdf: project?.showPDF == false ? "Show PDF" : "Hide PDF"
-        case .viewToggleInspector: inspectorVisible ? "Hide Inspector" : "Show Inspector"
-        case .viewToggleLogs: project?.showLogs == true ? "Hide Build Panel" : "Show Build Panel"
-        case .viewToggleWordCount: showWordCount ? "Hide Word Count" : "Show Word Count"
-        default: command.title
+        let shown: Bool? = switch command {
+        case .viewToggleSidebar: sidebarVisible
+        case .viewTogglePdf: project?.showPDF != false
+        case .viewToggleInspector: inspectorVisible
+        case .viewToggleLogs: project?.showLogs == true
+        case .viewToggleWordCount: showWordCount
+        default: nil
         }
+        return shown.map { "\($0 ? "Hide" : "Show") \(command.title)" } ?? command.title
     }
 
-    /// With no project there's no file to make, so ⌘N makes a project (home.js).
+    /// With no project there's no file to make, so ⌘N makes a project.
     func shortcut(_ command: MenuCommand, on project: ProjectModel?) -> KeyboardShortcut? {
         switch (command, project) {
         case (.projectNew, nil): MenuCommand.fileNew.shortcut
@@ -242,9 +209,6 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
-        // Auto compile binds in the menu; Undo and Redo use AppKit's responder chain.
-        case .compileToggleAuto, .editUndo, .editRedo:
-            break
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }
@@ -290,8 +254,7 @@ struct AppCommands: Commands {
             Divider()
             items([.fileNew, .fileNewFolder, .fileUpload])
             Divider()
-            // Not MenuCommands: the web has no command ids for them. They act on the
-            // chosen item of the list with the keyboard.
+            // These act on the chosen item of the list with the keyboard.
             let chosen = app.mainWindowIsKey ? app.chosenItem : nil
             Button("Rename") { chosen?.rename() }
                 .disabled(chosen == nil)
@@ -340,8 +303,7 @@ struct AppCommands: Commands {
         }
         CommandGroup(after: .sidebar) {
             item(.viewToggleSidebar)
-            // Not a MenuCommand: the web has no command id for it. The keyboard's
-            // and VoiceOver's way to the sidebar header's fold.
+            // The keyboard's and VoiceOver's way to the File Outline header's fold.
             Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || !app.sidebarVisible)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
@@ -360,7 +322,7 @@ struct AppCommands: Commands {
         }
         CommandMenu("Compile") {
             items([.compileRun, .compileStop])
-            Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
+            Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
             // Only with a project's settings, and their engine always a choice: a
             // selection no tag matches, nil included, is a SwiftUI fault.
             if let project, let engine = project.settings?.engine {

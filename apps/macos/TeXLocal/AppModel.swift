@@ -11,9 +11,6 @@ enum DefaultsKey {
     static let showPDF = "showPDF"
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
-    static let outlineFolded = "OutlineFolded"
-    /// Pane sizes set by dragging a divider (`PaneSize`).
-    static let paneSizes = "PaneSizes"
 }
 
 /// An alert: a short, specific title and the detail in the message (HIG, Alerts).

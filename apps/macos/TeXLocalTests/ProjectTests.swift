@@ -202,15 +202,13 @@ final class ProjectFlowTests {
         func lists(_ view: NSView) -> [NSOutlineView] {
             [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
         }
+        // The File Outline's header and its heading.
         try await waitUntil {
             workspace.view.layoutSubtreeIfNeeded()
-            return lists(workspace.outlineItem.viewController.view).first?.numberOfRows == 1
+            return lists(workspace.outlineItem.viewController.view).first?.numberOfRows == 2
         }
         #expect(!workspace.outlineItem.isCollapsed)
         #expect(workspace.outlineItem.viewController.view.frame.height > 0)
-        let header = try #require((workspace.sidebarItem.viewController as? NSSplitViewController)?
-            .splitViewItems.first?.bottomAlignedAccessoryViewControllers.first)
-        #expect(!header.isHidden)
     }
 
     /// Edit › Find's items reach the source's own find bar: from the text through the
@@ -394,13 +392,14 @@ final class ProjectFlowTests {
         window.orderFront(nil)
         defer { workspace.close(); window.close() }
         func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        try await waitUntil { lists(workspace.view).last?.selectedRow == 0 }
+        // Under the File Outline's header.
+        try await waitUntil { lists(workspace.view).last?.selectedRow == 1 }
         let outline = try #require(lists(workspace.view).last)
 
         // Centred two lines under C, the top line is in B at any font or window size.
         await project.open(try #require(project.openPath), line: 205)
         #expect(project.topHeading == project.outline[1].id)
-        try await waitUntil { outline.selectedRow == 2 } state: { "row \(outline.selectedRow), top line \(project.topLine)" }
+        try await waitUntil { outline.selectedRow == 3 } state: { "row \(outline.selectedRow), top line \(project.topLine)" }
         await app.close()
     }
 

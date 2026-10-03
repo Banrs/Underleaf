@@ -363,8 +363,13 @@ final class ProjectModel {
             return
         }
         analysis = Task {
-            guard let doc = try? await Outline.analyze(project: id, file: path), !Task.isCancelled else { return }
-            outline = doc.items
+            guard let doc = try? await core.call("analyze_project", ["id": id, "file": path], as: Analysis.self),
+                  !Task.isCancelled else { return }
+            outline = doc.outline.enumerated().map { index, heading in
+                var item = heading
+                item.id = index
+                return item
+            }
             counts = (doc.words, doc.lines)
         }
     }

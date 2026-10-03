@@ -44,13 +44,6 @@ struct OutlineTests {
         }
     }
 
-    @Test func theChainIsTheEnclosingHeadings() {
-        let outline = outline("1:A", "2:B", "3:C", "2:D")
-        #expect(Outline.chain(outline, to: 2).map(\.title) == ["A", "B", "C"])
-        #expect(Outline.chain(outline, to: 3).map(\.title) == ["A", "D"])
-        #expect(Outline.chain(outline, to: nil).isEmpty)
-    }
-
     /// A line is under its file's last heading above it, wherever the file is read in;
     /// above the file's first, under none.
     @Test func theCurrentHeadingFollowsTheFile() {
@@ -69,19 +62,10 @@ struct OutlineTests {
     /// the section after it; the subsection under that section is one in.
     @Test func theTreeNestsAsTheHeadingsDo() {
         let tree = Outline.tree(outline("3:(untitled)", "2:A", "3:A1", "4:A1a", "3:A2", "2:B"))
-        #expect(tree.map(\.item).map(Outline.displayTitle) == ["Untitled Subsection", "A", "B"])
+        #expect(tree.map(\.item.displayTitle) == ["Untitled Subsection", "A", "B"])
         #expect(tree[0].children == nil && tree[2].children == nil)
         #expect(tree[1].children?.map(\.item.title) == ["A1", "A2"])
         #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
-    }
-
-    /// A fold is keyed by the heading's file, level, title and which of its
-    /// namesakes there it is, so headings added above leave it where it was.
-    @Test func foldKeysSurviveRenumbering() {
-        let keys = Outline.foldKeys(outline("2:A", "3:Results", "2:B", "3:Results"))
-        #expect(keys == ["main.tex\t2:A#1", "main.tex\t3:Results#1", "main.tex\t2:B#1", "main.tex\t3:Results#2"])
-        let later = Outline.foldKeys(outline("2:New", "3:Other", "2:A", "3:Results", "2:B", "3:Results"))
-        #expect(Array(later.dropFirst(2)) == keys)
     }
 }
 

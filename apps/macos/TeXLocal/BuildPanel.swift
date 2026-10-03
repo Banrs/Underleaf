@@ -65,14 +65,9 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            let lines = state.filter.isEmpty
-                ? text
-                : text.split(separator: "\n", omittingEmptySubsequences: false)
-                    .filter { $0.localizedCaseInsensitiveContains(state.filter) }
-                    .joined(separator: "\n")
             // The native scroll view extends beneath both bars; its automatic
             // insets keep the first and last lines clear when scrolling ends.
-            LogTextView(text: lines, scrollsToEnd: state.filter.isEmpty)
+            LogTextView(text: text)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
@@ -82,8 +77,10 @@ struct BuildPanel: View {
 }
 
 /// Controls in the panel's native top accessory, above its scrolling content.
+/// The log has the text view's own find bar, so only the issues have a filter.
 struct BuildPanelHeader: View {
-    static let height: CGFloat = 24 + 2 * BarMetrics.inset
+    /// One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
+    static let height: CGFloat = 24
     @Bindable var project: ProjectModel
     @Bindable var state: BuildPanelState
 
@@ -105,6 +102,8 @@ struct BuildPanelHeader: View {
                     .toggleStyle(.button)
                     .help(state.showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
+                SearchField(text: $state.filter, prompt: "Filter")
+                    .frame(minWidth: 100, maxWidth: 180)
             } else {
                 Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
@@ -113,12 +112,9 @@ struct BuildPanelHeader: View {
                 .help("Copy Log")
                 .disabled(project.result?.log.isEmpty ?? true)
             }
-            SearchField(text: $state.filter, prompt: "Filter")
-                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
         }
-        // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
         .frame(height: Self.height)
-        .paneBarControls()
+        .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
     }
@@ -126,6 +122,7 @@ struct BuildPanelHeader: View {
 
 /// The errors and warnings. Choosing one shows its line and leaves the keyboard
 /// in the list, as the outline does; a double-click or Return goes into the source.
+/// Rows are places in the build's issues, so a new build starts with none chosen.
 private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
@@ -151,10 +148,7 @@ private struct IssueList: View {
         }
         // Edit › Copy copies the selected issue.
         .copyable(selection.flatMap(item).map { [$0.message] } ?? [])
-        // Kept while its row shows.
-        .onChange(of: items.map(\.offset)) { _, shown in
-            if let selection, !shown.contains(selection) { self.selection = nil }
-        }
+        .onChange(of: project.compiling) { selection = nil }
         .onChange(of: selection) { _, id in
             if let item = id.flatMap(item) { open(item, focus: false) }
         }
@@ -175,11 +169,11 @@ private struct IssueRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.message).lineLimit(3)
                 if let location = location(line: ":") {
                     Text(location)
-                        .font(Typography.secondary)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -200,23 +194,20 @@ private struct IssueRow: View {
 }
 
 /// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
+/// It opens at its end, where the error usually is.
 private struct LogTextView: NSViewRepresentable {
     let text: String
-    /// Unfiltered, the log opens at its end, where the error usually is.
-    let scrollsToEnd: Bool
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
-        scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        // Lines the text up with the header's controls; the fragment padding
-        // would put it past them.
-        view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
+        // Lines the text up with the header's controls, at AppKit's accessory
+        // inset; the fragment padding would put it past them.
+        view.textContainerInset = NSSize(width: 10, height: 10)
         view.textContainer?.lineFragmentPadding = 0
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
@@ -229,7 +220,7 @@ private struct LogTextView: NSViewRepresentable {
         let view = scroll.documentView as! NSTextView
         guard view.string != text else { return }
         view.string = text
-        if scrollsToEnd { view.scrollToEndOfDocument(nil) } else { view.scrollToBeginningOfDocument(nil) }
+        view.scrollToEndOfDocument(nil)
     }
 }
 
@@ -244,7 +235,6 @@ private struct LogTextView: NSViewRepresentable {
 }
 
 #Preview("Build log") {
-    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).",
-                scrollsToEnd: false)
+    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).")
         .frame(width: 480, height: 160)
 }

@@ -1,44 +1,5 @@
 import SwiftUI
 
-/// The File Outline's header: the system's collapsible sidebar section (so it folds,
-/// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
-/// Files pane's foot so it stays put over the outline. Folded, it aligns with the
-/// status bar; open, its first row follows with the Files section's native spacing.
-struct OutlineHeader: View {
-    @Environment(AppModel.self) private var app
-
-    /// A sidebar section header's row (measured, 27.2).
-    private static let headerRow: CGFloat = 19
-    private static let topInset = (BarMetrics.secondaryBarHeight - headerRow) / 2
-    static let expandedHeight = topInset + headerRow
-
-    var body: some View {
-        List {
-            Section(isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
-            } header: {
-                Text("File Outline")
-            }
-        }
-        .listStyle(.sidebar)
-        .accessibilityLabel("File Outline Header")
-        // The sidebar's own material shows through, as behind the lists either side.
-        .scrollContentBackground(.hidden)
-        .scrollDisabled(true)
-        // Its room under the header too, so a drag from the header has nothing to
-        // autoscroll (scrollDisabled doesn't stop it).
-        .frame(height: sidebarListRoom + Self.headerRow + sidebarListRoom, alignment: .top)
-        // AppKit animates the containing bar's lower padding with the split.
-        // This content keeps one size and a fixed distance below the hairline.
-        .offset(y: Self.topInset - sidebarListRoom)
-        .frame(height: Self.expandedHeight, alignment: .top)
-        .clipped()
-    }
-}
-
-/// The room a sidebar list leaves over its first row and under its last, inside
-/// its table (measured, 27.2).
-private let sidebarListRoom: CGFloat = 10
-
 /// The project's files, or the project search's results while there is a
 /// query.
 struct FilesList: View {
@@ -50,42 +11,27 @@ struct FilesList: View {
     @FocusState private var listFocused: Bool
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
-    /// Files dragged over the list's empty space, or over a row.
-    @State private var listTargeted = false
-    @State private var rowTargeted: TreeNode?
 
     var body: some View {
         // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
         if project.isSearching { results } else { files }
     }
 
-    /// The folder a drop would go into ("" the project's top level): the
-    /// row's, or the folder of the file it's over.
-    private var dropFolder: String? {
-        rowTargeted.map(dropDestination)
-            ?? (listTargeted ? "" : nil)
-    }
-
-    private func dropDestination(for node: TreeNode) -> String {
-        node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
-    }
-
     private var files: some View {
         List(selection: $selection) {
-            Section {
-                TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) }) { node in
+            Section("Files") {
+                // Between the top-level rows, into the project's top level.
+                TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) },
+                         insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
                     row(node).tag(node.path)
                 }
-            } header: {
-                // The project's top level, as a row takes a drop into its folder: a List
-                // hands a drop on its empty space to neither dropDestination nor onDrop
-                // (27.2). Search results take none.
-                Text("Files")
-                    .headerDropHighlight(dropFolder == "")
-                    .contentShape(.rect)
-                    .fileDrop(moves: { project.projectPath($0) != nil }, targeted: { listTargeted = $0 }) { urls in
-                        Task { await project.dropFiles(urls, into: "") }
-                    }
+            }
+            // The folded File Outline's header, which unfolds it into its pane below.
+            if project.isLaTeX, app.outlineCollapsed {
+                Section(isExpanded: Binding(get: { false }, set: { if $0 { app.outlineCollapsed = false } })) {
+                } header: {
+                    Text("File Outline")
+                }
             }
         }
         .listStyle(.sidebar)
@@ -182,9 +128,9 @@ struct FilesList: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text("\(hit.before)\(Text(hit.match).bold())\(hit.after)")
                             .lineLimit(2)
-                        Spacer(minLength: BarMetrics.spacing)
+                        Spacer(minLength: 4)
                         Text("\(hit.line)")
-                            .font(Typography.secondary)
+                            .font(.subheadline)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Line \(hit.line)")
@@ -227,14 +173,11 @@ struct FilesList: View {
         // The whole row a drop target, not only its name.
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        .dropHighlight(node.isDirectory && dropFolder == node.path)
         // The star's name too: the row's label replaces its children's.
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         // Into the folder dropped on, or the dropped-on file's folder.
-        .fileDrop(moves: { project.projectPath($0) != nil }, targeted: { over in
-            if over { rowTargeted = node } else if rowTargeted?.path == node.path { rowTargeted = nil }
-        }) { urls in
-            let folder = dropDestination(for: node)
+        .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
+            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
             Task { await project.dropFiles(urls, into: folder) }
         }
         .draggable(file: project.url(node.path))
@@ -252,11 +195,12 @@ struct FilesList: View {
 }
 
 /// A tree's rows, each with children a disclosure group, open as `isExpanded` says:
-/// the files and the outline.
+/// the files and the outline. `insert` takes files dropped between its top rows.
 private struct TreeRows<Node: Identifiable, Row: View>: View {
     let nodes: [Node]
     let children: (Node) -> [Node]?
     let isExpanded: (Node) -> Binding<Bool>
+    var insert: (([URL]) -> Void)?
     @ViewBuilder let row: (Node) -> Row
 
     var body: some View {
@@ -271,14 +215,26 @@ private struct TreeRows<Node: Identifiable, Row: View>: View {
                 row(node)
             }
         }
+        .onInsert(of: insert == nil ? [] : [.fileURL]) { _, providers in
+            Task {
+                var urls: [URL] = []
+                for provider in providers {
+                    let url = await withCheckedContinuation { done in
+                        _ = provider.loadTransferable(type: URL.self) { done.resume(returning: try? $0.get()) }
+                    }
+                    if let url { urls.append(url) }
+                }
+                if !urls.isEmpty { insert?(urls) }
+            }
+        }
     }
 }
 
 private extension Binding<Set<String>> {
-    /// On while the set holds `key` (`inverted`, while it doesn't); a switch that adds or removes it.
-    func contains(_ key: String, inverted: Bool = false) -> Binding<Bool> {
-        Binding<Bool>(get: { wrappedValue.contains(key) != inverted },
-                      set: { if $0 != inverted { wrappedValue.insert(key) } else { wrappedValue.remove(key) } })
+    /// On while the set holds `key`; a switch that adds or removes it.
+    func contains(_ key: String) -> Binding<Bool> {
+        Binding<Bool>(get: { wrappedValue.contains(key) },
+                      set: { if $0 { wrappedValue.insert(key) } else { wrappedValue.remove(key) } })
     }
 }
 
@@ -300,67 +256,17 @@ private extension Binding<Set<String>> {
     .frame(width: ColumnMetrics.sidebarIdeal, height: 240)
 }
 
-/// The sidebar's selection capsule. UI kit Sidebars/Small/Items/Level 0 - Selected:
-/// background x −4, width row+8, radius 8; inset measured on 27.2.
-private nonisolated enum SidebarSelection {
-    static let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-    /// From each side of the list to the capsule.
-    static let inset: CGFloat = 10
-    /// The capsule reaches this far before a row's content.
-    static let leading: CGFloat = 4
-    /// Above and below a header's content, to a row's height (27.2).
-    static let vertical: CGFloat = 2
-    /// Where a header's content ends, short of the sidebar's edge (27.2).
-    static let contentTrailing: CGFloat = 2
-}
-
-/// A row's content outlined as the sidebar's selection is.
-/// Nonisolated: SwiftUI may ask a shape for its path off the main thread.
-private nonisolated struct SidebarRowShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let s = SidebarSelection.self
-        let row = CGRect(x: rect.minX - s.leading, y: rect.minY - s.vertical,
-                         width: rect.width + s.leading - (s.inset - s.contentTrailing),
-                         height: rect.height + 2 * s.vertical)
-        return s.shape.path(in: row)
-    }
-}
-
-private extension View {
-    /// A row where a drop would go, tinted a level under a selection so its
-    /// text keeps its colours.
-    func dropHighlight(_ isOn: Bool) -> some View {
-        listRowBackground(isOn ? SidebarSelection.shape.fill(.tint.quaternary)
-            .padding(.horizontal, SidebarSelection.inset) : nil)
-    }
-
-    /// The same for a section's header, which a list gives no row background.
-    func headerDropHighlight(_ isOn: Bool) -> some View {
-        frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if isOn { SidebarRowShape().fill(.tint.quaternary) }
-            }
-    }
-}
-
 extension View {
     /// Takes dropped files, copied in or, those `moves` names, moved (as Finder
-    /// does within a volume); anything else, or a file `accepts` turns down, is
-    /// refused while dragged. `targeted`: a taken drag is over it.
+    /// does within a volume). A drag of anything else, of a file `accepts` turns
+    /// down, or of more than `limit` files, is refused while dragged.
     func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, moves: @escaping (URL) -> Bool = { _ in false },
-                  targeted: @escaping (Bool) -> Void, action: @escaping ([URL]) -> Void) -> some View {
+                  limit: Int = .max, action: @escaping ([URL]) -> Void) -> some View {
         dropDestination(for: URL.self) { urls, _ in
-            targeted(false)
             let files = urls.filter { $0.isFileURL && accepts($0) }
-            if !files.isEmpty { action(files) }
+            if !files.isEmpty, files.count <= limit { action(files) }
         }
-        .dropConfiguration { _ in DropConfiguration(operation: dropOperation(accepts, moves)) }
-        .onDropSessionUpdated { session in
-            switch session.phase {
-            case .entering, .active: targeted(dropOperation(accepts, moves) != .forbidden)
-            default: targeted(false)
-            }
-        }
+        .dropConfiguration { _ in DropConfiguration(operation: dropOperation(accepts, moves, limit)) }
     }
 
     /// Dragged out as the file itself: other apps copy it, the tree moves it.
@@ -376,34 +282,28 @@ extension View {
 
 /// What a drop does with the dragged files `accepts` takes. AppKit's drag
 /// pasteboard: a drop session names none of its items until they're dropped.
-private func dropOperation(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool) -> DropOperation {
+private func dropOperation(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool, _ limit: Int) -> DropOperation {
     let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
                                                       options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
-    return urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy
+    return urls.isEmpty || urls.count > limit ? .forbidden : urls.allSatisfy(moves) ? .move : .copy
 }
 
-/// The project's sections from its main file, under `OutlineHeader`, which folds them away.
-/// Takes no drops: files go into the list above.
+/// The project's sections from its main file, in a pane under the files, whose
+/// header folds it away. Takes no drops: files go into the list above.
 struct OutlineList: View {
+    @Environment(AppModel.self) private var app
     let project: ProjectModel
-    @Environment(\.sidebarRowSize) private var rowSize
-    /// Folded headings, by project and `Outline.foldKeys`.
-    @State private var folded = Set(UserDefaults.standard.stringArray(forKey: DefaultsKey.outlineFolded) ?? [])
+    /// Folded headings, by file, level and title, for this session.
+    @State private var folded: Set<String> = []
     /// The line the selection follows: the caret's or the top line, whichever
     /// changed last; the caret's when both do, as its `onChange` runs second.
     @State private var line = 1
     /// A heading chosen in the list, shown selected until the source reaches it.
     @State private var chosen: Int?
 
-    /// A step under the files' rows: a table of contents under a list.
-    private var outlineRowSize: SidebarRowSize { rowSize == .large ? .medium : .small }
-
-    private var prefix: String { "\(project.id)/" }
-
     var body: some View {
         let outline = project.outline
         let current = Outline.current(outline, file: project.openPath, line: line)
-        let keys = Outline.foldKeys(outline).map { prefix + $0 }
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
@@ -413,75 +313,54 @@ struct OutlineList: View {
         })
         ScrollViewReader { proxy in
             List(selection: selection) {
-                if outline.isEmpty {
-                    Text("No Sections").foregroundStyle(.secondary)
-                        .selectionDisabled()
-                } else {
-                    TreeRows(nodes: Outline.tree(outline), children: \.children,
-                             isExpanded: { $folded.contains(keys[$0.id], inverted: true) }) { node in
+                Section(isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
+                    TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
+                        let key = "\(node.item.file)\t\(node.item.level):\(node.item.title)"
+                        return Binding(get: { !folded.contains(key) },
+                                       set: { if $0 { folded.remove(key) } else { folded.insert(key) } })
+                    }) { node in
                         HeadingRow(item: node.item).equatable().tag(node.id)
-                            .simultaneousGesture(TapGesture().onEnded {
-                                if current == node.id { project.reveal(node.item) }
-                            })
                     }
+                } header: {
+                    Text("File Outline")
                 }
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
+            .overlay {
+                if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
+            }
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
                 guard let item = outline.first(where: { $0.id == ids.first }) else { return }
                 Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
             }
-            // The header above stands in for a section's, so the list's room over its
-            // first row goes; the scroller keeps to what shows.
-            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
-            .padding(.top, -sidebarListRoom)
-            .clipped()
-            .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.topHeading) { line = project.topLine }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            // The current heading always shows: its sections open, then the row
-            // comes into view if needed.
+            // The current heading's row comes into view if it shows.
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
-                let chain = Outline.chain(outline, to: id).dropLast()
-                let opened = folded.subtracting(chain.map { keys[$0.id] })
-                if opened != folded { folded = opened }
                 guard let id else { return }
                 Task { proxy.scrollTo(id) }
-            }
-            .onChange(of: folded) { _, folded in
-                // The shown files' folds of headings they no longer have go; a file the main
-                // file doesn't reach, shown alone, leaves the document's alone.
-                let current = Set(keys), files = Set(outline.map { "\(prefix)\($0.file)\t" })
-                let stale = folded.filter { key in !current.contains(key) && files.contains { key.hasPrefix($0) } }
-                UserDefaults.standard.set(Array(folded.subtracting(stale)).sorted(), forKey: DefaultsKey.outlineFolded)
             }
         }
     }
 }
 
-/// A heading in the file outline.
+/// A heading in the file outline. Equatable: as a plain view, a heading that
+/// takes the place of a leaf and has subheadings opens closed (27.2).
 private struct HeadingRow: View, Equatable {
     let item: OutlineItem
 
     var body: some View {
-        let title = Outline.displayTitle(item)
-        // The whole title as a tooltip only where it's cut short.
-        ViewThatFits(in: .horizontal) {
-            Text(title).fixedSize()
-            Text(title).help(title)
-        }
-        .lineLimit(1)
-        .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(.rect)
-        .accessibilityLabel(title)
-        // Its kind ("Subsection"); the list tells its depth.
-        .accessibilityValue(item.kind)
-        // For scrollTo, inside the row: on it, the list would take it for the row's
-        // identity, and a heading that gains subheadings would keep a leaf's closed state.
-        .id(item.id)
+        Text(item.displayTitle)
+            .lineLimit(1)
+            .help(item.displayTitle)
+            .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            // Its kind ("Subsection"); the list tells its depth.
+            .accessibilityValue(item.kind)
+            // For scrollTo, inside the row: on it, the list would take it for the row's
+            // identity, and a heading that gains subheadings would keep a leaf's closed state.
+            .id(item.id)
     }
 }

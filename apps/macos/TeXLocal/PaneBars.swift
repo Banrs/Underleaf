@@ -1,38 +1,5 @@
 import SwiftUI
 
-/// The in-window bars' metrics, from the macOS 27 UI kit.
-enum BarMetrics {
-    /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
-    static let inset: CGFloat = 8
-    /// UI kit: a symbol and its words 4 pt apart.
-    static let spacing: CGFloat = 4
-    /// The status bar and folded File Outline header share this height, so the
-    /// hairlines over them run on as one (Xcode's status bar).
-    static let secondaryBarHeight: CGFloat = 36
-    /// UI kit, Unified Compact toolbar: items 12 pt apart.
-    static let itemSpacing: CGFloat = 12
-    /// Design: the least room a find query needs, and the widest a filter grows
-    /// (UI kit search fields are drawn 120 pt).
-    static let fieldMinWidth: CGFloat = 100
-    static let fieldMaxWidth: CGFloat = 180
-}
-
-enum Typography {
-    static let itemTitle: Font = .headline
-    /// Secondary rows and captions: the size `.small` controls use.
-    static let secondary: Font = .subheadline
-    /// UI kit, form rows: the description 2 pt under the title.
-    static let subtitleSpacing: CGFloat = 2
-}
-
-extension View {
-    func paneBarControls() -> some View {
-        lineLimit(1)
-            .padding(.horizontal, BarMetrics.inset)
-            .frame(maxWidth: .infinity)
-    }
-}
-
 /// The PDF's find bar. Its pane accessory keeps the field ready to focus.
 struct FindBar: View {
     @Binding var query: String
@@ -47,7 +14,7 @@ struct FindBar: View {
     var body: some View {
         HStack {
             SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
-                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+                .frame(minWidth: 100, maxWidth: .infinity)
             ControlGroup {
                 Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
                     .help("Previous Match")
@@ -63,8 +30,7 @@ struct FindBar: View {
                 .layoutPriority(-1)
             Button("Done") { close() }
         }
-        .padding(.vertical, BarMetrics.inset)
-        .paneBarControls()
+        .lineLimit(1)
     }
 }
 
@@ -202,13 +168,13 @@ struct DialogSheet<Fields: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: BarMetrics.spacing) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.title3.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
                 if let message {
                     Text(message)
-                        .font(Typography.secondary)
+                        .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
