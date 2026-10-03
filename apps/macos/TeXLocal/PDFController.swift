@@ -41,10 +41,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     private(set) var limited = false
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Self.label(scale) }
-    /// The longest label of the scales PDFKit allows.
-    var widestZoomLabel: String {
-        [view.minScaleFactor, view.maxScaleFactor].map(Self.label).max { $0.count < $1.count } ?? zoomLabel
-    }
+    /// The limit's, for the toolbar to reserve.
+    var widestZoomLabel: String { Self.label(Self.maxScale) }
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
     /// 999%, so the toolbar's scale reserves a three-digit label's width (`widestZoomLabel`):
@@ -61,9 +59,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         super.init()
         // Preview's canvas color; the PDF's paper keeps its own colors.
         view.backgroundColor = .controlBackgroundColor
-        // From before the first PDF, so the toolbar reserves its scale's width from the start.
-        // Before fitting, which a set limit turns off.
-        view.maxScaleFactor = Self.maxScale
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
@@ -92,7 +87,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     @objc private func scaleChanged() {
-        guard view.document != nil, view.bounds.width > 0, view.shownHeight > 0 else { return }
+        guard view.document != nil, view.hasShownArea else { return }
         scale = view.scaleFactor
         canZoomIn = view.canZoomIn
         canZoomOut = view.canZoomOut
@@ -100,7 +95,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
             fit = .width
-        } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale(view)) > 0.001) {
+        } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale) > 0.001) {
             fit = nil
         }
     }
@@ -108,7 +103,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// The whole page, as Pages' and Keynote's Fit Page: the smaller of the scales that fit
     /// its width (PDFKit's own) and its height, with its page-break margins, which scale
     /// with it, in the height it shows in.
-    private func pageScale(_ view: PDFView) -> CGFloat {
+    private var pageScale: CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
         let margins = view.pageBreakMargins
         let height = view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
@@ -144,7 +139,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     func fitPage() {
         guard view.currentPage != nil, view.shownHeight > 0 else { return }
         if view.autoScales { view.autoScales = false }
-        let scale = pageScale(view)
+        let scale = pageScale
         if view.scaleFactor != scale { view.scaleFactor = scale }
         fit = .page
     }
@@ -240,7 +235,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let scale = view.scaleFactor
         view.document = document
         observeMagnification()
-        // A document resets the limit (27.2).
+        // A document resets the limit (27.2). Setting it turns fitting off, so before the fit below.
         view.maxScaleFactor = Self.maxScale
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
@@ -256,8 +251,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     private func restorePageIfReady() {
-        // A destination cannot land until the PDF view has a visible size.
-        guard let number = restorePage, view.document != nil, view.bounds.width > 0, view.shownHeight > 0 else { return }
+        guard let number = restorePage, view.document != nil, view.hasShownArea else { return }
         restorePage = nil
         go(toPage: number)
     }
@@ -266,7 +260,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// marked as Find marks a match; or SyncTeX's box, when the word can't be told
     /// from its neighbours or the find bar holds the selection.
     func reveal(_ loc: ForwardLoc, word: SyncTeXWord?) {
-        guard view.bounds.width > 0, view.shownHeight > 0 else {
+        guard view.hasShownArea else {
             pendingReveal = (loc, word)
             return
         }
@@ -431,7 +425,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         // At the document start, width changes or Fit Page can lose the first
         // page's visible top beneath the toolbar; restore it after resizing.
         let widthChanged = newSize.width != frame.width
-        let atStart = bounds.width > 0 && shownHeight > 0 && atDocumentStart
+        let atStart = hasShownArea && atDocumentStart
         super.setFrameSize(newSize)
         onResize()
         if atStart, widthChanged || !atDocumentStart, let page = document?.page(at: 0) {
@@ -647,6 +641,9 @@ private nonisolated struct SyncText {
 private extension PDFView {
     /// The height clear of the toolbar, find bar and bottom status bar.
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
+
+    /// A hidden or collapsed pane has none, and a destination can't land in it.
+    var hasShownArea: Bool { bounds.width > 0 && shownHeight > 0 }
 }
 
 extension NSMenu {
