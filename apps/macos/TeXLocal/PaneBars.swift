@@ -71,6 +71,8 @@ final class FieldHandle {
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    /// In the magnifying glass's place: a filter's, as Xcode's filter fields.
+    var symbol: String?
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
@@ -112,6 +114,9 @@ struct SearchField: NSViewRepresentable {
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
+        if let symbol, let cell = view.cell as? NSSearchFieldCell {
+            cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        }
         handle?.field = view
         return view
     }

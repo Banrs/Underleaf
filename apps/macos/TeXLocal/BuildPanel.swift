@@ -26,7 +26,9 @@ struct BuildPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        // Under the header, not the status bar: the panel rises from the bar's top edge
+        // rather than showing through the bar from the window's foot.
+        .background(Color(nsColor: .textBackgroundColor), ignoresSafeAreaEdges: .top)
     }
 
     /// The issues showing, each by its place in the build's errors then warnings, so
@@ -102,7 +104,7 @@ struct BuildPanelHeader: View {
                     .toggleStyle(.button)
                     .help(state.showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                SearchField(text: $state.filter, prompt: "Filter")
+                SearchField(text: $state.filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(minWidth: 100, maxWidth: 180)
             } else {
                 Button("Copy Log", systemImage: "document.on.document") {
