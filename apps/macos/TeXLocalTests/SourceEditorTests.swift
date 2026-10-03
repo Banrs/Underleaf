@@ -148,6 +148,14 @@ struct SourceEditorTests {
 
     /// A block's fields, as a completion's: Tab goes from a figure's file to
     /// its caption and label.
+    /// Escape that reaches the editor through the window, not its own keys, passes up the
+    /// chain instead of to NSTextView, which doesn't take it and would throw.
+    @Test func escapeOutsideASnippetPassesOn() {
+        open("text")
+        text.cancelOperation(nil)
+        #expect(text.string == "text")
+    }
+
     @Test func blocksTabThroughTheirFields() {
         open("")
         #expect(editor.perform(.block, "figure"))

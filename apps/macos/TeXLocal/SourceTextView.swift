@@ -571,7 +571,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             snippet = nil
             return
         }
-        super.cancelOperation(sender)
+        // NSTextView doesn't implement it, so super would throw; pass it on as NSResponder would
+        // have (the window's, which leaves full screen).
+        nextResponder?.tryToPerform(#selector(cancelOperation(_:)), with: sender)
     }
 
     // MARK: completion: the core's items in a list under the caret
