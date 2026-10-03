@@ -4,14 +4,14 @@ import AppKit
 enum CompletionKind {
     case command, environment, label, citation, entryType
 
-    /// A letter on a coloured square, as Xcode's kinds; the colour is the editor's for commands and arguments.
+    /// A letter on a coloured square, as Xcode's kinds; the colour is the editor's for the same text.
     var badge: (symbol: String, color: NSColor, name: String) {
         switch self {
-        case .command: ("c.square.fill", .systemPink, String(localized: "Command"))
-        case .environment: ("e.square.fill", .systemTeal, String(localized: "Environment"))
-        case .label: ("l.square.fill", .systemBlue, String(localized: "Label"))
-        case .citation: ("b.square.fill", .systemOrange, String(localized: "Citation"))
-        case .entryType: ("t.square.fill", .systemBrown, String(localized: "Entry Type"))
+        case .command: ("c.square.fill", .syntaxCommand, String(localized: "Command"))
+        case .environment: ("e.square.fill", .syntaxArgument, String(localized: "Environment"))
+        case .label: ("l.square.fill", .syntaxArgument, String(localized: "Label"))
+        case .citation: ("b.square.fill", .syntaxArgument, String(localized: "Citation"))
+        case .entryType: ("t.square.fill", .syntaxKeyword, String(localized: "Entry Type"))
         }
     }
 }

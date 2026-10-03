@@ -174,6 +174,23 @@ Math delimiters get the preprocessor colour because they switch mode the way a
 preprocessor directive does, and having them stand out is worth more here than
 category purity.
 
+**The Mac editor uses Overleaf's colours instead**, from its source editor's
+themes (`themes/cm6/textmate.json`, its default, and `overleaf_dark.json`, its default in
+dark; the node-to-tag mapping is `languages/latex/latex-language.ts`), defined once in
+`SourceTextView.swift` (`NSColor.syntax…`) and shared with the completion badges:
+
+| Our token | Overleaf tag | Light | Dark |
+| --- | --- | --- | --- |
+| command (`\x`, escapes, `\\`, maths' `^ _ &`) | typeName | `#0000FF` | `#8BE9FD` |
+| BibTeX entry type (badge only) | keyword | `#0000FF` | `#FF79C6` |
+| environment, package, label, reference, citation, `\importmodule`'s second argument; numbers in text | attributeValue | `#318495` | `#FFB86C` |
+| maths delimiters, letters and numbers in maths, `\importmodule`'s first argument | string | `#036A07` | `#F1FA8C` |
+| comment | comment | `#4C886B` | `#6272A4` |
+| stray brace, what maths can't hold | invalid (foreground only) | `#FF0000` | `#FF79C6` |
+
+Text, braces and brackets are plain, as Overleaf's. Overleaf Dark also sets commands and
+attribute values in italic; the Mac editor does not.
+
 Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
 invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's
 (`#FFFFFF`/`#1F1F24`) — the editor sits flush against this app's panels, so it

@@ -797,17 +797,42 @@ extension NSColor {
                                        NSColor(srgbRed: 0.317647, green: 0.356862, blue: 0.439215, alpha: 1))
 }
 
+/// Overleaf's syntax colours, from its source editor's themes (services/web/frontend/js/features/source-editor/
+/// themes/cm6/): "textmate", its default, in Light and "overleaf_dark", its default in Dark, with the lezer
+/// tags extensions/class-highlighter.ts and languages/latex/latex-language.ts give LaTeX's nodes.
+/// Overleaf's text is black / #F8F8F2 and its braces, brackets and numbers outside maths are plain, so ours are too.
+extension NSColor {
+    private static func overleaf(_ light: UInt32, _ dark: UInt32) -> NSColor {
+        func rgb(_ hex: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
+        let light = rgb(light), dark = rgb(dark)
+        return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+    }
+
+    /// .tok-typeName (`\command`, `\begin`, `\end`): `blue` / #8BE9FD (italic in Overleaf Dark).
+    static let syntaxCommand = overleaf(0x0000FF, 0x8BE9FD)
+    /// .tok-keyword (`\documentclass`, `\cite`, `\ref`, `\label`, `~`, `&`, `\\`; BibTeX's `@article`): `blue` / #FF79C6.
+    static let syntaxKeyword = overleaf(0x0000FF, 0xFF79C6)
+    /// .tok-attributeValue (environment, label, reference, citation, file and package-option names): rgb(49,132,149) / #FFB86C (italic in Dark).
+    static let syntaxArgument = overleaf(0x318495, 0xFFB86C)
+    /// .tok-string (maths' `$` and what is in it, verbatim): rgb(3,106,7) / #F1FA8C.
+    static let syntaxMaths = overleaf(0x036A07, 0xF1FA8C)
+    /// .tok-comment: rgb(76,136,107) / #6272A4.
+    static let syntaxComment = overleaf(0x4C886B, 0x6272A4)
+    /// .tok-invalid: `red` / #FF79C6, which Dark fills behind #F8F8F0 text; Light tints behind at 10%. Neither fill is drawn here.
+    static let syntaxInvalid = overleaf(0xFF0000, 0xFF79C6)
+}
+
 private extension HighlightKind {
     var color: NSColor {
         switch self {
-        case .command: .systemPink
-        case .argument: .systemTeal
-        case .mathDelimiter: .systemOrange
-        case .mathIdentifier, .builtin: .systemPurple
-        case .number: .systemBlue
-        case .comment: .secondaryLabelColor
-        case .stringLiteral: .systemBrown
-        case .invalid: .systemRed
+        case .command: .syntaxCommand
+        case .argument: .syntaxArgument
+        case .mathDelimiter, .mathIdentifier, .number, .stringLiteral: .syntaxMaths
+        case .builtin: .syntaxArgument
+        case .comment: .syntaxComment
+        case .invalid: .syntaxInvalid
         }
     }
 }

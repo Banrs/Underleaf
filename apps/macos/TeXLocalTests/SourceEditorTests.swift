@@ -382,7 +382,7 @@ struct SourceEditorTests {
             colour = attributes[.foregroundColor] as? NSColor
             return false
         }
-        #expect(colour == .systemPink)
+        #expect(colour == .syntaxCommand)
     }
 
     /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
