@@ -34,9 +34,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// Renamed with the groups: a layout saved under "Workspace" lists the separate items,
     /// which would come back ungrouped.
     let toolbar = NSToolbar(identifier: "Workspace 2")
-    /// AppKit's menu indicators on Format, Math and Insert. With them, the group draws a
-    /// capsule for each (27.2); without, one for all three, as Pages' insert tools.
-    private static let menuIndicators = false
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -231,7 +228,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.toolTip = title
         item.image = symbol(image, title)
         item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
-        item.showsIndicator = Self.menuIndicators
+        // No chevrons: with them, the group draws a capsule for each menu (27.2); without, one
+        // for all three, as Pages' insert tools.
+        item.showsIndicator = false
         return item
     }
 
