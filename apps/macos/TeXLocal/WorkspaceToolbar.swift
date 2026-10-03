@@ -23,7 +23,7 @@ extension NSToolbarItem.Identifier {
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Editing tools and Share overflow before Zoom; Compile and window toggles take priority.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
-                              NSToolbarItemValidation {
+                              NSToolbarItemValidation, NSMenuItemValidation {
     let toolbar = NSToolbar(identifier: "Workspace")
     private let app: AppModel
     private let project: ProjectModel
@@ -120,10 +120,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.visibilityPriority = .low
             item = share
         case .compile:
-            // Xcode's Run and Stop: one symbol in its place, so the item keeps its width.
-            item = button(id, MenuCommand.compileRun.title, "play.fill", #selector(compile))
+            // The window's one prominent action (HIG Toolbars), titled: a play symbol alone reads as media.
+            item = NSToolbarItem(itemIdentifier: id)
+            item.label = MenuCommand.compileRun.title
+            item.view = CompileButton(target: self, action: #selector(compile))
             // The labelled form too: sized for the longer of its two labels.
             item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
+            let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
+            form.target = self
+            item.menuFormRepresentation = form
             item.style = .prominent
             item.visibilityPriority = .high
         case .togglePDF:
@@ -230,6 +235,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let canZoomIn: Bool
         let canZoomOut: Bool
         let compiling: Bool
+        let canCompile: Bool
         let pdfTitle: String
     }
 
@@ -237,7 +243,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         State(isLaTeX: project.isLaTeX,
               hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
-              compiling: project.compiling,
+              compiling: project.compiling, canCompile: canCompile,
               pdfTitle: app.title(.viewTogglePdf, on: project))
     }
 
@@ -265,7 +271,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             let command = state.compiling ? MenuCommand.compileStop : .compileRun
             item.label = command.title
             item.toolTip = command.title
-            item.image = symbol(state.compiling ? "stop.fill" : "play.fill", command.title)
+            item.menuFormRepresentation?.title = command.title
+            (item.view as? CompileButton)?.compiling = state.compiling
+            item.isEnabled = state.canCompile
         case .togglePDF:
             item.toolTip = state.pdfTitle
         default:
@@ -276,7 +284,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
         case .bold, .italic: project.isLaTeX
-        case .compile: canCompile
         default: item.action != #selector(insertTemplate(_:)) || project.isLaTeX
         }
     }
@@ -311,9 +318,66 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         perform(project.compiling ? .compileStop : .compileRun)
     }
 
+    /// The overflow menu's Compile, which the item's own view doesn't enable.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action != #selector(compile) || canCompile
+    }
+
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.pdfURL.map { [$0] } ?? []
+    }
+}
+
+/// Compile's button in the item's place, drawn as the toolbar draws its own (title and
+/// symbol on the item's prominent glass). Stop shows the stock spinner in the symbol's
+/// place and keeps Compile's width, so the toolbar doesn't shift as a build starts.
+private final class CompileButton: NSButton {
+    private static let play = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)!
+    private let spinner = NSProgressIndicator()
+    private var compileWidth: CGFloat = 0
+
+    convenience init(target: AnyObject, action: Selector) {
+        self.init(title: MenuCommand.compileRun.title, image: Self.play, target: target, action: action)
+        bezelStyle = .toolbar
+        imagePosition = .imageLeading
+        // Stop's shorter title keeps the spinner beside it in Compile's width.
+        imageHugsTitle = true
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        // Light, as the title on the tinted glass in either appearance.
+        spinner.appearance = NSAppearance(named: .darkAqua)
+        // The button's title says Stop; the status bar says Compiling.
+        spinner.setAccessibilityElement(false)
+        addSubview(spinner)
+    }
+
+    var compiling = false {
+        didSet {
+            guard compiling != oldValue else { return }
+            title = compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title
+            // A blank of the symbol's size keeps the title where the spinner leaves it.
+            image = compiling ? NSImage(size: Self.play.size) : Self.play
+            if compiling { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+            needsLayout = true
+        }
+    }
+
+    /// Compile's width as the toolbar lays it out, which is wider than outside it.
+    /// The toolbar sizes the item's glass from this, not from constraints.
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        if compiling { size.width = max(size.width, compileWidth) } else { compileWidth = size.width }
+        return size
+    }
+
+    override func layout() {
+        super.layout()
+        guard let place = cell?.imageRect(forBounds: bounds) else { return }
+        let size = spinner.fittingSize
+        spinner.frame = NSRect(x: place.midX - size.width / 2, y: place.midY - size.height / 2,
+                               width: size.width, height: size.height)
     }
 }
