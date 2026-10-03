@@ -97,9 +97,6 @@ final class WorkspaceController: RestoredSplitViewController {
     /// as it does a pane's bars while the pane animates (27.2).
     private var panelHeader: NSSplitViewItemAccessoryViewController!
     private var panelHeaderWidth: NSLayoutConstraint!
-    /// Clear over the text, as Xcode's bottom bar, and solid under the open panel, whose
-    /// header is then the clear bar (`setPanelShown`).
-    private var statusBar: NSSplitViewItemAccessoryViewController!
     /// Pane animations running, the scroll views keeping their scrollers out of sight
     /// until the last ends, and the frames laying out the split views (`paneAnimation`).
     private var paneAnimations = 0
@@ -226,14 +223,13 @@ final class WorkspaceController: RestoredSplitViewController {
         area.loaded = { [unowned self] in
             if !project.showLogs { panelItem.isCollapsed = true }
             if panelItem.isCollapsed { for view in panelViews { view.alphaValue = 0 } }
-            statusBar.preferredScrollEdgeEffectStyle = panelItem.isCollapsed ? .automatic : .hard
         }
 
         let areaItem = NSSplitViewItem(viewController: area)
         // A hard scroll edge draws no line over the build panel's still content.
         areaItem.addBottomAlignedAccessoryViewController(Self.separator())
         // Xcode's bottom bar: its height, and its items to the ends.
-        statusBar = accessory(StatusBar(project: project))
+        let statusBar = accessory(StatusBar(project: project))
         statusBar.automaticallyAppliesContentInsets = false
         statusBar.preferredScrollEdgeEffectStyle = .automatic
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
@@ -441,22 +437,15 @@ final class WorkspaceController: RestoredSplitViewController {
     /// The panel rises from the status bar and sinks back through AppKit's animation,
     /// which brings it back at its hosted view's height. AppKit leaves that its header's
     /// and the status bar's height short (27.2), and unanimated the panel would come back
-    /// at its minimum, so the height it was hidden at is kept here. The status bar is solid
-    /// from the moment the panel starts up until it's back down: the panel's header is the
-    /// clear bar while it shows, and the status bar is clear only over the text.
+    /// at its minimum, so the height it was hidden at is kept here.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
         // Opening, the hosted view is already at the height the pane is heading for.
         if !shown { panelHeight = panel.frame.height }
-        if shown { statusBar.preferredScrollEdgeEffectStyle = .hard }
-        let closed = { [weak self] in
-            guard let self, panelItem.isCollapsed else { return }
-            statusBar.preferredScrollEdgeEffectStyle = .automatic
-        }
         guard animates else {
             for view in panelViews { view.alphaValue = shown ? 1 : 0 }
-            setCollapsed(panelItem, !shown, done: closed)
+            setCollapsed(panelItem, !shown)
             if shown { split.setPosition(split.bounds.height - split.dividerThickness - panelHeight, ofDividerAt: 0) }
             return
         }
@@ -466,7 +455,7 @@ final class WorkspaceController: RestoredSplitViewController {
             let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
             panel.frame.size.height = min(panelHeight, room)
         }
-        setCollapsed(panelItem, !shown, done: closed)
+        setCollapsed(panelItem, !shown)
         // AppKit holds the opening pane at its header's and the status bar's height until
         // the animation passes it, and the closing header there until the pane's edge has
         // passed over it (27.2). Faded in slowly and out quickly, from wherever a reversed
