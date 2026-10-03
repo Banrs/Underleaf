@@ -76,8 +76,8 @@ struct FormatPanel: View {
             .padding(6)
             .onKeyPress(.downArrow) { move(by: 1) }
             .onKeyPress(.upArrow) { move(by: -1) }
-            .onKeyPress(.return) { choose(focused) }
-            .onKeyPress(.space) { choose(focused) }
+            .onKeyPress(.return) { chooseFocused() }
+            .onKeyPress(.space) { chooseFocused() }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Section Level")
         }
@@ -152,10 +152,15 @@ struct FormatPanel: View {
         return .handled
     }
 
-    private func choose(_ level: HeadingLevel?) -> KeyPress.Result {
-        guard let level else { return .ignored }
+    private func choose(_ level: HeadingLevel) {
         project.editor.perform(.heading, level.command)
         close()
+    }
+
+    /// Return and Space choose the keyboard's level.
+    private func chooseFocused() -> KeyPress.Result {
+        guard let focused else { return .ignored }
+        choose(focused)
         return .handled
     }
 }
