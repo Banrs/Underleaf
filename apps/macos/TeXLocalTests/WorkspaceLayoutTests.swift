@@ -147,9 +147,9 @@ final class WorkspaceLayoutTests {
     }
 
     /// Show Build Panel rises from the status bar through AppKit's animation, the first time
-    /// too in a window with a source and a PDF open: its header over the status bar and at
-    /// the panel's width throughout, the status bar still, and the scrollers it kept out of
-    /// sight back after a toggle reversed midway.
+    /// too in a window with a source and a PDF open: the columns' foot follows the panel's top
+    /// edge, where its header is, the status bar still, and the scrollers it kept out of sight
+    /// back after a toggle reversed midway.
     @Test func thePanelRisesFromTheStatusBar() async throws {
         let workspace = open(), project = workspace.project
         project.openPath = "main.tex"
@@ -161,7 +161,7 @@ final class WorkspaceLayoutTests {
         // A moment after the window opens, its first rise would often miss its layouts,
         // holding over the status bar, then jumping (27.2).
         try await Task.sleep(for: .milliseconds(1100))
-        let panel = pane(workspace.panelItem), header = workspace.panelItem.topAlignedAccessoryViewControllers[0].view
+        let panel = pane(workspace.panelItem), columns = pane(workspace.area.splitViewItems[0])
         let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
         let bar = status.convert(status.bounds, to: nil)
         var heights: [CGFloat] = []
@@ -170,9 +170,8 @@ final class WorkspaceLayoutTests {
         while ContinuousClock.now - start < .seconds(0.6) {
             if !panel.isHidden {
                 heights.append(panel.frame.height)
-                let place = header.convert(header.bounds, to: nil)
-                #expect(place.minY >= bar.maxY, "header \(place), status bar \(bar)")
-                #expect(isClose(header.frame.width, panel.frame.width - 2 * ColumnMetrics.barSideInset))
+                let top = panel.convert(panel.bounds, to: nil).maxY, foot = columns.convert(columns.bounds, to: nil).minY
+                #expect(abs(foot - top - workspace.area.splitView.dividerThickness) <= 1, "columns' foot \(foot), panel's top \(top)")
             }
             #expect(status.convert(status.bounds, to: nil) == bar)
             try await Task.sleep(for: .milliseconds(4))
@@ -188,7 +187,6 @@ final class WorkspaceLayoutTests {
         try await Task.sleep(for: .milliseconds(400))
         let scrollers = Self.scrollers(workspace.view)
         #expect(!scrollers.isEmpty && scrollers.allSatisfy { $0.alphaValue == 1 })
-        #expect(header.alphaValue == 1 && workspace.panelItem.viewController.view.alphaValue == 1)
     }
 
     /// The next window opens with the dividers where this one left them.

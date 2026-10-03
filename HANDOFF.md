@@ -67,9 +67,13 @@ PDF is one persistent PDFKit view owned by `PDFController`.
   so layouts saved with Share or the toggles' former group don't come back. The 0.5 pt
   trailing safe-area adjustment.
 - Build panel: it rises from the status bar's top edge and sinks back through AppKit's split
-  animation; the status bar stays at the window's foot. Only the panel's header is clear over
-  its content; the panel's background stops at the status bar, so it no longer shows through
-  the bar from the window's foot as it rises. The Filter field has Xcode's filter symbol.
+  animation; the status bar stays at the window's foot, clear over the text, with its hairline
+  over the panel. The panel's header is a SwiftUI `safeAreaBar` in its own content, the clear
+  bar over its list, so it rides the pane's top edge and the columns' foot follows it; as a
+  split-item accessory AppKit held it at its height and the text clipped behind it. The panel's
+  content and background stop at the status bar. AppKit starts the rise about 100 ms after the
+  toggle, still (the main thread is idle then; not explained). The Filter field has Xcode's
+  filter symbol.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
 

@@ -93,10 +93,6 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// The panel's height as it was hidden, or its first (`setPanelShown`).
     private var panelHeight: CGFloat = 0
-    /// The panel's header, and its width while AppKit lays it out at its fitting size,
-    /// as it does a pane's bars while the pane animates (27.2).
-    private var panelHeader: NSSplitViewItemAccessoryViewController!
-    private var panelHeaderWidth: NSLayoutConstraint!
     /// Pane animations running, the scroll views keeping their scrollers out of sight
     /// until the last ends, and the frames laying out the split views (`paneAnimation`).
     private var paneAnimations = 0
@@ -200,16 +196,7 @@ final class WorkspaceController: RestoredSplitViewController {
 
         let panelState = BuildPanelState()
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project, state: panelState), height: panelHeight))
-        panelHeader = accessory(BuildPanelHeader(project: project, state: panelState))
-        panelHeader.preferredScrollEdgeEffectStyle = .automatic
-        // Its own height, not the panel's, when laid out at its fitting size; and the panel's
-        // width, which the pane's constraints outrank at rest.
-        panelHeader.view.setContentHuggingPriority(.required, for: .vertical)
-        panelHeaderWidth = panelHeader.view.widthAnchor.constraint(equalToConstant: 0)
-        panelHeaderWidth.priority = .defaultLow + 1
-        panelHeaderWidth.isActive = true
-        panelItem.addTopAlignedAccessoryViewController(panelHeader)
-        panelItem.minimumThickness = ColumnMetrics.panelMinimum
+        panelItem.minimumThickness = ColumnMetrics.panelMinimum + ColumnMetrics.panelHeader
         // It keeps its height as the window resizes; the columns take the change.
         panelItem.holdingPriority = .defaultLow + 1
 
@@ -222,7 +209,6 @@ final class WorkspaceController: RestoredSplitViewController {
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in
             if !project.showLogs { panelItem.isCollapsed = true }
-            if panelItem.isCollapsed { for view in panelViews { view.alphaValue = 0 } }
         }
 
         let areaItem = NSSplitViewItem(viewController: area)
@@ -434,42 +420,27 @@ final class WorkspaceController: RestoredSplitViewController {
         }
     }
 
-    /// The panel rises from the status bar and sinks back through AppKit's animation,
-    /// which brings it back at its hosted view's height. AppKit leaves that its header's
-    /// and the status bar's height short (27.2), and unanimated the panel would come back
-    /// at its minimum, so the height it was hidden at is kept here.
+    /// The panel rises from the status bar and sinks back through AppKit's animation, its
+    /// header (in its content, `BuildPanel`) on its top edge, which the columns' foot follows.
+    /// AppKit brings it back at its hosted view's height, and unanimated at its minimum, so
+    /// the height it was hidden at is kept here.
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
         // Opening, the hosted view is already at the height the pane is heading for.
         if !shown { panelHeight = panel.frame.height }
         guard animates else {
-            for view in panelViews { view.alphaValue = shown ? 1 : 0 }
             setCollapsed(panelItem, !shown)
             if shown { split.setPosition(split.bounds.height - split.dividerThickness - panelHeight, ofDividerAt: 0) }
             return
         }
-        panelHeaderWidth.constant = split.bounds.width - 2 * ColumnMetrics.barSideInset
         // Not reversing a close midway, which heads back to where it began.
         if shown, split.arrangedSubviews[1].isHidden {
             let room = split.bounds.height - split.dividerThickness - ColumnMetrics.columnsMinimum
             panel.frame.size.height = min(panelHeight, room)
         }
         setCollapsed(panelItem, !shown)
-        // AppKit holds the opening pane at its header's and the status bar's height until
-        // the animation passes it, and the closing header there until the pane's edge has
-        // passed over it (27.2). Faded in slowly and out quickly, from wherever a reversed
-        // toggle left it, the header doesn't pop up there, and has mostly faded before it's
-        // covered.
-        NSAnimationContext.runAnimationGroup { context in
-            context.timingFunction = CAMediaTimingFunction(name: shown ? .easeIn : .easeOut)
-            for view in panelViews { view.animator().alphaValue = shown ? 1 : 0 }
-        }
     }
-
-    /// What fades as the panel rises and sinks: its content and its header, clear while
-    /// it's closed so that a fade starts from there.
-    private var panelViews: [NSView] { [panelItem.viewController.view, panelHeader.view] }
 
     private var animates: Bool {
         view.window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -678,8 +649,10 @@ enum ColumnMetrics {
     /// 1280 points wide. At its shortest, the columns over the build panel and the status
     /// bar under its line.
     static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + toolbarInset).rounded(.up),
-                                       height: columnsMinimum + divider + bar(BuildPanelHeader.height) + panelMinimum
+                                       height: columnsMinimum + divider + panelHeader + panelMinimum
                                            + divider + StatusBar.height)
+    /// The build panel's header, its content within a bar's standard insets.
+    static let panelHeader = bar(BuildPanelHeader.height)
 
     /// A pane bar's content within AppKit's standard accessory insets (27.2).
     private static func bar(_ content: CGFloat) -> CGFloat { content + 2 * 9 }

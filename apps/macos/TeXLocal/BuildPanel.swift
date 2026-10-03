@@ -26,9 +26,17 @@ struct BuildPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Under the header, not the status bar: the panel rises from the bar's top edge
-        // rather than showing through the bar from the window's foot.
+        // Up under the header, which is the clear bar, but not down under the status bar:
+        // the panel rises from the bar's top edge rather than through it from the window's foot.
         .background(Color(nsColor: .textBackgroundColor), ignoresSafeAreaEdges: .top)
+        .mask { Rectangle().ignoresSafeArea(.container, edges: .top) }
+        // The header in the panel's own content, so it rides the pane's top edge as the split
+        // animates, and the columns' foot follows it.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            BuildPanelHeader(project: project, state: state)
+                .padding(.horizontal, ColumnMetrics.barSideInset)
+                .padding(.vertical, (ColumnMetrics.panelHeader - BuildPanelHeader.height) / 2)
+        }
     }
 
     /// The issues showing, each by its place in the build's errors then warnings, so
@@ -67,10 +75,8 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            // The native scroll view extends beneath both bars; its automatic
-            // insets keep the first and last lines clear when scrolling ends.
+            // Between the bars: the native scroll view's insets don't see the header.
             LogTextView(text: text)
-                .ignoresSafeArea(.container, edges: [.top, .bottom])
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -78,7 +84,7 @@ struct BuildPanel: View {
     }
 }
 
-/// Controls in the panel's native top accessory, above its scrolling content.
+/// Controls in the panel's header, a clear bar over its scrolling content (`BuildPanel`).
 /// The log has the text view's own find bar, so only the issues have a filter.
 struct BuildPanelHeader: View {
     /// One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
