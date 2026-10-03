@@ -31,13 +31,6 @@ struct FilesList: View {
                     row(node).tag(node.path)
                 }
             }
-            // The folded File Outline's header, which unfolds it into its pane below.
-            if project.isLaTeX, app.outlineCollapsed {
-                Section(isExpanded: Binding(get: { false }, set: { if $0 { app.outlineCollapsed = false } })) {
-                } header: {
-                    Text("File Outline")
-                }
-            }
         }
         .listStyle(.sidebar)
         .accessibilityLabel("Files")
@@ -350,6 +343,32 @@ struct OutlineList: View {
                 Task { proxy.scrollTo(id) }
             }
         }
+    }
+}
+
+/// The folded File Outline's header, at the foot of the files where the outline's
+/// pane, collapsed, leaves it: its own list, as tall as the header, unfolding the pane.
+struct FoldedOutlineHeader: View {
+    @Environment(AppModel.self) private var app
+    @State private var height: CGFloat?
+
+    var body: some View {
+        List {
+            Section(isExpanded: Binding(get: { false }, set: { if $0 { app.outlineCollapsed = false } })) {
+            } header: {
+                Text("File Outline")
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .scrollDisabled(true)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+        } action: { _, content in
+            height = content
+        }
+        .frame(height: height)
+        .accessibilityLabel("File Outline")
     }
 }
 

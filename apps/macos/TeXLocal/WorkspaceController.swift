@@ -65,6 +65,7 @@ final class WorkspaceController: NSSplitViewController {
     private(set) var panelItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
+    private var foldedOutline: NSSplitViewItemAccessoryViewController!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private let searchField = FieldHandle()
 
@@ -113,6 +114,10 @@ final class WorkspaceController: NSSplitViewController {
         sidebar.splitView.autosaveName = "Sidebar"
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
+        // Folded, the outline's pane collapses and its header stays at the foot of the files.
+        foldedOutline = accessory(FoldedOutlineHeader())
+        foldedOutline.automaticallyAppliesContentInsets = false
+        if OutlineState(app, project) == .folded { filesItem.addBottomAlignedAccessoryViewController(foldedOutline) }
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project),
                                                             height: (height * ColumnMetrics.outlineShare).rounded()))
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
@@ -120,7 +125,7 @@ final class WorkspaceController: NSSplitViewController {
         outlineItem.holdingPriority = .defaultLow + 1
         sidebar.addSplitViewItem(filesItem)
         sidebar.addSplitViewItem(outlineItem)
-        sidebar.loaded = { [unowned self] in if !showsOutline || app.outlineCollapsed { outlineItem.isCollapsed = true } }
+        sidebar.loaded = { [unowned self] in if OutlineState(app, project) != .open { outlineItem.isCollapsed = true } }
         sidebar.view.frame.size.width = ColumnMetrics.sidebarIdeal
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
@@ -241,8 +246,6 @@ final class WorkspaceController: NSSplitViewController {
         return accessory
     }
 
-    private var showsOutline: Bool { !project.isSearching && project.isLaTeX }
-
     // ---------- the models drive the panes ----------
 
     private func watch() {
@@ -252,9 +255,7 @@ final class WorkspaceController: NSSplitViewController {
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
             track({ app.showPDF }) { [weak self] visible in if let self { setCollapsed(pdfItem, !visible) } },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
-            track({ app.outlineCollapsed || project.isSearching || !project.isLaTeX }) { [weak self] folded in
-                if let self { setCollapsed(outlineItem, folded) }
-            },
+            track({ OutlineState(app, project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.pdfRequest?.token }) { [weak self] _ in self?.takePDFRequest() },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
@@ -291,6 +292,27 @@ final class WorkspaceController: NSSplitViewController {
         } completionHandler: {
             MainActor.assumeIsolated { done?() }
         }
+    }
+
+    /// Folding, the pane collapses with its header and the header then stands at the
+    /// files' foot; unfolding, the pane opens up from there.
+    private func setOutline(_ state: OutlineState) {
+        let files = sidebar.splitViewItems[0]
+        // Hidden before its first layout, a bottom accessory still insets its pane (27.2).
+        if state == .folded, !files.bottomAlignedAccessoryViewControllers.contains(foldedOutline) {
+            showFoldedOutline(false)
+            files.addBottomAlignedAccessoryViewController(foldedOutline)
+        }
+        if state != .folded { showFoldedOutline(false) }
+        setCollapsed(outlineItem, state != .open) { [weak self] in
+            guard let self, OutlineState(app, project) == .folded else { return }
+            showFoldedOutline(true)
+        }
+    }
+
+    private func showFoldedOutline(_ shown: Bool) {
+        foldedOutline.isHidden = !shown
+        foldedOutline.view.isHidden = !shown
     }
 
     /// The bar's view hides too: a hidden accessory only folds to no height, and its
@@ -430,6 +452,16 @@ final class WorkspaceController: NSSplitViewController {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
+    }
+}
+
+/// The File Outline: open in its pane, folded to its header, or hidden with its
+/// header while the sidebar shows search results or the project isn't LaTeX.
+private nonisolated enum OutlineState {
+    case open, folded, hidden
+
+    @MainActor init(_ app: AppModel, _ project: ProjectModel) {
+        self = project.isSearching || !project.isLaTeX ? .hidden : app.outlineCollapsed ? .folded : .open
     }
 }
 

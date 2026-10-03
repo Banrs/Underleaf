@@ -73,6 +73,11 @@ final class WorkspaceLayoutTests {
         let view = item.viewController.view
         return sequence(first: view, next: \.superview).first { $0.superview is NSSplitView } ?? view
     }
+    /// The lists shown in a view, in order.
+    private static func lists(_ view: NSView) -> [NSOutlineView] {
+        guard !view.isHidden else { return [] }
+        return [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
+    }
     private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
@@ -173,26 +178,37 @@ final class WorkspaceLayoutTests {
         }
     }
 
-    /// Folded, the File Outline's header is the files' last section, and its pane is
-    /// gone; unfolding it there brings the pane back under its own header.
-    @Test func theFoldedOutlineHeaderJoinsTheFiles() async throws {
+    /// Folded, the File Outline keeps its header at the foot of the sidebar, where its
+    /// pane's header was, the files above it; unfolding it there brings the pane back.
+    @Test func theFoldedOutlineKeepsItsHeaderAtTheFoot() async throws {
         let workspace = open(), project = workspace.project
-        workspace.app.outlineCollapsed = true
+        workspace.app.outlineCollapsed = false
         project.tree = [TreeNode(type: "file", name: "main.tex", path: "main.tex", children: nil)]
         project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex")]
         project.openPath = "main.tex"
-        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        let files = { lists(workspace.sidebarItem.viewController.view).first?.numberOfRows }
-        let outline = { lists(workspace.outlineItem.viewController.view).first?.numberOfRows }
-        // Files: its header, main.tex and the File Outline's header.
-        try await waitUntil { files() == 3 } state: { "files \(String(describing: files()))" }
-        #expect(workspace.outlineItem.isCollapsed)
+        let sidebar = workspace.sidebarItem.viewController.view
+        // Shown lists, files first, by their rows; and the foot of the sidebar each pane's list ends at.
+        let rows = { Self.lists(sidebar).map(\.numberOfRows) }
+        let bottoms = { Self.lists(sidebar).map { list in
+            let frame = list.enclosingScrollView!.convert(list.enclosingScrollView!.bounds, to: sidebar)
+            return sidebar.isFlipped ? sidebar.bounds.height - frame.maxY : frame.minY
+        } }
+        let state = { "rows \(rows()), above the foot \(bottoms()), outline collapsed \(workspace.outlineItem.isCollapsed)" }
+        // Files: its header and main.tex; the File Outline: its header and the heading, to the foot.
+        try await waitUntil { rows() == [2, 2] && isClose(bottoms()[1], 0) } state: { state() }
 
-        workspace.app.outlineCollapsed = false
-        // Files: its header and main.tex; the File Outline: its header and the heading.
-        try await waitUntil { !workspace.outlineItem.isCollapsed && files() == 2 && outline() == 2 } state: {
-            "collapsed \(workspace.outlineItem.isCollapsed), files \(String(describing: files())), outline \(String(describing: outline()))"
-        }
+        workspace.app.outlineCollapsed = true
+        // The File Outline: its header alone, under the files, to the foot.
+        try await waitUntil {
+            workspace.outlineItem.isCollapsed && rows() == [2, 1] && isClose(bottoms()[1], 0)
+        } state: { state() }
+        // Opening the header's section, as its disclosure button does, unfolds the outline.
+        let header = try #require(Self.lists(sidebar).last)
+        header.expandItem(header.item(atRow: 0))
+        try await waitUntil {
+            !workspace.outlineItem.isCollapsed && rows() == [2, 2] && isClose(bottoms()[1], 0)
+        } state: { state() }
+        #expect(!workspace.app.outlineCollapsed)
     }
 
     /// The sidebar shows the open file: its folders open, and a heading that gains
@@ -207,8 +223,7 @@ final class WorkspaceLayoutTests {
                            OutlineItem(id: 1, level: 1, title: "Methods", line: 9, file: "main.tex")]
         project.openPath = "main.tex"
         // Files, then the File Outline.
-        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        func rows() -> [Int] { lists(workspace.view).map(\.numberOfRows) }
+        func rows() -> [Int] { Self.lists(workspace.view).map(\.numberOfRows) }
         // Files: its header, the folder and main.tex; the outline: its header and two headings.
         try await waitUntil { rows() == [3, 3] } state: { "\(rows())" }
 
@@ -217,7 +232,7 @@ final class WorkspaceLayoutTests {
         try await waitUntil { rows().first == 4 } state: { "\(rows())" }
         project.outline = [OutlineItem(id: 0, level: 1, title: "Results", line: 1, file: "chapters/results.tex"),
                            OutlineItem(id: 1, level: 2, title: "Discussion", line: 9, file: "chapters/results.tex")]
-        let outline = try #require(lists(workspace.view).last)
+        let outline = try #require(Self.lists(workspace.view).last)
         try await waitUntil { outline.isExpandable(outline.item(atRow: 1)) }
         #expect(outline.isItemExpanded(outline.item(atRow: 1)))
     }
