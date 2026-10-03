@@ -54,10 +54,11 @@ struct FindMatches: Equatable {
 final class FieldHandle {
     fileprivate(set) weak var field: NSTextField?
 
-    func focus(selectAll: Bool = true) {
+    /// With its text selected, to type over.
+    func focus() {
         guard let field, let window = field.window else { return }
         if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
-        if selectAll { field.currentEditor()?.selectAll(nil) }
+        field.currentEditor()?.selectAll(nil)
     }
 
     var hasFocus: Bool {
@@ -133,7 +134,7 @@ struct SearchField: NSViewRepresentable {
 }
 
 /// Pass Edit › Find from the PDF find field's editor to the window, which routes it to the PDF.
-class FindPassingTextView: NSTextView {
+final class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
     }
