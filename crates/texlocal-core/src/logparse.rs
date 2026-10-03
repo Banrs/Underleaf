@@ -237,17 +237,21 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
 }
 
 /// Errors from bibtex's or biber's own log (.blg). A bibtex error names the
-/// .bib line; biber's name none a user can open.
+/// .bib line, after its message or on the line below it; biber's name none a
+/// user can open.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
+    let mut previous = "";
     blg.lines()
         .filter_map(|line| {
+            let above = std::mem::replace(&mut previous, line);
             if let Some(m) = BIBTEX_ERROR.captures(line) {
                 let file = project_path(m[3].trim());
+                let message = if m[1].trim().is_empty() { above } else { &m[1] };
                 Some(LogItem {
                     kind: "error",
                     line: file.as_ref().and(m[2].parse().ok()),
                     file,
-                    message: m[1].trim().to_string(),
+                    message: message.trim().to_string(),
                 })
             } else {
                 BIBER_ERROR
@@ -537,6 +541,13 @@ mod tests {
         let items = latexmk_errors(output);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].message, "biber main: Could not find main.bcf");
+    }
+
+    #[test]
+    fn a_bibtex_error_takes_its_message_from_the_line_above_its_place() {
+        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
+        assert_eq!(items[0].message, "I couldn't open database file .bib");
+        assert_eq!(items[0].line, Some(5));
     }
 
     #[test]
