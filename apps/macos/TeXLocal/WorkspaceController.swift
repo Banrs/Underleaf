@@ -57,7 +57,7 @@ final class WorkspaceController: NSSplitViewController {
 
     let columns = RestoredSplitViewController()
     let area = RestoredSplitViewController()
-    private let sidebar = RestoredSplitViewController()
+    private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var outlineItem: NSSplitViewItem!
     private(set) var sourceItem: NSSplitViewItem!
@@ -65,8 +65,10 @@ final class WorkspaceController: NSSplitViewController {
     private(set) var panelItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
-    private var foldedOutline: NSSplitViewItemAccessoryViewController!
-    private let foldedLine = separator()
+    /// The File Outline's header at the files' foot, and its height: as the outline's
+    /// first row's room when open, the status bar's when folded.
+    private var outlineBar: NSSplitViewItemAccessoryViewController!
+    private var outlineBarHeight: NSLayoutConstraint!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private let searchField = FieldHandle()
 
@@ -115,13 +117,10 @@ final class WorkspaceController: NSSplitViewController {
         sidebar.splitView.autosaveName = "Sidebar"
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        // Folded, the outline's pane collapses and its header stays at the foot of the files,
-        // under the status bar's line and as tall as the bar, so the two line up.
-        foldedOutline = accessory(FoldedOutlineHeader())
-        foldedOutline.automaticallyAppliesContentInsets = false
-        // The separator draws the line; the sidebar's automatic edge would add its own over it.
-        for bar in [foldedLine, foldedOutline!] { bar.preferredScrollEdgeEffectStyle = .soft }
-        if OutlineState(app, project) == .folded { addFoldedOutline(to: filesItem) }
+        // The outline's header stays at the files' foot, over the outline's pane or, folded,
+        // at the sidebar's: one view, which the pane's collapse carries down and back.
+        buildOutlineBar()
+        if OutlineState(app, project) != .hidden { filesItem.addBottomAlignedAccessoryViewController(outlineBar) }
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project),
                                                             height: (height * ColumnMetrics.outlineShare).rounded()))
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
@@ -131,6 +130,7 @@ final class WorkspaceController: NSSplitViewController {
         sidebar.addSplitViewItem(outlineItem)
         sidebar.loaded = { [unowned self] in if OutlineState(app, project) != .open { outlineItem.isCollapsed = true } }
         sidebar.view.frame.size.width = ColumnMetrics.sidebarIdeal
+        sidebar.header = outlineBar
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
@@ -225,6 +225,40 @@ final class WorkspaceController: NSSplitViewController {
         return separator
     }
 
+    /// The header under the system separator, which stands for the sidebar split's divider
+    /// (`SidebarSplitViewController`). Its content keeps one place under the line as the
+    /// bar's height animates with the split, so folded it lines up with the status bar.
+    private func buildOutlineBar() {
+        let bar = NSView()
+        let line = NSBox()
+        line.boxType = .separator
+        let header = NSHostingView(rootView: OutlineHeader().environment(app))
+        header.sizingOptions = [.intrinsicContentSize]
+        for view in [line, header] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            bar.addSubview(view)
+        }
+        outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineCollapsed))
+        NSLayoutConstraint.activate([
+            outlineBarHeight,
+            line.topAnchor.constraint(equalTo: bar.topAnchor),
+            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            header.topAnchor.constraint(equalTo: line.bottomAnchor),
+            header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+        ])
+        outlineBar = NSSplitViewItemAccessoryViewController()
+        outlineBar.view = bar
+        outlineBar.automaticallyAppliesContentInsets = false
+        // The separator is the line; the sidebar's automatic edge would draw another.
+        outlineBar.preferredScrollEdgeEffectStyle = .soft
+    }
+
+    private func outlineBarHeight(folded: Bool) -> CGFloat {
+        (folded ? StatusBar.height : OutlineHeader.openHeight) + sidebar.splitView.dividerThickness
+    }
+
     /// A pane bar sized to its content, inside AppKit's standard accessory insets.
     private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
@@ -280,38 +314,27 @@ final class WorkspaceController: NSSplitViewController {
         }
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
+            // One animation carries the outline's pane and its header's height.
+            if item === outlineItem {
+                context.allowsImplicitAnimation = true
+                outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+            }
             item.animator().isCollapsed = collapsed
+            if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
         } completionHandler: {
             MainActor.assumeIsolated { done?() }
         }
     }
 
-    /// Folding, the pane collapses with its header and the header then stands at the
-    /// files' foot; unfolding, the pane opens up from there.
+    /// The pane folds down under its header to the sidebar's foot, and opens up from there.
     private func setOutline(_ state: OutlineState) {
         let files = sidebar.splitViewItems[0]
         // Hidden before its first layout, a bottom accessory still insets its pane (27.2).
-        if state == .folded, !files.bottomAlignedAccessoryViewControllers.contains(foldedOutline) {
-            showFoldedOutline(false)
-            addFoldedOutline(to: files)
+        if state != .hidden, !files.bottomAlignedAccessoryViewControllers.contains(outlineBar) {
+            files.addBottomAlignedAccessoryViewController(outlineBar)
         }
-        if state != .folded { showFoldedOutline(false) }
-        setCollapsed(outlineItem, state != .open) { [weak self] in
-            guard let self, OutlineState(app, project) == .folded else { return }
-            showFoldedOutline(true)
-        }
-    }
-
-    private func addFoldedOutline(to files: NSSplitViewItem) {
-        files.addBottomAlignedAccessoryViewController(foldedLine)
-        files.addBottomAlignedAccessoryViewController(foldedOutline)
-    }
-
-    private func showFoldedOutline(_ shown: Bool) {
-        for bar in [foldedLine, foldedOutline!] {
-            bar.isHidden = !shown
-            bar.view.isHidden = !shown
-        }
+        setHidden(outlineBar, state == .hidden)
+        setCollapsed(outlineItem, state != .open)
     }
 
     /// The bar's view hides too: a hidden accessory only folds to no height, and its
@@ -466,12 +489,40 @@ private nonisolated enum OutlineState {
 
 /// A split whose autosave has restored its panes as its view loads; `loaded`
 /// then hides the ones its owner's models hide.
-final class RestoredSplitViewController: NSSplitViewController {
+class RestoredSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
 
     override func viewDidLoad() {
         super.viewDidLoad()
         loaded()
+    }
+}
+
+/// Files over the File Outline. The separator over the outline's header, at the foot of
+/// the files, stands for the divider: AppKit has no thin divider that draws no line, so
+/// the divider's own, under the header, isn't drawn, and it takes drags at the separator.
+private final class SidebarSplitViewController: RestoredSplitViewController {
+    weak var header: NSSplitViewItemAccessoryViewController?
+
+    private final class SplitView: NSSplitView {
+        override func drawDivider(in rect: NSRect) {}
+    }
+
+    override init(nibName: NSNib.Name?, bundle: Bundle?) {
+        super.init(nibName: nibName, bundle: bundle)
+        splitView = SplitView()
+        splitView.dividerStyle = .thin
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        // Folded, the outline opens only from its header.
+        guard let header, !header.isHidden, splitViewItems.last?.isCollapsed == false else { return .zero }
+        let frame = header.view.convert(header.view.bounds, to: splitView)
+        let line = splitView.isFlipped ? frame.minY : frame.maxY
+        return proposedEffectiveRect.offsetBy(dx: 0, dy: line - drawnRect.minY)
     }
 }
 

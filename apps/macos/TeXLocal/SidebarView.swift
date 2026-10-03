@@ -287,11 +287,11 @@ private func fileDropConfiguration(_ accepts: (URL) -> Bool, _ moves: (URL) -> B
     return configuration
 }
 
-/// The project's sections from its main file, in a pane under the files, whose
-/// header folds it away. Takes no drops: files go into the list above.
+/// The project's sections from its main file, in a pane under `OutlineHeader`, which
+/// folds it away. Takes no drops: files go into the list above.
 struct OutlineList: View {
-    @Environment(AppModel.self) private var app
     let project: ProjectModel
+    @Environment(\.sidebarRowSize) private var rowSize
     /// Folded headings, by file, level and title, for this session.
     @State private var folded: Set<String> = []
     /// The line the selection follows: the caret's or the top line, whichever
@@ -312,20 +312,23 @@ struct OutlineList: View {
         })
         ScrollViewReader { proxy in
             List(selection: selection) {
-                Section(isExpanded: Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })) {
-                    TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
-                        let key = "\(node.item.file)\t\(node.item.level):\(node.item.title)"
-                        return Binding(get: { !folded.contains(key) },
-                                       set: { if $0 { folded.remove(key) } else { folded.insert(key) } })
-                    }) { node in
-                        HeadingRow(item: node.item).equatable().tag(node.id)
-                    }
-                } header: {
-                    OutlineHeaderTitle()
+                TreeRows(nodes: Outline.tree(outline), children: \.children, isExpanded: { node in
+                    let key = "\(node.item.file)\t\(node.item.level):\(node.item.title)"
+                    return Binding(get: { !folded.contains(key) },
+                                   set: { if $0 { folded.remove(key) } else { folded.insert(key) } })
+                }) { node in
+                    HeadingRow(item: node.item).equatable().tag(node.id)
                 }
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
+            // The header above stands for a section's, so the list's room over its first
+            // row goes; the scroller keeps to what shows.
+            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
+            .padding(.top, -sidebarListRoom)
+            .clipped()
+            // A step under the files' rows: a table of contents under a list.
+            .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay {
                 if outline.isEmpty { ContentUnavailableView("No Sections", systemImage: "list.bullet.indent") }
             }
@@ -346,45 +349,50 @@ struct OutlineList: View {
     }
 }
 
-/// The folded File Outline's header, at the foot of the files where the outline's
-/// pane, collapsed, leaves it: its own list, its header row as tall as the status bar
-/// (centred between the list's even insets), unfolding the pane.
-struct FoldedOutlineHeader: View {
+/// The File Outline's header: the system's collapsible sidebar section (so it folds,
+/// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
+/// files' foot so it stays put over the outline. Its whole row folds and unfolds.
+/// Folded, it lines up with the status bar; open, the first heading follows at the
+/// Files section's own spacing.
+struct OutlineHeader: View {
     @Environment(AppModel.self) private var app
-    @State private var height: CGFloat?
+
+    /// A sidebar section header's row (measured, 27.2).
+    private static let row: CGFloat = 19
+    /// Centred in the status bar's height, as folded, and kept there open.
+    private static let top = (StatusBar.height - row) / 2
+    static let openHeight = top + row
 
     var body: some View {
+        let expanded = Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })
         List {
-            Section(isExpanded: Binding(get: { false }, set: { if $0 { app.outlineCollapsed = false } })) {
+            Section(isExpanded: expanded) {
             } header: {
-                OutlineHeaderTitle()
+                Button { expanded.wrappedValue.toggle() } label: {
+                    Text("File Outline")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
             }
         }
         .listStyle(.sidebar)
+        // The sidebar's own material shows through, as behind the lists either side.
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
-        .environment(\.defaultMinListHeaderHeight, StatusBar.height)
-        .onScrollGeometryChange(for: CGFloat.self, of: \.contentSize.height) { _, content in height = content }
-        .frame(height: height)
-        .frame(height: StatusBar.height)
+        .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
+        // AppKit animates the bar's height with the split; the header keeps one
+        // size and one place under the line.
+        .offset(y: Self.top - sidebarListRoom)
+        .frame(height: Self.openHeight, alignment: .top)
+        .clipped()
         .accessibilityLabel("File Outline")
     }
 }
 
-/// The File Outline's section header, its whole row a button that folds or unfolds the
-/// outline, as its disclosure chevron does.
-private struct OutlineHeaderTitle: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        Button { app.outlineCollapsed.toggle() } label: {
-            Text("File Outline")
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-}
+/// The room a sidebar list leaves over its first row and under its last, inside its
+/// table (measured, 27.2); `contentMargins` doesn't reach it.
+private let sidebarListRoom: CGFloat = 10
 
 /// A heading in the file outline. Equatable: as a plain view, a heading that
 /// takes the place of a leaf and has subheadings opens closed (27.2).

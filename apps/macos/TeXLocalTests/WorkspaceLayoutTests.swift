@@ -178,8 +178,8 @@ final class WorkspaceLayoutTests {
         }
     }
 
-    /// Folded, the File Outline keeps its header at the foot of the sidebar, where its
-    /// pane's header was, the files above it; unfolding it there brings the pane back.
+    /// The File Outline's header is one list at the foot of the files: over the outline's
+    /// pane, or folded with it at the foot of the sidebar; unfolding it there brings the pane back.
     @Test func theFoldedOutlineKeepsItsHeaderAtTheFoot() async throws {
         let workspace = open(), project = workspace.project
         workspace.app.outlineCollapsed = false
@@ -194,19 +194,20 @@ final class WorkspaceLayoutTests {
             return sidebar.isFlipped ? sidebar.bounds.height - frame.maxY : frame.minY
         } }
         let state = { "rows \(rows()), above the foot \(bottoms()), outline collapsed \(workspace.outlineItem.isCollapsed)" }
-        // Files: its header and main.tex; the File Outline: its header and the heading, to the foot.
-        try await waitUntil { rows() == [2, 2] && isClose(bottoms()[1], 0) } state: { state() }
+        // Files: its header and main.tex; the File Outline's header; its heading, to the foot.
+        try await waitUntil { rows() == [2, 1, 1] && isClose(bottoms()[2], 0) } state: { state() }
+        let header = Self.lists(sidebar)[1]
 
         workspace.app.outlineCollapsed = true
-        // The File Outline: its header alone, under the files, to the foot.
+        // The header alone, under the files, in the status bar's height at the foot: the same list.
         try await waitUntil {
-            workspace.outlineItem.isCollapsed && rows() == [2, 1] && isClose(bottoms()[1], 0)
+            workspace.outlineItem.isCollapsed && rows() == [2, 1] && abs(bottoms()[1]) < StatusBar.height / 2
         } state: { state() }
+        #expect(Self.lists(sidebar)[1] === header)
         // Opening the header's section, as its disclosure button does, unfolds the outline.
-        let header = try #require(Self.lists(sidebar).last)
         header.expandItem(header.item(atRow: 0))
         try await waitUntil {
-            !workspace.outlineItem.isCollapsed && rows() == [2, 2] && isClose(bottoms()[1], 0)
+            !workspace.outlineItem.isCollapsed && rows() == [2, 1, 1] && isClose(bottoms()[2], 0)
         } state: { state() }
         #expect(!workspace.app.outlineCollapsed)
     }
@@ -222,10 +223,10 @@ final class WorkspaceLayoutTests {
         project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex"),
                            OutlineItem(id: 1, level: 1, title: "Methods", line: 9, file: "main.tex")]
         project.openPath = "main.tex"
-        // Files, then the File Outline.
+        // Files, the File Outline's header, then the outline.
         func rows() -> [Int] { Self.lists(workspace.view).map(\.numberOfRows) }
-        // Files: its header, the folder and main.tex; the outline: its header and two headings.
-        try await waitUntil { rows() == [3, 3] } state: { "\(rows())" }
+        // Files: its header, the folder and main.tex; the outline: two headings.
+        try await waitUntil { rows() == [3, 1, 2] } state: { "\(rows())" }
 
         // The folder opens. The headings come after the file, as the core's analysis does.
         project.openPath = "chapters/results.tex"
@@ -233,8 +234,8 @@ final class WorkspaceLayoutTests {
         project.outline = [OutlineItem(id: 0, level: 1, title: "Results", line: 1, file: "chapters/results.tex"),
                            OutlineItem(id: 1, level: 2, title: "Discussion", line: 9, file: "chapters/results.tex")]
         let outline = try #require(Self.lists(workspace.view).last)
-        try await waitUntil { outline.isExpandable(outline.item(atRow: 1)) }
-        #expect(outline.isItemExpanded(outline.item(atRow: 1)))
+        try await waitUntil { outline.isExpandable(outline.item(atRow: 0)) }
+        #expect(outline.isItemExpanded(outline.item(atRow: 0)))
     }
 
     /// No pane's content raises the window's minimum: it goes down to the app's own,
