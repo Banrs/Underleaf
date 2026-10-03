@@ -107,7 +107,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = menuItem(id, "Math", "radicand.squareroot",
                             NSHostingMenu(rootView: MathMenuItems(project: project, inlineMath: inlineMath)))
         case .insert:
-            item = menuItem(id, "Insert", "plus", NSHostingMenu(rootView: InsertMenuItems(project: project)), indicator: true)
+            item = menuItem(id, "Insert", "plus", NSHostingMenu(rootView: InsertMenuItems(project: project)))
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
@@ -199,12 +199,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ image: String,
-                          _ menu: NSMenu, indicator: Bool = false) -> NSMenuToolbarItem {
+                          _ menu: NSMenu) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
         item.toolTip = title
         item.image = symbol(image, title)
-        item.showsIndicator = indicator
         item.menu = menu
         item.visibilityPriority = .low
         return item
