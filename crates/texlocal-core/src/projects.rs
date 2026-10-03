@@ -252,10 +252,6 @@ fn project_info(name: String, root: &Path, meta: &fs::Metadata, main_file: Strin
     }
 }
 
-fn name_taken() -> CoreError {
-    CoreError::conflict("A project with that name already exists")
-}
-
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
     let mut projects = Vec::new();
     for entry in fs::read_dir(data_dir)? {
@@ -353,7 +349,9 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
     if occupied(&root, &dest) {
-        return Err(name_taken());
+        return Err(CoreError::conflict(
+            "A project with that name already exists",
+        ));
     }
     fs::rename(&root, &dest)?;
     let main_file = read_settings(&dest).main_file;
@@ -562,22 +560,10 @@ fn delete_entry_using(
 
 // ---------- search ----------
 
+// Keep one folded character per original character so snippet offsets agree.
 fn lower_into(s: &str, out: &mut Vec<char>) {
     out.clear();
-    out.extend(s.chars().map(|c| {
-        if c.is_ascii() {
-            c.to_ascii_lowercase()
-        } else {
-            c.to_lowercase().next().unwrap_or(c)
-        }
-    }));
-}
-
-fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
-    if needle.is_empty() {
-        return None;
-    }
-    haystack.windows(needle.len()).position(|w| w == needle)
+    out.extend(s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)));
 }
 
 pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchHit>, CoreError> {
@@ -586,13 +572,6 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    // The ASCII spelling of the query, when it has one, for the whole-file
-    // prefilter below.
-    let q_ascii: Option<Vec<u8>> = q
-        .iter()
-        .all(|c| c.is_ascii())
-        .then(|| q.iter().map(|c| *c as u8).collect());
-
     let mut hits: Vec<SearchHit> = Vec::new();
     let mut lower = Vec::new();
     visit_files(root, &mut |abs, rel| {
@@ -602,32 +581,13 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
             return Ok(true);
         };
-        // One case-insensitive pass over the raw bytes rules a file out without
-        // splitting a single line. Sound only when both sides are ASCII: there
-        // the byte fold and `lower_into`'s char fold agree by definition, while
-        // a character like 'İ' lowercases into an ASCII 'i' that no byte
-        // comparison would find.
-        if let Some(needle) = &q_ascii {
-            if bytes.is_ascii() && find_ci_ascii(&bytes, needle).is_none() {
-                return Ok(true);
-            }
-        }
         let text = String::from_utf8_lossy(&bytes);
         for (i, line) in text.split('\n').enumerate() {
             if hits.len() >= limit {
                 break;
             }
-            // The same reasoning holds per line: an ASCII line needs no char
-            // decode, and its byte offsets are its char offsets. A file that
-            // passed the prefilter is otherwise decoded line by line in full.
-            let found = match &q_ascii {
-                Some(needle) if line.is_ascii() => find_ci_ascii(line.as_bytes(), needle),
-                _ => {
-                    lower_into(line, &mut lower);
-                    find_chars(&lower, &q)
-                }
-            };
-            let Some(col) = found else {
+            lower_into(line, &mut lower);
+            let Some(col) = lower.windows(q.len()).position(|w| w == q) else {
                 continue;
             };
             let chars: Vec<char> = line.chars().collect();
@@ -648,19 +608,6 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
         Ok(hits.len() < limit)
     })?;
     Ok(hits)
-}
-
-/// Case-insensitive substring search over ASCII bytes.
-fn find_ci_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    (0..=haystack.len() - needle.len()).find(|&i| {
-        haystack[i..i + needle.len()]
-            .iter()
-            .zip(needle)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b))
-    })
 }
 
 // ---------- symbols ----------
@@ -748,22 +695,18 @@ impl SymbolCache {
             Ok(true)
         })?;
 
-        fn dedup(mut v: Vec<String>) -> Vec<String> {
+        fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
             let mut seen = HashSet::new();
-            v.retain(|s| seen.insert(s.clone()));
-            v
+            symbols
+                .filter(|symbol| seen.insert(*symbol))
+                .cloned()
+                .collect()
         }
-        // The map keeps completion order stable across filesystem traversals.
-        let mut citations = Vec::new();
-        let mut labels = Vec::new();
-        for cached in files.values() {
-            citations.extend(cached.symbols.citations.iter().cloned());
-            labels.extend(cached.symbols.labels.iter().cloned());
-        }
+        // BTreeMap order keeps completions stable; borrow keys while deduplicating.
         self.files = files;
         Ok(Symbols {
-            citations: dedup(citations),
-            labels: dedup(labels),
+            citations: dedup(self.files.values().flat_map(|c| &c.symbols.citations)),
+            labels: dedup(self.files.values().flat_map(|c| &c.symbols.labels)),
         })
     }
 }

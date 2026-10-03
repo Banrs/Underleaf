@@ -3,10 +3,6 @@
 //! editor owns the text, its undo and its drawing; a `SourceDocument` mirrors
 //! the text through the editor's edits and answers in UTF-16 offsets, which
 //! NSString, .NET strings and JavaScript all count in.
-//!
-//! A port of the web editor's logic (web/src/editor.js) and of CodeMirror's
-//! stex mode, which the web runs; the fixtures in tests/ hold both to
-//! the same answers.
 
 mod catalog;
 mod complete;
@@ -265,13 +261,9 @@ fn clamp(range: TextRange, len: u32) -> TextRange {
 fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
     if let Some(last) = ranges
         .last_mut()
-        .filter(|last| range.start <= last.start.saturating_add(last.length))
+        .filter(|last| range.start <= last.start + last.length)
     {
-        let end = last
-            .start
-            .saturating_add(last.length)
-            .max(range.start.saturating_add(range.length));
-        last.length = end.saturating_sub(last.start);
+        last.length = last.length.max(range.start + range.length - last.start);
     } else {
         ranges.push(range);
     }

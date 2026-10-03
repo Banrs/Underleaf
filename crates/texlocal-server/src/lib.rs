@@ -25,8 +25,6 @@ use texlocal_core::{paths, serve, zipexport, CoreError};
 pub use http::{Request, Response};
 use tokio::net::TcpListener;
 
-/// The header every request for project data carries the token in.
-const TOKEN_HEADER: &str = "x-texlocal-token";
 /// Uploads and whole documents travel in one body.
 pub const MAX_BODY: usize = UPLOAD_MAX_BYTES + 1024 * 1024;
 
@@ -103,20 +101,20 @@ impl App {
         if let Some(refused) = self.guard(&req) {
             return refused.secured();
         }
-        let path = req.path().to_string();
+        let path = req.path();
         let read = matches!(req.method.as_str(), "GET" | "HEAD");
         let response = if req.method == "POST" && path == "/api/upload_file" {
             self.upload(req).await
         } else if let Some(command) = path.strip_prefix("/api/").filter(|_| req.method == "POST") {
             self.api(decode(command), &req.body).await
         } else if read && (path.starts_with("/__pdf/") || path.starts_with("/__raw/")) {
-            self.file(&path, req.header("range")).await
+            self.file(path, req.header("range")).await
         } else if let Some(id) = path.strip_prefix("/__download/pdf/").filter(|_| read) {
-            self.download_pdf(decode(id)).await
+            self.download(decode(id), false).await
         } else if let Some(id) = path.strip_prefix("/__download/zip/").filter(|_| read) {
-            self.download_zip(decode(id)).await
+            self.download(decode(id), true).await
         } else if read {
-            self.asset(&path).await
+            self.asset(path).await
         } else {
             Response::text(405, "Method not allowed")
         };
@@ -152,7 +150,7 @@ impl App {
             return None;
         }
         if !req
-            .header(TOKEN_HEADER)
+            .header("x-texlocal-token")
             .is_some_and(|t| same(t, &self.token))
         {
             return Some(Response::text(
@@ -163,10 +161,7 @@ impl App {
         None
     }
 
-    /// Run file-system work (tree walks, searches, whole-file reads and writes,
-    /// ZIP builds) on the blocking pool, so a large project cannot stall the
-    /// async workers every other request, pdf.js's range fetches included,
-    /// waits on.
+    /// Keep disk work off the async workers, including PDF range fetches.
     async fn blocking<T: Send + 'static>(
         &self,
         work: impl FnOnce(&Service) -> Result<T, CoreError> + Send + 'static,
@@ -198,22 +193,22 @@ impl App {
     /// the same shape as Tauri's `upload_file` invoke; `X-Replace: true`
     /// moves an entry in its place to the Trash.
     async fn upload(&self, req: Request) -> Response {
-        let header = |name: &str| {
-            req.header(name)
-                .map(decode)
-                .ok_or_else(|| CoreError::bad_request(format!("Missing {name} header")))
-        };
-        let names = (|| Ok((header("x-project")?, header("x-dir")?, header("x-path")?)))();
-        let (id, dir, path) = match names {
-            Ok(names) => names,
-            Err(e) => return error(e),
-        };
-        // The answer to Replace in the host's Replace / Keep Both / Stop.
-        let replace = req.header("x-replace") == Some("true");
-        let body = req.body;
-        self.blocking(move |service| service.upload_file(&id, &dir, &path, &body, replace))
-            .await
-            .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
+        self.blocking(move |service| {
+            let header = |name: &str| {
+                req.header(name)
+                    .map(decode)
+                    .ok_or_else(|| CoreError::bad_request(format!("Missing {name} header")))
+            };
+            service.upload_file(
+                &header("x-project")?,
+                &header("x-dir")?,
+                &header("x-path")?,
+                &req.body,
+                req.header("x-replace") == Some("true"),
+            )
+        })
+        .await
+        .map_or_else(error, |rel| Response::json(200, &json!({ "saved": [rel] })))
     }
 
     /// Path resolution runs on the blocking pool with everything else that
@@ -245,19 +240,18 @@ impl App {
         }
     }
 
-    async fn download_pdf(&self, id: String) -> Response {
-        let name = format!("{id}.pdf");
+    async fn download(&self, id: String, zip: bool) -> Response {
+        let (ext, mime) = if zip {
+            ("zip", "application/zip")
+        } else {
+            ("pdf", "application/pdf")
+        };
+        let name = format!("{id}.{ext}");
         self.blocking(move |service| {
-            let pdf = service.pdf_path(&id)?;
-            std::fs::read(pdf).map_err(|_| CoreError::not_found("No compiled PDF yet"))
-        })
-        .await
-        .map_or_else(error, |bytes| attachment(bytes, &name, "application/pdf"))
-    }
-
-    async fn download_zip(&self, id: String) -> Response {
-        let name = format!("{id}.zip");
-        self.blocking(move |service| {
+            if !zip {
+                return std::fs::read(service.pdf_path(&id)?)
+                    .map_err(|_| CoreError::not_found("No compiled PDF yet"));
+            }
             let root = service.project_root(&id)?;
             let dir = tempfile::tempdir()?;
             let dest = dir.path().join("export.zip");
@@ -265,7 +259,13 @@ impl App {
             Ok(std::fs::read(dest)?)
         })
         .await
-        .map_or_else(error, |bytes| attachment(bytes, &name, "application/zip"))
+        .map_or_else(error, |bytes| {
+            let encoded = utf8_percent_encode(&name, NON_ALPHANUMERIC);
+            Response::new(200, mime, bytes).with(
+                "Content-Disposition",
+                format!("attachment; filename*=UTF-8''{encoded}"),
+            )
+        })
     }
 }
 
@@ -275,12 +275,4 @@ fn served(file: serve::Served) -> Response {
         headers: file.headers,
         body: file.body,
     }
-}
-
-fn attachment(bytes: Vec<u8>, name: &str, mime: &str) -> Response {
-    let encoded = utf8_percent_encode(name, NON_ALPHANUMERIC);
-    Response::new(200, mime, bytes).with(
-        "Content-Disposition",
-        format!("attachment; filename*=UTF-8''{encoded}"),
-    )
 }

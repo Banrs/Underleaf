@@ -1,7 +1,7 @@
 //! Maths, as web/src/editor.js reads it: whether a position is in maths
 //! (`mathModeAt`), and the maths at the caret to preview (`mathAt`).
 
-use std::sync::LazyLock;
+use std::{borrow::Cow, sync::LazyLock};
 
 use regex::Regex;
 use serde::Serialize;
@@ -39,29 +39,20 @@ pub fn math_mode_at(src: &[u16]) -> bool {
     scan(src, false).0
 }
 
-/// The UTF-16 ranges that are math or literal code, using the same scan as
-/// `math_mode_at`. Math comments and the text arguments of \text-like
-/// commands stay out of these ranges so they remain ordinary prose.
-pub(crate) fn non_prose_ranges(src: &[u16]) -> Vec<TextRange> {
-    scan(src, true).1
-}
-
 /// Scan once for both the math mode at EOF and non-prose math/code runs.
-/// Keeping ranges here makes collection follow `math_mode_at`'s parsing rules.
-fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
+/// Math comments and text arguments remain prose.
+pub(crate) fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
     let catalog = &*catalog::CATALOG;
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
     // Open groups, innermost last: whether they're maths, and what closes
     // them: "$", "$$", "\)", "\]", "}" or "env:<name>".
-    let mut stack: Vec<(bool, String)> = Vec::new();
-    let math = |stack: &[(bool, String)]| stack.last().is_some_and(|g| g.0);
-    let close = |stack: &mut Vec<(bool, String)>, end: &str| {
+    let mut stack: Vec<(bool, Cow<'static, str>)> = Vec::new();
+    let math = |stack: &[(bool, Cow<'static, str>)]| stack.last().is_some_and(|g| g.0);
+    let close = |stack: &mut Vec<(bool, Cow<'static, str>)>, end: &str| {
         if let Some(k) = stack.iter().rposition(|g| g.1 == end) {
             stack.truncate(k);
         }
     };
-    let open =
-        |stack: &mut Vec<(bool, String)>, math: bool, end: &str| stack.push((math, end.into()));
     // The next { opens a text argument (\text{).
     let mut text_argument = false;
     let mut ranges = RangeCollector {
@@ -73,7 +64,6 @@ fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
     let mut i = 0;
     while i < n {
         let token_start = i;
-        let was_math = math(&stack);
         let c = src[i];
         if is(c, '%') {
             // The line feed itself is read next, for the blank-line rule.
@@ -90,20 +80,21 @@ fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
                 j += 1;
             }
             if j < n && is(src[j], '\n') {
-                let paragraph =
-                    |g: &(bool, String)| ["$", "$$", "\\)", "\\]"].contains(&g.1.as_str());
-                if let Some(k) = stack.iter().position(paragraph) {
+                if let Some(k) = stack
+                    .iter()
+                    .position(|g| ["$", "$$", "\\)", "\\]"].contains(&g.1.as_ref()))
+                {
                     stack.truncate(k);
                 }
                 text_argument = false;
             }
             i += 1;
-            ranges.transition(was_math, math(&stack), i, i);
+            ranges.transition(math(&stack), i, i);
             continue;
         }
         if is(c, '$') {
             let double = src.get(i + 1).is_some_and(|&u| is(u, '$'));
-            match stack.last().map(|g| g.1.as_str()) {
+            match stack.last().map(|g| g.1.as_ref()) {
                 Some("$") => {
                     stack.pop();
                     i += 1;
@@ -114,27 +105,27 @@ fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
                 }
                 _ if math(&stack) => i += 1, // a stray $ in an environment's maths
                 _ => {
-                    open(&mut stack, true, if double { "$$" } else { "$" });
+                    stack.push((true, if double { "$$" } else { "$" }.into()));
                     i += 1 + double as usize;
                 }
             }
             text_argument = false;
-            ranges.transition(was_math, math(&stack), token_start, i);
+            ranges.transition(math(&stack), token_start, i);
             continue;
         }
         if is(c, '{') {
             let maths = !text_argument && math(&stack);
-            open(&mut stack, maths, "}");
+            stack.push((maths, "}".into()));
             text_argument = false;
             i += 1;
-            ranges.transition(was_math, math(&stack), token_start, i);
+            ranges.transition(math(&stack), token_start, i);
             continue;
         }
         if is(c, '}') {
             // The innermost open brace, and anything unclosed inside it.
             close(&mut stack, "}");
             i += 1;
-            ranges.transition(was_math, math(&stack), token_start, i);
+            ranges.transition(math(&stack), token_start, i);
             continue;
         }
         if !is(c, '\\') {
@@ -147,13 +138,13 @@ fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
             // A control symbol: \( \) \[ \] open and close maths; any other
             // (\$, \%, \\, \{) is an escape and nothing more.
             if (is(d, '(') || is(d, '[')) && !math(&stack) {
-                open(&mut stack, true, if is(d, '(') { "\\)" } else { "\\]" });
+                stack.push((true, if is(d, '(') { "\\)" } else { "\\]" }.into()));
             } else if is(d, ')') || is(d, ']') {
-                close(&mut stack, &String::from_utf16_lossy(&src[i..i + 2]));
+                close(&mut stack, if is(d, ')') { "\\)" } else { "\\]" });
             }
             text_argument = false;
             i += 2;
-            ranges.transition(was_math, math(&stack), token_start, i);
+            ranges.transition(math(&stack), token_start, i);
             continue;
         }
         let j = i + 1 + src[i + 1..].iter().take_while(|&&u| letter(u)).count();
@@ -195,12 +186,12 @@ fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
             } else {
                 let bare = environment.strip_suffix('*').unwrap_or(environment);
                 let maths = listed(&catalog.math_environments, bare) || math(&stack);
-                open(&mut stack, maths, &format!("env:{environment}"));
+                stack.push((maths, format!("env:{environment}").into()));
             }
         } else if listed(&catalog.text_commands, &name) && math(&stack) {
             text_argument = true;
         }
-        ranges.transition(was_math, math(&stack), token_start, i);
+        ranges.transition(math(&stack), token_start, i);
     }
     ranges.end_math(n);
     (math(&stack), ranges.ranges)
@@ -215,13 +206,13 @@ struct RangeCollector {
 }
 
 impl RangeCollector {
-    fn transition(&mut self, was_math: bool, is_math: bool, token_start: usize, token_end: usize) {
+    fn transition(&mut self, is_math: bool, token_start: usize, token_end: usize) {
         if !self.enabled {
             return;
         }
         if is_math {
             self.math_start.get_or_insert(token_start as u32);
-        } else if was_math {
+        } else {
             self.end_math(token_end);
         }
     }
@@ -270,20 +261,6 @@ static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\{
 static NUMBERING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:nonumber|notag)(?-u:\b)").unwrap());
 
-/// A display block in the text read: its start and end, its environment's
-/// name if it's one, and its body.
-type Block<'a> = (usize, usize, Option<&'a str>, &'a str);
-
-fn paired_block<'a>(re: &Regex, window: &'a str, at: usize) -> Option<Block<'a>> {
-    re.captures_iter(window)
-        .map(|c| {
-            let whole = c.get(0).unwrap();
-            (whole.start(), whole.end(), None, c.get(1).unwrap().as_str())
-        })
-        .take_while(|b| b.0 <= at)
-        .find(|b| at <= b.1)
-}
-
 /// The maths the caret is in or just after: the first display block that
 /// holds it (a maths environment, then $$…$$, then \[…\]), else $…$ on its
 /// line. Only 20,000 units either side are read. None when it holds no TeX.
@@ -301,17 +278,34 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
             display,
         })
     };
-    let block = environments(&window)
-        .take_while(|b| b.0 <= at)
-        .find(|b| at <= b.1)
-        .or_else(|| paired_block(&DOLLARS, &window, at))
-        .or_else(|| paired_block(&BRACKETS, &window, at));
-    if let Some((start, _, environment, body)) = block {
-        return preview(
-            from + utf16(&window[..start]),
-            preview_tex(environment, body),
-            true,
-        );
+    for (re, is_environment) in [(&*BEGIN, true), (&*DOLLARS, false), (&*BRACKETS, false)] {
+        let mut offset = 0;
+        while let Some(c) = re.captures_at(&window, offset) {
+            let whole = c.get(0).unwrap();
+            if whole.start() > at {
+                break;
+            }
+            offset = whole.end();
+            let (environment, body) = if is_environment {
+                let name = c.get(1).unwrap().as_str();
+                let end = format!("\\end{{{name}{}}}", &c[2]);
+                let Some(close) = window[offset..].find(&end) else {
+                    continue;
+                };
+                let body = &window[offset..offset + close];
+                offset += close + end.len();
+                (Some(name), body)
+            } else {
+                (None, c.get(1).unwrap().as_str())
+            };
+            if at <= offset {
+                return preview(
+                    from + utf16(&window[..whole.start()]),
+                    preview_tex(environment, body),
+                    true,
+                );
+            }
+        }
     }
     // Inline: single, unescaped dollars on the caret's line, paired in order.
     let index = text.line_index(caret);
@@ -336,34 +330,17 @@ pub fn math_at(text: &Text, caret: u32) -> Option<MathPreview> {
     preview(line_start + open, tex, false)
 }
 
-/// The maths environments in `window` that close, in order.
-fn environments(window: &str) -> impl Iterator<Item = Block<'_>> {
-    let mut from = 0;
-    std::iter::from_fn(move || {
-        while let Some(c) = BEGIN.captures_at(window, from) {
-            let (open, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
-            from = open.start() + 1;
-            let end = format!("\\end{{{name}{}}}", &c[2]);
-            if let Some(close) = window[open.end()..].find(&end) {
-                let body = &window[open.end()..open.end() + close];
-                from = open.end() + close + end.len();
-                return Some((open.start(), from, Some(name), body));
-            }
-        }
-        None
-    })
-}
-
 /// What KaTeX shows of maths: no labels or numbering, and an environment's
 /// body as the aligned or cases block it can render.
 fn preview_tex(environment: Option<&str>, body: &str) -> String {
     let body = LABELS.replace_all(body, "");
     let body = NUMBERING.replace_all(&body, "");
     let clean = trim_js_space(&body);
-    match environment {
-        None | Some("equation" | "multline") => clean.to_string(),
-        Some("cases") => format!("\\begin{{cases}}{clean}\\end{{cases}}"),
-        Some("gather") => format!("\\begin{{gathered}}{clean}\\end{{gathered}}"),
-        Some(_) => format!("\\begin{{aligned}}{clean}\\end{{aligned}}"),
-    }
+    let environment = match environment {
+        None | Some("equation" | "multline") => return clean.to_string(),
+        Some("cases") => "cases",
+        Some("gather") => "gathered",
+        Some(_) => "aligned",
+    };
+    format!("\\begin{{{environment}}}{clean}\\end{{{environment}}}")
 }

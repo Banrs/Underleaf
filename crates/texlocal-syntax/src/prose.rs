@@ -9,8 +9,6 @@ use crate::{catalog::CATALOG, letter, maths, merge_range, space, Text, TextRange
 /// Name arguments are read from the paragraph's start as they cannot contain
 /// a blank line.
 pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
-    let end = end.min(text.units.len() as u32);
-    let start = start.min(end);
     let blank = |line: usize| text.line(line).iter().all(|&u| space(u));
     let mut line = text.line_index(start);
     while line > 0 && !blank(line - 1) {
@@ -24,40 +22,40 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
             .map(|&u| char::from_u32(u.into()).unwrap_or_default())
     };
     let end_index = end as usize;
-    let comment_end = |mut i, limit: usize| {
-        while i < limit && at(i) != Some('\n') {
+    let comment_end = |mut i| {
+        while i < end_index && at(i) != Some('\n') {
             i += 1;
         }
         i
     };
+    let paragraph_end =
+        |i| at(i) == Some('\n') && i + 1 < end_index && blank(text.line_index(i as u32 + 1));
     // An open context only needs to extend to the checked range's end.
-    let opaque_ranges = maths::non_prose_ranges(&text.units[..end_index]);
+    let opaque_ranges = maths::scan(&text.units[..end_index], true).1;
     let mut ranges = Vec::new();
-    let mut opaque = 0;
+    let mut opaque = opaque_ranges.iter().peekable();
     while i < end_index {
-        while opaque < opaque_ranges.len()
-            && opaque_ranges[opaque]
-                .start
-                .saturating_add(opaque_ranges[opaque].length)
-                <= i as u32
+        while opaque
+            .peek()
+            .is_some_and(|r| r.start + r.length <= i as u32)
         {
-            opaque += 1;
+            opaque.next();
         }
-        if let Some(range) = opaque_ranges.get(opaque).filter(|r| r.start <= i as u32) {
-            i = range.start.saturating_add(range.length) as usize;
-            opaque += 1;
+        if let Some(range) = opaque.peek().filter(|r| r.start <= i as u32) {
+            i = (range.start + range.length) as usize;
+            opaque.next();
             continue;
         }
         let c = at(i);
         i += 1;
         if c == Some('%') {
-            i = comment_end(i, end_index);
+            i = comment_end(i);
         }
         if c != Some('\\') {
             continue;
         }
         let name = i;
-        while i < end_index && units.get(i).is_some_and(|&u| letter(u)) {
+        while i < end_index && letter(units[i]) {
             i += 1;
         }
         let name = String::from_utf16_lossy(&units[name..i]);
@@ -75,13 +73,12 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
         loop {
             while i < end_index && matches!(at(i), Some(' ' | '\t' | '\r' | '\n' | '%')) {
                 if at(i) == Some('%') {
-                    i = comment_end(i, end_index);
+                    i = comment_end(i);
                 }
                 if i >= end_index {
                     break;
                 }
-                if at(i) == Some('\n') && i + 1 < end_index && blank(text.line_index(i as u32 + 1))
-                {
+                if paragraph_end(i) {
                     break;
                 }
                 i += 1;
@@ -108,13 +105,9 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
                             start: from as u32,
                             length: (i - from) as u32,
                         });
-                        i = comment_end(i, end_index);
+                        i = comment_end(i);
                         from = i;
-                        if i >= end_index
-                            || (at(i) == Some('\n')
-                                && i + 1 < end_index
-                                && blank(text.line_index(i as u32 + 1)))
-                        {
+                        if i >= end_index || paragraph_end(i) {
                             break;
                         }
                     }
@@ -122,7 +115,7 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
                     '{' => depth += 1,
                     '}' if depth > 0 => depth -= 1,
                     c if c == close && depth == 0 => break,
-                    '\n' if i + 1 < end_index && blank(text.line_index(i as u32 + 1)) => break,
+                    '\n' if paragraph_end(i) => break,
                     _ => {}
                 }
             }

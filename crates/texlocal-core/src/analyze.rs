@@ -1,8 +1,5 @@
-// A project's outline, word count and line count, each file read the way the
-// browser client's `analyzeDoc` (web/src/state.js) reads the open one, so every
-// host shows the same numbers. The regular expressions are that file's, spelled
-// for JavaScript's rules (its `\s`, its `.`); tests/fixtures/analyze.json holds
-// both to them.
+// Match the browser's analyzeDoc counts and outlines, including JavaScript's
+// whitespace and line-terminator rules; shared fixtures pin this compatibility.
 
 use std::collections::HashSet;
 use std::fs;
@@ -178,8 +175,7 @@ fn add(
                 });
             }
         }
-        let code = code(line);
-        into.words += words(code);
+        into.words += words(line);
         inputs(line, &mut literal, &mut |name| input(into, name));
     }
     lines
@@ -257,17 +253,12 @@ fn plain_title(title: &str) -> String {
     }
 }
 
-/// A line up to its comment.
-fn code(line: &str) -> &str {
-    match COMMENT.captures(line) {
-        Some(m) => &line[..m.get(1).unwrap().end()],
-        None => line,
-    }
-}
-
 /// Rough word count of a line's code: drop commands and TeX's special
 /// characters, and count the runs left that contain a letter.
-fn words(code: &str) -> usize {
+fn words(line: &str) -> usize {
+    let code = COMMENT
+        .captures(line)
+        .map_or(line, |m| &line[..m.get(1).unwrap().end()]);
     WORD_BREAK
         .split(&COMMAND.replace_all(code, " "))
         .filter(|w| w.chars().any(char::is_alphabetic))

@@ -159,10 +159,6 @@ impl Service {
         paths::project_root(&self.data_dir, id)
     }
 
-    fn forget_project(&self, root: &Path) {
-        self.symbols.lock().unwrap().remove(root);
-    }
-
     fn with_project<T>(
         &self,
         id: &str,
@@ -231,11 +227,10 @@ impl Service {
             None => None,
             Some(dir) => {
                 let dir = Path::new(dir);
-                let bin = dir.is_absolute().then(|| compile::tex_bin_dir(dir));
-                Some(
-                    bin.flatten()
-                        .ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?,
-                )
+                if !dir.is_absolute() {
+                    return Err(CoreError::bad_request(NO_LATEXMK));
+                }
+                Some(compile::tex_bin_dir(dir).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?)
             }
         };
         let text = json!({ "texDir": chosen.map(|d| d.to_string_lossy().into_owned()) });
@@ -427,13 +422,13 @@ impl Service {
             "rename_project" => {
                 let old = root()?;
                 let info = projects::rename_project(&self.data_dir, s("id")?, s("name")?)?;
-                self.forget_project(&old);
+                self.symbols.lock().unwrap().remove(&old);
                 out(info)
             }
             "delete_project" => {
                 let old = root()?;
                 projects::delete_project(&self.data_dir, s("id")?)?;
-                self.forget_project(&old);
+                self.symbols.lock().unwrap().remove(&old);
                 out(())
             }
             "get_settings" => out(settings::read_settings(&root()?)),

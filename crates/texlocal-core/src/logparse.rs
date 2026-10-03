@@ -43,7 +43,7 @@ static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap(
 static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(LaTeX(?: Font| NFSS)?|Package (\S+)|Class (\S+)) Warning:\s*(.*)$").unwrap()
+    Regex::new(r"^(?:LaTeX(?: Font| NFSS)?|Package \S+|Class \S+) Warning:\s*(.*)$").unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
@@ -63,7 +63,7 @@ fn project_path(path: &str) -> Option<String> {
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
 /// it opens, or None for a parenthesis in text, and each ")" pops.
-fn track(open: &mut Vec<Option<String>>, line: &str) {
+fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
     let mut rest = line;
     while let Some(i) = rest.find(['(', ')']) {
         let paren = rest.as_bytes()[i];
@@ -80,7 +80,7 @@ fn track(open: &mut Vec<Option<String>>, line: &str) {
                     .unwrap_or(rest.len()),
             ),
         };
-        open.push(token.contains(['/', '\\']).then(|| token.to_string()));
+        open.push(token.contains(['/', '\\']).then_some(token));
         rest = after;
     }
 }
@@ -91,14 +91,14 @@ fn track(open: &mut Vec<Option<String>>, line: &str) {
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
-    open: &[Option<String>],
+    open: &[Option<&str>],
     main_file: &str,
     message: &mut String,
 ) -> (Option<String>, Option<u32>) {
     let Some(line) = line else {
         return (None, None);
     };
-    let mut files = open.iter().rev().flatten().map(String::as_str);
+    let mut files = open.iter().rev().flatten().copied();
     let Some(path) = named.or_else(|| files.clone().next()) else {
         return (Some(main_file.to_string()), Some(line));
     };
@@ -126,30 +126,6 @@ fn append(message: &mut String, prev: &str, next: &str) {
     message.push_str(next.trim());
 }
 
-/// Find this error's "l.<n>" source echo without borrowing the next error's.
-fn echo_line(lines: &[&str], i: usize) -> Option<usize> {
-    lines[(i + 1)..(i + 12).min(lines.len())]
-        .iter()
-        .take_while(|next| !next.starts_with('!') && !FILE_LINE.is_match(next))
-        .position(|next| L_NO.is_match(next))
-        .map(|k| i + 1 + k)
-}
-
-/// Name TeX's undefined command from the first context line through its echo
-/// that ends in one ("<recently read> \foo", "\x ->\foo", or the echo).
-fn name_undefined(message: &mut String, lines: &[&str], i: usize, echo: Option<usize>) {
-    let named = echo
-        .filter(|_| message.starts_with("Undefined control sequence."))
-        .and_then(|j| {
-            lines[i + 1..=j]
-                .iter()
-                .find_map(|line| LAST_CS.captures(line))
-        });
-    if let Some(m) = named {
-        *message = format!("Undefined control sequence: {}", &m[1]);
-    }
-}
-
 /// The first blank line from `from`, or the end.
 fn blank_from(lines: &[&str], from: usize) -> usize {
     (from..lines.len())
@@ -161,7 +137,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     // lines() drops CR from Windows logs before assembling continuations.
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
-    let mut open: Vec<Option<String>> = Vec::new();
+    let mut open = Vec::new();
     // Lines before this one echo source or a box's contents, whose
     // parentheses needn't pair up, so they aren't tracked.
     let mut quiet_until = 0;
@@ -169,7 +145,12 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     for (i, &line) in lines.iter().enumerate() {
         let file_error = FILE_LINE.captures(line);
         if file_error.is_some() || line.starts_with("! ") {
-            let echo = echo_line(&lines, i);
+            // Find the source echo without borrowing the next error's.
+            let echo = lines[i + 1..(i + 12).min(lines.len())]
+                .iter()
+                .take_while(|next| !next.starts_with('!') && !FILE_LINE.is_match(next))
+                .position(|next| L_NO.is_match(next))
+                .map(|k| i + 1 + k);
             quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
             let (mut message, line_no) = if let Some(m) = file_error.as_ref() {
                 // File-line errors can continue up to TeX's context or echo.
@@ -195,7 +176,17 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             if summary && items.iter().any(|item| item.kind == "error") {
                 continue;
             }
-            name_undefined(&mut message, &lines, i, echo);
+            // TeX's context or source echo names the undefined command.
+            if let Some(m) = echo
+                .filter(|_| message.starts_with("Undefined control sequence."))
+                .and_then(|j| {
+                    lines[i + 1..=j]
+                        .iter()
+                        .find_map(|line| LAST_CS.captures(line))
+                })
+            {
+                message = format!("Undefined control sequence: {}", &m[1]);
+            }
             let line_no = if summary && file_error.is_some() {
                 None
             } else {
@@ -215,7 +206,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
             .then(|| WARNING.captures(line))
             .flatten()
         {
-            let mut message = m[4].to_string();
+            let mut message = m[1].to_string();
             let mut prev = line;
             for next in &lines[(i + 1)..(i + 3).min(lines.len())] {
                 if next.trim().is_empty()
@@ -251,7 +242,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
         items.iter().map(|item| seen.insert(item)).collect()
     };
     let mut keep = keep.into_iter();
-    items.retain(|_| keep.next().unwrap_or(false));
+    items.retain(|_| keep.next().unwrap());
     items
 }
 

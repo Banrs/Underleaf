@@ -12,7 +12,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio_io_timeout::TimeoutStream;
 
 const MAX_HEAD: usize = 64 * 1024;
@@ -115,7 +115,22 @@ pub async fn serve<H, F, C>(
                 Ok((stream, _)) => {
                     let handler = Arc::clone(&handler);
                     let check = Arc::clone(&check);
-                    tokio::spawn(connection(stream, handler, check, max_body));
+                    tokio::spawn(async move {
+                        let mut stream = TimeoutStream::new(stream);
+                        stream.set_write_timeout(Some(BODY_TIME));
+                        let service = service_fn(|incoming| async {
+                            Ok::<_, Infallible>(request(incoming, &*handler, &*check, max_body).await)
+                        });
+                        let connection = http1::Builder::new()
+                            .timer(TokioTimer::new())
+                            .header_read_timeout(HEAD_TIME)
+                            .max_headers(MAX_HEADERS)
+                            .max_buf_size(MAX_HEAD)
+                            .serve_connection(TokioIo::new(Box::pin(stream)), service);
+                        if let Ok(parts) = connection.without_shutdown().await {
+                            linger(parts.io.into_inner()).await;
+                        }
+                    });
                 }
                 // A descriptor limit must not turn accept into a busy loop.
                 Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
@@ -206,45 +221,14 @@ where
     }
 }
 
-async fn connection<H, F, C>(stream: TcpStream, handler: Arc<H>, check: Arc<C>, max_body: usize)
-where
-    H: Fn(Request) -> F + Send + Sync + 'static,
-    F: Future<Output = Response> + Send + 'static,
-    C: Fn(&Request) -> Option<Response> + Send + Sync + 'static,
-{
-    let mut stream = TimeoutStream::new(stream);
-    stream.set_write_timeout(Some(BODY_TIME));
-    let service = service_fn(move |incoming| {
-        let handler = Arc::clone(&handler);
-        let check = Arc::clone(&check);
-        async move { Ok::<_, Infallible>(request(incoming, &*handler, &*check, max_body).await) }
-    });
-    let connection = http1::Builder::new()
-        .timer(TokioTimer::new())
-        .header_read_timeout(HEAD_TIME)
-        .max_headers(MAX_HEADERS)
-        .max_buf_size(MAX_HEAD)
-        .serve_connection(TokioIo::new(Box::pin(stream)), service);
-    if let Ok(parts) = connection.without_shutdown().await {
-        linger(parts.io.into_inner()).await;
-    }
-}
-
 /// An unread rejected upload must not reset the socket before its response
 /// arrives. Half-close, then discard input for a bounded time and amount.
 async fn linger(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
     if stream.shutdown().await.is_err() {
         return;
     }
-    let mut sink = [0; 16 * 1024];
-    let drain = async {
-        let mut left = LINGER_BYTES;
-        while left > 0 {
-            match stream.read(&mut sink).await {
-                Ok(0) | Err(_) => return,
-                Ok(n) => left = left.saturating_sub(n),
-            }
-        }
-    };
+    let mut input = stream.take(LINGER_BYTES as u64);
+    let mut sink = tokio::io::sink();
+    let drain = tokio::io::copy(&mut input, &mut sink);
     let _ = tokio::time::timeout(LINGER, drain).await;
 }

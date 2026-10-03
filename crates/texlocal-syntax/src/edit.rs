@@ -106,18 +106,9 @@ static HEADING: LazyLock<Regex> = LazyLock::new(|| {
 pub fn set_heading(text: &Text, caret: u32, command: &str) -> Insertion {
     let index = text.line_index(caret);
     let (line, start) = (text.line(index), text.lines[index]);
-    let (new, cursor) = heading_line(&String::from_utf16_lossy(line), command);
-    Insertion {
-        edit: edit(start, line.len() as u32, new),
-        caret: start + cursor as u32,
-        fields: vec![],
-    }
-}
-
-/// A line as a heading of `command`, or as plain text given none, and where
-/// the caret goes (in UTF-16 units): after the title. A heading keeps its
-/// star and short title; otherwise the line is the title.
-fn heading_line(line: &str, command: &str) -> (String, usize) {
+    let length = line.len() as u32;
+    let line = String::from_utf16_lossy(line);
+    let line = line.as_str();
     let (before, title, rest, marks) = match HEADING.captures(line) {
         Some(c) => {
             let open = c.get(0).unwrap();
@@ -152,16 +143,22 @@ fn heading_line(line: &str, command: &str) -> (String, usize) {
             String::new(),
         ),
     };
-    if command.is_empty() {
+    let (new, cursor) = if command.is_empty() {
         let text = format!("{before}{title}{rest}");
         let cursor = utf16(&text);
-        return (text, cursor);
+        (text, cursor)
+    } else {
+        let head = format!("{before}\\{command}{marks}{{");
+        (
+            format!("{head}{title}}}{rest}"),
+            utf16(&head) + utf16(title),
+        )
+    };
+    Insertion {
+        edit: edit(start, length, new),
+        caret: start + cursor as u32,
+        fields: vec![],
     }
-    let head = format!("{before}\\{command}{marks}{{");
-    (
-        format!("{head}{title}}}{rest}"),
-        utf16(&head) + utf16(title),
-    )
 }
 
 pub fn insert_block(text: &Text, id: &str, selection: TextRange) -> Option<Insertion> {

@@ -52,16 +52,6 @@ fn pdf_for(root: &Path) -> Result<std::path::PathBuf, CoreError> {
     Ok(pdf)
 }
 
-/// source (file:line) -> PDF location
-pub async fn synctex_forward(
-    root: &Path,
-    file: &str,
-    line: u32,
-    path_env: &str,
-) -> Result<ForwardLoc, CoreError> {
-    synctex_forward_at(root, file, line, None, path_env).await
-}
-
 /// The optional column is zero-based, as in an inverse result. Some TeX
 /// engines only record lines, so retain every box even when given a column.
 pub async fn synctex_forward_at(
@@ -80,7 +70,7 @@ pub async fn synctex_forward_at(
     }
     let column = column.unwrap_or(0).saturating_add(1);
     let input = format!("{line}:{column}:./{rel}");
-    let pdf_str = pdf.to_string_lossy().into_owned();
+    let pdf_str = pdf.to_string_lossy();
     let (code, stdout) = run(
         "synctex",
         &["view", "-i", &input, "-o", &pdf_str],
@@ -101,7 +91,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
     let mut values = [None; 7];
     let finish = |values: [Option<f64>; 7], matches: &mut Vec<ForwardLoc>| {
         let [page, x, y, h, v, width, height] = values;
-        if let Some(page) = page.filter(|page| page.is_finite() && *page >= 1.0) {
+        if let Some(page) = page.filter(|page| *page >= 1.0) {
             matches.push(ForwardLoc {
                 page,
                 x,
@@ -204,24 +194,20 @@ pub async fn synctex_inverse_with_context(
         return Err(CoreError::not_found("No SyncTeX match"));
     };
 
-    // join keeps an absolute `file` as it is.
     let abs = root.join(file);
     // Generated files (.toc/.aux in the build dir) and anything outside the
     // project aren't real sources — report "no match" so the UI shows a toast.
-    // TeX records the input under the working directory as getcwd reported
-    // it, with symlinks resolved. A data dir reached through a link (/tmp on
-    // macOS, a library moved to another disk and linked back) therefore names
-    // the project by its real path, not the one `root` spells.
+    // TeX records the physical working directory, even if root is a link.
     let no_source = || CoreError::not_found("No source file at this location");
+    let canonical_root = std::fs::canonicalize(root)?;
     let rel = rel_to_root(root, &abs)
-        .or_else(|| rel_to_root(&std::fs::canonicalize(root).ok()?, &abs))
-        // A project renamed or moved since TeX ran, which latexmk doesn't run
-        // again for: TeX wrote "<its old folder>/./<file>".
+        .or_else(|| rel_to_root(&canonical_root, &abs))
+        // A moved project can retain TeX's old "<folder>/./<file>" spelling.
         .or_else(|| safe_rel_file(root, file.split_once("/./")?.1).ok())
         .ok_or_else(no_source)?;
     let rel = safe_rel_file(root, &rel).map_err(|_| no_source())?;
     let source = std::fs::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
-    let physical = rel_to_root(&std::fs::canonicalize(root)?, &source)
+    let physical = rel_to_root(&canonical_root, &source)
         .and_then(|rel| safe_rel_file(root, &rel).ok())
         .ok_or_else(no_source)?;
     // Links within the project can still lead to generated output, and the
@@ -233,7 +219,7 @@ pub async fn synctex_inverse_with_context(
                 .is_some_and(|top| top.eq_ignore_ascii_case(BUILD_DIR))
         })
     {
-        return Err(CoreError::not_found("No source file at this location"));
+        return Err(no_source());
     }
     let found = word.and_then(|word| {
         let text = crate::lossy_string(std::fs::read(&source).ok()?);
@@ -299,7 +285,7 @@ fn find_word(
         .lines()
         .zip(1..)
         .skip(first as usize - 1)
-        .take_while(|&(_, n)| n <= line + REACH)
+        .take_while(|&(_, n)| n <= line.saturating_add(REACH))
         .flat_map(|(text, n)| {
             text.chars().chain(['\n']).scan(0, move |at, c| {
                 *at += c.len_utf16() as u32;
@@ -340,21 +326,26 @@ fn find_word(
         }
         i += 1;
     }
-    // A PDF extractor can include TeX's discretionary line-end hyphen even
-    // though the source word has no hyphen (``re-\nmain`` for ``remain``).
-    // Keep that glyph in the context with an optional marker: it matches a
-    // real source hyphen when present, and is skipped when the source has no
-    // hyphen. Inline hyphens remain required matches.
+    // PDF line-end hyphens are optional: they can be discretionary glyphs
+    // (re-\nmain), but a real source hyphen must still match.
     let context = if let Some((text, target)) = context {
-        let raw: Vec<char> = text.chars().collect();
+        let mut raw = text.chars().peekable();
+        let mut previous = '\0';
         let mut normalized = Vec::new();
         let mut start = None;
         let mut units = 0;
-        for (i, &c) in raw.iter().enumerate() {
+        while let Some(c) = raw.next() {
             if units == target {
                 start = Some(normalized.len());
             }
-            let line_end_hyphen = is_discretionary_line_hyphen(&raw, i);
+            let line_end_hyphen = is_hyphen(c)
+                && previous.is_alphabetic()
+                && raw.peek().is_some_and(|c| is_line_break(*c))
+                && raw
+                    .clone()
+                    .find(|c| !is_line_break(*c))
+                    .is_some_and(|c| c.is_alphabetic());
+            previous = c;
             match LIGATURES.iter().find(|(ligature, _)| *ligature == c) {
                 Some((_, spelt)) => normalized.extend(spelt.chars().map(|c| (c, false))),
                 None if !c.is_whitespace() => normalized.push((c, line_end_hyphen)),
@@ -364,9 +355,6 @@ fn find_word(
         }
         if units == target {
             start = Some(normalized.len());
-        }
-        if target > units {
-            return None;
         }
         let start = start? + lead;
         let clicked_word = normalized.get(start..start + letters.len())?;
@@ -399,50 +387,37 @@ fn find_word(
         );
         before + after
     };
-    let mut candidates: Vec<_> = (0..=printed.len().checked_sub(letters.len())?)
-        .filter(|&k| {
-            let (from, to) = (printed[k], printed[k + letters.len() - 1]);
-            printed[k..k + letters.len()].iter().map(|&i| source[i].2).eq(letters.iter().copied())
+    let candidates = printed.windows(letters.len()).enumerate()
+        .filter(|(_, indices)| {
+            let (from, to) = (indices[0], indices[indices.len() - 1]);
+            indices.iter().map(|&i| source[i].2).eq(letters.iter().copied())
                 // Not part of a longer word, nor a command's name.
                 && (from == 0 || !(source[from - 1].2.is_alphanumeric() || source[from - 1].2 == '\\'))
                 && !source.get(to + 1).is_some_and(|c| c.2.is_alphanumeric())
         })
-        .map(|k| (score(k), source[printed[k + clicked]]))
-        .collect();
-    candidates
-        .sort_by_key(|&(score, (n, _, _))| (std::cmp::Reverse(score), n.abs_diff(line), n > line));
-    let &(best_score, (best_line, best_column, _)) = candidates.first()?;
-    // Context should disambiguate a repeated word. If the strongest match is
-    // still tied on score and SyncTeX distance, omit the column rather than
-    // silently moving the caret to the first repeated occurrence.
-    if context.is_some()
-        && candidates.get(1).is_some_and(|&(score, (n, _, _))| {
-            score == best_score
-                && n.abs_diff(line) == best_line.abs_diff(line)
-                && (n > line) == (best_line > line)
-        })
-    {
-        return None;
+        .map(|(k, indices)| {
+            let (n, column, _) = source[indices[clicked]];
+            ((std::cmp::Reverse(score(k)), n.abs_diff(line), n > line), (n, column))
+        });
+    let mut best = None;
+    let mut tied = false;
+    for candidate in candidates {
+        match best {
+            Some((rank, _)) if candidate.0 > rank => {}
+            Some((rank, _)) if candidate.0 == rank => tied = true,
+            _ => {
+                best = Some(candidate);
+                tied = false;
+            }
+        }
     }
-    Some((best_line, best_column))
+    // Ambiguous context must not move the caret to an arbitrary occurrence.
+    best.filter(|_| context.is_none() || !tied)
+        .map(|(_, loc)| loc)
 }
 
 fn is_hyphen(c: char) -> bool {
     matches!(c, '-' | '\u{00ad}' | '\u{2010}' | '\u{2011}')
-}
-
-fn is_discretionary_line_hyphen(raw: &[char], at: usize) -> bool {
-    if at == 0 || !is_hyphen(raw[at]) || !raw[at - 1].is_alphabetic() {
-        return false;
-    }
-    let mut next = at + 1;
-    if !raw.get(next).is_some_and(|c| is_line_break(*c)) {
-        return false;
-    }
-    while raw.get(next).is_some_and(|c| is_line_break(*c)) {
-        next += 1;
-    }
-    raw.get(next).is_some_and(|c| c.is_alphabetic())
 }
 
 fn is_line_break(c: char) -> bool {
@@ -454,20 +429,18 @@ fn matching_context_chars(
     context: impl Iterator<Item = (char, bool)>,
 ) -> usize {
     let mut source = source.peekable();
-    let mut context = context.peekable();
     let mut matched = 0;
-    while let (Some(&source_char), Some(&(context_char, optional_hyphen))) =
-        (source.peek(), context.peek())
-    {
+    for (context_char, optional_hyphen) in context {
+        let Some(&source_char) = source.peek() else {
+            break;
+        };
         if optional_hyphen && !is_hyphen(source_char) {
-            context.next();
             continue;
         }
         if source_char != context_char {
             break;
         }
         source.next();
-        context.next();
         matched += 1;
     }
     matched

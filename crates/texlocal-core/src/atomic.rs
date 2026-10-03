@@ -26,18 +26,15 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         Ok(meta) if meta.file_type().is_symlink() => fs::canonicalize(path)?,
         _ => path.to_path_buf(),
     };
-    let old = fs::metadata(&target).ok();
-    if old
-        .as_ref()
-        .is_some_and(|meta| meta.permissions().readonly())
-    {
+    let permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
+    if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
     let (temp, mut file) = create_temp(&target)?;
     // Before the contents, so a private file's text is never readable
     // under the temporary file's default mode.
-    if let Some(meta) = &old {
-        file.set_permissions(meta.permissions())?;
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)?;
     }
     file.write_all(bytes)?;
     file.sync_all()?;

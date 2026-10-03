@@ -437,7 +437,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 }
 
 #[test]
-fn search_is_case_insensitive_in_both_folding_branches() {
+fn search_is_case_insensitive_for_ascii_and_unicode() {
     let data = data_dir();
     let root = project(data.path(), "search");
     fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
@@ -453,7 +453,7 @@ fn search_is_case_insensitive_in_both_folding_branches() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].matched, "ÉCOLE");
     assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
-    // An ASCII line in a non-ASCII file takes the byte branch on its own.
+    // An ASCII match in a file that also contains Unicode.
     fs::write(root.join("mixed.tex"), "Café\nsee Lemma 3\n").unwrap();
     let hits = search_project(&root, "lemma", 50).unwrap();
     assert_eq!(hits.len(), 1);
@@ -622,11 +622,8 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
 }
 
 #[test]
-fn the_byte_prefilter_never_hides_a_match_the_char_path_would_find() {
-    // U+0130 and the Kelvin sign both lowercase into plain ASCII, so an ASCII
-    // query can match a file holding no such ASCII byte. Skipping a file on one
-    // pass over its bytes is gated on the file being ASCII for exactly that
-    // reason; drop the gate and these two searches quietly return nothing.
+fn unicode_characters_can_match_an_ascii_query() {
+    // U+0130 and the Kelvin sign both lowercase into plain ASCII.
     let data = data_dir();
     let root = project(data.path(), "folding");
     fs::write(root.join("a.tex"), "\u{0130}stanbul\n").unwrap();

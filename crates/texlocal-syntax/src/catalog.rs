@@ -4,12 +4,12 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use serde::Deserialize;
+use serde::{de::IgnoredAny, Deserialize};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
-    /// By id; "$0" marks where the caret goes.
+    /// By id.
     pub blocks: BTreeMap<String, String>,
     pub environments: Vec<String>,
     pub bib_entry_types: Vec<String>,
@@ -27,8 +27,8 @@ pub struct Catalog {
     pub text_commands: Vec<String>,
     /// The maths environments the preview renders.
     pub preview_environments: Vec<String>,
-    /// (name, detail, snippet); "#{…}" marks a snippet field.
-    pub commands: Vec<(String, String, String)>,
+    /// (name, web-only detail, snippet); "#{…}" marks a snippet field.
+    pub commands: Vec<(String, IgnoredAny, String)>,
 }
 
 pub static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {

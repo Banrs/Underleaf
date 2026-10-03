@@ -63,14 +63,9 @@ impl TlHandle {
     }
 }
 
-/// The result as a JSON envelope the host frees with `tl_free`.
-fn reply(result: Result<Value, CoreError>) -> *mut c_char {
-    let envelope = match result {
-        Ok(value) => json!({ "ok": value }),
-        Err(err) => json!({ "error": err.message, "status": err.status }),
-    };
+fn json_string(value: Value) -> *mut c_char {
     // JSON escapes NUL inside strings, so serialized output never contains one.
-    CString::new(envelope.to_string())
+    CString::new(value.to_string())
         .expect("JSON has no interior NUL")
         .into_raw()
 }
@@ -93,21 +88,16 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
         None if data_dir.is_null() => texlocal_core::default_data_dir(),
         None => return std::ptr::null_mut(),
     };
-    let opened = catch_unwind(|| {
+    catch_unwind(|| {
         std::fs::create_dir_all(&dir).ok()?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .ok()?;
+        let runtime = tokio::runtime::Runtime::new().ok()?;
         Some(Box::new(TlHandle {
             runtime,
             service: Service::new(dir),
         }))
-    });
-    match opened {
-        Ok(Some(handle)) => Box::into_raw(handle),
-        _ => std::ptr::null_mut(),
-    }
+    })
+    .unwrap_or_default()
+    .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
 /// Run `command` with a JSON object of arguments (null means `{}`). Returns
@@ -123,10 +113,10 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let Some(handle) = handle.as_ref() else {
-        return reply(Err(CoreError::bad_request("No handle")));
-    };
-    reply((|| {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = handle
+            .as_ref()
+            .ok_or_else(|| CoreError::bad_request("No handle"))?;
         let command = str_arg(command).ok_or_else(|| CoreError::bad_request("Invalid command"))?;
         let args: Value = match str_arg(args_json) {
             Some(text) => serde_json::from_str(text)
@@ -134,9 +124,13 @@ pub unsafe extern "C" fn tl_call(
             None if args_json.is_null() => json!({}),
             None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
         };
-        catch_unwind(AssertUnwindSafe(|| handle.call(command, &args)))
-            .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")))
-    })())
+        handle.call(command, &args)
+    }))
+    .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")));
+    json_string(match result {
+        Ok(value) => json!({ "ok": value }),
+        Err(err) => json!({ "error": err.message, "status": err.status }),
+    })
 }
 
 /// Free a string `tl_call` returned. Null is ignored.
@@ -292,9 +286,7 @@ pub unsafe extern "C" fn tl_source_call(
         "text" => json!(doc.text()),
         _ => return std::ptr::null_mut(),
     };
-    CString::new(result.to_string())
-        .expect("JSON has no interior NUL")
-        .into_raw()
+    json_string(result)
 }
 
 /// Null is ignored.

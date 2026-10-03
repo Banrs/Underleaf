@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, utf16, Text};
+use crate::{catalog, is, utf16, Text};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -127,10 +127,12 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
 /// after the first takes `at`'s line's indentation, and each leading tab one
 /// more level (two spaces, the editor's indent unit).
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
-    let indentation: String = String::from_utf16_lossy(source.line(source.line_index(at)))
-        .chars()
-        .take_while(|&c| c == ' ' || c == '\t')
-        .collect();
+    let line = source.line(source.line_index(at));
+    let indent = line
+        .iter()
+        .take_while(|&&u| is(u, ' ') || is(u, '\t'))
+        .count();
+    let indentation = String::from_utf16_lossy(&line[..indent]);
     let (mut text, mut fields, mut names) = (String::new(), Vec::new(), Vec::<&str>::new());
     for (n, line) in snippet.split('\n').enumerate() {
         let tabs = if n == 0 {
