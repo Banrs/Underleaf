@@ -15,7 +15,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     let scrollView = SourceTextView.scrollablePlainDocumentContentTextView()
     let textView: SourceTextView
     var onChanged: () -> Void = {}
-    var onCursor: (Int) -> Void = { _ in }
+    /// The caret's line and column (UTF-16, from 0).
+    var onCursor: (Int, Int) -> Void = { _, _ in }
     /// The line at the top of the view.
     var onScroll: (Int) -> Void = { _ in }
 
@@ -24,7 +25,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// only if their text is unchanged since.
     private var kept: [String: (text: String, undo: UndoManager, selection: NSRange)] = [:]
     private var undo = UndoManager()
-    private var cursorLine = 1, topLine = 1
+    private var cursorLine = 1, cursorColumn = 0, topLine = 1
 
     /// Hiding removes the editor from the key view loop; showing it restores
     /// requested focus after a file opens.
@@ -178,10 +179,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     private func reportCursor() {
-        let line = currentLine
-        guard line != cursorLine else { return }
-        cursorLine = line
-        onCursor(line)
+        let line = currentLine, column = currentColumn
+        guard line != cursorLine || column != cursorColumn else { return }
+        (cursorLine, cursorColumn) = (line, column)
+        onCursor(line, column)
     }
 
     func textDidChange(_ notification: Notification) {

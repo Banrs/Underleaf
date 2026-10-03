@@ -13,6 +13,8 @@ final class ProjectModel {
     var outline: [OutlineItem] = []
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
+    /// The caret's column (UTF-16, from 0), for the status bar.
+    var cursorColumn = 0
     /// The line at the top of the source; unobserved, as it changes on every
     /// line scrolled past.
     @ObservationIgnored var topLine = 1
@@ -20,6 +22,9 @@ final class ProjectModel {
     private(set) var topHeading: Int?
 
     var dirty = false
+    /// Edits since the build of the PDF on screen started.
+    private(set) var pdfOutdated = false
+    @ObservationIgnored private var edits = 0
     var compiling = false
     var result: CompileResult?
     /// The PDF the viewer shows; nil until one loads.
@@ -123,7 +128,12 @@ final class ProjectModel {
     /// is left meanwhile, so it never writes to the editor after the next one.
     func load(restoring saved: SavedWorkspace? = nil) async {
         editor.onChanged = { [weak self] in self?.edited() }
-        editor.onCursor = { [weak self] line in self?.cursorLine = line }
+        editor.onCursor = { [weak self] line, column in
+            guard let self else { return }
+            // Each set notifies: the outline follows the line alone.
+            if cursorLine != line { cursorLine = line }
+            cursorColumn = column
+        }
         editor.onScroll = { [weak self] line in
             guard let self else { return }
             topLine = line
@@ -257,6 +267,8 @@ final class ProjectModel {
 
     private func edited() {
         dirty = true
+        edits += 1
+        if hasPDF, !pdfOutdated { pdfOutdated = true }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autosaveDelay)
@@ -469,12 +481,17 @@ final class ProjectModel {
         compiling = true
         stopRequested = false
         // Through the mutation lane, after the settings and renames asked for before.
+        let built = edits
         let saved = await flush()
         if saved, !stopRequested, !closed {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
                 // The PDF is the main file's now: a main-file change stopped any build of the old one.
-                if result.pdf != nil, !closed { await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged) }
+                if result.pdf != nil, !closed {
+                    await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
+                    // Edits made while it built aren't in it.
+                    pdfOutdated = edits != built
+                }
                 if !closed {
                     self.result = result
                     if result.failed, !auto || result.pdf == nil { showBuildPanel() }
