@@ -7,12 +7,11 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 > scheme, `~/TeXLocal` projects, `.texlocal.json` settings, and `TEXLOCAL_DATA`
 > — so existing installs and projects keep working.
 
-One Rust core, several clients:
+One Rust core, two clients:
 
 - **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`.
 - **Browser version** — the `web/` UI served by `crates/texlocal-server` on
   `127.0.0.1` only; never exposed to the network.
-- **Tauri desktop app** (`src-tauri`) — the cross-platform desktop shell.
 
 The macOS app's editor is native (TextKit 2 over
 `crates/texlocal-syntax`), and it shows the PDF with PDFKit.
@@ -25,7 +24,6 @@ git clone https://github.com/Banrs/Underleaf.git
 cd Underleaf
 npm install
 npm run serve        # browser version: prints a local URL with a sign-in token
-npm run app          # Tauri desktop app against live code
 ```
 
 You also need a TeX distribution — see [Requirements](#requirements).
@@ -65,8 +63,8 @@ TeXLocal finds TeX on your `PATH` and in the usual install locations
 (`/Library/TeX/texbin`, Homebrew, `/usr/local/texlive/<year>`,
 `C:\texlive\<year>`, MiKTeX), or in a folder you choose in Settings.
 
-**To build from source:** Node.js ≥ 22.12 and Rust (stable). The Tauri app also
-needs the Tauri prerequisites; the macOS app needs Xcode.
+**To build from source:** Node.js ≥ 22.12 and Rust (stable); the macOS app
+also needs Xcode.
 
 Projects are plain folders in `~/TeXLocal` — override with
 `TEXLOCAL_DATA=/path`. No databases, no lock-in.
@@ -79,7 +77,6 @@ crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZI
 crates/texlocal-ffi/     C ABI the macOS app links (header in include/).
 crates/texlocal-server/  The browser version's local HTTP host.
 apps/macos/              AppKit and SwiftUI app.
-src-tauri/               Cross-platform Tauri desktop shell.
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
 docs/                    design-tokens.md (extracted Apple UI-kit values) ·
                          web.md
@@ -104,10 +101,9 @@ These are full regression commands. For an individual change, select the affecte
 test files or Xcode methods; keep cursor, menu tracking and visual-material checks
 in native UI verification. `HANDOFF.md` records the current evidence and limits.
 
-To publish a release: bump the version in `package.json`, the workspace
-`Cargo.toml`, `src-tauri/tauri.conf.json` and the macOS project
-(`MARKETING_VERSION` in `apps/macos/project.yml` and the `.xcodeproj`), then
-push a matching `v*` tag. CI checks they agree before drafting the release.
+Keep the version in `package.json`, the workspace `Cargo.toml` and the macOS
+project (`MARKETING_VERSION` in `apps/macos/project.yml` and the `.xcodeproj`)
+consistent. CI checks them with `node scripts/check-version.mjs`.
 
 ## Security notes
 
@@ -115,9 +111,9 @@ push a matching `v*` tag. CI checks they agree before drafting the release.
   header on every request for project data (the page keeps it for its tab, never
   in a cookie), rejects foreign Host and Origin headers, and may not be framed.
 - Project files are served with a sandbox CSP and `nosniff`, so a file in a project can never execute as a document on the app's origin.
-- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The native apps turn it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
+- `-shell-escape` is **off** by default (it lets documents execute arbitrary shell commands). The macOS app turns it on per project; `.texlocal.json` is reserved and cannot be written through the generic file APIs.
 - A project's own `latexmkrc` (Perl that runs on every build) is read only when that project has shell escape on; your own (`~/.latexmkrc` or `~/.config/latexmk/latexmkrc`) always is.
 
 ## License
 
-MIT. Built with [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [KaTeX](https://katex.org) (MIT), [Tauri](https://tauri.app) (MIT/Apache-2.0), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.
+MIT. Built with [CodeMirror 6](https://codemirror.net) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [KaTeX](https://katex.org) (MIT), and [esbuild](https://esbuild.github.io) (MIT). LaTeX compilation is delegated to your local TeX distribution.

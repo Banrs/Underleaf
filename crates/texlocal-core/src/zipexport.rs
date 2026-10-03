@@ -3,7 +3,6 @@
 //! inside the project cannot archive itself and failures never leave a partial
 //! ZIP at the requested path.
 
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
@@ -15,8 +14,6 @@ use zip::{CompressionMethod, ZipWriter};
 use crate::atomic::create_temp;
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
-
-const LITTER: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
@@ -31,7 +28,6 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
         root_canonical: &root_canonical,
         archive_dir: fs::canonicalize(parent.unwrap_or(Path::new(".")))?,
         archive_names: [dest.file_name(), temp_path.file_name()],
-        visited: HashSet::from([root_canonical.clone()]),
     };
     export.add_dir(root, &root_canonical, "")?;
     export.writer.finish()?.sync_all()?;
@@ -47,11 +43,10 @@ struct Export<'a> {
     root_canonical: &'a Path,
     archive_dir: PathBuf,
     archive_names: [Option<&'a OsStr>; 2],
-    visited: HashSet<PathBuf>,
 }
 
 impl Export<'_> {
-    /// `dir_canonical` is `dir` resolved, as the visited set records it.
+    /// `dir_canonical` is `dir` resolved, for excluding the archive itself.
     fn add_dir(&mut self, dir: &Path, dir_canonical: &Path, prefix: &str) -> Result<(), CoreError> {
         let mut entries = fs::read_dir(dir)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(|e| e.file_name());
@@ -63,8 +58,8 @@ impl Export<'_> {
                 continue;
             }
             let name = file_name.to_string_lossy();
-            // What Finder and Explorer leave in folders is nobody's content.
-            if LITTER.iter().any(|l| name.eq_ignore_ascii_case(l)) {
+            // Finder's folder metadata is not project content.
+            if name.eq_ignore_ascii_case(".DS_Store") {
                 continue;
             }
             if prefix.is_empty() && (name.eq_ignore_ascii_case(BUILD_DIR) || name == SETTINGS_FILE)
@@ -100,9 +95,6 @@ impl Export<'_> {
             if entry_type.is_dir() {
                 let canonical = fs::canonicalize(&path)?;
                 if !canonical.starts_with(self.root_canonical) {
-                    continue;
-                }
-                if !self.visited.insert(canonical.clone()) {
                     continue;
                 }
                 let options = dated(self.options, &path);

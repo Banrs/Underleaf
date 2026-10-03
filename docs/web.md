@@ -1,6 +1,6 @@
 # The web UI
 
-`web/` is the browser version and the Tauri app. The project-wide picture is in
+`web/` is the browser version. The project-wide picture is in
 `HANDOFF.md`; this file keeps the web UI's own rules. Refactor where
 responsibilities are mixed, but don't add a component framework or small
 abstractions that only add lines.
@@ -10,11 +10,10 @@ abstractions that only add lines.
 - **Universal web design**, not Mac- or Windows-styled: familiar to both, as
   Google Docs, Overleaf and VS Code for the web are. One design language in
   `web/styles.css`, from the kit values in `design-tokens.md`.
-- **Two hooks** (`web/src/main.js`): `html.mac` gates the Tauri Mac window's
-  chrome (vibrancy, traffic-light insets); a browser tab gets `html.browser`
+- **Browser styling** (`web/src/main.js`): a browser tab gets `html.browser`
   (14 px type, opaque menus, toasts and dialogs with a neutral hover, no
-  Interface Size, since the browser zooms the page). Rules for every host go on
-  the bare selector. Floating panels (`prefs.floating`) are a preference, not a
+  Interface Size, since the browser zooms the page). Floating panels
+  (`prefs.floating`) are a preference, not a
   second design system.
 - **Shortcut labels are platform-correct:** ⌘ glyphs on the Mac, Ctrl+Enter
   elsewhere. Chords the browser keeps (new window, tab, incognito) aren't
@@ -45,15 +44,6 @@ abstractions that only add lines.
 - **Small surfaces:** menus/popovers scroll within zoom-correct viewport bounds;
   settings stack by dialog width; symbol arrow keys follow the rendered grid.
 
-## Tauri only (delete with `src-tauri`)
-
-Under Tauri, `texlocal://` carries only the compiled PDF and raw project files,
-cross-origin to the page; that is what the extra CSP sources in
-`web/index.html` are for. Windows needs both spellings of each, because
-WebView2 maps custom schemes onto `http://<scheme>.localhost`. Neither
-WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
-`data-tauri-drag-region`.
-
 ## Web backlog
 
 The native audit has not reverified these earlier web interaction reports. Code
@@ -78,7 +68,7 @@ observations remain listed alongside them; reproduce UI issues before changing b
 - A light variant of One Dark for Syntax Colors.
 - The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
   WebKit that also lets the system's smart dashes and quotes rewrite LaTeX
-  (`--` becomes an em dash). Check Safari and the Tauri Mac app with
+  (`--` becomes an em dash). Check Safari with
   Substitutions on before keeping it.
 
 ## Parked

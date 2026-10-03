@@ -142,11 +142,18 @@ fn path_traversal_is_rejected_at_every_boundary() {
     fails_with(project_root(data.path(), "../etc"), "Bad project id");
     // A folder inside a project is not a project of its own.
     create_file(&root, "chapters/intro.tex", false).unwrap();
-    for id in ["paths-test/chapters", r"paths-test\chapters"] {
-        assert_eq!(project_root(data.path(), id).unwrap_err().status, 400);
-    }
+    assert_eq!(
+        project_root(data.path(), "paths-test/chapters")
+            .unwrap_err()
+            .status,
+        400
+    );
     assert_eq!(project_root(data.path(), "./paths-test/").unwrap(), root);
-    for path in ["../x", "a/../../b", ".", r"..\x", r"C:\x"] {
+    assert_eq!(
+        safe_rel_file(&root, "./chapters/../chapters//intro.tex").unwrap(),
+        "chapters/intro.tex"
+    );
+    for path in ["../x", "a/../../b", ".", "/x"] {
         fails_with(safe_path(&root, path), "Path escapes project");
     }
     fails_with(safe_path(&root, ""), "Missing path");
@@ -192,14 +199,10 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
-    fails_with(
-        safe_path(&root, "outside/secret.tex"),
-        "Path escapes project",
-    );
-    fails_with(
-        safe_rel_file(&root, "outside/secret.tex"),
-        "Path escapes project",
-    );
+    for path in ["outside/secret.tex", "outside/new/sub/file.tex"] {
+        fails_with(safe_path(&root, path), "Path escapes project");
+        fails_with(safe_rel_file(&root, path), "Path escapes project");
+    }
 }
 
 #[cfg(unix)]
@@ -241,18 +244,6 @@ fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
 }
 
-#[cfg(windows)]
-#[test]
-fn windows_reserved_device_names_are_rejected() {
-    let data = data_dir();
-    let root = project(data.path(), "windows-aliases");
-    assert!(safe_path(&root, "CON.tex").is_err());
-    assert!(safe_path(&root, "CONIN$").is_err());
-    assert!(safe_path(&root, "COM¹.log").is_err());
-    assert!(safe_path(&root, "paper.tex.").is_err());
-    assert!(safe_path(&root, "paper.tex ").is_err());
-}
-
 #[test]
 fn project_names_are_sanitized() {
     let data = data_dir();
@@ -291,26 +282,6 @@ fn renaming_an_unrelated_entry_leaves_the_main_file_alone() {
     write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
     rename_entry(&root, "chapters", "content").unwrap();
     assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-}
-
-#[test]
-fn a_backslash_main_file_from_an_old_settings_file_still_works() {
-    let data = data_dir();
-    let root = project(data.path(), "backslash-test");
-    create_file(&root, "chapters/paper.tex", false).unwrap();
-    fs::write(
-        root.join(".texlocal.json"),
-        r#"{ "mainFile": "chapters\\paper.tex" }"#,
-    )
-    .unwrap();
-    assert_eq!(
-        safe_rel_file(&root, &read_settings(&root).main_file).unwrap(),
-        "chapters/paper.tex"
-    );
-    assert_eq!(
-        compiled_pdf_path(&root).unwrap(),
-        root.join("build").join("paper.pdf")
-    );
 }
 
 #[cfg(unix)]
@@ -389,12 +360,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
     let data = data_dir();
     let root = project(data.path(), "dated-zip");
     fs::create_dir_all(root.join("figs")).unwrap();
-    for litter in [
-        ".DS_Store",
-        "figs/.DS_Store",
-        "figs/Thumbs.db",
-        "Desktop.ini",
-    ] {
+    for litter in [".DS_Store", "figs/.DS_Store"] {
         fs::write(root.join(litter), "x").unwrap();
     }
     fs::write(root.join(".latexmkrc"), "$pdf_mode = 1;").unwrap();
@@ -403,9 +369,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 
     let names = zip_names(&dest);
     assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
-    for litter in ["DS_Store", "Thumbs.db", "Desktop.ini"] {
-        assert!(!names.iter().any(|n| n.contains(litter)), "{names:?}");
-    }
+    assert!(!names.iter().any(|n| n.contains("DS_Store")), "{names:?}");
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
     let dated = archive
         .by_name("main.tex")
@@ -644,26 +608,6 @@ fn unicode_characters_can_match_an_ascii_query() {
 }
 
 #[test]
-fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
-    // Settings written by an older build can hold "chapters\main.tex". The
-    // rename normalises separators before comparing, so it still recognises the
-    // file it is moving; without that the main file keeps pointing at the old
-    // path and the next compile fails.
-    let data = data_dir();
-    let root = project(data.path(), "legacy-sep");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    fs::write(
-        root.join(".texlocal.json"),
-        r#"{"mainFile":"chapters\\main.tex","engine":"pdflatex","shellEscape":false}"#,
-    )
-    .unwrap();
-
-    rename_entry(&root, "chapters", "content").unwrap();
-
-    assert_eq!(read_settings(&root).main_file, "content/main.tex");
-}
-
-#[test]
 fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
     let data = data_dir();
     let root = project(data.path(), "tree-order");
@@ -798,4 +742,48 @@ fn citations_include_bibitem_keys_and_commented_or_unfilled_labels_are_left_out(
     let found = scan_symbols(&root).unwrap();
     assert_eq!(found.labels, ["kept", "after-percent"]);
     assert_eq!(found.citations, ["knuth", "lamport"]);
+}
+
+#[test]
+fn symbol_completions_keep_file_order_and_remove_duplicates() {
+    let data = data_dir();
+    let root = project(data.path(), "symbol-order");
+    fs::write(
+        root.join("z.tex"),
+        "\\label{shared}\\label{last}\\bibitem{two}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("a.tex"),
+        "\\label{first}\\label{shared}\\bibitem{one}",
+    )
+    .unwrap();
+    fs::write(root.join("refs.bib"), "@article{one,}\n@article{two,}").unwrap();
+
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["first", "shared", "last"]);
+    assert_eq!(found.citations, ["one", "two"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn scans_from_an_aliased_root_follow_file_links_and_skip_directory_links() {
+    let data = data_dir();
+    let root = project(data.path(), "scan-alias");
+    fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
+    std::os::unix::fs::symlink(root.join("source.txt"), root.join("linked.tex")).unwrap();
+    std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+    let alias = data.path().join("alias");
+    std::os::unix::fs::symlink(&root, &alias).unwrap();
+
+    let tree = file_tree(&alias).unwrap();
+    assert_eq!(
+        tree.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
+        ["linked.tex", "main.tex", "source.txt"]
+    );
+    let hits = search_project(&alias, "needle", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!(hits.iter().any(|h| h.file == "linked.tex"));
+    assert!(hits.iter().any(|h| h.file == "source.txt"));
+    assert_eq!(scan_symbols(&alias).unwrap().labels, ["linked"]);
 }

@@ -2,8 +2,7 @@ import * as esbuild from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Anchor every path to this file, not the cwd: Tauri runs this as its
-// beforeDevCommand and beforeBuildCommand.
+// Anchor every path to this file so builds work from any cwd.
 const ROOT = import.meta.dirname;
 const at = (...p) => path.join(ROOT, ...p);
 
@@ -37,8 +36,7 @@ const common = {
   sourcemap: watch,
   logLevel: 'info',
 };
-// One bundle for the browser version and Tauri; bridge.js picks the backend at
-// runtime. Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
+// Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
 // pdf.js) in chunks/, so the home screen never parses it. Hashed names: clear
 // the previous build's.
 fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });

@@ -5,17 +5,13 @@
   "scripts": {
     "test": "node --test",
     "build": "node build.mjs",
-    "tauri": "tauri",
-    "app": "tauri dev",
-    "serve": "npm run build && cargo run --release -p texlocal-server --",
-    "package": "tauri build"
+    "serve": "npm run build && cargo run --release -p texlocal-server --"
   },
   "keywords": [
     "latex",
     "overleaf",
     "editor",
-    "offline-first",
-    "tauri"
+    "offline-first"
   ],
   "author": "Underleaf contributors",
   "license": "MIT",
@@ -39,7 +35,6 @@
     "pdfjs-dist": "^6.1.200"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "happy-dom": "^20.14.5"
   },
   "repository": {

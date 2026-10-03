@@ -1,11 +1,10 @@
-// Shared command surface: hosts forward here so path checks and cache
-// invalidation have one implementation.
+// Shared command surface: hosts forward here so path checks and edit
+// serialization have one implementation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,22 +13,17 @@ use serde_json::{json, Value};
 use crate::analyze;
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
 use crate::paths::fold_case;
-use crate::projects::{self, SymbolCache, Symbols};
+use crate::projects::{self, Symbols};
 use crate::settings;
 use crate::synctex;
 use crate::{atomic, paths, CoreError};
 
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
-const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
 const SEARCH_LIMIT: usize = 100;
 /// Shared TeX folder choice, stored beside projects as a file so it never
 /// appears in the project list.
 pub const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
-const NO_LATEXMK: &str = if cfg!(windows) {
-    r"That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as C:\texlive\2026\bin\windows."
-} else {
-    "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin."
-};
+const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
 
 /// TeX folder listing: names only, never file contents.
 #[derive(Debug, Serialize)]
@@ -65,14 +59,13 @@ pub struct UploadCheck {
 
 /// An upload file's path once Keep Both has renamed the clash it lies under.
 pub fn keep_both(path: &str, clashes: &[Clash]) -> String {
-    let path = path.replace('\\', "/");
     clashes
         .iter()
         .find_map(|c| {
             let rest = path.strip_prefix(&c.path)?;
             (rest.is_empty() || rest.starts_with('/')).then(|| format!("{}{rest}", c.keep_both))
         })
-        .unwrap_or(path)
+        .unwrap_or_else(|| path.to_string())
 }
 
 /// The first entry in `rel`'s way under `base`: the file itself if it
@@ -95,15 +88,13 @@ fn clash(base: &Path, rel: &str) -> Option<String> {
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
-    /// The last TeX probe and when it ran.
-    status: Mutex<Option<(TexStatus, Instant)>>,
-    symbols: Mutex<HashMap<PathBuf, Arc<Mutex<SymbolCache>>>>,
+    /// Serialize edits with symbol scans and settings read/modify/write.
+    edits: Mutex<()>,
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
-    let name = name.replace('\\', "/");
     if dir.is_empty() {
-        name
+        name.to_string()
     } else {
         format!("{}/{}", dir.trim_end_matches('/'), name)
     }
@@ -116,42 +107,12 @@ fn too_large() -> CoreError {
     ))
 }
 
-/// Dot-folders, and on Windows the protected system folders Explorer hides
-/// ($Recycle.Bin, System Volume Information). Merely hidden ones such as
-/// AppData stay: a per-user TeX install lives there.
-fn hidden(entry: &std::fs::DirEntry) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const HIDDEN_SYSTEM: u32 = 0x2 | 0x4;
-        if entry
-            .metadata()
-            .is_ok_and(|m| m.file_attributes() & HIDDEN_SYSTEM == HIDDEN_SYSTEM)
-        {
-            return true;
-        }
-    }
-    entry.file_name().to_string_lossy().starts_with('.')
-}
-
-fn roots() -> Vec<String> {
-    if cfg!(windows) {
-        (b'A'..=b'Z')
-            .map(|drive| format!(r"{}:\", drive as char))
-            .filter(|root| Path::new(root).is_dir())
-            .collect()
-    } else {
-        vec!["/".into()]
-    }
-}
-
 impl Service {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             data_dir,
             compile: CompileManager::default(),
-            status: Mutex::new(None),
-            symbols: Mutex::new(HashMap::new()),
+            edits: Mutex::new(()),
         }
     }
 
@@ -162,46 +123,20 @@ impl Service {
     fn with_project<T>(
         &self,
         id: &str,
-        use_project: impl FnOnce(&Path, &mut SymbolCache) -> Result<T, CoreError>,
+        use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
+        let _edit = self.edits.lock().unwrap();
         let root = self.project_root(id)?;
-        let state = {
-            let mut caches = self.symbols.lock().unwrap();
-            caches.entry(root.clone()).or_default().clone()
-        };
-        let mut symbols = state.lock().unwrap();
-        use_project(&root, &mut symbols)
-    }
-
-    /// Serialize a project edit with its symbol scan, then clear its cache.
-    fn edit<T>(
-        &self,
-        id: &str,
-        edit: impl FnOnce(&Path) -> Result<T, CoreError>,
-    ) -> Result<T, CoreError> {
-        self.with_project(id, |root, symbols| {
-            let result = edit(root);
-            // An edit can fail after a partial filesystem change.
-            *symbols = SymbolCache::default();
-            result
-        })
+        use_project(&root)
     }
 
     // ---------- status ----------
 
-    /// A found TeX is cached until the chosen TeX folder changes; a missing
-    /// one only briefly, so the UI's install poll notices a new install.
+    /// Probe the current TeX choice, including installs made while the app is open.
     pub async fn status(&self) -> TexStatus {
         let tex_dir = self.tex_dir();
-        let chosen = tex_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
-        if let Some((status, at)) = &*self.status.lock().unwrap() {
-            if status.tex_dir == chosen && (status.available || at.elapsed() < TEX_MISSING_TTL) {
-                return status.clone();
-            }
-        }
         let mut found = compile::tex_available(&compile::tex_path(tex_dir.as_deref())).await;
-        found.tex_dir = chosen;
-        *self.status.lock().unwrap() = Some((found.clone(), Instant::now()));
+        found.tex_dir = tex_dir.map(|d| d.to_string_lossy().into_owned());
         found
     }
 
@@ -221,7 +156,7 @@ impl Service {
     }
 
     /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
-    /// or MiKTeX root is accepted and saved as its bin folder.
+    /// root is accepted and saved as its bin folder.
     pub async fn set_tex_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
         let chosen = match dir.map(str::trim).filter(|d| !d.is_empty()) {
             None => None,
@@ -259,7 +194,7 @@ impl Service {
         let mut dirs: Vec<String> = std::fs::read_dir(&dir)
             .map_err(|_| unreadable())?
             .filter_map(|e| e.ok())
-            .filter(|e| !hidden(e) && e.path().is_dir())
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir())
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         dirs.sort_by_key(|name| name.to_lowercase());
@@ -268,14 +203,14 @@ impl Service {
             parent: dir.parent().map(|p| p.to_string_lossy().into_owned()),
             dirs,
             has_latexmk: compile::has_latexmk(&dir),
-            roots: roots(),
+            roots: vec!["/".into()],
         })
     }
 
     // ---------- files ----------
 
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
-        self.with_project(id, |root, symbols| symbols.scan(root))
+        self.with_project(id, projects::scan_symbols)
     }
 
     /// Validate the whole batch before writing, so a late unsafe or oversize
@@ -355,7 +290,7 @@ impl Service {
             return Err(too_large());
         }
         let rel = upload_rel(dir, path);
-        self.edit(id, |root| {
+        self.with_project(id, |root| {
             let abs = paths::safe_write_path(root, &rel)?;
             if let Some(taken) = clash(root, &paths::rel_key(&rel)?) {
                 if !replace {
@@ -419,22 +354,15 @@ impl Service {
                     .as_deref()
                     .unwrap_or("article"),
             )?),
-            "rename_project" => {
-                let old = root()?;
-                let info = projects::rename_project(&self.data_dir, s("id")?, s("name")?)?;
-                self.symbols.lock().unwrap().remove(&old);
-                out(info)
-            }
-            "delete_project" => {
-                let old = root()?;
-                projects::delete_project(&self.data_dir, s("id")?)?;
-                self.symbols.lock().unwrap().remove(&old);
-                out(())
-            }
+            "rename_project" => out(self.with_project(s("id")?, |_| {
+                projects::rename_project(&self.data_dir, s("id")?, s("name")?)
+            })?),
+            "delete_project" => out(self.with_project(s("id")?, |_| {
+                projects::delete_project(&self.data_dir, s("id")?)
+            })?),
             "get_settings" => out(settings::read_settings(&root()?)),
-            // A rename also rewrites mainFile; serialize read/modify/write
-            // without invalidating unchanged completion symbols.
-            "set_settings" => out(self.with_project(s("id")?, |root, _| {
+            // A rename also rewrites mainFile; serialize read/modify/write.
+            "set_settings" => out(self.with_project(s("id")?, |root| {
                 settings::write_settings(root, &arg(args, "patch")?)
             })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
@@ -459,27 +387,24 @@ impl Service {
             // the file.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
-                out(self.with_project(s("id")?, |root, symbols| {
-                    let rel = paths::rel_key(path)?;
+                out(self.with_project(s("id")?, |root| {
                     let abs = paths::safe_write_path(root, path)?;
-                    projects::write_creating(&abs, text.as_bytes())?;
-                    symbols.invalidate_file(root, &rel);
-                    Ok(())
+                    projects::write_creating(&abs, text.as_bytes())
                 })?)
             }
             "create_entry" => {
                 let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
-                out(self.edit(s("id")?, |root| {
+                out(self.with_project(s("id")?, |root| {
                     projects::create_file(root, path, dir.unwrap_or(false))
                 })?)
             }
             "rename_entry" => {
                 let (from, to) = (s("from")?, s("to")?);
-                out(self.edit(s("id")?, |root| projects::rename_entry(root, from, to))?)
+                out(self.with_project(s("id")?, |root| projects::rename_entry(root, from, to))?)
             }
             "delete_entry" => {
                 let path = s("path")?;
-                out(self.edit(s("id")?, |root| projects::delete_entry(root, path))?)
+                out(self.with_project(s("id")?, |root| projects::delete_entry(root, path))?)
             }
             "validate_uploads" => out(self.validate_uploads(
                 s("id")?,

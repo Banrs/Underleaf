@@ -1,7 +1,9 @@
 //! SyncTeX queries: editor line to PDF position, and back.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Serialize;
 
 use crate::compile::{run, PROBE_TIMEOUT};
@@ -9,6 +11,12 @@ use crate::error::CoreError;
 use crate::paths::{rel_to_root, safe_rel_file};
 use crate::settings::compiled_pdf_path;
 use crate::BUILD_DIR;
+
+// Consume commands, control symbols and comments before matching printed
+// characters. Escaped specials print; ordinary grouping braces do not.
+static PRINTED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:\p{Alphabetic}[\p{Alphabetic}@]*|(?P<escaped>[^\s\\])|[\s\\])|%.*|(?P<glyph>[^\s{}\\%])").unwrap()
+});
 
 /// Only `page` is required. The rest are omitted when synctex didn't report
 /// them, because the PDF viewer falls back with `??` — which fires on an
@@ -279,52 +287,37 @@ fn find_word(
     let lead = letters.iter().take_while(|c| !c.is_alphanumeric()).count();
     let end = letters.iter().rposition(|c| c.is_alphanumeric())? + 1;
     let (letters, clicked) = (&letters[lead..end], clicked.clamp(lead, end - 1) - lead);
-    // The lines round `line` as (line, column, character), each ended by a break.
+    // Printed characters near the recorded line, with their original UTF-16
+    // positions and word boundaries. Formatting has no glyphs in the PDF.
     let first = line.saturating_sub(REACH).max(1);
-    let source: Vec<(u32, u32, char)> = text
+    let mut printed = Vec::new();
+    for (text, n) in text
         .lines()
         .zip(1..)
         .skip(first as usize - 1)
         .take_while(|&(_, n)| n <= line.saturating_add(REACH))
-        .flat_map(|(text, n)| {
-            text.chars().chain(['\n']).scan(0, move |at, c| {
-                *at += c.len_utf16() as u32;
-                Some((n, *at - c.len_utf16() as u32, c))
-            })
-        })
-        .collect();
-    // Formatting commands and braces have no PDF glyphs. Keep source indices
-    // so a match still returns the original UTF-16 column.
-    let mut printed = Vec::new();
-    let mut i = 0;
-    while i < source.len() {
-        let c = source[i].2;
-        if c == '\\' {
-            i += 1;
-            if source.get(i).is_some_and(|c| c.2.is_alphabetic()) {
-                while source
-                    .get(i)
-                    .is_some_and(|c| c.2.is_alphabetic() || c.2 == '@')
-                {
-                    i += 1;
-                }
-                continue;
+    {
+        let (mut at, mut column) = (0, 0);
+        for token in PRINTED.captures_iter(text) {
+            if let Some(glyph) = token.name("escaped").or_else(|| token.name("glyph")) {
+                column += text[at..glyph.start()].encode_utf16().count() as u32;
+                at = glyph.start();
+                let starts_word = text[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '\\'));
+                let ends_word = text[glyph.end()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_alphanumeric());
+                printed.push((
+                    (n, column),
+                    glyph.as_str().chars().next().unwrap(),
+                    starts_word,
+                    ends_word,
+                ));
             }
-            if source
-                .get(i)
-                .is_some_and(|c| !c.2.is_whitespace() && c.2 != '\\')
-            {
-                printed.push(i);
-            }
-        } else if c == '%' {
-            while source.get(i).is_some_and(|c| c.2 != '\n') {
-                i += 1;
-            }
-            continue;
-        } else if !c.is_whitespace() && c != '{' && c != '}' {
-            printed.push(i);
         }
-        i += 1;
     }
     // PDF line-end hyphens are optional: they can be discretionary glyphs
     // (re-\nmain), but a real source hyphen must still match.
@@ -374,7 +367,7 @@ fn find_word(
             return 0;
         };
         let before = matching_context_chars(
-            printed[..k].iter().rev().map(|&i| source[i].2),
+            printed[..k].iter().rev().map(|c| c.1),
             context[..*start]
                 .iter()
                 .rev()
@@ -382,38 +375,31 @@ fn find_word(
         );
         let end = start + letters.len();
         let after = matching_context_chars(
-            printed[k + letters.len()..].iter().map(|&i| source[i].2),
+            printed[k + letters.len()..].iter().map(|c| c.1),
             context[end..].iter().map(|&(c, optional)| (c, optional)),
         );
         before + after
     };
-    let candidates = printed.windows(letters.len()).enumerate()
-        .filter(|(_, indices)| {
-            let (from, to) = (indices[0], indices[indices.len() - 1]);
-            indices.iter().map(|&i| source[i].2).eq(letters.iter().copied())
+    let mut candidates: Vec<_> = printed
+        .windows(letters.len())
+        .enumerate()
+        .filter(|(_, chars)| {
+            chars.iter().map(|c| c.1).eq(letters.iter().copied())
                 // Not part of a longer word, nor a command's name.
-                && (from == 0 || !(source[from - 1].2.is_alphanumeric() || source[from - 1].2 == '\\'))
-                && !source.get(to + 1).is_some_and(|c| c.2.is_alphanumeric())
+                && chars[0].2 && chars[chars.len() - 1].3
         })
-        .map(|(k, indices)| {
-            let (n, column, _) = source[indices[clicked]];
-            ((std::cmp::Reverse(score(k)), n.abs_diff(line), n > line), (n, column))
-        });
-    let mut best = None;
-    let mut tied = false;
-    for candidate in candidates {
-        match best {
-            Some((rank, _)) if candidate.0 > rank => {}
-            Some((rank, _)) if candidate.0 == rank => tied = true,
-            _ => {
-                best = Some(candidate);
-                tied = false;
-            }
-        }
-    }
+        .map(|(k, chars)| {
+            let (n, column) = chars[clicked].0;
+            (
+                (std::cmp::Reverse(score(k)), n.abs_diff(line), n > line),
+                (n, column),
+            )
+        })
+        .collect();
+    candidates.sort_by_key(|c| c.0);
+    let (rank, loc) = *candidates.first()?;
     // Ambiguous context must not move the caret to an arbitrary occurrence.
-    best.filter(|_| context.is_none() || !tied)
-        .map(|(_, loc)| loc)
+    (context.is_none() || candidates.get(1).is_none_or(|c| c.0 != rank)).then_some(loc)
 }
 
 fn is_hyphen(c: char) -> bool {

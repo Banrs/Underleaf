@@ -133,40 +133,31 @@ pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<Snip
         .take_while(|&&u| is(u, ' ') || is(u, '\t'))
         .count();
     let indentation = String::from_utf16_lossy(&line[..indent]);
-    let (mut text, mut fields, mut names) = (String::new(), Vec::new(), Vec::<&str>::new());
-    for (n, line) in snippet.split('\n').enumerate() {
-        let tabs = if n == 0 {
-            0
-        } else {
-            line.len() - line.trim_start_matches('\t').len()
-        };
-        if n > 0 {
-            text += &format!("\n{indentation}{}", "  ".repeat(tabs));
-        }
-        let line = &line[tabs..];
-        let mut last = 0;
-        for c in FIELD.captures_iter(line) {
-            let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
-            text += &line[last..whole.start()];
-            // Unnamed fields are each their own.
-            let index = match names.iter().position(|&n| !name.is_empty() && n == name) {
-                Some(index) => index,
-                None => {
-                    names.push(name);
-                    names.len() - 1
-                }
-            };
-            fields.push(SnippetField {
-                start: utf16(&text) as u32,
-                length: utf16(name) as u32,
-                index: index as u32,
+    // Catalog tabs are indentation; preserve any tabs in the source's indent.
+    let snippet = snippet
+        .replace('\t', "  ")
+        .replace('\n', &format!("\n{indentation}"));
+    let mut names = Vec::new();
+    let mut fields = Vec::new();
+    let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
+        let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
+        // Unnamed fields are each their own.
+        let index = names
+            .iter()
+            .position(|previous| !name.is_empty() && previous == name)
+            .unwrap_or_else(|| {
+                names.push(name.to_owned());
+                names.len() - 1
             });
-            text += name;
-            last = whole.end();
-        }
-        text += &line[last..];
-    }
-    (text, fields)
+        fields.push(SnippetField {
+            // Each earlier field lost its three delimiters: "#{" and "}".
+            start: (utf16(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
+            length: utf16(name) as u32,
+            index: index as u32,
+        });
+        name.to_owned()
+    });
+    (text.into_owned(), fields)
 }
 
 #[cfg(test)]
@@ -205,6 +196,16 @@ mod tests {
                 .map(|f| (f.start, f.length))
                 .collect::<Vec<_>>(),
             [(12, 0)]
+        );
+        let (text, fields) =
+            super::expand(&crate::Text::new("\t\\beg"), 5, "#{😀}\n\t#{}#{é}#{😀}#{}");
+        assert_eq!(text, "😀\n\t  é😀");
+        assert_eq!(
+            fields
+                .iter()
+                .map(|f| (f.start, f.length, f.index))
+                .collect::<Vec<_>>(),
+            [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
         );
     }
 

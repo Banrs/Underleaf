@@ -38,8 +38,6 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     file.write_all(bytes)?;
     file.sync_all()?;
-    // Closed before the rename, which Windows needs.
-    drop(file);
     temp.persist(&target).map_err(|err| err.error)
 }
 

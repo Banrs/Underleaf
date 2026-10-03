@@ -13,11 +13,7 @@ fn open_file_aliases_keep_the_whole_document() {
     .unwrap();
     fs::write(dir.path().join("chapters/one.tex"), "\\section{One}").unwrap();
     let expected = analyze_project(dir.path(), "main.tex", "chapters/one.tex");
-    for open in [
-        "./chapters/one.tex",
-        "chapters\\one.tex",
-        "chapters/../chapters/one.tex",
-    ] {
+    for open in ["./chapters/one.tex", "chapters/../chapters/one.tex"] {
         assert_eq!(
             analyze_project(dir.path(), "main.tex", open),
             expected,

@@ -4,90 +4,35 @@
 //! project.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::error::CoreError;
 use crate::{BUILD_DIR, SETTINGS_FILE};
 
-/// True for `/x`, `\\x`, and `C:...` forms — anything that doesn't stay
-/// relative to the base it's joined onto.
-pub(crate) fn is_absolute_like(rel: &str) -> bool {
-    let b = rel.as_bytes();
-    rel.starts_with('/')
-        || rel.starts_with('\\')
-        || (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic())
-}
-
-#[cfg(windows)]
-fn invalid_windows_segment(segment: &str) -> bool {
-    if segment.ends_with(' ') || segment.ends_with('.') {
-        return true;
-    }
-    if segment
-        .chars()
-        .any(|c| c <= '\u{1f}' || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
-    {
-        return true;
-    }
-
-    // Device names are reserved even when an extension is present (CON.tex,
-    // LPT1.log, and so on).
-    let stem = segment
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) || stem
-        .strip_prefix("COM")
-        .or_else(|| stem.strip_prefix("LPT"))
-        .is_some_and(|n| {
-            matches!(
-                n,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-            )
-        })
-}
-
-fn validate_platform_segment(segment: &str, error: &str) -> Result<(), CoreError> {
-    #[cfg(windows)]
-    if invalid_windows_segment(segment) {
-        return Err(CoreError::bad_request(error));
-    }
-    let _ = (segment, error);
-    Ok(())
-}
-
-/// Split a relative path into normalized segments, accepting either separator.
+/// Split a relative path into normalized segments.
 /// `.` segments drop out; `..` pops — popping past the start is an escape.
 /// Returns an empty vec for inputs that normalize to the base itself.
 fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>, CoreError> {
-    if is_absolute_like(rel) {
-        return Err(CoreError::bad_request(escape_err));
-    }
     let mut segments = Vec::new();
-    for seg in rel.split(['/', '\\']) {
-        match seg {
-            "" | "." => {}
-            ".." => {
+    for component in Path::new(rel).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
                 if segments.pop().is_none() {
                     return Err(CoreError::bad_request(escape_err));
                 }
             }
-            _ => {
-                validate_platform_segment(seg, escape_err)?;
-                segments.push(seg);
-            }
+            // Components of a UTF-8 input are themselves UTF-8.
+            Component::Normal(segment) => segments.push(segment.to_str().unwrap()),
+            _ => return Err(CoreError::bad_request(escape_err)),
         }
     }
     Ok(segments)
 }
 
 /// Resolve only the closest path component that already exists. This retains
-/// lexical path semantics for new files while preventing an existing symlink or
-/// junction from redirecting the final operation outside `root`.
+/// lexical path semantics for new files while preventing an existing symlink
+/// from redirecting the final operation outside `root`.
 fn ensure_existing_ancestor_within(
     root: &Path,
     target: &Path,
@@ -142,8 +87,8 @@ pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
 /// Normalized project-relative segments for a user-supplied path, with the
 /// reserved-settings-file rule: `.texlocal.json` at the project root is only
 /// writable through write_settings, which validates each key. Its case
-/// aliases are reserved on every platform, since Windows and macOS volumes are
-/// usually case-insensitive and the boundary must not depend on the volume.
+/// aliases are reserved since macOS volumes are usually case-insensitive and
+/// the boundary must not depend on the volume.
 fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if rel.is_empty() {
         return Err(CoreError::bad_request("Missing path"));
@@ -185,9 +130,9 @@ pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     join_within(root, &segments)
 }
 
-/// A path as the volume compares it: macOS's and Windows' ignore case.
+/// A path as the volume compares it: macOS volumes usually ignore case.
 pub(crate) fn fold_case(path: &str) -> String {
-    if cfg!(any(windows, target_os = "macos")) {
+    if cfg!(target_os = "macos") {
         path.to_lowercase()
     } else {
         path.to_owned()
@@ -217,24 +162,16 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
 }
 
 pub fn sanitize_name(name: &str) -> Result<String, CoreError> {
-    const STRIP: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-    let clean: String = name
-        .trim()
-        .chars()
-        .filter(|c| !STRIP.contains(c))
-        .take(80)
-        .collect();
+    let clean: String = name.trim().chars().filter(|&c| c != '/').take(80).collect();
     if clean.is_empty() || clean.starts_with('.') {
         return Err(CoreError::bad_request("Invalid name"));
     }
-    validate_platform_segment(&clean, "Invalid name")?;
     Ok(clean)
 }
 
 /// Lexically normalize an absolute path (resolve `.` and `..` without touching
 /// the filesystem), for mapping tool output back into a project.
 fn normalize_abs(path: &Path) -> PathBuf {
-    use std::path::Component;
     let mut out = PathBuf::new();
     for c in path.components() {
         match c {
