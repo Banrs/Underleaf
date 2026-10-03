@@ -364,6 +364,23 @@ final class SyncPDFView: PDFView {
         }
     }
 
+    /// A divider or window drag refits the page each step, and every step would flash the
+    /// overlay scrollers; they stay out of sight until the drag ends. Legacy scrollers stay.
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        showScrollers(NSScroller.preferredScrollerStyle != .overlay)
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        showScrollers(true)
+    }
+
+    private func showScrollers(_ shown: Bool) {
+        guard let scroll = documentView?.enclosingScrollView else { return }
+        for scroller in [scroll.verticalScroller, scroll.horizontalScroller] { scroller?.alphaValue = shown ? 1 : 0 }
+    }
+
     /// Allow the scaled page-break margin when checking the first page's top.
     private var atDocumentStart: Bool {
         guard let page = document?.page(at: 0) else { return false }
