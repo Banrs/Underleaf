@@ -352,6 +352,25 @@ struct PDFFindTests {
         #expect(controller.matches.count == 1)
     }
 
+    /// Typing back to the found text while a longer one is searched ends with the field's matches.
+    @Test func typingBackKeepsTheFieldsMatches() async throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["a ab a"]))
+        controller.finding = true
+        controller.findText = "a"
+        controller.findTyped()
+        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
+        controller.findText = "ab"
+        controller.findTyped()
+        controller.findText = "a"
+        controller.findTyped()
+        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
+        // The longer search, had it gone on, would have ended by now.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(controller.query == "a" && controller.matches.count == 3)
+    }
+
     /// A double-click sends the word, and where in it the click fell.
     @Test func aClickSendsTheWordAndTheLetter() throws {
         let pdf = try document(["alpha beta"]), page = try #require(pdf.page(at: 0))

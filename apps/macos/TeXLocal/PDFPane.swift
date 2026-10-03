@@ -63,9 +63,7 @@ struct PDFFindBar: View {
                 searched: controller.query, step: controller.step, close: controller.closeFind)
             .task(id: controller.findText) {
                 try? await Task.sleep(for: PDFFind.debounce)
-                if !Task.isCancelled, PDFFind.normalize(controller.findText) != controller.query {
-                    controller.find(controller.findText)
-                }
+                if !Task.isCancelled { controller.findTyped() }
             }
     }
 }

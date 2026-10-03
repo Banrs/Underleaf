@@ -147,6 +147,11 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         search?.document.cancelFindString()
     }
 
+    /// Once typing pauses: the field's text, unless it is what's being searched or was found.
+    func findTyped() {
+        if PDFFind.normalize(findText) != search?.query ?? query { find(findText) }
+    }
+
     /// During rebuild, keep the selected match and page where possible.
     func find(_ value: String, keepingPlace: Bool = false) {
         guard let document = view.document else { return }
