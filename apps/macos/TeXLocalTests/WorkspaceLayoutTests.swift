@@ -386,6 +386,8 @@ final class WorkspaceLayoutTests {
         pdf.show(try #require(PDFDocument(data: page.dataWithPDF(inside: page.bounds))))
         // Fitted to the column once it has its width.
         try await waitUntil { pdf.zoomLabel != "100%" }
+        // A document keeps the cap: three digits at most.
+        #expect(pdf.widestZoomLabel == "999%")
         for scale in [pdf.view.minScaleFactor, 0.5, 0.95, 1, pdf.view.maxScaleFactor] {
             pdf.setScale(scale)
             try await waitUntil { abs(pdf.scale - scale) < 0.001 && zoom.label(forSegment: 1) == pdf.zoomLabel } state: {
@@ -394,6 +396,12 @@ final class WorkspaceLayoutTests {
             window?.layoutIfNeeded()
             #expect(zoom.intrinsicContentSize.width == width, "\(pdf.zoomLabel)")
         }
+        // Zoom In stops there.
+        pdf.setScale(9.5)
+        try await waitUntil { pdf.zoomLabel == "950%" }
+        pdf.zoom(in: true)
+        try await waitUntil { pdf.zoomLabel != "950%" }
+        #expect(pdf.zoomLabel == "999%")
     }
 }
 

@@ -44,6 +44,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
+    /// 999%, so the toolbar's scale reserves a three-digit label's width (`widestZoomLabel`):
+    /// PDFKit would go to 10,000%, and Pages' zoom stops at 400%.
+    private static let maxScale: CGFloat = 9.99
     private static func label(_ scale: CGFloat) -> String {
         Double(scale).formatted(.percent.precision(.fractionLength(0)))
     }
@@ -55,10 +58,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         super.init()
         // Preview's canvas color; the PDF's paper keeps its own colors.
         view.backgroundColor = .controlBackgroundColor
-        // The range PDFKit gives a document (27.2), from the start, so the toolbar's scale keeps
-        // one width before the first PDF (`widestZoomLabel`). Before fitting, which a set
-        // limit turns off.
-        view.maxScaleFactor = 100
+        // From before the first PDF, so the toolbar reserves its scale's width from the start.
+        // Before fitting, which a set limit turns off.
+        view.maxScaleFactor = Self.maxScale
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
@@ -223,6 +225,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
+        // A document resets the limit (27.2).
+        view.maxScaleFactor = Self.maxScale
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
