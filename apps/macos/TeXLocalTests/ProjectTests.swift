@@ -465,6 +465,27 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// The Dock icon's menu lists the recent projects still in the library, newest first,
+    /// as Pages and Xcode list their recent documents; one opens as from Home, its window
+    /// brought forward. With none, the Dock shows only its own items.
+    @Test(.timeLimit(.minutes(1)))
+    func theDockMenuOpensARecentProject() async throws {
+        let first = try await project("first").info, second = try await project("second").info
+        await app.refresh()
+        var shown = 0
+        let dock = DockMenu(app: app) { shown += 1 }
+        app.recentProjects = []
+        #expect(dock.menu == nil)
+        app.recentProjects = [second.id, "Gone", first.id]
+        let menu = try #require(dock.menu)
+        #expect(menu.items.map(\.title) == [second.name, first.name])
+        menu.performActionForItem(at: 1)
+        try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
+        #expect(shown == 1 && app.recentProjects.first == first.id)
+        #expect(NSApp.delegate?.responds(to: #selector(NSApplicationDelegate.applicationDockMenu(_:))) == true)
+        await app.close()
+    }
+
     /// New items are "untitled.tex" and "untitled folder", numbered past the names taken
     /// where they go as Finder numbers them, another app's too before the tree has them.
     /// A new file opens, without the keyboard, which goes to its name.
