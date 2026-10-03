@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
@@ -12,6 +13,9 @@ struct SettingsView: View {
         Form {
             Section("Editor") {
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                Picker("Colour Theme", selection: $syntaxTheme) {
+                    ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
+                }
             }
             Section("PDF") {
                 Picker(selection: $pdfPaper) {

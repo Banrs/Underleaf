@@ -278,6 +278,10 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func setFontSize(_ size: Int) {
         textView.fontSize = CGFloat(size)
     }
+
+    func setSyntaxTheme(_ theme: SyntaxTheme) {
+        textView.syntaxTheme = theme
+    }
 }
 
 /// Reuse the editor's scroll view across SwiftUI updates and beneath the bars,
@@ -302,7 +306,7 @@ enum EditorCommand {
 }
 
 enum EditorPrefs {
-    static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck"
+    static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck", syntaxThemeKey = "editorSyntaxTheme"
     static let fontSize = Int(NSFont.systemFontSize)
 
     /// Edit › Spelling and Grammar › Check Spelling While Typing, as last set; on at first.

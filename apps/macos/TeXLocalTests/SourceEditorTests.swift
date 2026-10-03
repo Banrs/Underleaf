@@ -369,20 +369,38 @@ struct SourceEditorTests {
         return window
     }
 
+    /// The colour the editor draws `word` in, once laid out.
+    private func colour(of word: String) throws -> NSColor? {
+        let manager = try #require(text.textLayoutManager)
+        manager.textViewportLayoutController.layoutViewport()
+        let range = try #require(text.textRange((text.string as NSString).range(of: word)))
+        var colour: NSColor?
+        manager.enumerateRenderingAttributes(from: range.location, reverse: false) { _, attributes, _ in
+            colour = attributes[.foregroundColor] as? NSColor
+            return false
+        }
+        return colour
+    }
+
     /// A new line shows its colours once laid out, without the caret moving again.
     @Test func newLinesAreColoured() throws {
         _ = inWindow()
         open("x")
         text.insertText("\n\\section", replacementRange: typed)
-        let manager = try #require(text.textLayoutManager)
-        manager.textViewportLayoutController.layoutViewport()
-        let command = try #require(text.textRange((text.string as NSString).range(of: "\\section")))
-        var colour: NSColor?
-        manager.enumerateRenderingAttributes(from: command.location, reverse: false) { _, attributes, _ in
-            colour = attributes[.foregroundColor] as? NSColor
-            return false
-        }
-        #expect(colour == .syntaxCommand)
+        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
+    }
+
+    /// Choosing another colour theme recolours what is open.
+    @Test func aThemeRecoloursTheText() throws {
+        _ = inWindow()
+        open("\\section{A} % note")
+        editor.setSyntaxTheme(.texstudio)
+        #expect(try colour(of: "\\section") == SyntaxTheme.texstudio.colours.command)
+        #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
+        editor.setSyntaxTheme(.system)
+        #expect(try colour(of: "\\section") == NSColor.systemPink)
+        editor.setSyntaxTheme(.overleaf)
+        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
     }
 
     /// A double-click goes to the PDF from the word it selects; a single click only places the caret.

@@ -5,19 +5,20 @@ enum CompletionKind {
     case command, environment, label, citation, entryType
 
     /// A letter on a coloured square, as Xcode's kinds; the colour is the editor's for the same text.
-    var badge: (symbol: String, color: NSColor, name: String) {
-        switch self {
-        case .command: ("c.square.fill", .syntaxCommand, String(localized: "Command"))
-        case .environment: ("e.square.fill", .syntaxArgument, String(localized: "Environment"))
-        case .label: ("l.square.fill", .syntaxArgument, String(localized: "Label"))
-        case .citation: ("b.square.fill", .syntaxArgument, String(localized: "Citation"))
-        case .entryType: ("t.square.fill", .syntaxKeyword, String(localized: "Entry Type"))
+    func badge(in theme: SyntaxTheme) -> (symbol: String, color: NSColor, name: String) {
+        let colours = theme.colours
+        return switch self {
+        case .command: ("c.square.fill", colours.command, String(localized: "Command"))
+        case .environment: ("e.square.fill", colours.argument, String(localized: "Environment"))
+        case .label: ("l.square.fill", colours.argument, String(localized: "Label"))
+        case .citation: ("b.square.fill", colours.argument, String(localized: "Citation"))
+        case .entryType: ("t.square.fill", colours.keyword, String(localized: "Entry Type"))
         }
     }
 }
 
 private extension NSColor {
-    /// A badge's letter: white on Light's deep squares, near-black on Overleaf Dark's pale ones.
+    /// A badge's letter: white on Light's deep squares, near-black on Dark's pale ones.
     static let badgeLetter = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.1, alpha: 1) : .white }
 }
 
@@ -34,6 +35,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private let scroll = NSScrollView()
     private var rows: [(label: String, kind: CompletionKind)] = []
     private var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    private var theme = SyntaxTheme.overleaf
     /// The table's own row height, for the system font.
     private let systemRowHeight: CGFloat
     /// At most this many rows show; the rest scroll.
@@ -67,9 +69,10 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Shows `rows` in `font` with the first selected, the labels' text under
     /// the typed text's start, `start`: a screen rect of `window`'s. Without a
     /// window it holds them unseen.
-    func show(_ rows: [(label: String, kind: CompletionKind)], font: NSFont, under start: NSRect, in window: NSWindow?) {
+    func show(_ rows: [(label: String, kind: CompletionKind)], font: NSFont, theme: SyntaxTheme, under start: NSRect, in window: NSWindow?) {
         self.rows = rows
         self.font = font
+        self.theme = theme
         let line = { (font: NSFont) in (font.ascender - font.descender + font.leading).rounded(.up) }
         table.rowHeight = systemRowHeight + max(0, line(font) - line(.systemFont(ofSize: NSFont.systemFontSize)))
         table.reloadData()
@@ -146,7 +149,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: Cell.identifier, owner: nil) as? Cell ?? Cell()
-        let (label, kind) = rows[row], badge = kind.badge
+        let (label, kind) = rows[row], badge = kind.badge(in: theme)
         cell.textField?.stringValue = label
         cell.textField?.font = font
         cell.imageView?.image = NSImage(systemSymbolName: badge.symbol, accessibilityDescription: badge.name)?

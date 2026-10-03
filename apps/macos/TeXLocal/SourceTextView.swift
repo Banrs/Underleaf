@@ -113,6 +113,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return position + shift
     }
 
+    // MARK: the colours
+
+    /// Settings' Colour Theme.
+    var syntaxTheme = SyntaxTheme.overleaf {
+        didSet {
+            guard syntaxTheme != oldValue else { return }
+            recolour()
+        }
+    }
+
     // MARK: the font
 
     /// Settings' size; the weight follows the appearance.
@@ -294,7 +304,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         guard let whole = textRange(NSRange(location: start, length: end - start)) else { return }
         manager.removeRenderingAttribute(.foregroundColor, for: whole)
         for run in document.highlights(in: NSRange(location: start, length: end - start)) {
-            if let r = textRange(run.range) { manager.addRenderingAttribute(.foregroundColor, value: run.kind.color, for: r) }
+            if let r = textRange(run.range) { manager.addRenderingAttribute(.foregroundColor, value: run.kind.color(in: syntaxTheme), for: r) }
         }
         coloured = start..<end
     }
@@ -621,7 +631,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             return (item.label, kind)
         }
         completionList.show(rows, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                            under: start, in: host)
+                            theme: syntaxTheme, under: start, in: host)
         // Out of the list's way.
         if host != nil { previewMath() }
     }
@@ -797,42 +807,87 @@ extension NSColor {
                                        NSColor(srgbRed: 0.317647, green: 0.356862, blue: 0.439215, alpha: 1))
 }
 
-/// Overleaf's syntax colours, from its source editor's themes (services/web/frontend/js/features/source-editor/
-/// themes/cm6/): "textmate", its default, in Light and "overleaf_dark", its default in Dark, with the lezer
-/// tags extensions/class-highlighter.ts and languages/latex/latex-language.ts give LaTeX's nodes.
-/// Overleaf's text is black / #F8F8F2 and its braces, brackets and numbers outside maths are plain, so ours are too.
-extension NSColor {
-    private static func overleaf(_ light: UInt32, _ dark: UInt32) -> NSColor {
-        func rgb(_ hex: UInt32) -> NSColor {
+/// The editor's syntax colours: Settings' Colour Theme. Text, braces and brackets are plain in all of them.
+enum SyntaxTheme: String, CaseIterable, Identifiable {
+    case overleaf, texstudio, system
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .overleaf: "Overleaf"
+        case .texstudio: "TeXstudio"
+        case .system: "System"
+        }
+    }
+
+    struct Colours {
+        /// `\command`, `\begin`, `\end`, escapes.
+        let command: NSColor
+        /// `\documentclass`, `\cite` and the like; for now only BibTeX's `@article` badge.
+        let keyword: NSColor
+        /// Environment, label, reference, citation, file and package-option names.
+        let argument: NSColor
+        /// Maths' delimiters and what is in it, verbatim.
+        let maths: NSColor
+        let comment: NSColor
+        /// Foreground only: a stray brace, what maths can't hold.
+        let invalid: NSColor
+    }
+
+    var colours: Colours {
+        switch self {
+        case .overleaf: Self.overleafColours
+        case .texstudio: Self.texstudioColours
+        case .system: Self.systemColours
+        }
+    }
+
+    private static func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
+        func srgb(_ hex: UInt32) -> NSColor {
             NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
         }
-        let light = rgb(light), dark = rgb(dark)
+        let light = srgb(light), dark = srgb(dark)
         return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
     }
 
-    /// .tok-typeName (`\command`, `\begin`, `\end`): `blue` / #8BE9FD (italic in Overleaf Dark).
-    static let syntaxCommand = overleaf(0x0000FF, 0x8BE9FD)
-    /// .tok-keyword (`\documentclass`, `\cite`, `\ref`, `\label`, `~`, `&`, `\\`; BibTeX's `@article`): `blue` / #FF79C6.
-    static let syntaxKeyword = overleaf(0x0000FF, 0xFF79C6)
-    /// .tok-attributeValue (environment, label, reference, citation, file and package-option names): rgb(49,132,149) / #FFB86C (italic in Dark).
-    static let syntaxArgument = overleaf(0x318495, 0xFFB86C)
-    /// .tok-string (maths' `$` and what is in it, verbatim): rgb(3,106,7) / #F1FA8C.
-    static let syntaxMaths = overleaf(0x036A07, 0xF1FA8C)
-    /// .tok-comment: rgb(76,136,107) / #6272A4.
-    static let syntaxComment = overleaf(0x4C886B, 0x6272A4)
-    /// .tok-invalid: `red` / #FF79C6, which Dark fills behind #F8F8F0 text; Light tints behind at 10%. Neither fill is drawn here.
-    static let syntaxInvalid = overleaf(0xFF0000, 0xFF79C6)
+    /// Overleaf's source editor themes (services/web/frontend/js/features/source-editor/themes/cm6/): "textmate",
+    /// its default, in Light and "overleaf_dark" in Dark, with the lezer tags extensions/class-highlighter.ts and
+    /// languages/latex/latex-language.ts give LaTeX's nodes. Its text is black / #F8F8F2.
+    /// command: .tok-typeName (`\command`, `\begin`, `\end`), italic in Dark here only; keyword: .tok-keyword
+    /// (`\documentclass`, `\cite`, `\ref`, `\label`, `~`, `&`, `\\`; BibTeX's `@article`); argument: .tok-attributeValue,
+    /// italic in Dark; maths: .tok-string; comment: .tok-comment; invalid: .tok-invalid, which Dark fills behind
+    /// #F8F8F0 text and Light tints behind at 10%.
+    private static let overleafColours = Colours(
+        command: rgb(0x0000FF, 0x8BE9FD), keyword: rgb(0x0000FF, 0xFF79C6), argument: rgb(0x318495, 0xFFB86C),
+        maths: rgb(0x036A07, 0xF1FA8C), comment: rgb(0x4C886B, 0x6272A4), invalid: rgb(0xFF0000, 0xFF79C6))
+
+    /// TeXstudio's own formats, utilities/qxs/defaultFormats.qxf (Light) and defaultFormatsDark.qxf (Dark), with
+    /// which format the LaTeX highlighter gives what from utilities/qxs/tex.qnfa and samples/colortest.tex.
+    /// command: "keyword"; keyword: "extra-keyword" (bold there), TeXstudio's `\begin`, `\end` and sectioning;
+    /// argument: "referencePresent", "citationPresent" and "packagePresent", which are one colour (its environment
+    /// names are #000080 / #60CDF2, which Dark shares with its commands); maths: "math-delimiter";
+    /// comment: "comment"; invalid: "braceMismatch", which fills #C00000 behind #FFFF7F text in Light and #8D0B0B
+    /// behind #F2F218 in Dark; the fill is not drawn here, so Light takes the fill and Dark the text.
+    private static let texstudioColours = Colours(
+        command: rgb(0x800000, 0x60CDF2), keyword: rgb(0x0095FF, 0xA960F2), argument: rgb(0x008000, 0x60F260),
+        maths: rgb(0x509600, 0x85F218), comment: rgb(0x808080, 0x667299), invalid: rgb(0xC00000, 0xF2F218))
+
+    /// The system's colours, which follow the accent and appearance; what the editor used before Overleaf's.
+    private static let systemColours = Colours(
+        command: .systemPink, keyword: .systemBrown, argument: .systemTeal,
+        maths: .systemPurple, comment: .secondaryLabelColor, invalid: .systemRed)
 }
 
 private extension HighlightKind {
-    var color: NSColor {
-        switch self {
-        case .command: .syntaxCommand
-        case .argument: .syntaxArgument
-        case .mathDelimiter, .mathIdentifier, .number, .stringLiteral: .syntaxMaths
-        case .builtin: .syntaxArgument
-        case .comment: .syntaxComment
-        case .invalid: .syntaxInvalid
+    func color(in theme: SyntaxTheme) -> NSColor {
+        let colours = theme.colours
+        return switch self {
+        case .command: colours.command
+        case .argument, .builtin: colours.argument
+        case .mathDelimiter, .mathIdentifier, .number, .stringLiteral: colours.maths
+        case .comment: colours.comment
+        case .invalid: colours.invalid
         }
     }
 }

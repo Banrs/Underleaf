@@ -174,22 +174,41 @@ Math delimiters get the preprocessor colour because they switch mode the way a
 preprocessor directive does, and having them stand out is worth more here than
 category purity.
 
-**The Mac editor uses Overleaf's colours instead**, from its source editor's
-themes (`themes/cm6/textmate.json`, its default, and `overleaf_dark.json`, its default in
-dark; the node-to-tag mapping is `languages/latex/latex-language.ts`), defined once in
-`SourceTextView.swift` (`NSColor.syntax…`) and shared with the completion badges:
+**The Mac editor's syntax colours are a choice**, Settings › Editor › Colour Theme,
+defined once as `SyntaxTheme` in `SourceTextView.swift` and shared with the completion
+badges. Overleaf is the default; each theme gives the six colours below in Light and Dark.
+Text, braces and brackets are plain in all of them, and none draws bold or italic.
 
-| Our token | Overleaf tag | Light | Dark |
+| Our token | Overleaf | TeXstudio | System |
 | --- | --- | --- | --- |
-| command (`\x`, escapes, `\\`, maths' `^ _ &`) | typeName | `#0000FF` | `#8BE9FD` |
-| BibTeX entry type (badge only) | keyword | `#0000FF` | `#FF79C6` |
-| environment, package, label, reference, citation, `\importmodule`'s second argument; numbers in text | attributeValue | `#318495` | `#FFB86C` |
-| maths delimiters, letters and numbers in maths, `\importmodule`'s first argument | string | `#036A07` | `#F1FA8C` |
-| comment | comment | `#4C886B` | `#6272A4` |
-| stray brace, what maths can't hold | invalid (foreground only) | `#FF0000` | `#FF79C6` |
+| command (`\x`, `\begin`, `\end`, escapes, `\\`, maths' `^ _ &`) | `#0000FF` / `#8BE9FD` | `#800000` / `#60CDF2` | pink |
+| keyword (BibTeX entry type, badge only) | `#0000FF` / `#FF79C6` | `#0095FF` / `#A960F2` | brown |
+| argument (environment, package, label, reference, citation, `\importmodule`'s second argument; numbers in text) | `#318495` / `#FFB86C` | `#008000` / `#60F260` | teal |
+| maths (delimiters, letters and numbers in maths, verbatim, `\importmodule`'s first argument) | `#036A07` / `#F1FA8C` | `#509600` / `#85F218` | purple |
+| comment | `#4C886B` / `#6272A4` | `#808080` / `#667299` | secondary label |
+| invalid (stray brace, what maths can't hold; foreground only) | `#FF0000` / `#FF79C6` | `#C00000` / `#F2F218` | red |
 
-Text, braces and brackets are plain, as Overleaf's. Overleaf Dark also sets commands and
-attribute values in italic; the Mac editor does not.
+Sources, light / dark:
+
+- **Overleaf**: the source editor's themes (`themes/cm6/textmate.json`, its default, and
+  `overleaf_dark.json`); the node-to-tag mapping is `languages/latex/latex-language.ts`.
+  Tags: typeName, keyword, attributeValue, string, comment, invalid. Overleaf Dark also sets
+  commands and attribute values in italic.
+- **TeXstudio** (texstudio-org/texstudio, `utilities/qxs/`): `defaultFormats.qxf` and its own
+  `defaultFormatsDark.qxf`; which format the LaTeX highlighter gives what is in `tex.qnfa` and
+  `samples/colortest.tex`. Formats: keyword, extra-keyword (bold there; `\begin`, `\end`,
+  sectioning), referencePresent / citationPresent / packagePresent (one colour), math-delimiter,
+  comment, braceMismatch. TeXstudio fills braceMismatch (`#C00000` behind `#FFFF7F`, Dark
+  `#8D0B0B` behind `#F2F218`); the fill isn't drawn here, so Light takes the fill and Dark the
+  text. Its environment names are `#000080` / `#60CDF2`, the same blue as Dark's commands, so
+  they stay arguments' green until the tokenizer tells environments apart.
+- **System**: `systemPink`, `systemBrown`, `systemTeal`, `systemPurple`,
+  `secondaryLabelColor`, `systemRed`, what the editor used before Overleaf's; they follow the
+  accent and appearance. It had eight kinds: maths' delimiters were orange, its numbers blue and
+  its verbatim brown, now all purple.
+
+Texifier has no theme here: its themes (five, per its Preferences docs) and their values aren't
+published, and the app is closed source.
 
 Surfaces: selection `#A4CDFF`/`#515B70`, current line `#E8F2FF`/`#23252B`,
 invisibles `#CCCCCC`/`#424D5B`. The **background is deliberately not** Xcode's

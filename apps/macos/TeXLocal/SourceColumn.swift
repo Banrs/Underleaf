@@ -4,6 +4,7 @@ import SwiftUI
 struct SourceColumn: View {
     let project: ProjectModel
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
 
     var body: some View {
         // Keep the editor under previews so it retains its text and scroll position.
@@ -21,6 +22,7 @@ struct SourceColumn: View {
             }
         }
         .onChange(of: fontSize, initial: true) { _, size in project.editor.setFontSize(size) }
+        .onChange(of: syntaxTheme, initial: true) { _, theme in project.editor.setSyntaxTheme(theme) }
         .modifier(WorkspaceModals(project: project))
         .windowModals()
     }
