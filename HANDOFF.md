@@ -58,12 +58,18 @@ PDF is one persistent PDFKit view owned by `PDFController`.
   capsule. Aa opens a popover, as Notes' Aa (Bold, Italic and Underline, lit where the selection
   is in their command, then the levels the main file's class has, with its numbering, weights
   and shapes, and its sizes scaled into Notes' range: \Huge at Notes' 22 pt Title); the overflow
-  and menu bar keep plain menus. The PDF and Inspector toggles are one unlabelled
-  NSToolbarItemGroup (the system's Inspector toggle draws blank in a group). Zoom is the stock
-  minus, percentage menu and plus, its own item. Items overflow from the least used in TeX
-  editors: Zoom, then Insert, Math and Aa, then Back; Compile and the toggles last. The toolbar is
-  "Workspace 2", so layouts saved before the toggles' group don't come back. The 0.5 pt
+  and menu bar keep plain menus. The PDF toggle and the system's Inspector toggle are items of
+  their own (Daniel asked for them apart again). Compile is its word alone on the prominent
+  glass, and Stop a spinner and its word on clear glass at Compile's width, as at 6342673
+  (Daniel judged the word-and-symbol button a regression). Zoom is the stock minus, percentage
+  menu and plus, its own item. Items overflow from the least used in TeX editors: Zoom, then
+  Insert, Math and Aa, then Back; Compile and the toggles last. The toolbar is "Workspace 3",
+  so layouts saved with Share or the toggles' former group don't come back. The 0.5 pt
   trailing safe-area adjustment.
+- Build panel: it rises from the status bar's top edge and sinks back through AppKit's split
+  animation; the status bar stays at the window's foot. Only the panel's header is clear over
+  its content; the panel's background stops at the status bar, so it no longer shows through
+  the bar from the window's foot as it rises. The Filter field has Xcode's filter symbol.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
 
@@ -91,8 +97,7 @@ reference for a given part; say which you used and why.
 ## State at 87574f9
 
 Done this session: Tauri and Windows removed; core, syntax, server and FFI crates simplified;
-stock find bar with Replace; Home as a template chooser over Recent; Compile as word and
-symbol with a spinner in Stop at the same width; status bar with Line/Col; outline header that
+stock find bar with Replace; Home as a template chooser over Recent; status bar with Line/Col; outline header that
 rides the fold; divider detents with a haptic; a glass completion list; the maths preview over
 the caret; double-click SyncTeX both ways; Colour Theme in Settings (Overleaf, TeXstudio, System).
 
@@ -101,8 +106,7 @@ Not verified by hand:
 - The detent haptic, the bracket flash, the completion list's click and dark mode for the bars.
 - Xcode's focused-window editor state (caret width, highlight during a selection) and its
   completion popup's metrics were not measured; those parts are from the theme file or memory.
-- `/Applications/TeXLocal.app` is still an older Release build.
-- `apps/macos/TeXLocal/LaTeX.swift` has an uncommitted whitespace edit of Daniel's.
+- `/Applications/TeXLocal.app` was replaced with a Release build of a9df40f on 4 October.
 - Layout and outline tests failed intermittently in some runs, a different one each time.
 
 Open questions for Daniel:
