@@ -316,7 +316,9 @@ struct AppCommands: Commands {
         // The app's own menus go between View and Window (HIG, The menu bar).
         CommandMenu("Insert") {
             Group {
-                MathMenuItems(project: project, inlineMath: item(.editMath))
+                MathMenuItems(project: project, shortcut: app.shortcut(.editMath, on: project)) {
+                    app.perform(.editMath, on: project)
+                }
                 Divider()
                 InsertMenuItems(project: project)
             }

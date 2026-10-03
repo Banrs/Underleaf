@@ -107,7 +107,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .format:
             item = formatItem()
         case .math:
-            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project, inlineMath: inlineMath))
+            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project) { [app, project] in
+                app.perform(.editMath, on: project)
+            })
         case .insert:
             item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
         case .bold:
@@ -253,11 +255,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         group.subitems = items
         group.paletteLabel = paletteLabel
         return group
-    }
-
-    /// Inline Math for the toolbar's menus; the menu bar's carries the shortcut.
-    private var inlineMath: some View {
-        Button(MenuCommand.editMath.title) { [app, project] in app.perform(.editMath, on: project) }
     }
 
     // ---------- state ----------
