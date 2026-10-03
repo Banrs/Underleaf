@@ -41,7 +41,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
     /// How the page is fitted to the view, or nil at a set scale.
-    enum Fit { case width, height }
+    enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
     override init() {
@@ -49,7 +49,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
-            if fit == .height { fitHeight() }
+            if fit == .page { fitPage() }
             restorePageIfReady()
             if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
         }
@@ -74,16 +74,19 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
             fit = .width
-        } else if fit == .width || (fit == .height && abs(view.scaleFactor - heightScale(view)) > 0.001) {
+        } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale(view)) > 0.001) {
             fit = nil
         }
     }
 
-    /// The page and its page-break margins, which scale with it, the height it shows in.
-    private func heightScale(_ view: PDFView) -> CGFloat {
+    /// The whole page, as Pages' and Keynote's Fit Page: the smaller of the scales that fit
+    /// its width (PDFKit's own) and its height, with its page-break margins, which scale
+    /// with it, in the height it shows in.
+    private func pageScale(_ view: PDFView) -> CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
         let margins = view.pageBreakMargins
-        return view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
+        let height = view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
+        return min(height, view.scaleFactorForSizeToFit)
     }
 
     func setScale(_ scale: CGFloat) {
@@ -112,12 +115,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     /// Sets the fit after the scale, since the scale's change ends a fit.
-    func fitHeight() {
+    func fitPage() {
         guard view.currentPage != nil, view.shownHeight > 0 else { return }
         if view.autoScales { view.autoScales = false }
-        let scale = heightScale(view)
+        let scale = pageScale(view)
         if view.scaleFactor != scale { view.scaleFactor = scale }
-        fit = .height
+        fit = .page
     }
 
     func setDarkPaper(_ dark: Bool) {
@@ -131,7 +134,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.displayBox = box
         switch fit {
         case .width: fitWidth()
-        case .height: fitHeight()
+        case .page: fitPage()
         case nil: setScale(scale)
         }
         if let place { view.go(to: place) }
@@ -360,7 +363,7 @@ final class SyncPDFView: PDFView {
     override func setFrameSize(_ newSize: NSSize) {
         // SwiftUI reassigns the same frame on scroll; only a new size counts.
         guard newSize != frame.size else { return }
-        // At the document start, width changes or Fit Height can lose the first
+        // At the document start, width changes or Fit Page can lose the first
         // page's visible top beneath the toolbar; restore it after resizing.
         let widthChanged = newSize.width != frame.width
         let atStart = bounds.width > 0 && shownHeight > 0 && atDocumentStart

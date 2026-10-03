@@ -75,7 +75,7 @@ struct ScaleMenuItems: View {
 
     var body: some View {
         Toggle("Fit Width", isOn: choice(pdf.fit == .width) { pdf.fitWidth() })
-        Toggle("Fit Height", isOn: choice(pdf.fit == .height) { pdf.fitHeight() })
+        Toggle("Fit Page", isOn: choice(pdf.fit == .page) { pdf.fitPage() })
         Divider()
         ForEach(Self.presets, id: \.self) { percent in
             Toggle((Double(percent) / 100).formatted(.percent),

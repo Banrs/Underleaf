@@ -566,7 +566,7 @@ final class WorkspaceController: RestoredSplitViewController {
         case .zoomOut: pdf.zoom(in: false)
         case .actualSize: pdf.setScale(1)
         case .fitWidth: pdf.fitWidth()
-        case .fitHeight: pdf.fitHeight()
+        case .fitPage: pdf.fitPage()
         case .goToPage(let page): pdf.go(toPage: page)
         case .find: showPDFFind()
         case .print: pdf.view.print(with: .shared, autoRotate: true)
