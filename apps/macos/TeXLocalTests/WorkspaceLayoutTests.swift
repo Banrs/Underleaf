@@ -290,6 +290,50 @@ final class WorkspaceLayoutTests {
         #expect(outline.isItemExpanded(outline.item(atRow: 0)))
     }
 
+    /// The menu a right-click there shows, as AppKit finds it: the clicked view's, or the
+    /// first up the responder chain from it.
+    private func contextMenu(at point: NSPoint, in view: NSView) throws -> [String]? {
+        let window = try #require(view.window)
+        let location = view.convert(point, to: nil)
+        let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [],
+                                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        var responder: NSResponder? = window.contentView?.superview?.hitTest(location)
+        while let next = responder {
+            if let menu = (next as? NSView)?.menu(for: event) { return menu.items.filter { !$0.isSeparatorItem }.map(\.title) }
+            responder = next.nextResponder
+        }
+        return nil
+    }
+
+    /// A right-click under the files shows the project's top level's menu, as a Finder
+    /// window's background shows its folder's; a row's shows its own. SwiftUI's menu for
+    /// no row raised there (27.2). The File Outline has none for its empty space.
+    @Test func theFilesEmptySpaceHasTheTopLevelsMenu() async throws {
+        let workspace = open(), project = workspace.project
+        workspace.app.outlineCollapsed = false
+        let file = { (path: String) in TreeNode(type: "file", name: (path as NSString).lastPathComponent, path: path, children: nil) }
+        project.tree = [TreeNode(type: "dir", name: "chapters", path: "chapters", children: [file("chapters/results.tex")]),
+                        file("main.tex")]
+        project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex")]
+        project.openPath = "main.tex"
+        try await waitUntil { Self.lists(workspace.view).map(\.numberOfRows) == [3, 1, 1] } state: {
+            "\(Self.lists(workspace.view).map(\.numberOfRows))"
+        }
+        let files = try #require(Self.lists(workspace.view).first)
+        let below = { (list: NSOutlineView) in
+            let last = list.rect(ofRow: list.numberOfRows - 1)
+            return NSPoint(x: last.midX, y: last.maxY + 30)
+        }
+        #expect(files.row(at: below(files)) == -1)
+        #expect(try contextMenu(at: below(files), in: files) == ["New File…", "New Folder…", "Add Files…"])
+        let folder = files.rect(ofRow: 1)
+        #expect(try contextMenu(at: NSPoint(x: folder.midX, y: folder.midY), in: files)
+            == ["New File…", "New Folder…", "Rename", "Show in Finder", "Move to Trash"])
+        let outline = try #require(Self.lists(workspace.view).last)
+        #expect(try contextMenu(at: below(outline), in: outline) == nil)
+    }
+
     /// No pane's content raises the window's minimum: it goes down to the app's own,
     /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
     @Test func theWindowReachesItsMinimum() {

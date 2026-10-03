@@ -35,7 +35,7 @@ struct FilesList: View {
         .listStyle(.sidebar)
         .accessibilityLabel("Files")
         // The clicked row's menu, which leaves the selection (and the open file) as
-        // it is; on the list's empty space, the list's own.
+        // it is. None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
         .contextMenu(forSelectionType: String.self) { paths in
             if let path = paths.first, let node = project.node(at: path) {
                 if node.isDirectory {
@@ -48,16 +48,19 @@ struct FilesList: View {
                     Divider()
                 }
                 ItemMenuItems(actions: actions(node))
-            } else {
-                Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
-                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
-                Divider()
-                Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
             }
         } primaryAction: { paths in
             // A folder opens or closes; a file is already open once chosen.
             guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
             if expanded.remove(path) == nil { expanded.insert(path) }
+        }
+        // The empty space's: the project's top level's, as a Finder window's background
+        // has its folder's.
+        .contextMenu {
+            Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: "") }
+            Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: "") }
+            Divider()
+            Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
         }
         .onChange(of: selection) { _, path in
             if let path, path != project.openPath, project.node(at: path)?.isDirectory == false {
