@@ -449,7 +449,7 @@ struct PDFFindTests {
         let nativeOrder = Array(boxes.dropFirst(boxes.count / 2)) + Array(boxes.prefix(boxes.count / 2))
         for index in [0, 3, 7] {
             let word = SyncTeXWord(text: "echo", offset: 0, context: source, contextOffset: NSRange(sourceRanges[index], in: source).location)
-            let hit = try #require(pdf.bounds(of: word, near: nativeOrder))
+            let hit = try #require(pdf.match(for: word, near: nativeOrder))
             let expected = try #require(page.selection(for: NSRange(renderedRanges[index], in: rendered))).bounds(for: page)
             #expect(hit.page === page && hit.rect == expected)
         }
@@ -465,7 +465,7 @@ struct PDFFindTests {
                              width: expected.width, height: expected.height)
         let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
                               contextOffset: (paragraph as NSString).range(of: "echo", options: .backwards).location)
-        let hit = try #require(pdf.bounds(of: word, near: [loc]))
+        let hit = try #require(pdf.match(for: word, near: [loc]))
         #expect(hit.page === page && hit.rect == expected)
         let inverse = try #require(page.syncWord(at: CGPoint(x: expected.midX, y: expected.midY)))
         #expect(inverse.text == "echo" && inverse.context == rendered)
@@ -479,7 +479,7 @@ struct PDFFindTests {
         for index in 0..<3 {
             let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
                                   contextOffset: NSRange(paragraph.ranges(of: "echo")[index], in: paragraph).location)
-            let hit = try #require(pdf.bounds(of: word, near: boxes))
+            let hit = try #require(pdf.match(for: word, near: boxes))
             #expect(hit.rect == (try #require(page.selection(for: NSRange(occurrences[index + 3], in: rendered)))).bounds(for: page))
         }
     }
@@ -490,7 +490,7 @@ struct PDFFindTests {
         let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
         let loc = ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
         let word = SyncTeXWord(text: "echo", offset: 0, context: "\\LaTeX echo", contextOffset: 7)
-        #expect(pdf.bounds(of: word, near: [loc]) == nil)
+        #expect(pdf.match(for: word, near: [loc]) == nil)
     }
 
     /// PDFKit searches off the main thread and posts what it finds to the main queue.

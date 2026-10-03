@@ -21,21 +21,24 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     @ObservationIgnored let view = SyncPDFView()
     @ObservationIgnored private var magnification: NSKeyValueObservation?
-    var page = 0
+    /// One-based, as the status bar shows it.
+    private(set) var page = 0
     /// The page a reopened project's first PDF opens at.
     @ObservationIgnored var restorePage: Int?
     /// A forward search's spot, until the view has a size to show it in.
     @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
-    var pageCount = 0
-    /// The field text can be ahead of the completed PDFKit query.
+    private(set) var pageCount = 0
+    /// The find bar shows.
     var finding = false
+    /// Can be ahead of the query the matches are for.
     var findText = ""
     @ObservationIgnored let findField = FieldHandle()
     /// The query the matches are for, normalised.
     private(set) var query = ""
-    var matches: [PDFSelection] = []
-    var matchIndex = 0
-    var limited = false
+    private(set) var matches: [PDFSelection] = []
+    private(set) var matchIndex = 0
+    /// More matches than `PDFFind.maxMatches` were found.
+    private(set) var limited = false
     private(set) var scale: CGFloat = 1
     var zoomLabel: String { Self.label(scale) }
     /// The longest label of the scales PDFKit allows.
@@ -82,7 +85,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
-    @objc func pageChanged() {
+    @objc private func pageChanged() {
         guard let document = view.document, let page = view.currentPage else { return }
         self.page = document.index(for: page) + 1
         pageCount = document.pageCount
@@ -215,7 +218,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
         if matches.isEmpty { view.clearSelection() }
-        show(scrolling: !keepingPlace)
+        selectMatch(scrolling: !keepingPlace)
     }
 
     /// Clear highlights; return focus to the PDF only when the bar had it.
@@ -270,7 +273,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         pendingReveal = nil
         guard let document = view.document, let locatedPage = document.page(at: Int(loc.page) - 1) else { return }
         // The source occurrence can wrap beyond the first SyncTeX box.
-        let match = word.flatMap { document.bounds(of: $0, near: loc.matches ?? [loc]) }
+        let match = word.flatMap { document.match(for: $0, near: loc.matches ?? [loc]) }
         let page = match?.page ?? locatedPage
         let rect = match?.rect ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
         // A destination lands below the toolbar, a rect under it.
@@ -286,10 +289,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     func step(_ delta: Int) {
         guard !matches.isEmpty else { return }
         matchIndex = (matchIndex + delta + matches.count) % matches.count
-        show()
+        selectMatch()
     }
 
-    private func show(scrolling: Bool = true) {
+    private func selectMatch(scrolling: Bool = true) {
         guard matches.indices.contains(matchIndex) else { return }
         view.setCurrentSelection(matches[matchIndex], animate: scrolling)
         if scrolling { view.scrollSelectionToVisible(nil) }
@@ -297,7 +300,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     /// A SyncTeX point on a line of text: SyncTeX resolves only points on a glyph
     /// box, and the page centre is usually whitespace.
-    func sourcePoint() -> (Int, CGPoint)? {
+    func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
         // "The text you are looking at": the first line at or below a fifth of the way down.
         let probe = CGPoint(x: view.bounds.midX, y: view.bounds.maxY - view.safeAreaInsets.top - view.shownHeight * 0.2)
@@ -537,7 +540,6 @@ extension PDFPage {
         }
         return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
     }
-
 }
 
 extension PDFDocument {
@@ -545,7 +547,7 @@ extension PDFDocument {
 
     /// Align the source line with rendered text first, so equal words retain their occurrence.
     /// SyncTeX boxes delimit the fallback when commands prevent an exact text alignment.
-    func bounds(of word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
+    func match(for word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
         guard !locations.isEmpty, pageCount > 0 else { return nil }
         let first = max(0, Int(locations.map(\.page).min()!) - 2)
         let last = min(pageCount - 1, Int(locations.map(\.page).max()!))
