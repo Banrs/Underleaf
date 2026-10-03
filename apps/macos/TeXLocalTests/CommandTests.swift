@@ -73,7 +73,7 @@ struct MenuStructureTests {
             ("g", .command, "Find Next"), ("g", [.command, .shift], "Find Previous"),
             ("f", .command, "Find…"), ("f", [.command, .option], "Find and Replace…"),
             ("s", [.command, .control], "Sidebar"), ("0", .command, "Actual Size"),
-            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Height"),
+            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Page"),
             ("l", [.command, .shift], "Build Panel"), ("i", [.command, .option], "Inspector"),
             (",", .command, "Settings…"), ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
             (".", .command, "Stop"), ("w", [.command, .shift], MenuCommand.projectClose.title),

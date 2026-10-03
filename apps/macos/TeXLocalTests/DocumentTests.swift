@@ -108,12 +108,12 @@ struct PDFFitTests {
         }
     }
 
-    @Test func fittingHeightAgainAtTheSameSizeDoesNotRewritePDFKitState() throws {
+    @Test func fittingThePageAgainAtTheSameSizeDoesNotRewritePDFKitState() throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
         controller.show(try pages(3))
-        controller.fitHeight()
+        controller.fitPage()
         var automaticWrites = 0, scaleWrites = 0
         let automatic = view.observe(\.autoScales, options: .new) { _, _ in
             MainActor.assumeIsolated { automaticWrites += 1 }
@@ -121,18 +121,18 @@ struct PDFFitTests {
         let scale = view.observe(\.scaleFactor, options: .new) { _, _ in
             MainActor.assumeIsolated { scaleWrites += 1 }
         }
-        controller.fitHeight()
+        controller.fitPage()
         view.setFrameSize(view.frame.size)
         view.setFrameSize(NSSize(width: 800, height: 500))
         #expect(automaticWrites == 0 && scaleWrites == 0)
-        #expect(controller.fit == .height)
+        #expect(controller.fit == .page)
         withExtendedLifetime((automatic, scale)) {}
     }
 
-    /// Fit Height shows the whole page, its page-break margins too, and keeps it
-    /// whole as the view resizes.
+    /// Fit Page shows the whole page, its page-break margins too, and keeps it whole as
+    /// the view resizes: by its height in a wide view, by its width in a narrow one.
     @Test(arguments: [0.0, 37.0])
-    func fitHeightKeepsTheWholePageInView(_ bottomInset: CGFloat) throws {
+    func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat) throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
@@ -141,14 +141,18 @@ struct PDFFitTests {
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
         controller.show(try pages(1))
-        controller.fitHeight()
-        for height in [500.0, 380] {
-            view.setFrameSize(NSSize(width: 600, height: height))
+        controller.fitPage()
+        for (width, height) in [(600.0, 500.0), (600, 380), (300, 500), (420, 500)] {
+            view.setFrameSize(NSSize(width: width, height: height))
             view.layoutDocumentView()
             // In page space, magnified by the scale.
-            let shown = try #require(view.documentView).frame.height * view.scaleFactor
-            #expect(isClose(shown, height - bottomInset, within: 1), "pages \(shown) in \(height - bottomInset)")
-            #expect(controller.fit == .height)
+            let pages = try #require(view.documentView).frame.size
+            let shown = CGSize(width: pages.width * view.scaleFactor, height: pages.height * view.scaleFactor)
+            let room = CGSize(width: width, height: height - bottomInset)
+            #expect(shown.width <= room.width + 1 && shown.height <= room.height + 1, "pages \(shown) in \(room)")
+            #expect(isClose(shown.width, room.width, within: 1) || isClose(shown.height, room.height, within: 1),
+                    "pages \(shown) in \(room)")
+            #expect(controller.fit == .page)
         }
     }
 
@@ -170,8 +174,8 @@ struct PDFFitTests {
         follows(.width, "resized")
         controller.zoom(in: true)
         follows(nil, "zoomed in")
-        controller.fitHeight()
-        follows(.height, "fit height")
+        controller.fitPage()
+        follows(.page, "fit page")
         controller.setScale(1.5)
         follows(nil, "set")
         controller.fitWidth()
@@ -310,6 +314,22 @@ struct PDFFitTests {
         let white = try #require(bitmap.colorAt(x: 5, y: 5)), red = try #require(bitmap.colorAt(x: 15, y: 5))
         #expect(white.brightnessComponent > 0.95)
         #expect(red.redComponent > 0.95 && red.greenComponent < 0.05 && red.blueComponent < 0.05)
+    }
+
+    /// White paper on the system's under-page canvas, which isn't the page's white in
+    /// Light; dark paper on the content background, as before.
+    @Test func whitePaperSitsOnTheUnderPageCanvas() throws {
+        let view = PDFController().view
+        #expect(view.backgroundColor == .underPageBackgroundColor)
+        var canvas: CGFloat = 1
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            canvas = NSColor.underPageBackgroundColor.usingColorSpace(.sRGB)?.brightnessComponent ?? 1
+        }
+        #expect(canvas < 1)
+        view.darkPaper = true
+        #expect(view.backgroundColor == .controlBackgroundColor)
+        view.darkPaper = false
+        #expect(view.backgroundColor == .underPageBackgroundColor)
     }
 }
 

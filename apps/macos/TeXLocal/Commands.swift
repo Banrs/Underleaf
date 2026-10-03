@@ -31,7 +31,7 @@ enum MenuCommand: String, CaseIterable {
     case viewZoomOut = "view.zoomOut"
     case viewActualSize = "view.actualSize"
     case viewFitWidth = "view.fitWidth"
-    case viewFitHeight = "view.fitHeight"
+    case viewFitPage = "view.fitPage"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
     case syncForward = "sync.forward"
@@ -69,7 +69,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewZoomOut: "Zoom Out"
         case .viewActualSize: "Actual Size"
         case .viewFitWidth: "Fit Width"
-        case .viewFitHeight: "Fit Height"
+        case .viewFitPage: "Fit Page"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
         case .syncForward: "Go to PDF Position"
@@ -107,7 +107,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewZoomOut: KeyboardShortcut("-")
         case .viewActualSize: KeyboardShortcut("0")
         case .viewFitWidth: KeyboardShortcut("9")
-        case .viewFitHeight: KeyboardShortcut("9", modifiers: [.command, .option])
+        case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
         // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
@@ -118,7 +118,7 @@ enum MenuCommand: String, CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage
+    case gotoPage
 
     var id: Self { self }
 }
@@ -131,7 +131,7 @@ struct NewEntry: Equatable {
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView, print
     /// Go to PDF Position's result.
     case reveal(ForwardLoc, SyncTeXWord?)
 }
@@ -147,7 +147,7 @@ extension AppModel {
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
-        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitHeight, .syncInverse:
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         default: project != nil
@@ -204,7 +204,7 @@ extension AppModel {
         case .editItalic: project?.editor.perform(.italic)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
-        case .editGotoLine: prompt = .gotoLine
+        case .editGotoLine: project?.editor.goToLine()
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
@@ -216,7 +216,7 @@ extension AppModel {
         case .viewZoomOut: requestPDF(.zoomOut)
         case .viewActualSize: requestPDF(.actualSize)
         case .viewFitWidth: requestPDF(.fitWidth)
-        case .viewFitHeight: requestPDF(.fitHeight)
+        case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .syncForward: Task { await project?.forwardSync() }
@@ -318,7 +318,7 @@ struct AppCommands: Commands {
                 .disabled(project?.isLaTeX != true || !app.sidebarVisible)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
-            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight])
+            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
             Divider()
         }
         // The app's own menus go between View and Window (HIG, The menu bar).

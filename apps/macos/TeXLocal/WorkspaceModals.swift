@@ -34,7 +34,6 @@ struct WorkspaceModals: ViewModifier {
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
-                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.editor.reveal(line: $0) }
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
@@ -66,8 +65,9 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// Edit › Go to Line… and Go to Page…; the page also from the status bar.
-/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
+/// Edit › Go to Page…, also from the status bar: a sheet, as Preview's. (Go to Line… is
+/// Xcode's floating field, `GoToLinePanel`.) `limit` is read as the sheet draws, so a
+/// build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
