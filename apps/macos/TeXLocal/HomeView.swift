@@ -36,14 +36,18 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            Section {
+            // No section header: the list pins its first one with a rule the full width
+            // of the window, over cards that have no rule of their own.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates
-                    .selectionDisabled()
-                    .listRowSeparator(.hidden)
-            } header: {
-                Text("New")
             }
-            .listSectionSeparator(.hidden)
+            .selectionDisabled()
+            .listRowSeparator(.hidden)
+            // The buttons' unseen 10 pt edge runs into the gap before Recent, not on top of it.
+            .padding(.bottom, -10)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("New")
             Section {
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
