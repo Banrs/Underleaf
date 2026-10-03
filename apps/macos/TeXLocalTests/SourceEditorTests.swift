@@ -122,6 +122,30 @@ struct SourceEditorTests {
         #expect(!editor.perform(.block, "no such block"))
     }
 
+    /// Bold, Italic and Underline are on where the selection is in their
+    /// command, as a word processor's: they unwrap it, in one step.
+    @Test func aStyleTheSelectionIsInUnwraps() {
+        open("a \\textit{b \\textbf{word} c} d")
+        let word = (text.string as NSString).range(of: "word")
+        text.setSelectedRange(word)
+        #expect(editor.textStyles.bold != nil && editor.textStyles.italic != nil && editor.textStyles.underline == nil)
+        #expect(editor.perform(.bold))
+        #expect(text.string == "a \\textit{b word c} d")
+        #expect(text.selectedRange() == NSRange(location: word.location - 8, length: 4))
+        #expect(editor.textStyles.bold == nil)
+        text.undoManager?.undo()
+        #expect(text.string == "a \\textit{b \\textbf{word} c} d")
+        #expect(editor.document?.text == text.string)
+        text.undoManager?.redo()
+        #expect(editor.perform(.underline))
+        #expect(text.string == "a \\textit{b \\underline{word} c} d")
+        // The caret in it, the whole command goes.
+        text.setSelectedRange(NSRange(location: 11, length: 0))
+        #expect(editor.perform(.italic))
+        #expect(text.string == "a b \\underline{word} c d" && text.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(editor.document?.text == text.string)
+    }
+
     /// A block's fields, as a completion's: Tab goes from a figure's file to
     /// its caption and label.
     @Test func blocksTabThroughTheirFields() {

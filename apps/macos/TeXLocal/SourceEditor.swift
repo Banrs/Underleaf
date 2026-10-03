@@ -243,8 +243,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             return true
         }
         switch command {
-        case .bold: wrap("\\textbf{", "}", named: String(localized: "Bold"))
-        case .italic: wrap("\\textit{", "}", named: String(localized: "Italic"))
+        case .bold: toggle(\.bold, "\\textbf{", named: String(localized: "Bold"))
+        case .italic: toggle(\.italic, "\\textit{", named: String(localized: "Italic"))
+        case .underline: toggle(\.underline, "\\underline{", named: String(localized: "Underline"))
         case .math: wrap("$", "$", named: String(localized: "Inline Math"))
         case .displayMath: wrap("\\[", "\\]", named: String(localized: "Display Math"))
         case .inline:
@@ -264,6 +265,21 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
         focus()
         return true
+    }
+
+    /// The styles the selection is in, for Format's toggles.
+    var textStyles: TextStyles {
+        path == nil ? TextStyles() : textView.document.textStyles(textView.selectedRange())
+    }
+
+    /// A style off when the selection is in it, as a word processor's: the
+    /// command giving it unwraps, its argument staying selected; on otherwise.
+    private func toggle(_ style: KeyPath<TextStyles, [TextEdit]?>, _ command: String, named name: String) {
+        if let unwrap = textStyles[keyPath: style] {
+            textView.apply(unwrap, named: name)
+        } else {
+            wrap(command, "}", named: name)
+        }
     }
 
     /// Round the selection, which stays selected (or the caret, between them).
@@ -300,7 +316,7 @@ struct EditorView: NSViewRepresentable {
 }
 
 enum EditorCommand {
-    case bold, italic, math, displayMath, comment, heading, symbol
+    case bold, italic, underline, math, displayMath, comment, heading, symbol
     /// A block from the core's catalog (crates/texlocal-syntax), by id.
     case block
     /// A template with "$0" where the selection goes.

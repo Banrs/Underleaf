@@ -17,6 +17,7 @@ enum MenuCommand: String, CaseIterable {
     case filePrint = "file.print"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
+    case editUnderline = "edit.underline"
     case editMath = "edit.math"
     case editComment = "edit.comment"
     case editGotoLine = "edit.gotoLine"
@@ -54,6 +55,7 @@ enum MenuCommand: String, CaseIterable {
         case .filePrint: "Print…"
         case .editBold: "Bold"
         case .editItalic: "Italic"
+        case .editUnderline: "Underline"
         case .editMath: "Inline Math"
         case .editComment: "Comment Selection"
         case .editGotoLine: "Go to Line…"
@@ -93,6 +95,7 @@ enum MenuCommand: String, CaseIterable {
         case .filePrint: KeyboardShortcut("p")
         case .editBold: KeyboardShortcut("b")
         case .editItalic: KeyboardShortcut("i")
+        case .editUnderline: KeyboardShortcut("u")
         // Pages' Insert › Equation.
         case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
         case .editComment: KeyboardShortcut("/")
@@ -134,7 +137,7 @@ extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         case .projectNew, .projectOpen, .filePageSetup: true
-        case .fileSave, .editBold, .editItalic, .editMath, .editComment, .editGotoLine:
+        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
@@ -194,6 +197,7 @@ extension AppModel {
         case .filePrint: requestPDF(.print)
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
+        case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
         case .editGotoLine: prompt = .gotoLine
@@ -296,7 +300,7 @@ struct AppCommands: Commands {
             item(.pdfFind)
         }
         CommandGroup(replacing: .textFormatting) {
-            items([.editBold, .editItalic])
+            items([.editBold, .editItalic, .editUnderline])
             Divider()
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)

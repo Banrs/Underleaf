@@ -8,6 +8,7 @@ extension NSToolbarItem.Identifier {
     static let format = Self("sectionLevel")
     static let bold = Self("bold")
     static let italic = Self("italic")
+    static let underline = Self("underline")
     static let math = Self("math")
     static let insert = Self("insert")
     /// The source/PDF divider's line through the toolbar.
@@ -71,7 +72,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     /// Share is here only: File › Share has it.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.undo, .redo, .format, .bold, .italic, .math, .insert]
+        [.undo, .redo, .format, .bold, .italic, .underline, .math, .insert]
             + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
             + [.zoom, .share, .space, .flexibleSpace]
             + toolbarImmovableItemIdentifiers(toolbar)
@@ -120,6 +121,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.visibilityPriority = .low
         case .italic:
             item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic))
+            item.visibilityPriority = .low
+        case .underline:
+            item = button(id, MenuCommand.editUnderline.title, "underline", #selector(underline))
             item.visibilityPriority = .low
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
@@ -246,7 +250,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
         form.image = item.image
         form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { [app, project] in
-            ForEach([MenuCommand.editBold, .editItalic], id: \.self) { command in
+            ForEach([MenuCommand.editBold, .editItalic, .editUnderline], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
             }
             Divider()
@@ -347,7 +351,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
-        case .bold, .italic: project.isLaTeX
+        case .bold, .italic, .underline: project.isLaTeX
         default: item.action != #selector(insertTemplate(_:)) || project.isLaTeX
         }
     }
@@ -372,6 +376,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func bold() { perform(.editBold) }
 
     @objc private func italic() { perform(.editItalic) }
+
+    @objc private func underline() { perform(.editUnderline) }
 
     @objc private func insertTemplate(_ item: NSToolbarItem) {
         guard let template = Self.buttonTemplates.first(where: { .template($0) == item.itemIdentifier }) else { return }

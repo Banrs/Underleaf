@@ -39,29 +39,67 @@ pub fn math_mode_at(src: &[u16]) -> bool {
     scan(src, |_, _| {}, |_, _, _| {})
 }
 
+/// A group open at a point: whether it's maths, what closes it, where it
+/// opens, and the command whose argument it is (the command's backslash and
+/// the end of its name), when the brace follows a command, spaces aside.
+#[derive(Clone, Debug)]
+pub(crate) struct Group {
+    pub math: bool,
+    pub end: Cow<'static, str>,
+    pub open: usize,
+    pub command: Option<(usize, usize)>,
+}
+
 /// Read math/code ranges and commands outside them in one pass. Callers merge
 /// adjacent ranges; no range storage is needed when only the mode is wanted.
 pub(crate) fn scan(
     src: &[u16],
+    range: impl FnMut(usize, usize),
+    command: impl FnMut(&str, usize, usize),
+) -> bool {
+    scan_groups(src, &[], range, command, |_, _| {}, |_, _| {})
+}
+
+/// `scan`, which also hands `at` the groups open at each of `probes` (in
+/// order), and `closed` each brace group as its `}` closes it.
+pub(crate) fn scan_groups(
+    src: &[u16],
+    probes: &[usize],
     mut range: impl FnMut(usize, usize),
     mut command: impl FnMut(&str, usize, usize),
+    mut at: impl FnMut(usize, &[Group]),
+    mut closed: impl FnMut(&Group, usize),
 ) -> bool {
     let catalog = &*catalog::CATALOG;
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
-    // Open groups, innermost last: whether they're maths, and what closes them.
-    let mut stack: Vec<(bool, Cow<'static, str>)> = Vec::new();
-    let math = |stack: &[(bool, Cow<'static, str>)]| stack.last().is_some_and(|g| g.0);
-    let close = |stack: &mut Vec<(bool, Cow<'static, str>)>, end: &str| {
-        if let Some(k) = stack.iter().rposition(|g| g.1 == end) {
+    // Open groups, innermost last.
+    let mut stack: Vec<Group> = Vec::new();
+    let group = |math: bool, end: Cow<'static, str>, open: usize| Group {
+        math,
+        end,
+        open,
+        command: None,
+    };
+    let math = |stack: &[Group]| stack.last().is_some_and(|g| g.math);
+    let close = |stack: &mut Vec<Group>, end: &str| {
+        if let Some(k) = stack.iter().rposition(|g| g.end == end) {
             stack.truncate(k);
         }
     };
     let mut text_argument = false; // The next { opens a text argument (\text{).
     let mut math_run = false;
+    // The command just read, while only spaces, a line feed or a comment follow it.
+    let mut last_command: Option<(usize, usize)> = None;
+    let mut probe = 0;
     let n = src.len();
     let mut i = 0;
     while i < n {
         let token_start = i;
+        while probe < probes.len() && probes[probe] <= token_start {
+            at(probes[probe], &stack);
+            probe += 1;
+        }
+        let pending = last_command.take();
         let c = char::from_u32(src[i] as u32).unwrap_or_default();
         let mut code = false;
         i += 1;
@@ -69,6 +107,7 @@ pub(crate) fn scan(
             '%' => {
                 // Comments remain prose, including the following line feed.
                 math_run = false;
+                last_command = pending;
                 let Some(eol) = find(src, i, &['\n' as u16]) else {
                     break;
                 };
@@ -83,11 +122,13 @@ pub(crate) fn scan(
                 if src.get(j).is_some_and(|&u| is(u, '\n')) {
                     if let Some(k) = stack
                         .iter()
-                        .position(|g| matches!(g.1.as_ref(), "$" | "$$" | "\\)" | "\\]"))
+                        .position(|g| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]"))
                     {
                         stack.truncate(k);
                     }
                     text_argument = false;
+                } else {
+                    last_command = pending;
                 }
                 if math_run {
                     range(token_start, i);
@@ -97,33 +138,47 @@ pub(crate) fn scan(
             }
             '$' => {
                 let double = src.get(i).is_some_and(|&u| is(u, '$'));
-                match stack.last().map(|g| g.1.as_ref()) {
+                match stack.last().map(|g| g.end.as_ref()) {
                     Some(end @ ("$" | "$$")) => {
                         i += (end == "$$" && double) as usize;
                         stack.pop();
                     }
                     _ if math(&stack) => {} // a stray $ in an environment's maths
                     _ => {
-                        stack.push((true, if double { "$$" } else { "$" }.into()));
+                        stack.push(group(
+                            true,
+                            if double { "$$" } else { "$" }.into(),
+                            token_start,
+                        ));
                         i += double as usize;
                     }
                 }
                 text_argument = false;
             }
             '{' => {
-                stack.push((!text_argument && math(&stack), "}".into()));
+                stack.push(Group {
+                    command: pending,
+                    ..group(!text_argument && math(&stack), "}".into(), token_start)
+                });
                 text_argument = false;
             }
-            '}' => close(&mut stack, "}"),
+            '}' => {
+                if let Some(k) = stack.iter().rposition(|g| g.end == "}") {
+                    closed(&stack[k], token_start);
+                    stack.truncate(k);
+                }
+            }
             '\\' if i < n => {
                 let in_math = math(&stack);
                 text_argument = false;
                 if !letter(src[i]) {
                     let d = char::from_u32(src[i] as u32).unwrap_or_default();
                     match d {
-                        '(' | '[' if !in_math => {
-                            stack.push((true, if d == '(' { "\\)" } else { "\\]" }.into()))
-                        }
+                        '(' | '[' if !in_math => stack.push(group(
+                            true,
+                            if d == '(' { "\\)" } else { "\\]" }.into(),
+                            token_start,
+                        )),
                         ')' | ']' => close(&mut stack, if d == ')' { "\\)" } else { "\\]" }),
                         _ => {}
                     }
@@ -160,9 +215,10 @@ pub(crate) fn scan(
                                     ))
                                 } else {
                                     let bare = environment.strip_suffix('*').unwrap_or(environment);
-                                    stack.push((
+                                    stack.push(group(
                                         listed(&catalog.math_environments, bare) || in_math,
                                         format!("env:{environment}").into(),
+                                        token_start,
                                     ));
                                     None
                                 }
@@ -172,6 +228,7 @@ pub(crate) fn scan(
                         }
                         _ => {
                             text_argument = listed(&catalog.text_commands, &name) && in_math;
+                            last_command = Some((token_start, name_end));
                             None
                         }
                     };
@@ -189,13 +246,21 @@ pub(crate) fn scan(
                     }
                 }
             }
-            _ => text_argument &= space(src[token_start]),
+            _ => {
+                text_argument &= space(src[token_start]);
+                if space(src[token_start]) {
+                    last_command = pending;
+                }
+            }
         }
         let next_math = math(&stack);
         if code || math_run || next_math {
             range(token_start, i);
         }
         math_run = next_math;
+    }
+    for &p in &probes[probe..] {
+        at(p, &stack);
     }
     math(&stack)
 }

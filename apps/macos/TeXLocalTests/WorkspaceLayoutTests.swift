@@ -346,7 +346,7 @@ final class WorkspaceLayoutTests {
         window.layoutIfNeeded()
         let item = try #require(toolbar.items.first { $0.itemIdentifier == .format })
         #expect(!(item is NSMenuToolbarItem) && item.menuFormRepresentation?.submenu?.items.map(\.title)
-            .starts(with: [MenuCommand.editBold.title, MenuCommand.editItalic.title]) == true)
+            .starts(with: [MenuCommand.editBold.title, MenuCommand.editItalic.title, MenuCommand.editUnderline.title]) == true)
         let popover = workspace.toolbar.format.popover
         NSApp.sendAction(try #require(item.action), to: item.target, from: item)
         try await waitUntil { popover.isShown && popover.contentViewController?.view.window != nil }

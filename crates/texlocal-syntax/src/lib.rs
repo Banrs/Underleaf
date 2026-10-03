@@ -10,12 +10,14 @@ mod edit;
 mod highlight;
 mod maths;
 mod prose;
+mod style;
 
 use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{math_mode_at, MathPreview};
+pub use style::TextStyles;
 
 /// A range of the text, in UTF-16 units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +197,12 @@ impl SourceDocument {
     /// and keeps its title, a line of text becomes the title.
     pub fn set_heading(&self, caret: u32, command: &str) -> Insertion {
         edit::set_heading(&self.text, caret.min(self.text.len()), command)
+    }
+
+    /// The bold, italic and underline the whole selection is in, each as the
+    /// edits that unwrap the command giving it, in order.
+    pub fn text_styles(&self, selection: TextRange) -> TextStyles {
+        style::text_styles(&self.text, clamp(selection, self.text.len()))
     }
 
     /// The maths to preview at the caret, if it's in some.

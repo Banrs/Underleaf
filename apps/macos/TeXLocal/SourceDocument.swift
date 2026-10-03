@@ -78,6 +78,12 @@ final class SourceDocument {
         call("insert_symbol", ["command": command, "selection": Self.json(selection)])
     }
 
+    /// The bold, italic and underline the whole selection is in, each as the
+    /// edits that unwrap the command giving it.
+    func textStyles(_ selection: NSRange) -> TextStyles {
+        call("text_styles", ["selection": Self.json(selection)]) ?? TextStyles()
+    }
+
     /// The maths the caret is in or just after, to preview.
     func mathAt(caret: Int) -> MathPreview? {
         call("math_at", ["caret": caret])
@@ -115,6 +121,13 @@ nonisolated struct TextEdit: Decodable, Equatable {
     }
 
     var range: NSRange { NSRange(location: start, length: length) }
+}
+
+/// The styles a selection is in (crates/texlocal-syntax `TextStyles`).
+nonisolated struct TextStyles: Decodable, Equatable {
+    var bold: [TextEdit]?
+    var italic: [TextEdit]?
+    var underline: [TextEdit]?
 }
 
 /// An edit, where the caret goes after it, and where Tab goes in a block.

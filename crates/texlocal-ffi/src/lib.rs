@@ -282,6 +282,7 @@ pub unsafe extern "C" fn tl_source_call(
         "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
         "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
         "math_at" => json_string(doc.math_at(a.caret)),
+        "text_styles" => json_string(doc.text_styles(a.selection)),
         "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
         "text" => json_string(doc.text()),
         _ => std::ptr::null_mut(),
