@@ -133,6 +133,7 @@ final class WorkspaceController: NSSplitViewController {
         sidebar.view.frame.size.width = ColumnMetrics.sidebarIdeal
 
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
@@ -497,8 +498,9 @@ final class RestoredSplitViewController: NSSplitViewController {
 /// Content sets pane minimums; AppKit moves toolbar items across dividers or
 /// into overflow near the window minimum.
 enum ColumnMetrics {
-    /// AppKit's inspector width (NSSplitViewItem.h), so the side columns open alike.
-    static let sidebarIdeal: CGFloat = 270
+    /// Xcode's navigator: its default width, and its narrowest.
+    static let sidebarIdeal: CGFloat = 256
+    static let sidebarMinimum: CGFloat = 222
     /// About 40 editor columns or a legible fitted page; equal minima split the
     /// narrowest room evenly between source and PDF.
     static let sourceMinimum: CGFloat = 320
