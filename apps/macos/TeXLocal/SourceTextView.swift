@@ -43,6 +43,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         document = SourceDocument(text: text)
         snippet = nil
         closers.removeAll()
+        closeCompletions()
         updateGutterWidth()
         recolour()
     }
@@ -192,6 +193,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
         colourViewport()
+        // Scrolled, it follows the text.
+        if offered != nil { showCompletions(reload: false) }
         needsDisplay = true
     }
 
@@ -269,6 +272,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
+        if !typing { closeCompletions() }
         brackets = matchBrackets()
         previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
@@ -290,6 +294,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         defer {
             needsDisplay = true
             mathPopover?.close()
+            closeCompletions()
         }
         return super.resignFirstResponder()
     }
@@ -306,6 +311,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     @objc private func keyChanged() {
         needsDisplay = true
+        if !hasKeyboard { closeCompletions() }
         previewMath()
     }
 
@@ -383,10 +389,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
-        defer { if !hasMarkedText() { beforeMarkedText = nil } }
+        let wasTyping = typing
+        typing = true
+        defer {
+            typing = wasTyping
+            if !hasMarkedText() { beforeMarkedText = nil }
+        }
         guard let typed = string as? String, typed.count == 1, let c = typed.first,
               replacementRange.location == NSNotFound, !hasMarkedText(), selectedRanges.count == 1 else {
             super.insertText(string, replacementRange: replacementRange)
+            closeCompletions()
             return
         }
         let selection = selectedRange()
@@ -416,8 +428,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         offerCompletions()
     }
 
-    /// Delete an empty bracket pair or backspace to the last indent stop.
+    /// Delete an empty bracket pair or backspace to the last indent stop;
+    /// an open completion list filters again.
     override func deleteBackward(_ sender: Any?) {
+        let wasTyping = typing, completing = offered != nil
+        typing = true
+        defer {
+            typing = wasTyping
+            if completing { offerCompletions() }
+        }
         let selection = selectedRange(), text = string as NSString
         guard selection.length == 0, selection.location > 0, selectedRanges.count == 1 else { return super.deleteBackward(sender) }
         let caret = selection.location
@@ -491,48 +510,85 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         super.cancelOperation(sender)
     }
 
-    // MARK: completion: the core's items in the system's list
+    // MARK: completion: the core's items in a list under the caret
 
-    private var offered: Completions?
-    private var completing = false
+    /// What the list offers, while it's open; the document keeps the keyboard.
+    private(set) var offered: Completions?
+    private lazy var completionList: CompletionList = {
+        let list = CompletionList()
+        list.clicked = { [unowned self] in acceptCompletion($0) }
+        return list
+    }()
+    /// Typing filters the open list; any other selection change closes it.
+    private var typing = false
 
     private var caret: Int { selectedRange().location }
 
     /// Offer core completions after typing when the caret has candidates.
-    private func offerCompletions() { complete(nil, explicit: false) }
+    private func offerCompletions() { complete(explicit: false) }
 
-    override func complete(_ sender: Any?) { complete(sender, explicit: true) }
+    override func complete(_ sender: Any?) { complete(explicit: true) }
 
-    private func complete(_ sender: Any?, explicit: Bool) {
-        guard !completing, selectedRange().length == 0,
-              let found = document.completions(caret: caret, explicit: explicit, symbols: symbols) else { return }
+    private func complete(explicit: Bool) {
+        guard selectedRange().length == 0, selectedRanges.count == 1, !hasMarkedText(),
+              let found = document.completions(caret: caret, explicit: explicit, symbols: symbols) else {
+            return closeCompletions()
+        }
         offered = found
-        // The list runs its own event loop until it closes.
-        completing = true
-        super.complete(sender)
-        completing = false
+        showCompletions(reload: true)
     }
 
-    override var rangeForUserCompletion: NSRange {
-        guard let offered else { return NSRange(location: NSNotFound, length: 0) }
-        return NSRange(location: offered.start, length: caret - offered.start)
+    func closeCompletions() {
+        guard offered != nil else { return }
+        offered = nil
+        completionList.close()
     }
 
-    override func completions(forPartialWordRange charRange: NSRange,
-                              indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
-        offered?.items.map(\.label)
+    /// Under the typed text's start while its line shows, or closed. Without a
+    /// window it holds its items unseen, as the tests use it.
+    private func showCompletions(reload: Bool) {
+        guard let offered else { return }
+        var start = NSRect.zero, host: NSWindow?
+        if let window, let clip = enclosingScrollView?.contentView {
+            host = window
+            start = firstRect(forCharacterRange: NSRange(location: offered.start, length: 0), actualRange: nil)
+            let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
+            var shown = window.convertToScreen(clip.convert(clip.bounds, to: nil))
+            shown.origin.y += insets.bottom
+            shown.size.height -= insets.top + insets.bottom
+            guard shown.contains(NSPoint(x: start.minX, y: start.midY)) else { return closeCompletions() }
+            guard reload else { return completionList.place(under: start) }
+        }
+        let rows = offered.items.map { item -> (label: String, kind: CompletionKind) in
+            let kind: CompletionKind = item.label.hasPrefix("\\") ? .command
+                : item.label.hasPrefix("@") ? .entryType
+                : symbols.citations.contains(item.label) ? .citation
+                : symbols.labels.contains(item.label) ? .label : .environment
+            return (item.label, kind)
+        }
+        completionList.show(rows, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+                            under: start, in: host)
     }
 
-    /// Accept only a chosen completion. Typed keys close AppKit's list and
-    /// enter the document before completion opens again.
-    override func insertCompletion(_ word: String, forPartialWordRange range: NSRange, movement: Int, isFinal: Bool) {
-        // A typed key closes it with .other, or .right for punctuation and space (27.2).
-        let typedOn = NSApp.currentEvent?.type == .keyDown
-            && ![NSTextMovement.return.rawValue, NSTextMovement.tab.rawValue].contains(movement)
-        guard isFinal, movement != NSTextMovement.cancel.rawValue, !typedOn,
-              let item = offered?.items.first(where: { $0.label == word }) else { return }
-        insertText(item.text, replacementRange: range)
-        startSnippet(item.fields, at: range.location)
+    /// Arrows move through the open list, Return and Tab accept, Escape closes it.
+    override func doCommand(by selector: Selector) {
+        guard offered != nil else { return super.doCommand(by: selector) }
+        switch selector {
+        case #selector(moveUp(_:)): completionList.move(-1)
+        case #selector(moveDown(_:)): completionList.move(1)
+        case #selector(insertNewline(_:)), #selector(insertTab(_:)): acceptCompletion(completionList.selection)
+        case #selector(cancelOperation(_:)): closeCompletions()
+        default: super.doCommand(by: selector)
+        }
+    }
+
+    /// Only a chosen completion goes in, replacing what's typed of it.
+    private func acceptCompletion(_ index: Int) {
+        guard let offered, offered.items.indices.contains(index), caret >= offered.start else { return closeCompletions() }
+        let item = offered.items[index]
+        closeCompletions()
+        insertText(item.text, replacementRange: NSRange(location: offered.start, length: caret - offered.start))
+        startSnippet(item.fields, at: offered.start)
     }
 
     // MARK: snippet fields

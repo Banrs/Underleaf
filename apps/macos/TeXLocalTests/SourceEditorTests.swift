@@ -192,14 +192,13 @@ struct SourceEditorTests {
     @Test(.timeLimit(.minutes(1)))
     func completionsFillTheirFields() throws {
         open("  \\beg")
-        // Off screen the system's list doesn't open, but the core's items are asked for.
+        // Without a window the list holds the core's items unseen.
         text.complete(nil)
-        let range = text.rangeForUserCompletion
-        #expect(range == NSRange(location: 2, length: 4))
-        var index = 0
-        let labels = try #require(text.completions(forPartialWordRange: range, indexOfSelectedItem: &index))
-        #expect(labels.first == "\\begin")
-        text.insertCompletion("\\begin", forPartialWordRange: range, movement: NSTextMovement.return.rawValue, isFinal: true)
+        let offered = try #require(text.offered)
+        #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
+        // Return accepts the selected item, the first.
+        text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        #expect(text.offered == nil)
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
         #expect(text.selectedRange() == NSRange(location: 9, length: 3))
         text.insertText("itemize", replacementRange: typed)
@@ -211,6 +210,37 @@ struct SourceEditorTests {
         #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}")
         // The core's copy went through every step with it.
         #expect(text.document.text == text.string)
+    }
+
+    /// The list follows typing; arrows choose, Escape and a move away close it
+    /// with nothing put in, and typed keys only go into the document.
+    @Test func theCompletionListTakesOnlyItsKeys() throws {
+        open("\\")
+        text.insertText("b", replacementRange: typed)
+        let all = try #require(text.offered).items.count
+        text.insertText("e", replacementRange: typed)
+        #expect(try #require(text.offered).items.count < all)
+        text.deleteBackward(nil)
+        #expect(text.offered?.items.count == all)
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(text.offered == nil && text.string == "\\b")
+        // The second item, chosen with the arrow.
+        text.complete(nil)
+        let second = try #require(text.offered?.items[1])
+        text.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        text.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        #expect(text.string == second.text)
+        // A typed key that matches nothing closes it and goes in.
+        open("\\be")
+        text.complete(nil)
+        text.insertText(" ", replacementRange: typed)
+        #expect(text.offered == nil && text.string == "\\be ")
+        // Moving the caret closes it.
+        open("\\be")
+        text.complete(nil)
+        #expect(text.offered != nil)
+        text.setSelectedRange(NSRange(location: 0, length: 0))
+        #expect(text.offered == nil)
     }
 
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
