@@ -16,6 +16,11 @@ enum CompletionKind {
     }
 }
 
+private extension NSColor {
+    /// A badge's letter: white on Light's deep squares, near-black on Overleaf Dark's pale ones.
+    static let badgeLetter = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.1, alpha: 1) : .white }
+}
+
 /// The core's completions under the caret, as Xcode's: a list in system glass
 /// in a panel that never takes the keyboard, so typing stays in the document,
 /// which moves the selection and accepts it.
@@ -146,7 +151,7 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         cell.textField?.font = font
         cell.imageView?.image = NSImage(systemSymbolName: badge.symbol, accessibilityDescription: badge.name)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
-                .applying(NSImage.SymbolConfiguration(paletteColors: [.white, badge.color])))
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.badgeLetter, badge.color])))
         return cell
     }
 
