@@ -311,6 +311,22 @@ struct PDFFitTests {
         #expect(white.brightnessComponent > 0.95)
         #expect(red.redComponent > 0.95 && red.greenComponent < 0.05 && red.blueComponent < 0.05)
     }
+
+    /// White paper on the system's under-page canvas, which isn't the page's white in
+    /// Light; dark paper on the content background, as before.
+    @Test func whitePaperSitsOnTheUnderPageCanvas() throws {
+        let view = PDFController().view
+        #expect(view.backgroundColor == .underPageBackgroundColor)
+        var canvas: CGFloat = 1
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            canvas = NSColor.underPageBackgroundColor.usingColorSpace(.sRGB)?.brightnessComponent ?? 1
+        }
+        #expect(canvas < 1)
+        view.darkPaper = true
+        #expect(view.backgroundColor == .controlBackgroundColor)
+        view.darkPaper = false
+        #expect(view.backgroundColor == .underPageBackgroundColor)
+    }
 }
 
 /// Find in PDF across a rebuild, off screen.
