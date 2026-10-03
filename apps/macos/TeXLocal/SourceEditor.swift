@@ -43,7 +43,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        text.textContainerInset = NSSize(width: 0, height: 4)
+        // Xcode's first line, measured: its highlight 8 pt under the bar, a point under where TextKit's line starts.
+        text.textContainerInset = NSSize(width: 0, height: 7)
+        text.fontSize = NSFont.systemFontSize
+        // Xcode's theme colours; its caret is the text's.
+        text.selectedTextAttributes = [.backgroundColor: NSColor.sourceSelection]
+        text.insertionPointColor = .textColor
         text.allowsUndo = true
         // Native spelling and correction in prose only (below). Smart dashes
         // and quotes would rewrite the LaTeX (-- to an em dash).
@@ -270,23 +275,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     // ---------- font ----------
 
     func setFontSize(_ size: Int) {
-        // The user's fixed-pitch font, as the HIG's typography table gives monospaced document text.
-        let font = NSFont.userFixedPitchFont(ofSize: CGFloat(size)) ?? .monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
-        let lines = Self.lineStyle(for: font)
-        textView.font = font
-        textView.defaultParagraphStyle = lines
-        if let storage = textView.textStorage {
-            storage.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: storage.length))
-        }
-        textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: lines]
-        textView.updateGutterWidth()
-    }
-
-    /// Leave glyph height to the font, including fallback glyphs and input methods.
-    private static func lineStyle(for font: NSFont) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = (font.pointSize * 0.1).rounded()
-        return style
+        textView.fontSize = CGFloat(size)
     }
 }
 

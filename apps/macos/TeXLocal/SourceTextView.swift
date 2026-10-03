@@ -113,24 +113,68 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return position + shift
     }
 
+    // MARK: the font
+
+    /// Settings' size; the weight follows the appearance.
+    var fontSize = NSFont.systemFontSize {
+        didSet { applyFont() }
+    }
+    /// How far the current line's highlight sits below its line's top: the
+    /// extra line height goes above the glyphs, Xcode centres them.
+    private var rowShift: CGFloat = 0
+    private var applied: NSFont?
+
+    /// SF Mono as Xcode's Default themes give it, regular in Light and medium in
+    /// Dark, its lines 1.1 times the font's (DVTLineSpacing) to whole points: 18 at 13.
+    private func applyFont() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: dark ? .medium : .regular)
+        guard font != applied else { return }
+        applied = font
+        let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
+        let style = NSMutableParagraphStyle()
+        // A minimum, so taller fallback glyphs and input methods still fit.
+        style.minimumLineHeight = (natural * 1.1).rounded()
+        rowShift = (style.minimumLineHeight - natural) / 2
+        self.font = font
+        defaultParagraphStyle = style
+        if let storage = textStorage {
+            storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
+        }
+        typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
+        // Xcode's numbers, measured: semi-condensed SF a point under the text, tabular.
+        let numbers = NSFont.systemFont(ofSize: fontSize - 1, weight: .regular, width: NSFont.Width(rawValue: -0.1))
+        numberFont = NSFont(descriptor: numbers.fontDescriptor.addingAttributes([.featureSettings: [[
+            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+            .selectorIdentifier: kMonospacedNumbersSelector]]]), size: 0) ?? numbers
+        gutterWidth = 0
+        updateGutterWidth()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyFont()
+    }
+
     // MARK: the gutter
 
     private var gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
+    private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    /// Where the line numbers end.
+    private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
 
-    private var numberFont: NSFont {
-        .monospacedSystemFont(ofSize: max(8, (font?.pointSize ?? NSFont.systemFontSize) - 2), weight: .regular)
-    }
+    private func digits(_ n: Int) -> Int { max(3, String(n).count) }
 
-    private func digits(_ n: Int) -> Int { max(2, String(n).count) }
-
-    /// Room for the largest line number, 8 pt either side of it.
+    /// Xcode's, measured at 13 pt: three digits' room from 19.5 pt, more as
+    /// the file needs them, and the text 11 pt after.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
         let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
-        let width = (CGFloat(lineCountDigits) * digit + 16).rounded(.up)
+        numbersEnd = 19.5 + CGFloat(lineCountDigits) * digit
+        let width = numbersEnd + 11 - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
         // Account for the gutter at the start and 8 pt at the end.
@@ -202,41 +246,32 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         let origin = textContainerOrigin
-        let caret = selectedRange().location, length = (string as NSString).length
-        let entry = fragments.last { $0.offset <= caret }.flatMap { entry in
+        let selection = selectedRange(), length = (string as NSString).length
+        let entry = fragments.last { $0.offset <= selection.location }.flatMap { entry in
             let end = offset(entry.fragment.rangeInElement.endLocation)
-            return caret < end || end == length ? entry : nil
+            return selection.location < end || end == length ? entry : nil
         }
         let current = entry?.offset
-        if let entry {
-            // Its lines and the spacing under the last, which TextKit lays
-            // out at the top of the next paragraph.
+        // As Xcode's, measured: for a caret only, its paragraph from 14 pt to
+        // 8 pt from the right edge, with 4 pt corners round the line number.
+        if let entry, selection.length == 0 {
             let frame = entry.fragment.layoutFragmentFrame, lines = entry.fragment.textLineFragments
             let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
-            let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + (defaultParagraphStyle?.lineSpacing ?? 0)
-            NSColor.quaternarySystemFill.setFill()
-            NSRect(x: 0, y: origin.y + top, width: bounds.width, height: bottom - top).fill(using: .sourceOver)
-        }
-        if let manager = textLayoutManager, hasKeyboard {
-            for (range, matched) in brackets {
-                guard let r = textRange(range) else { continue }
-                let color = (matched ? NSColor.systemTeal : .systemRed).withAlphaComponent(0.3)
-                manager.enumerateTextSegments(in: r, type: .highlight, options: []) { _, rect, _, _ in
-                    color.setFill()
-                    rect.offsetBy(dx: origin.x, dy: origin.y).fill(using: .sourceOver)
-                    return true
-                }
-            }
+            let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height)
+            (hasKeyboard ? NSColor.currentLine : .inactiveCurrentLine).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 14, y: origin.y + top + rowShift, width: bounds.width - 22, height: bottom - top),
+                         xRadius: 4, yRadius: 4).fill()
         }
         let font = numberFont
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
-            let color: NSColor = offset == current ? .textColor : .secondaryLabelColor
+            // Measured: the current line's in the text's colour, the others at 30%.
+            let color: NSColor = offset == current ? .labelColor : .textColor.withAlphaComponent(0.3)
             let number = NSAttributedString(string: "\(document.line(at: offset))",
                                             attributes: [.font: font, .foregroundColor: color])
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
-            let x = gutterWidth - 8 - number.size().width
-            number.draw(with: NSRect(x: x, y: baseline, width: number.size().width, height: 0), options: [])
+            let width = number.size().width
+            number.draw(with: NSRect(x: numbersEnd - width, y: baseline, width: width, height: 0), options: [])
         }
     }
 
@@ -266,14 +301,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // MARK: the selection
 
-    private var brackets: [(NSRange, Bool)] = []
     private static let pairs: [Character: Character] = ["(": ")", "[": "]", "{": "}"]
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !loading else { return }
         if !typing { closeCompletions() }
-        brackets = matchBrackets()
         previewMath()
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
@@ -351,23 +384,38 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return text.substring(with: text.rangeOfComposedCharacterSequence(at: i)).first
     }
 
-    /// Check before and after the caret, bounded to 10,000 UTF-16 units.
-    private func matchBrackets() -> [(NSRange, Bool)] {
-        let caret = selectedRange().location
-        let opens = Array(Self.pairs.keys), closes = Array(Self.pairs.values)
-        for at in [caret - 1, caret] {
-            guard let c = character(at: at), opens.contains(c) || closes.contains(c) else { continue }
-            let forward = opens.contains(c)
-            let partner = forward ? Self.pairs[c]! : Self.pairs.first { $0.value == c }!.key
-            var depth = 0, i = at
-            while abs(i - at) <= 10_000, let d = character(at: i) {
-                if d == c { depth += 1 } else if d == partner { depth -= 1 }
-                if depth == 0 { return [(NSRange(location: at, length: 1), true), (NSRange(location: i, length: 1), true)] }
-                i += forward ? 1 : -1
-            }
-            return [(NSRange(location: at, length: 1), false)]
+    /// Where the bracket at `at` is matched, within 10,000 UTF-16 units.
+    private func partner(of at: Int) -> Int? {
+        guard let c = character(at: at) else { return nil }
+        let close = Self.pairs[c], open = Self.pairs.first { $0.value == c }?.key
+        guard let other = close ?? open else { return nil }
+        var depth = 0, i = at
+        while abs(i - at) <= 10_000, let d = character(at: i) {
+            if d == c { depth += 1 } else if d == other { depth -= 1 }
+            if depth == 0 { return i }
+            i += close != nil ? 1 : -1
         }
-        return []
+        return nil
+    }
+
+    /// As Xcode: typing a bracket, or moving the caret over one, shows its
+    /// partner for a moment, when that's on screen.
+    private func showPartner(of at: Int) {
+        guard let i = partner(of: at), let first = fragments.first, let last = fragments.last,
+              first.offset <= i, i < offset(last.fragment.rangeInElement.endLocation) else { return }
+        showFindIndicator(for: NSRange(location: i, length: 1))
+    }
+
+    override func moveRight(_ sender: Any?) {
+        let before = selectedRange()
+        super.moveRight(sender)
+        if before.length == 0, selectedRange() == NSRange(location: before.location + 1, length: 0) { showPartner(of: before.location) }
+    }
+
+    override func moveLeft(_ sender: Any?) {
+        let before = selectedRange()
+        super.moveLeft(sender)
+        if before.length == 0, selectedRange() == NSRange(location: before.location - 1, length: 0) { showPartner(of: before.location - 1) }
     }
 
     // MARK: typing
@@ -407,6 +455,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         if selection.length == 0, Self.pairs.values.contains(c), next == c, closers.contains(selection.location) {
             closers.remove(selection.location)
             setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+            showPartner(of: selection.location)
             return
         }
         if let close = Self.pairs[c] {
@@ -425,6 +474,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             }
         }
         super.insertText(string, replacementRange: replacementRange)
+        if Self.pairs.values.contains(c) { showPartner(of: selectedRange().location - 1) }
         offerCompletions()
     }
 
@@ -724,6 +774,22 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
     }
+}
+
+/// Xcode's Default (Light) and (Dark) themes' editor colours.
+extension NSColor {
+    private static func theme(_ light: NSColor, _ dark: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+    }
+
+    /// DVTSourceTextCurrentLineHighlightColor.
+    static let currentLine = theme(NSColor(srgbRed: 0.909804, green: 0.94902, blue: 1, alpha: 1),
+                                   NSColor(srgbRed: 0.138526, green: 0.146864, blue: 0.169283, alpha: 1))
+    /// Xcode's in a window in the background: grey, measured in Light; Dark's is near grey already.
+    static let inactiveCurrentLine = theme(NSColor(white: 0.933, alpha: 1), currentLine)
+    /// DVTSourceTextSelectionColor.
+    static let sourceSelection = theme(NSColor(srgbRed: 0.642038, green: 0.802669, blue: 0.999195, alpha: 1),
+                                       NSColor(srgbRed: 0.317647, green: 0.356862, blue: 0.439215, alpha: 1))
 }
 
 private extension HighlightKind {

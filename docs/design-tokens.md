@@ -186,8 +186,10 @@ Xcode's treatment.
 `ui-monospace`, which resolves to SF Mono on macOS (what Xcode sets) and Cascadia
 Mono on Windows. JetBrains Mono stays bundled and selectable in Settings, but an
 app that should read as native shouldn't ship its own code face ahead of the
-platform's. Web leading is 1.45; AppKit uses the font's natural line height with
-a small paragraph spacing, and draws gutter numbers on the text's first baseline.
+platform's. Web leading is 1.45; AppKit follows Xcode's editor, measured on Xcode
+27: SF Mono (medium in Dark), lines 1.1 times the font's to whole points (18 at
+13 pt), semi-condensed numbers a point smaller on the text's first baseline, and
+the current line as a rounded rectangle 14 pt in from the left, 8 pt from the right.
 
 Use semantic system colours for native chrome. The kit supplies web references;
 AppKit owns native control metrics and materials, including scroll-edge effects.
