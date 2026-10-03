@@ -37,7 +37,8 @@ because a compile blocks. `AppModel` holds app-wide state and preferences,
 inspector with an NSToolbar, hosting SwiftUI for the sidebar, bars and Home. Commands
 (`Commands.swift`) are the one definition of menus, shortcuts and toolbar items. The
 editor is an NSTextView (TextKit 2) mirrored by Rust's syntax crate through
-`SourceDocument`; it uses the stock find bar, so Find and Replace are the system's. The
+`SourceDocument`, styled after Xcode's editor; it uses the stock find bar, so Find and
+Replace are the system's. The
 PDF is one persistent PDFKit view owned by `PDFController`.
 
 ## Details worth preserving
@@ -56,10 +57,60 @@ PDF is one persistent PDFKit view owned by `PDFController`.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
 
+## Design direction (agreed 3 October 2026)
+
+- Native macOS 27: system controls, HIG, design resources, WWDC and SDK guidance. Legacy-looking
+  AppKit UI is not acceptable even when stock.
+- Xcode is the reference for the text editor (font, 18 pt lines, gutter, rounded current line,
+  selection, completion list), the bottom bar's metrics, the File Outline header and the
+  sidebar's width (256 pt, 222 pt minimum). Not for the rest of the chrome.
+- Preview for the PDF side, Mail for split-view logic. Overleaf, Texifier and TeXstudio for
+  functions and positioning, not visual design.
+- The editor stays on TextKit 2; no TextKit 1 fallback.
+- The File Outline and status bar look and animate as at commit 6342673, built from system
+  parts. Treat visible drift from an existing look as a regression: capture it first, then match.
+- Visible UI changes are proposed first; commits are pushed to this branch, never as a PR.
+- The Rust core is left for a later session, except bugs that show in the Mac app.
+
+## State at 87574f9
+
+Done this session: Tauri and Windows removed; core, syntax, server and FFI crates simplified;
+stock find bar with Replace; Home as a template chooser over Recent; Compile as word and
+symbol with a spinner in Stop at the same width; status bar with Line/Col; outline header that
+rides the fold; divider detents with a haptic; a glass completion list; the maths preview over
+the caret; double-click SyncTeX both ways; Colour Theme in Settings (Overleaf, TeXstudio, System).
+
+Not verified by hand:
+- The PDF's scrollers staying hidden during a divider drag (77aa8ad relies on live resize).
+- The detent haptic, the bracket flash, the completion list's click and dark mode for the bars.
+- Xcode's focused-window editor state (caret width, highlight during a selection) and its
+  completion popup's metrics were not measured; those parts are from the theme file or memory.
+- `/Applications/TeXLocal.app` is still an older Release build.
+- `apps/macos/TeXLocal/LaTeX.swift` has an uncommitted whitespace edit of Daniel's.
+- Layout and outline tests failed intermittently in some runs, a different one each time.
+
+Open questions for Daniel:
+- Which highlight colour looked wrong (current line and selection match Xcode's Default theme).
+- Whether unmatched braces get a mark again beyond the theme's invalid colour.
+- Compact rows for the File Outline (13 pt text kept, about Xcode's 17 pt row pitch).
+- A Texifier theme needs its colour values; none are published.
+
+Proposed, not built:
+- Editor: wrapped-line continuation indent, scroll past the end, a tint on lines with an issue.
+- Status bar: the engine's name; hairlines between every trailing item.
+- Toolbar: Compile at the far trailing edge (HIG's place for the prominent action).
+- Tokenizer (Rust): keyword commands, control symbols, commands in maths, environment names
+  and `&` as their own kinds, so the themes can colour them as Overleaf and TeXstudio do;
+  bold and italic styles.
+
+## Issues (Daniel)
+
+<!-- Add issues here for the next session: what you did, what you saw, what you expected. -->
+
+-
+
 ## Known limits
 
 - Physical trackpad pinch and interactive IME sessions are only tested through code paths.
-- Minimum-layout tests log a hidden-outline 28.5 against 29 pt constraint diagnostic.
-- A same-size external symbol edit that keeps its mtime is missed by the symbol cache.
 - ZIP imports have per-entry limits but no total budget; a late failure can leave a
   partial import.
