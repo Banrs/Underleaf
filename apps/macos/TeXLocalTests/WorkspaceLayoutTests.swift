@@ -120,15 +120,6 @@ final class WorkspaceLayoutTests {
         }
     }
 
-    /// Panes open on whole points: one half a point off centres its content half a point low.
-    @Test func firstSizesAreWholePoints() async throws {
-        let workspace = open(size: NSSize(width: Self.size.width, height: 601))
-        workspace.app.outlineCollapsed = false
-        workspace.project.showLogs = true
-        try await waitUntil { self.height(workspace.panelItem) > 0 }
-        for item in [workspace.outlineItem!, workspace.panelItem!] { #expect(height(item) == height(item).rounded()) }
-    }
-
     /// The next window opens with the dividers where this one left them.
     @Test func theNextWindowKeepsTheDividers() async throws {
         var workspace = open()

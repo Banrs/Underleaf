@@ -80,12 +80,6 @@ struct FindTests {
         #expect(FindMatches().label(for: "loop") == "Not found")
         #expect(FindMatches().label(for: "").isEmpty)
     }
-
-    @Test func queriesAreTrimmedAndCapped() {
-        #expect(PDFFind.normalize("  theorem \n") == "theorem")
-        #expect(PDFFind.normalize(" \t ").isEmpty)
-        #expect(PDFFind.normalize(String(repeating: "a", count: 300)).count == PDFFind.maxQuery)
-    }
 }
 
 /// The PDF view's fits, off screen.

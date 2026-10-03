@@ -82,12 +82,12 @@ struct SourceEditorTests {
     }
 
     /// The core's edits go in as one undo step, the selection following the
-    /// text as CodeMirror's does: text put in at its start goes before it.
+    /// text: text put in at its start goes before it.
     @Test func commentsToggleAsOneStep() {
         open("a\n  b")
         text.setSelectedRange(NSRange(location: 0, length: 5))
         #expect(editor.perform(.comment))
-        // At the least indentation of the lines, as CodeMirror puts it.
+        // At the least indentation of the lines.
         #expect(text.string == "% a\n%   b")
         #expect(text.selectedRange() == NSRange(location: 2, length: 7))
         #expect(editor.document?.text == text.string)
