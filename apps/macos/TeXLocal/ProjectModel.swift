@@ -11,8 +11,8 @@ final class ProjectModel {
     private(set) var initialLoadComplete = false
     var openPath: String?
     var outline: [OutlineItem] = []
-    /// The main file's `\documentclass`, for how its headings are numbered (Aa).
-    private(set) var documentClass: String?
+    /// The main file's `\documentclass`, for the levels Aa offers and how it sets them.
+    var documentClass: DocumentClass?
     /// The main file `documentClass` was read from.
     @ObservationIgnored private var classFile: String?
     var counts: (words: Int, lines: Int)?
@@ -96,6 +96,11 @@ final class ProjectModel {
 
     /// Only LaTeX has an outline, counts and the LaTeX tools.
     var isLaTeX: Bool { openPath.map(isLaTeXFile) ?? false }
+    /// The levels the main file's class has, how it numbers and sets them.
+    var headingStyles: HeadingStyles {
+        HeadingStyles(documentClass: documentClass, hasChapters: outline.contains { $0.level == 1 })
+    }
+
     var headingLevel: HeadingLevel {
         outline.first { $0.file == openPath && $0.line == cursorLine }.flatMap { HeadingLevel.atDepth($0.level) } ?? .normalText
     }
@@ -337,7 +342,7 @@ final class ProjectModel {
                   let text = main == path ? editor.document?.text
                     : try? await core.call("read_file", ["id": id, "path": main], as: FileText.self).text,
                   !Task.isCancelled else { return }
-            documentClass = HeadingNumbering.documentClass(in: text)
+            documentClass = DocumentClass(in: text)
             classFile = main
         }
     }

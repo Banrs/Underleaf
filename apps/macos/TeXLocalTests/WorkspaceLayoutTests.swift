@@ -338,11 +338,16 @@ final class WorkspaceLayoutTests {
         #expect(inspector.toolTip == "Hide Inspector")
     }
 
-    /// Aa opens its popover under it, on the screen, and again closes it; the menu bar's
-    /// Format and the overflow menu keep the same choices as menu items.
+    /// Aa opens its popover under it, on the screen, and again closes it; its styles are lit
+    /// where the selection is in them and toggle with it open. The menu bar's Format and the
+    /// overflow menu keep the same choices as menu items.
     @Test func aaOpensItsPopover() async throws {
         let workspace = open(sidebar: false)
         let window = try #require(window), toolbar = try showToolbar(workspace)
+        let editor = workspace.project.editor
+        workspace.project.openPath = "main.tex"
+        editor.open(path: "main.tex", text: "a \\textit{word}", focus: false)
+        editor.textView.setSelectedRange(NSRange(location: 12, length: 0))
         window.layoutIfNeeded()
         let item = try #require(toolbar.items.first { $0.itemIdentifier == .format })
         #expect(!(item is NSMenuToolbarItem) && item.menuFormRepresentation?.submenu?.items.map(\.title)
@@ -355,6 +360,15 @@ final class WorkspaceLayoutTests {
         let anchor = aa.convert(aa.bounds, to: nil).offsetBy(dx: window.frame.minX, dy: window.frame.minY)
         #expect(shown.minX < anchor.midX && anchor.midX < shown.maxX && shown.maxY <= anchor.minY + 1)
         #expect(window.screen.map { $0.visibleFrame.contains(shown) } != false && shown.height < 400)
+        let content = try #require(popover.contentViewController?.view)
+        let toggles: [NSButton] = ["Bold", "Italic", "Underline"].compactMap { title in
+            Self.views(content).lazy.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == title }
+        }
+        #expect(toggles.count == 3)
+        try await waitUntil { toggles.map(\.state) == [NSControl.StateValue.off, .on, .off] }
+        toggles[1].performClick(nil)
+        #expect(editor.textView.string == "a word" && popover.isShown)
+        try await waitUntil { toggles[1].state == NSControl.StateValue.off }
         NSApp.sendAction(try #require(item.action), to: item.target, from: item)
         try await waitUntil { !popover.isShown }
     }

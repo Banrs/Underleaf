@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa: Bold and Italic, then the levels, the caret's checked. The menu
-/// bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
+/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The
+/// menu bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
 @MainActor
 final class FormatPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
@@ -41,10 +41,11 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// Bold and Italic as the standard symbols, then the levels in one size at even spacing, each
-/// after how LaTeX numbers it, as Notes' lists after their markers. It opens with the caret's
-/// level checked and nothing highlighted, as a menu; the arrow keys start from the checked level,
-/// Return chooses, and a choice closes it, as a menu's.
+/// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
+/// levels the document's class has, each at its size, weight and shape there against the text's,
+/// at an even pitch, after its number as the class prints it. A style toggles and the popover
+/// stays, as Notes' does; a level is chosen and it closes, as a menu. It opens with the caret's
+/// level checked and nothing highlighted; the arrow keys start from the checked level.
 struct FormatPanel: View {
     let app: AppModel
     let project: ProjectModel
@@ -53,29 +54,32 @@ struct FormatPanel: View {
     @FocusState private var focused: HeadingLevel?
     /// Highlighted once the pointer or the arrow keys have moved.
     @State private var engaged = false
+    /// The selection's, read again as the text or the selection changes.
+    @State private var styles = TextStyles()
 
-    private var numbering: HeadingNumbering {
-        HeadingNumbering(documentClass: project.documentClass, hasChapters: project.outline.contains { $0.level == 1 })
-    }
+    /// Notes' list markers sit a word space from their text.
+    private static let markerGap: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 2) {
-                style(.editBold, symbol: "bold")
-                style(.editItalic, symbol: "italic")
+        let headings = project.headingStyles
+        let layout = Layout(headings)
+        VStack(spacing: 0) {
+            HStack(spacing: 5) {
+                toggle(.editBold, symbol: "bold", on: styles.bold != nil)
+                toggle(.editItalic, symbol: "italic", on: styles.italic != nil)
+                toggle(.editUnderline, symbol: "underline", on: styles.underline != nil)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             Divider()
                 .padding(.horizontal, 14)
             VStack(spacing: 0) {
-                ForEach(HeadingLevel.all, id: \.self) { level in
-                    row(level, marker: numbering.marker(level))
+                ForEach(headings.levels, id: \.self) { level in
+                    row(level, marker: headings.marker(level), layout: layout)
                 }
             }
             .padding(6)
-            .onKeyPress(.downArrow) { move(by: 1) }
-            .onKeyPress(.upArrow) { move(by: -1) }
+            .onKeyPress(.downArrow) { move(by: 1, in: headings.levels) }
+            .onKeyPress(.upArrow) { move(by: -1, in: headings.levels) }
             .onKeyPress(.return) { chooseFocused() }
             .onKeyPress(.space) { chooseFocused() }
             .accessibilityElement(children: .contain)
@@ -87,46 +91,51 @@ struct FormatPanel: View {
             return .handled
         }
         // At the caret's level, as a pop-up menu opens at its item.
-        .onAppear { focused = project.headingLevel }
-    }
-
-    private func style(_ command: MenuCommand, symbol: String) -> some View {
-        Button {
-            app.perform(command, on: project)
-            close()
-        } label: {
-            Image(systemName: symbol)
-                .font(.title3)
-                .frame(width: 30, height: 28)
+        .onAppear {
+            focused = project.headingLevel
+            styles = project.editor.textStyles
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.primary)
-        .help(command.title)
-        .accessibilityLabel(command.title)
+        .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification, object: project.editor.textView)) { _ in
+            styles = project.editor.textStyles
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification,
+                                                        object: project.editor.textView)) { _ in
+            styles = project.editor.textStyles
+        }
     }
 
-    private func row(_ level: HeadingLevel, marker: String?) -> some View {
+    private func toggle(_ command: MenuCommand, symbol: String, on: Bool) -> some View {
+        StyleToggle(title: command.title, symbol: symbol, isOn: on) {
+            app.perform(command, on: project)
+        }
+        .frame(width: 24, height: 24)
+        .help(command.title)
+    }
+
+    private func row(_ level: HeadingLevel, marker: String?, layout: Layout) -> some View {
         let lit = engaged && focused == level
+        let font = layout.font(level)
         return Button { choose(level) } label: {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .opacity(project.headingLevel == level ? 1 : 0)
-                // The widest marker sets the column, so the names line up.
-                ZStack(alignment: .leading) {
-                    Text(verbatim: "1.1.1").hidden()
-                    Text(verbatim: marker ?? "")
-                        .foregroundStyle(lit ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.secondary))
+                HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
+                    if layout.markers > 0 {
+                        Text(verbatim: marker ?? "")
+                            .foregroundStyle(lit ? AnyShapeStyle(Color(nsColor: .selectedMenuItemTextColor)) : AnyShapeStyle(.secondary))
+                            .frame(width: layout.markers, alignment: .trailing)
+                    }
+                    Text(level.title)
                 }
-                .monospacedDigit()
-                Text(level.title)
+                .font(font)
                 Spacer(minLength: 12)
             }
             .padding(.horizontal, 8)
-            .frame(height: 24)
-            .foregroundStyle(lit ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-            // A menu's highlight, which follows the pointer and the arrow keys.
-            .background(lit ? Color.accentColor : .clear, in: .rect(cornerRadius: 6))
+            .frame(height: layout.pitch)
+            // A menu's highlight, the system's, which follows the pointer and the arrow keys.
+            .foregroundStyle(lit ? Color(nsColor: .selectedMenuItemTextColor) : .primary)
+            .background(lit ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 6))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -144,8 +153,7 @@ struct FormatPanel: View {
         .accessibilityAddTraits(project.headingLevel == level ? .isSelected : [])
     }
 
-    private func move(by step: Int) -> KeyPress.Result {
-        let levels = HeadingLevel.all
+    private func move(by step: Int, in levels: [HeadingLevel]) -> KeyPress.Result {
         let index = focused.flatMap(levels.firstIndex) ?? (step > 0 ? -1 : levels.count)
         if engaged { focused = levels[min(max(index + step, 0), levels.count - 1)] }
         engaged = true
@@ -163,36 +171,81 @@ struct FormatPanel: View {
         choose(focused)
         return .handled
     }
-}
 
-/// How a document's class numbers its headings, as its markers read: the book classes number
-/// chapters and the sections in them (1.1), the article classes have no chapters. Parts are
-/// Roman in both; the lowest levels go unnumbered.
-nonisolated enum HeadingNumbering {
-    case article, book
+    /// The levels' fonts at the text's size, the even pitch the largest needs, and the marker
+    /// column, as wide as the widest number shown in its level's font.
+    struct Layout {
+        private let fonts: [HeadingLevel: NSFont]
+        private let shapes: [HeadingLevel: HeadingStyles.Shape]
+        let pitch: CGFloat
+        let markers: CGFloat
 
-    private static let bookClasses: Set = ["book", "report", "memoir", "amsbook", "scrbook", "scrreprt"]
+        init(_ headings: HeadingStyles) {
+            var fonts: [HeadingLevel: NSFont] = [:], shapes: [HeadingLevel: HeadingStyles.Shape] = [:]
+            for level in headings.levels {
+                let style = headings.font(level)
+                var font = NSFont.systemFont(ofSize: NSFont.systemFontSize * style.scale, weight: style.bold ? .bold : .regular)
+                if style.shape == .italic {
+                    font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: 0) ?? font
+                }
+                fonts[level] = font
+                shapes[level] = style.shape
+            }
+            self.fonts = fonts
+            self.shapes = shapes
+            // The rows' even pitch, as Notes': the largest line and a little.
+            let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
+            pitch = max(24, (line + 4).rounded(.up))
+            markers = headings.levels.compactMap { level in
+                headings.marker(level).map { NSAttributedString(string: $0, attributes: [.font: fonts[level]!]).size().width }
+            }.max().map { $0.rounded(.up) } ?? 0
+        }
 
-    /// A class it doesn't know numbers as a book's when the document has chapters.
-    init(documentClass: String?, hasChapters: Bool) {
-        self = documentClass.map(Self.bookClasses.contains) == true || hasChapters ? .book : .article
-    }
-
-    func marker(_ level: HeadingLevel) -> String? {
-        switch (self, level.command) {
-        case (_, "part"): "I"
-        case (.book, "chapter"): "1"
-        case (.book, "section"), (.article, "subsection"): "1.1"
-        case (.book, "subsection"), (.article, "subsubsection"): "1.1.1"
-        case (.article, "section"): "1"
-        default: nil
+        func font(_ level: HeadingLevel) -> Font {
+            let font = Font(fonts[level] ?? .systemFont(ofSize: NSFont.systemFontSize))
+            return shapes[level] == .smallCaps ? font.smallCaps() : font
         }
     }
+}
 
-    /// The class a file's `\documentclass` names, outside comments.
-    static func documentClass(in text: String) -> String? {
-        // A comment runs from a % that isn't escaped to the line's end.
-        let code = text.replacing(/(^|[^\\])%[^\n]*/.anchorsMatchLineEndings()) { $0.1 }
-        return code.firstMatch(of: /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*([^}\s]+)\s*\}/).map { String($0.1) }
+/// A style's toggle, as Notes' Aa has: AppKit's on/off button, filled with the accent while on,
+/// its bezel showing under the pointer.
+struct StyleToggle: NSViewRepresentable {
+    let title: String
+    let symbol: String
+    let isOn: Bool
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: title) ?? NSImage(),
+                              target: context.coordinator, action: #selector(Coordinator.toggle))
+        button.setButtonType(.pushOnPushOff)
+        button.bezelStyle = .accessoryBar
+        button.showsBorderOnlyWhileMouseInside = true
+        button.bezelColor = .controlAccentColor
+        // Notes' size: a 13.5-point capital in a 24-point square.
+        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .regular)
+        // At that size, not shrunk to the bezel's insets.
+        button.imageScaling = .scaleNone
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.state = isOn ? .on : .off
+    }
+
+    /// The frame it's given: AppKit's own is wider than Notes' square.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions(by: nsView.intrinsicContentSize)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func toggle() { action() }
     }
 }

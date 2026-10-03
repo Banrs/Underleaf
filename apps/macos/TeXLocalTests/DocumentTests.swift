@@ -69,24 +69,44 @@ struct OutlineTests {
     }
 }
 
-/// Aa's markers: how the main file's class numbers each level.
+/// Aa's levels: those the main file's class has, numbered and set as it sets them.
 @MainActor
-struct HeadingNumberingTests {
-    @Test func theClassNumbersTheLevels() {
-        let markers = { (numbering: HeadingNumbering) in HeadingLevel.all.map(numbering.marker) }
-        #expect(markers(HeadingNumbering(documentClass: "article", hasChapters: false))
-            == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
-        #expect(markers(HeadingNumbering(documentClass: "report", hasChapters: false))
-            == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
-        // A class it doesn't know: a book's numbering once there are chapters.
-        #expect(HeadingNumbering(documentClass: "thesis", hasChapters: true) == .book)
-        #expect(HeadingNumbering(documentClass: nil, hasChapters: false) == .article)
+struct HeadingStylesTests {
+    private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
+        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) }, hasChapters: chapters)
+    }
+
+    private func markers(_ styles: HeadingStyles) -> [String?] {
+        styles.levels.map(styles.marker)
+    }
+
+    @Test func theClassHasItsLevelsAndNumbersThem() {
+        #expect(styles("article").levels.map(\.title) == ["Normal Text", "Part", "Section", "Subsection", "Subsubsection", "Paragraph"])
+        #expect(markers(styles("article")) == [nil, "I", "1", "1.1", "1.1.1", nil])
+        #expect(markers(styles("report")) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
+        #expect(markers(styles("IEEEtran")) == [nil, "I", "A", "1", "a"])
+        #expect(styles("IEEEtran").levels.map(\.title) == ["Normal Text", "Section", "Subsection", "Subsubsection", "Paragraph"])
+        #expect(styles("letter").levels == [.normalText])
+        // A class it doesn't know has every level, numbered as a book's once there are chapters.
+        #expect(markers(styles("thesis", chapters: true)) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
+        #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
+    }
+
+    /// LaTeX's sizes against the text's, at the class's size option.
+    @Test func theClassSetsTheLevelsSizes() {
+        let book = styles("book"), part = HeadingLevel.sections[0], section = HeadingLevel.sections[2]
+        #expect(book.font(part) == .init(scale: 2.488, bold: true, shape: .upright))
+        #expect(abs(styles("article").font(part).scale - 2.074) < 0.001)
+        #expect(abs(styles("article", size: 12).font(section).scale - 1.44) < 0.001)
+        #expect(book.font(.normalText) == .init(scale: 1, bold: false, shape: .upright))
+        #expect(styles("amsart").font(section) == .init(scale: 1, bold: false, shape: .smallCaps))
     }
 
     @Test func theClassIsTheOneNamedOutsideComments() {
-        #expect(HeadingNumbering.documentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == "report")
-        #expect(HeadingNumbering.documentClass(in: "50\\% \\documentclass{book}") == "book")
-        #expect(HeadingNumbering.documentClass(in: "\\section{A}") == nil)
+        #expect(DocumentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == DocumentClass(name: "report", pointSize: 11))
+        #expect(DocumentClass(in: "50\\% \\documentclass{book}") == DocumentClass(name: "book"))
+        #expect(DocumentClass(in: "\\documentclass[fontsize=12pt]{scrartcl}")?.pointSize == 12)
+        #expect(DocumentClass(in: "\\section{A}") == nil)
     }
 }
 

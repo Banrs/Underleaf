@@ -386,10 +386,10 @@ final class ProjectFlowTests {
         try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
         await app.open(info.id)
         let project = try #require(app.project)
-        try await waitUntil { project.documentClass == "report" }
+        try await waitUntil { project.documentClass?.name == "report" }
         project.reveal(project.outline[0])
         try await waitUntil { project.openPath == "a.tex" }
-        #expect(project.documentClass == "report")
+        #expect(project.documentClass == DocumentClass(name: "report", pointSize: 11))
         await app.close()
     }
 

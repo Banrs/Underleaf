@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// Shared Format and toolbar choices; the caret's level is checked.
+/// Shared Format and toolbar choices: the levels the class has, the caret's checked.
 struct SectionLevelItems: View {
     let project: ProjectModel?
 
     var body: some View {
-        ForEach(HeadingLevel.all, id: \.self) { level in
+        ForEach(project?.headingStyles.levels ?? HeadingLevel.all, id: \.self) { level in
             Toggle(level.title, isOn: Binding(get: { project?.headingLevel == level },
                                               set: { _ in project?.editor.perform(.heading, level.command) }))
         }
