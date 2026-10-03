@@ -49,7 +49,7 @@ extension NSCursor {
 /// Sidebar | source | PDF over the build panel and status bar | inspector.
 /// Find bars belong to their columns; AppKit animates model-driven collapses
 /// and keeps each split's divider positions across launches (`autosaveName`).
-final class WorkspaceController: NSSplitViewController {
+final class WorkspaceController: RestoredSplitViewController {
     let app: AppModel
     let project: ProjectModel
     var pdf: PDFController { project.pdf }
@@ -88,6 +88,14 @@ final class WorkspaceController: NSSplitViewController {
         buildInspector()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
+        // The opening sizes: the sidebar's width, and source and PDF in halves.
+        detent = { [unowned self] divider in
+            divider == 0 && !sidebarItem.isCollapsed ? ColumnMetrics.sidebarIdeal : nil
+        }
+        columns.detent = { [unowned columns] _ in
+            let split = columns.splitView
+            return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
+        }
         toolbar = WorkspaceToolbar(app: app, project: project, workspace: self)
         watch()
     }
@@ -489,12 +497,29 @@ private nonisolated enum OutlineState {
 
 /// A split whose autosave has restored its panes as its view loads; `loaded`
 /// then hides the ones its owner's models hide.
+///
+/// AppKit has no split detents: a drag that comes near `detent`, the opening
+/// position, stops there with an alignment haptic on arrival.
 class RestoredSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
+    var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         loaded()
+    }
+
+    /// NSSplitViewController declares this without acting on it, so super isn't called.
+    override func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
+                   ofSubviewAt dividerIndex: Int) -> CGFloat {
+        guard let detent = detent(dividerIndex),
+              abs(proposedPosition - detent) <= ColumnMetrics.detentReach else { return proposedPosition }
+        // Once, as the divider arrives: not on each step of a drag held there.
+        let pane = splitView.arrangedSubviews[dividerIndex].frame
+        if abs((splitView.isVertical ? pane.maxX : pane.maxY) - detent) >= 0.5 {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
+        }
+        return detent
     }
 }
 
@@ -532,6 +557,8 @@ enum ColumnMetrics {
     /// Xcode's navigator: its default width, and its narrowest.
     static let sidebarIdeal: CGFloat = 256
     static let sidebarMinimum: CGFloat = 222
+    /// Catches a drag aimed at a detent without trapping one passing through.
+    static let detentReach: CGFloat = 8
     /// About 40 editor columns or a legible fitted page; equal minima split the
     /// narrowest room evenly between source and PDF.
     static let sourceMinimum: CGFloat = 320
