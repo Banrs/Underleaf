@@ -42,8 +42,8 @@ final class FormatPopover: NSObject, NSPopoverDelegate {
 }
 
 /// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
-/// levels the document's class has, each at its size, weight and shape there against the text's,
-/// at an even pitch, after its number as the class prints it. A style toggles and the popover
+/// levels the document's class has, each at its weight and shape there and its size scaled into
+/// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover
 /// stays, as Notes' does; a level is chosen and it closes, as a menu. It opens with the caret's
 /// level checked and nothing highlighted; the arrow keys start from the checked level.
 struct FormatPanel: View {
@@ -184,7 +184,10 @@ struct FormatPanel: View {
             var fonts: [HeadingLevel: NSFont] = [:], shapes: [HeadingLevel: HeadingStyles.Shape] = [:]
             for level in headings.levels {
                 let style = headings.font(level)
-                var font = NSFont.systemFont(ofSize: NSFont.systemFontSize * style.scale, weight: style.bold ? .bold : .regular)
+                // LaTeX's sizes in Notes' range: \Huge's 2.5 times the text comes out at Notes'
+                // Title, 22 points, and \large and \Large near its Subheading and Heading.
+                let size = NSFont.systemFontSize * pow(style.scale, 0.58)
+                var font = NSFont.systemFont(ofSize: size.rounded(), weight: style.bold ? .bold : .regular)
                 if style.shape == .italic {
                     font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: 0) ?? font
                 }

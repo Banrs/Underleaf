@@ -26,8 +26,9 @@ extension NSToolbarItem.Identifier {
 }
 
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
-/// Related tools share a capsule (HIG, Toolbars): side by side, the editing tools share one, as
-/// Notes' do, and the PDF and Inspector toggles are a group, which moves and overflows as one.
+/// Related tools share a capsule (HIG, Toolbars): the editing tools are separate items that
+/// AppKit joins side by side, as Xcode's and Notes', and the PDF and Inspector toggles are a
+/// group, which moves and overflows as one.
 /// Items overflow from the least used in TeX editors: Zoom, then the editing tools (equal
 /// priorities leave from the right), then Back, and Compile and the toggles last.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
