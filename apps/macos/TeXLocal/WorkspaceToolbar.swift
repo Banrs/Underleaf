@@ -202,11 +202,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             ScaleMenuItems(pdf: pdf)
         })
         form.submenu = menu
-        let control = NSSegmentedControl(images: [symbol("minus.magnifyingglass", "Zoom Out"), NSImage(),
-                                                  symbol("plus.magnifyingglass", "Zoom In")].compactMap(\.self),
-                                         trackingMode: .momentary, target: nil, action: nil)
+        // Three segments whatever the symbols: `zoom` reads them by index.
+        let control = ZoomControl()
+        control.segmentCount = 3
+        control.trackingMode = .momentary
         control.addTarget(self, action: #selector(zoom(_:)), for: .primaryActionTriggered)
-        control.setImage(nil, forSegment: 1)
+        control.setImage(symbol("minus.magnifyingglass", "Zoom Out"), forSegment: 0)
+        control.setImage(symbol("plus.magnifyingglass", "Zoom In"), forSegment: 2)
         control.setLabel(pdf.zoomLabel, forSegment: 1)
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
@@ -306,11 +308,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }
         case .zoom:
             let control = item.view as? NSSegmentedControl
-            if changed(\.zoomLabel) {
-                // Reapply tabular digits during updates; otherwise Share shifts with the scale.
-                if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
-                control?.setLabel(state.zoomLabel, forSegment: 1)
-            }
+            if changed(\.zoomLabel) { control?.setLabel(state.zoomLabel, forSegment: 1) }
             if changed(\.hasPDF) || changed(\.canZoomOut) { control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0) }
             if changed(\.hasPDF) {
                 control?.setEnabled(state.hasPDF, forSegment: 1)
@@ -392,6 +390,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 private final class ShareItem: NSSharingServicePickerToolbarItem {
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         isEnabled && super.validateMenuItem(menuItem)
+    }
+}
+
+/// Zoom's segments, whose percentage keeps tabular digits in whatever font the toolbar gives
+/// it as it sizes the control: otherwise the capsule, and the items after it, move with the scale.
+private final class ZoomControl: NSSegmentedControl {
+    override var font: NSFont? {
+        get { super.font }
+        set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
     }
 }
 

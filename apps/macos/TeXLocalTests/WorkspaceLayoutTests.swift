@@ -356,6 +356,19 @@ final class WorkspaceLayoutTests {
         workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
         try await waitUntil { fitWidth() == true }
     }
+
+    /// Zoom out | scale | zoom in, the scale in tabular digits whatever font the toolbar gives
+    /// the control, so the capsule keeps its width as the scale changes.
+    @Test func theZoomControlKeepsItsSegmentsAndWidth() throws {
+        let workspace = open()
+        let zoom = try #require(showToolbar(workspace).items.first { $0.itemIdentifier == .zoom }?.view as? NSSegmentedControl)
+        window?.layoutIfNeeded()
+        #expect(zoom.segmentCount == 3 && zoom.image(forSegment: 0) != nil && zoom.image(forSegment: 2) != nil)
+        #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
+        let font = try #require(zoom.font)
+        let width = { (label: String) in NSAttributedString(string: label, attributes: [.font: font]).size().width }
+        #expect(width("111%") == width("888%"))
+    }
 }
 
 /// A window kept at the size it's given. Ordered front, a titled window shrinks
