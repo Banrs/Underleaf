@@ -261,16 +261,16 @@ private extension Binding<Set<String>> {
 }
 
 extension View {
-    /// Takes dropped files, copied in or, those `moves` names, moved (as Finder
-    /// does within a volume). A drag of anything else, of a file `accepts` turns
-    /// down, or of more than `limit` files, is refused while dragged.
+    /// Takes the dropped files `accepts` takes, copied in or, those `moves` names,
+    /// moved (as Finder does within a volume), and leaves the rest; the drag's badge
+    /// counts the ones taken. A drag with none of them is refused while dragged.
     func fileDrop(accepts: @escaping (URL) -> Bool = { _ in true }, moves: @escaping (URL) -> Bool = { _ in false },
-                  limit: Int = .max, action: @escaping ([URL]) -> Void) -> some View {
+                  action: @escaping ([URL]) -> Void) -> some View {
         dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter { $0.isFileURL && accepts($0) }
-            if !files.isEmpty, files.count <= limit { action(files) }
+            if !files.isEmpty { action(files) }
         }
-        .dropConfiguration { _ in DropConfiguration(operation: dropOperation(accepts, moves, limit)) }
+        .dropConfiguration { _ in fileDropConfiguration(accepts, moves) }
     }
 
     /// Dragged out as the file itself: other apps copy it, the tree moves it.
@@ -284,12 +284,14 @@ extension View {
     }
 }
 
-/// What a drop does with the dragged files `accepts` takes. AppKit's drag
-/// pasteboard: a drop session names none of its items until they're dropped.
-private func dropOperation(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool, _ limit: Int) -> DropOperation {
+/// What a drop does with the dragged files `accepts` takes, and how many it takes.
+/// AppKit's drag pasteboard: a drop session names none of its items until they're dropped.
+private func fileDropConfiguration(_ accepts: (URL) -> Bool, _ moves: (URL) -> Bool) -> DropConfiguration {
     let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
                                                       options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []).filter(accepts)
-    return urls.isEmpty || urls.count > limit ? .forbidden : urls.allSatisfy(moves) ? .move : .copy
+    var configuration = DropConfiguration(operation: urls.isEmpty ? .forbidden : urls.allSatisfy(moves) ? .move : .copy)
+    if !urls.isEmpty { configuration.acceptedItemCount = urls.count }
+    return configuration
 }
 
 /// The project's sections from its main file, in a pane under the files, whose

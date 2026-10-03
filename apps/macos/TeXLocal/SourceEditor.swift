@@ -270,7 +270,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     // ---------- font ----------
 
     func setFontSize(_ size: Int) {
-        let font = NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular), lines = Self.lineStyle(for: font)
+        // The user's fixed-pitch font, as the HIG's typography table gives monospaced document text.
+        let font = NSFont.userFixedPitchFont(ofSize: CGFloat(size)) ?? .monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+        let lines = Self.lineStyle(for: font)
         textView.font = font
         textView.defaultParagraphStyle = lines
         if let storage = textView.textStorage {

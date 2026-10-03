@@ -195,13 +195,14 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it. The
-    /// core removes a project it couldn't finish, so a bad zip leaves none.
-    func importProject(from url: URL) async {
+    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it, or
+    /// with `open` off only lists it. The core removes a project it couldn't finish, so a bad
+    /// zip leaves none.
+    func importProject(from url: URL, open: Bool = true) async {
         do {
             let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
             await refresh()
-            await open(info.id)
+            if open { await self.open(info.id) }
         } catch {
             alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
         }

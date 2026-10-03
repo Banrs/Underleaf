@@ -211,6 +211,20 @@ final class WorkspaceLayoutTests {
         #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height),
                 "workspace \(workspace.view.frame), safe area \(workspace.view.safeAreaInsets), minimum \(ColumnMetrics.contentMinimum)")
     }
+
+    /// Compile is off without TeX, in the toolbar and its overflow menu as in the
+    /// menu bar, and labelled, it keeps one width for Compile and Stop.
+    @Test func compileIsOffWithoutTeX() throws {
+        let toolbar = try #require(open().toolbar)
+        let item = try #require(toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: .compile, willBeInsertedIntoToolbar: true))
+        #expect(item.possibleLabels == [MenuCommand.compileRun.title, MenuCommand.compileStop.title])
+        item.validate()
+        #expect(!item.isEnabled)
+        let overflow = try #require(item.menuFormRepresentation), menu = NSMenu()
+        menu.addItem(overflow)
+        menu.update()
+        #expect(!overflow.isEnabled)
+    }
 }
 
 /// A window kept at the size it's given. Ordered front, a titled window shrinks

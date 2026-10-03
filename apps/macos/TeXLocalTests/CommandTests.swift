@@ -75,7 +75,7 @@ struct MenuStructureTests {
             ("s", [.command, .control], "Sidebar"), ("0", .command, "Actual Size"),
             ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Height"),
             ("l", [.command, .shift], "Build Panel"), ("i", [.command, .option], "Inspector"),
-            ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
+            (",", .command, "Settings…"), ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
             (".", .command, "Stop"), ("w", [.command, .shift], MenuCommand.projectClose.title),
             ("e", [.command, .option], MenuCommand.editMath.title), ("j", [.command, .option], MenuCommand.syncForward.title)]
         for (key, modifiers, title) in chords {

@@ -28,6 +28,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
         window.collectionBehavior.insert(.fullScreenPrimary)
+        // Tab follows the views as panes, bars and Home come and go.
+        window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
         findEditor.isFieldEditor = true

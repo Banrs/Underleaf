@@ -122,6 +122,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .compile:
             // Xcode's Run and Stop: one symbol in its place, so the item keeps its width.
             item = button(id, MenuCommand.compileRun.title, "play.fill", #selector(compile))
+            // The labelled form too: sized for the longer of its two labels.
+            item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
             item.style = .prominent
             item.visibilityPriority = .high
         case .togglePDF:

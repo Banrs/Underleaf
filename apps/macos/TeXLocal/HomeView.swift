@@ -14,9 +14,12 @@ struct HomeView: View {
         list.safeAreaBar(edge: .top) {
             if app.tex?.available == false { texMissing }
         }
-        // One project, copied in, as the Open panel says; anything else is refused.
-        .fileDrop(accepts: AppModel.canOpen, limit: 1) { urls in
-            if let url = urls.first { Task { await app.importProject(from: url) } }
+        // Projects, copied in, as the Open panel says; other items are left out. One
+        // opens; several stay listed under Recent.
+        .fileDrop(accepts: AppModel.canOpen) { urls in
+            Task {
+                for url in urls { await app.importProject(from: url, open: urls.count == 1) }
+            }
         }
         // Named for what the window shows, not the app (HIG, Toolbars).
         .navigationTitle("Projects")
