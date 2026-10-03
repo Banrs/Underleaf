@@ -293,6 +293,7 @@ final class ProjectModel {
         let (path, text) = document
         // An edit during the write marks it dirty again, and its own save follows.
         dirty = false
+        let previous = diskText
         do {
             // Before the write, so its own change event matches.
             diskText = text
@@ -301,6 +302,8 @@ final class ProjectModel {
             refreshSymbols(delayed: true)
             return true
         } catch {
+            // The disk still has what it had, so a later change event isn't taken for another app's.
+            if diskText == text { diskText = previous }
             dirty = true
             report(error, "“\(path.fileName)” Wasn’t Saved")
             return false
