@@ -124,13 +124,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         app.mainWindowIsKey = false
     }
 
-    /// The find bars' fields get the editor that passes Edit › Find's items on.
+    /// The PDF find bar's field gets the editor that passes Edit › Find's items on.
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, workspace?.hostsFindField(field) == true else { return nil }
         return findEditor
     }
 
-    /// Route Edit › Find by action tag to the pane with the keyboard.
+    /// Route Edit › Find by action tag to the pane with the keyboard, when the
+    /// source text, which answers it itself, doesn't have it.
     @objc func performFindPanelAction(_ sender: Any?) {
         findAction(for: sender)?()
     }
@@ -141,9 +142,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private func findAction(for sender: Any?) -> (() -> Void)? {
-        guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag,
-              let action = NSTextFinder.Action(rawValue: tag) else { return nil }
-        return workspace?.findAction(action)
+        (sender as? NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
     }
 
     // ---------- restoration ----------

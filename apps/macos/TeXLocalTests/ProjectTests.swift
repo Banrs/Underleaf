@@ -213,51 +213,49 @@ final class ProjectFlowTests {
         #expect(!header.isHidden)
     }
 
-    /// Replace uses the window's forwarding field editor, so Find menu items
-    /// remain enabled and route to the source pane.
-    @Test func replaceFieldKeepsFindCommandsAvailable() async throws {
+    /// Edit › Find's items reach the source's own find bar: from the text through the
+    /// responder chain, and through the window while the keyboard is elsewhere.
+    @Test func findAndReplaceAreTheTextViewsFindBar() async throws {
         let (project, controller) = try await windowFixture()
         await project.load()
         try await waitUntil { controller.workspace != nil }
-
+        let window = try #require(controller.window)
+        let editor = project.editor, text = editor.textView
+        func item(_ action: NSTextFinder.Action) -> NSMenuItem {
+            let item = NSMenuItem(title: "", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "")
+            item.tag = action.rawValue
+            return item
+        }
         func textFields(in view: NSView?) -> [NSTextField] {
             guard let view else { return [] }
-            let field = (view as? NSTextField).map { [$0] } ?? []
-            return field + view.subviews.flatMap { textFields(in: $0) }
+            return [view as? NSTextField].compactMap(\.self) + view.subviews.flatMap { textFields(in: $0) }
         }
-        project.showFind(replacing: true)
-        let window = try #require(controller.window)
-        try await waitUntil {
-            window.contentView?.layoutSubtreeIfNeeded()
-            return textFields(in: window.contentView).contains { $0.placeholderString == "Replace" }
-        }
-        let field = try #require(textFields(in: window.contentView).first { $0.placeholderString == "Replace" })
-        try await waitUntil { field.currentEditor() != nil && field.currentEditor() === window.firstResponder }
-        let editor = try #require(window.firstResponder as? NSTextView)
 
-        let findItem = NSMenuItem(title: "Find…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
-        findItem.tag = NSTextFinder.Action.showFindInterface.rawValue
-        let replaceItem = NSMenuItem(title: "Find and Replace…",
-                                     action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
-        replaceItem.tag = NSTextFinder.Action.showReplaceInterface.rawValue
-        #expect(editor.validateMenuItem(findItem))
-        #expect(editor.validateMenuItem(replaceItem))
+        window.makeFirstResponder(nil)
+        #expect(controller.validateMenuItem(item(.showFindInterface)))
+        controller.performFindPanelAction(item(.showFindInterface))
+        try await waitUntil { editor.scrollView.isFindBarVisible }
 
-        #expect(window.firstResponder?.tryToPerform(try #require(findItem.action), with: findItem) == true)
-        let find = try #require(textFields(in: window.contentView).first { $0.placeholderString == "Find" })
-        try await waitUntil { find.currentEditor() != nil && find.currentEditor() === window.firstResponder }
-        #expect(field.currentEditor() == nil)
+        // Use Selection for Find, then Find Next, from the text.
+        let source = text.string as NSString
+        text.setSelectedRange(source.range(of: "Text"))
+        window.makeFirstResponder(text)
+        #expect(window.firstResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: item(.setSearchString)) == true)
+        #expect(text.validateUserInterfaceItem(item(.nextMatch)))
+        text.performFindPanelAction(item(.nextMatch))
+        #expect(text.selectedRange() == source.range(of: "Text", options: .backwards))
 
-        find.stringValue = "Text"
-        #expect(find.sendAction(find.action, to: find.target))
-        try await waitUntil { project.findMatches.total == 2 }
-        let selection = project.editor.textView.selectedRange()
-        findItem.tag = NSTextFinder.Action.nextMatch.rawValue
-        #expect(editor.validateMenuItem(findItem))
-        #expect(window.firstResponder?.tryToPerform(try #require(findItem.action), with: findItem) == true)
-        #expect(project.editor.textView.selectedRange().location > selection.location)
-        findItem.tag = NSTextFinder.Action.replaceAll.rawValue
-        #expect(!editor.validateMenuItem(findItem))
+        // Find and Replace adds the stock replace field; Replace All uses it, as one undo step.
+        #expect(text.validateUserInterfaceItem(item(.showReplaceInterface)))
+        text.performFindPanelAction(item(.showReplaceInterface))
+        try await waitUntil { textFields(in: editor.scrollView.findBarView).count == 2 }
+        let replace = try #require(textFields(in: editor.scrollView.findBarView).last)
+        replace.stringValue = "Word"
+        replace.sendAction(replace.action, to: replace.target)
+        text.performFindPanelAction(item(.replaceAll))
+        try await waitUntil { text.string.hasSuffix("Word Word") }
+        text.undoManager?.undo()
+        #expect(text.string.hasSuffix("Text Text"))
     }
 
     /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.

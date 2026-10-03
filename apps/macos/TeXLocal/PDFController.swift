@@ -532,3 +532,17 @@ private extension PDFView {
     /// The height clear of the toolbar, find bar and bottom status bar.
     var shownHeight: CGFloat { bounds.height - safeAreaInsets.top - safeAreaInsets.bottom }
 }
+
+extension NSMenu {
+    /// Keep word actions before Cut/Copy, then only allowed actions or submenus.
+    func keep(_ actions: Set<Selector>) {
+        func kept(_ item: NSMenuItem) -> Bool {
+            item.action.map(actions.contains) == true || item.submenu?.items.contains(where: kept) == true
+        }
+        let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
+        var shown = Array(items[..<word])
+        for item in items[word...] where item.isSeparatorItem ? shown.last?.isSeparatorItem == false : kept(item) { shown.append(item) }
+        if shown.last?.isSeparatorItem == true { shown.removeLast() }
+        items = shown
+    }
+}

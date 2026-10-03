@@ -60,7 +60,7 @@ struct PDFFindBar: View {
         FindBar(query: $controller.findText, prompt: "Find in PDF", field: controller.findField,
                 matches: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
                                      limited: controller.limited),
-                searched: controller.query, step: controller.step, close: controller.closeFind) {}
+                searched: controller.query, step: controller.step, close: controller.closeFind)
             .task(id: controller.findText) {
                 try? await Task.sleep(for: PDFFind.debounce)
                 if !Task.isCancelled, PDFFind.normalize(controller.findText) != controller.query {

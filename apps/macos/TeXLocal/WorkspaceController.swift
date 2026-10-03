@@ -66,9 +66,7 @@ final class WorkspaceController: DetentSplitViewController {
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
-    private var sourceFind: NSSplitViewItemAccessoryViewController!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
-    private let sourceFindField = FieldHandle()
     private let searchField = FieldHandle()
 
     private var watches: [Task<Void, Never>] = []
@@ -145,9 +143,6 @@ final class WorkspaceController: DetentSplitViewController {
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
-        sourceFind = accessory(SourceFindBar(project: project, field: sourceFindField),
-                               hidden: !(project.findShown && project.editsText))
-        sourceItem.addTopAlignedAccessoryViewController(sourceFind)
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
@@ -286,15 +281,6 @@ final class WorkspaceController: DetentSplitViewController {
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ project.isSearching || !project.isLaTeX }) { [weak self] _ in self?.updateOutline() },
             track({ app.outlineCollapsed }) { [weak self] _ in self?.updateOutline() },
-            // Only over the text: over a preview or No File Open, it would search and
-            // replace in the hidden editor, whose edits aren't saved.
-            track({ project.findShown && project.editsText }) { [weak self] shown in if let self { setHidden(sourceFind, !shown) } },
-            // ⌘F, or Find and Replace…, again while the bar shows: back to its field.
-            track({ project.findFocus }) { [weak self] focus in
-                guard let self, focus > 0, project.editsText else { return }
-                setHidden(sourceFind, false)
-                focusField(sourceFindField, in: sourceFind)
-            },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
             track({ app.pdfRequest?.token }) { [weak self] _ in self?.takePDFRequest() },
             track({ app.searchFocusToken }, initial: false) { [weak self] _ in self?.focusSearch() },
@@ -414,7 +400,7 @@ final class WorkspaceController: DetentSplitViewController {
     }
 
     func hostsFindField(_ field: NSTextField) -> Bool {
-        field.isDescendant(of: sourceFind.view) || field.isDescendant(of: pdfFind.view)
+        field.isDescendant(of: pdfFind.view)
     }
 
     // ---------- sizes ----------
@@ -443,10 +429,23 @@ final class WorkspaceController: DetentSplitViewController {
 
     // ---------- find ----------
 
-    /// Edit › Find's items for the pane with the keyboard: the PDF's while its pages
-    /// or its find bar have it, else the source's. Nil turns an item off.
-    func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
-        guard pdfHasKeyboard else { return project.findAction(action) }
+    /// Edit › Find's items when the source text, which answers them itself, doesn't
+    /// have the keyboard: the PDF's while its pages or its find bar have it, else
+    /// the source's find bar, or the PDF's over a preview. Nil turns an item off.
+    func findAction(_ item: NSValidatedUserInterfaceItem) -> (() -> Void)? {
+        guard let action = NSTextFinder.Action(rawValue: item.tag) else { return nil }
+        guard pdfHasKeyboard else {
+            guard project.editsText else {
+                guard action == .showFindInterface, project.pdfVersion > 0 else { return nil }
+                return { [weak self] in self?.app.requestPDF(.find) }
+            }
+            let editor = project.editor
+            guard editor.textView.validateUserInterfaceItem(item) else { return nil }
+            return {
+                editor.focus()
+                editor.textView.performFindPanelAction(item)
+            }
+        }
         guard project.pdfVersion > 0 else { return nil }
         switch action {
         case .showFindInterface:

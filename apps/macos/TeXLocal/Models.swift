@@ -164,11 +164,6 @@ func isLaTeXFile(_ path: String) -> Bool {
     (path as NSString).pathExtension.lowercased() == "tex"
 }
 
-/// Other non-text files show No Preview in the source column.
-func isPreviewFile(_ path: String) -> Bool {
-    [.image, .pdf].contains(FileKind(path))
-}
-
 func fileSymbol(_ path: String, directory: Bool = false) -> String {
     if directory { return "folder" }
     switch (path as NSString).pathExtension.lowercased() {

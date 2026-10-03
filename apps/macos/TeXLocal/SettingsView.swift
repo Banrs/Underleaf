@@ -2,8 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
-    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
@@ -13,13 +11,7 @@ struct SettingsView: View {
         @Bindable var app = app
         Form {
             Section("Editor") {
-                Picker("Font", selection: $font) {
-                    ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
-                }
                 Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
-                Picker("Syntax Colors", selection: $palette) {
-                    ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
-                }
             }
             Section("PDF") {
                 Picker(selection: $pdfPaper) {

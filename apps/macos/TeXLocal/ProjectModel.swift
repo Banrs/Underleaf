@@ -63,21 +63,6 @@ final class ProjectModel {
     private var treeReload: Task<Void, Never>?
     private var diskCheck: Task<Void, Never>?
 
-    var findShown = false
-    var findQuery = FindQuery() {
-        didSet {
-            if findQuery != oldValue { editor.setFind(findQuery) }
-        }
-    }
-    var findMatches = FindMatches()
-    /// Bumped to focus the find or replace field; both reset as the bar
-    /// closes, so the next bar doesn't take a stale focus request.
-    var findFocus = 0
-    var replaceFocus = 0
-    /// The replace row: Find and Replace… adds it until the bar closes, so a plain
-    /// Find keeps the bar to one row.
-    var replaceShown = false
-
     var importClash: ImportClash?
 
     var searchQuery = "" { didSet { scheduleSearch() } }
@@ -179,13 +164,6 @@ final class ProjectModel {
             // The outline redraws only as a heading reaches the top.
             let heading = Outline.current(outline, file: openPath, line: line)
             if heading != topHeading { topHeading = heading }
-        }
-        editor.onFindMatches = { [weak self] matches in self?.findMatches = matches }
-        // Escape in the text closes the find bar first.
-        editor.textView.escape = { [weak self] in
-            guard let self, findShown else { return false }
-            closeFind()
-            return true
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.forwardSync = { [weak self] in
@@ -897,47 +875,6 @@ final class ProjectModel {
     }
 
     // ---------- editor commands ----------
-
-    func findStep(_ delta: Int) {
-        if !editor.findStep(delta) { showFind() }
-    }
-
-    func showFind(replacing: Bool = false) {
-        guard editsText else { return }
-        if let selection = editor.selectionQuery { findQuery.search = selection }
-        findShown = true
-        editor.setFind(findQuery)
-        if replacing {
-            replaceShown = true
-            replaceFocus += 1
-        } else {
-            findFocus += 1
-        }
-    }
-
-    func findAction(_ action: NSTextFinder.Action) -> (() -> Void)? {
-        guard editsText else {
-            guard action == .showFindInterface, pdfVersion > 0 else { return nil }
-            return { [weak self] in self?.app?.requestPDF(.find) }
-        }
-        switch action {
-        case .showFindInterface, .setSearchString: return { self.showFind() }
-        case .showReplaceInterface: return { self.showFind(replacing: true) }
-        case .nextMatch: return { self.findStep(1) }
-        case .previousMatch: return { self.findStep(-1) }
-        default: return nil
-        }
-    }
-
-    /// Done or Escape: unmarks the matches and returns typing to the text.
-    func closeFind() {
-        findShown = false
-        replaceShown = false
-        findFocus = 0
-        replaceFocus = 0
-        editor.closeFind()
-        editor.focus()
-    }
 
     /// An outline heading at the top of the source, in its file; the keyboard stays where it is.
     func reveal(_ item: OutlineItem) {

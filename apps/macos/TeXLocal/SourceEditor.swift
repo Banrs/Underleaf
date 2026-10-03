@@ -10,15 +10,14 @@ nonisolated struct SyncTeXWord: Equatable, Sendable {
 }
 
 /// One native text view shared across files, preserving each file's undo and selection.
-/// Owns source find and formatting commands.
+/// Owns formatting commands; find is the text view's own find bar.
 final class SourceEditor: NSObject, NSTextViewDelegate {
-    let scrollView = SourceTextView.scrollableTextView()
+    let scrollView = SourceTextView.scrollablePlainDocumentContentTextView()
     let textView: SourceTextView
     var onChanged: () -> Void = {}
     var onCursor: (Int) -> Void = { _ in }
     /// The line at the top of the view.
     var onScroll: (Int) -> Void = { _ in }
-    var onFindMatches: (FindMatches) -> Void = { _ in }
 
     private(set) var path: String?
     /// The files shown before, as they were left: their state comes back
@@ -26,7 +25,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     private var kept: [String: (text: String, undo: UndoManager, selection: NSRange)] = [:]
     private var undo = UndoManager()
     private var cursorLine = 1, topLine = 1
-    private var appliedAppearance: EditorAppearance?
 
     /// Hiding removes the editor from the key view loop; showing it restores
     /// requested focus after a file opens.
@@ -39,10 +37,12 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     private var focusWhenShown = false
 
     override init() {
-        // AppKit's own plain-text scroll view: TextKit 2, sized to its text.
         textView = scrollView.documentView as! SourceTextView
         super.init()
         let text = textView
+        text.usesFontPanel = false
+        text.usesFindBar = true
+        text.isIncrementalSearchingEnabled = true
         text.textContainerInset = NSSize(width: 0, height: 4)
         text.allowsUndo = true
         // Native spelling and correction in prose only (below). Smart dashes
@@ -86,7 +86,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
-        refreshFind()
         reportCursor()
         focusWhenShown = focus
         if focus { self.focus() }
@@ -181,8 +180,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
-        guard !textView.loading else { return }
-        refreshFind()
         onChanged()
     }
 
@@ -210,8 +207,19 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     func textViewDidChangeSelection(_ notification: Notification) {
         guard !textView.loading else { return }
         reportCursor()
-        if findShown { markFindMatches() }
     }
+
+    /// The system's text menu, with Go to PDF Position above it while there's somewhere to go.
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        guard textView.forwardSync() != nil else { return menu }
+        let item = NSMenuItem(title: MenuCommand.syncForward.title, action: #selector(goToPDF), keyEquivalent: "")
+        item.target = self
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func goToPDF() { textView.forwardSync()?() }
 
     // ---------- commands ----------
 
@@ -259,122 +267,17 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
                        select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
     }
 
-    // ---------- find ----------
+    // ---------- font ----------
 
-    private var query = FindQuery()
-    private(set) var findShown = false
-    private var matches: (ranges: [NSRange], limited: Bool) = ([], false)
-
-    /// A short selection as a query, with line breaks escaped as \n.
-    var selectionQuery: String? {
-        let selection = textView.selectedRange()
-        guard selection.length > 0, selection.length <= 100 else { return nil }
-        return (textView.string as NSString).substring(with: selection).replacingOccurrences(of: "\n", with: "\\n")
-    }
-
-    /// A changed query selects the first match from the current selection.
-    func setFind(_ query: FindQuery) {
-        let changed = query.search != self.query.search || !findShown
-        self.query = query
-        findShown = true
-        refreshFind()
-        guard changed, let hit = next(from: textView.selectedRange().location) else { return }
-        select(hit)
-    }
-
-    func closeFind() {
-        findShown = false
-        refreshFind()
-    }
-
-    /// The next or previous match, round the end; false with nothing to find.
-    @discardableResult
-    func findStep(_ delta: Int) -> Bool {
-        guard query.isValid else { return false }
-        let selection = textView.selectedRange()
-        guard let hit = delta > 0 ? next(from: NSMaxRange(selection)) : previous(before: selection.location) else { return true }
-        select(hit)
-        return true
-    }
-
-    /// Replace: the selection, if it's a match, and on to the next one; else
-    /// to the next one. Replace All: every match, as one undo step.
-    func replace(all: Bool) {
-        let text = textView.string as NSString
-        if all {
-            let edits = query.matches(in: text, limit: .max).ranges.map { range in
-                TextEdit(range, query.replacement(for: range, in: text))
-            }
-            textView.apply(edits, named: String(localized: "Replace All"))
-            return
+    func setFontSize(_ size: Int) {
+        let font = NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular), lines = Self.lineStyle(for: font)
+        textView.font = font
+        textView.defaultParagraphStyle = lines
+        if let storage = textView.textStorage {
+            storage.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: storage.length))
         }
-        let selection = textView.selectedRange()
-        guard let hit = next(from: selection.location) else { return }
-        guard hit == selection else { return select(hit) }
-        let replacement = query.replacement(for: hit, in: text)
-        let edit = TextEdit(hit, replacement)
-        textView.apply([edit], named: String(localized: "Replace"), select: NSRange(location: hit.location + (replacement as NSString).length, length: 0))
-        if let after = next(from: textView.selectedRange().location) { select(after) }
-    }
-
-    /// Select and reveal a match with the system find indicator.
-    private func select(_ match: NSRange) {
-        textView.setSelectedRange(match)
-        textView.scrollRangeToVisible(match)
-        textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
-        // Viewport layout after an offscreen jump otherwise cancels the indicator.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, textView.selectedRange() == match else { return }
-            textView.showFindIndicator(for: match)
-        }
-    }
-
-    private func next(from location: Int) -> NSRange? {
-        let text = textView.string as NSString
-        let after = NSRange(location: location, length: text.length - location)
-        return query.matches(in: text, range: after, limit: 1).ranges.first ?? query.matches(in: text, limit: 1).ranges.first
-    }
-
-    private func previous(before location: Int) -> NSRange? {
-        let text = textView.string as NSString
-        let before = query.matches(in: text, range: NSRange(location: 0, length: location), limit: .max).ranges
-        return before.last ?? query.matches(in: text, limit: .max).ranges.last
-    }
-
-    private func refreshFind() {
-        matches = findShown ? query.matches(in: textView.string as NSString, limit: 1000) : ([], false)
-        markFindMatches()
-    }
-
-    private func markFindMatches() {
-        let selection = textView.selectedRange()
-        let index = matches.ranges.firstIndex(of: selection)
-        textView.findMatches = matches.ranges
-        guard findShown else { return }
-        onFindMatches(FindMatches(index: index.map { $0 + 1 } ?? 0, total: matches.ranges.count, limited: matches.limited))
-    }
-
-    // ---------- appearance ----------
-
-    func setAppearance(_ appearance: EditorAppearance) {
-        guard appearance != appliedAppearance else { return }
-        let typographyChanged = appliedAppearance?.font != appearance.font || appliedAppearance?.size != appearance.size
-        appliedAppearance = appearance
-        let font = appearance.font.font(ofSize: CGFloat(appearance.size)), color = appearance.palette.textColor
-        if typographyChanged {
-            let lines = Self.lineStyle(for: font)
-            textView.font = font
-            textView.defaultParagraphStyle = lines
-            if let storage = textView.textStorage {
-                storage.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: storage.length))
-            }
-        }
-        textView.textColor = color
-        // A font change lays out new fragments, whose rendering colours need rebuilding.
-        textView.palette = appearance.palette
-        textView.typingAttributes = [.font: font, .foregroundColor: color,
-                                     .paragraphStyle: textView.defaultParagraphStyle ?? Self.lineStyle(for: font)]
-        if typographyChanged { textView.updateGutterWidth() }
+        textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: lines]
+        textView.updateGutterWidth()
     }
 
     /// Leave glyph height to the font, including fallback glyphs and input methods.
@@ -406,195 +309,13 @@ enum EditorCommand {
     case inline
 }
 
-struct EditorAppearance: Equatable {
-    var palette: EditorPalette
-    var font: EditorFont
-    var size: Int
-}
-
-enum EditorPalette: String, CaseIterable, Identifiable {
-    /// The editor's own colours, One Dark in dark mode and CodeMirror's in
-    /// light, so it isn't named for either.
-    case standard = "onedark"
-    case xcode
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .standard: "Default"
-        case .xcode: "Xcode"
-        }
-    }
-
-    /// Default colours follow CodeMirror in light mode and One Dark in dark;
-    /// Xcode uses its own palette.
-    func color(_ kind: HighlightKind) -> NSColor {
-        if self == .xcode, kind == .invalid { return .systemRed }
-        let (light, dark): (UInt32?, UInt32?) = switch (self, kind) {
-        case (.standard, .command): (0x008855, 0xe5c07b)
-        case (.standard, .argument): (0x221199, 0xd19a66)
-        case (.standard, .mathDelimiter): (0x770088, 0xc678dd)
-        case (.standard, .mathIdentifier): (0x225566, 0xd19a66)
-        case (.standard, .number): (0x116644, 0xe5c07b)
-        case (.standard, .comment): (0x994400, 0x7d8799)
-        case (.standard, .invalid): (0xff0000, 0xffffff)
-        case (.standard, .stringLiteral): (0xaa1111, 0x98c379)
-        case (.standard, .builtin): (nil, 0xd19a66)
-        case (.xcode, .command): (0x9b2393, 0xfc5fa3)
-        case (.xcode, .argument): (0x1c464a, 0x9ef1dd)
-        case (.xcode, .mathDelimiter): (0x643820, 0xfd8f3f)
-        case (.xcode, .mathIdentifier), (.xcode, .builtin): (0x326d74, 0x67b7a4)
-        case (.xcode, .number): (0x1c00cf, 0xd0bf69)
-        case (.xcode, .comment): (0x5d6c79, 0x8a97a5)
-        case (.xcode, .stringLiteral): (0xc41a16, 0xfc6a5d)
-        case (.xcode, .invalid): (nil, nil)
-        }
-        return NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return (isDark ? dark : light).map(NSColor.init(hex:)) ?? .textColor
-        }
-    }
-
-    /// The text's own colour: One Dark's in dark for the default, the system's otherwise.
-    var textColor: NSColor {
-        guard self == .standard else { return .textColor }
-        return NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(hex: 0xabb2bf) : .textColor
-        }
-    }
-}
-
-enum EditorFont: String, CaseIterable, Identifiable {
-    case system, jetbrains
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .system: "System Monospaced"
-        case .jetbrains: "JetBrains Mono"
-        }
-    }
-
-    func font(ofSize size: CGFloat) -> NSFont {
-        switch self {
-        case .system: return .monospacedSystemFont(ofSize: size, weight: .regular)
-        case .jetbrains:
-            Self.registerJetBrains
-            return NSFont(name: "JetBrainsMono-Regular", size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
-        }
-    }
-
-    /// Register the bundled WOFF2 through CoreText on demand;
-    /// ATSApplicationFontsPath does not load WOFF2.
-    private static let registerJetBrains: Void = {
-        guard let url = Bundle.main.url(forResource: "jetbrains-mono-latin-400-normal", withExtension: "woff2",
-                                        subdirectory: "Fonts") else { return }
-        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-    }()
-}
-
 enum EditorPrefs {
-    static let paletteKey = "editorPalette", fontKey = "editorFont", fontSizeKey = "editorFontSize"
-    static let spellCheckKey = "editorSpellCheck"
-    static let palette = EditorPalette.standard
-    static let font = EditorFont.system
+    static let fontSizeKey = "editorFontSize", spellCheckKey = "editorSpellCheck"
     static let fontSize = Int(NSFont.systemFontSize)
 
     /// Edit › Spelling and Grammar › Check Spelling While Typing, as last set; on at first.
     static var spellCheck: Bool {
         get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: spellCheckKey) }
-    }
-}
-
-/// Outside regular expressions, both fields interpret \n, \r, \t and \\ escapes.
-nonisolated struct FindQuery: Equatable {
-    var search = ""
-    var replace = ""
-    var caseSensitive = false
-    var regexp = false
-    var wholeWord = false
-
-    var isValid: Bool { expression != nil }
-
-    private static func unquote(_ text: String) -> String {
-        text.replacing(/\\([nrt\\])/) { ["n": "\n", "r": "\r", "t": "\t"][$0.1] ?? "\\" }
-    }
-
-    private var expression: NSRegularExpression? {
-        guard !search.isEmpty else { return nil }
-        let pattern = regexp ? search : NSRegularExpression.escapedPattern(for: Self.unquote(search))
-        return try? NSRegularExpression(pattern: pattern, options: caseSensitive ? [.anchorsMatchLines] : [.anchorsMatchLines, .caseInsensitive])
-    }
-
-    /// A whole word has a boundary at each end.
-    private func isWhole(_ range: NSRange, in text: NSString) -> Bool {
-        guard wholeWord else { return true }
-        let word = { (i: Int) -> Bool in
-            guard i >= 0, i < text.length else { return false }
-            let character = text.substring(with: text.rangeOfComposedCharacterSequence(at: i))
-            return character.unicodeScalars.contains { $0 == "_" || CharacterSet.alphanumerics.contains($0) }
-        }
-        let start = range.location, end = NSMaxRange(range)
-        return (!word(start - 1) || !word(start)) && (!word(end) || !word(end - 1))
-    }
-
-    /// Return up to `limit` matches and whether more exist.
-    func matches(in text: NSString, range: NSRange? = nil, limit: Int) -> (ranges: [NSRange], limited: Bool) {
-        var ranges: [NSRange] = [], limited = false
-        expression?.enumerateMatches(in: text as String, options: [.withTransparentBounds, .withoutAnchoringBounds],
-                                     range: range ?? NSRange(location: 0, length: text.length)) { result, _, stop in
-            guard let r = result?.range, r.length > 0, isWhole(r, in: text) else { return }
-            limited = ranges.count == limit
-            if limited { stop.pointee = true } else { ranges.append(r) }
-        }
-        return (ranges, limited)
-    }
-
-    /// Regex replacement uses $& for the match, $1… for groups and $$ for a dollar.
-    func replacement(for range: NSRange, in text: NSString) -> String {
-        let replace = Self.unquote(self.replace)
-        // Match against the remaining document: a lookahead may need text after
-        // the matched span, and anchors must still refer to the real line or document.
-        let remaining = NSRange(location: range.location, length: text.length - range.location)
-        guard regexp, let match = expression?.firstMatch(in: text as String,
-            options: [.anchored, .withTransparentBounds, .withoutAnchoringBounds], range: remaining),
-              match.range == range else { return replace }
-        return replace.replacing(/\$([$&]|\d+)/) { reference in
-            let name = reference.1
-            if name == "&" { return text.substring(with: match.range) }
-            if name == "$" { return "$" }
-            // The longest group number there is, the rest of the digits as they are.
-            guard let digits = (1...name.count).reversed().first(where: { n in
-                Int(name.prefix(n)).map { $0 > 0 && $0 < match.numberOfRanges } ?? false
-            }) else { return String(reference.0) }
-            let captured = match.range(at: Int(name.prefix(digits))!)
-            return (captured.location == NSNotFound ? "" : text.substring(with: captured)) + name.dropFirst(digits)
-        }
-    }
-}
-
-/// Match index starts at 1 (0 for no selected match); `limited` means more exist.
-struct FindMatches: Equatable {
-    var index = 0
-    var total = 0
-    var limited = false
-
-    func label(for query: String) -> String {
-        if query.isEmpty { return "" }
-        if total == 0 { return String(localized: "Not found") }
-        let count = "\(total.formatted())\(limited ? "+" : "")"
-        if index > 0 { return String(localized: "\(index) of \(count)") }
-        if limited { return String(localized: "\(count) matches") }
-        return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
-    }
-}
-
-private extension NSColor {
-    convenience init(hex: UInt32) {
-        self.init(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255,
-                  blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 }

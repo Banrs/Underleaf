@@ -33,52 +33,55 @@ extension View {
     }
 }
 
-/// Shared source and PDF find bar. Its pane accessory keeps the field ready to focus.
-struct FindBar<Replace: View>: View {
+/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
+struct FindBar: View {
     @Binding var query: String
     let prompt: String
     let field: FieldHandle
-    var options: [SearchOption] = []
     let matches: FindMatches
     /// The query the matches are for, which the count reads.
     let searched: String
     let step: @MainActor (Int) -> Void
     let close: @MainActor () -> Void
-    @ViewBuilder var replace: Replace
 
     var body: some View {
-        Grid(alignment: .leading, verticalSpacing: BarMetrics.inset) {
-            GridRow {
-                SearchField(text: $query, prompt: prompt, handle: field, options: options, step: step, close: close)
-                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-                HStack {
-                    ControlGroup {
-                        Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
-                            .help("Previous Match")
-                        Button("Next Match", systemImage: "chevron.forward") { step(1) }
-                            .help("Next Match")
-                    }
-                    .disabled(matches.total == 0)
-                    .fixedSize()
-                    // The first to give way in a narrow pane.
-                    Text(matches.label(for: searched))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .layoutPriority(-1)
-                    Button("Done") { close() }
-                }
-                .gridColumnAlignment(.trailing)
+        HStack {
+            SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
+                .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+            ControlGroup {
+                Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
+                    .help("Previous Match")
+                Button("Next Match", systemImage: "chevron.forward") { step(1) }
+                    .help("Next Match")
             }
-            replace
+            .disabled(matches.total == 0)
+            .fixedSize()
+            // The first to give way in a narrow pane.
+            Text(matches.label(for: searched))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .layoutPriority(-1)
+            Button("Done") { close() }
         }
         .padding(.vertical, BarMetrics.inset)
         .paneBarControls()
     }
 }
 
-struct SearchOption {
-    let title: String
-    let isOn: Binding<Bool>
+/// Match index starts at 1 (0 for no selected match); `limited` means more exist.
+struct FindMatches: Equatable {
+    var index = 0
+    var total = 0
+    var limited = false
+
+    func label(for query: String) -> String {
+        if query.isEmpty { return "" }
+        if total == 0 { return String(localized: "Not found") }
+        let count = "\(total.formatted())\(limited ? "+" : "")"
+        if index > 0 { return String(localized: "\(index) of \(count)") }
+        if limited { return String(localized: "\(count) matches") }
+        return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
+    }
 }
 
 /// A field the window can focus after AppKit creates it.
@@ -97,30 +100,22 @@ final class FieldHandle {
     }
 }
 
-/// Native find and replace fields with optional Return and Escape actions.
+/// A native search field with optional Return and Escape actions.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
     var handle: FieldHandle?
-    var replacing = false
-    var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
-        var optionStates: [Bool]?
 
         init(_ field: SearchField) { self.field = field }
 
         // Typing and the native clear button both send the action.
         @objc func changed(_ sender: NSSearchField) {
             if field.text != sender.stringValue { field.text = sender.stringValue }
-        }
-
-        @objc func toggleOption(_ sender: NSMenuItem) {
-            guard field.options.indices.contains(sender.tag) else { return }
-            field.options[sender.tag].isOn.wrappedValue.toggle()
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -150,11 +145,6 @@ struct SearchField: NSViewRepresentable {
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
-        if replacing, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
-            button.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: prompt)
-            button.alternateImage = button.image
-            button.setAccessibilityLabel(prompt)
-        }
         handle?.field = view
         return view
     }
@@ -164,8 +154,7 @@ struct SearchField: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSSearchField, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.field = self
+        context.coordinator.field = self
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
@@ -174,24 +163,10 @@ struct SearchField: NSViewRepresentable {
         if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             view.stringValue = text
         }
-        // The field copies its menu, so it is made again when a state changes.
-        let states = options.map(\.isOn.wrappedValue)
-        if !options.isEmpty, coordinator.optionStates != states {
-            coordinator.optionStates = states
-            let menu = NSMenu(title: "Find Options")
-            for (index, option) in options.enumerated() {
-                let item = NSMenuItem(title: option.title, action: #selector(Coordinator.toggleOption(_:)), keyEquivalent: "")
-                item.target = coordinator
-                item.tag = index
-                item.state = option.isOn.wrappedValue ? .on : .off
-                menu.addItem(item)
-            }
-            view.searchMenuTemplate = menu
-        }
     }
 }
 
-/// Pass Edit › Find from the field editor to the window, which routes it to the active pane.
+/// Pass Edit › Find from the PDF find field's editor to the window, which routes it to the PDF.
 class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
@@ -368,6 +343,6 @@ extension TextSelection {
 #Preview("Find bar") {
     @Previewable @State var query = "theorem"
     FindBar(query: $query, prompt: "Find", field: FieldHandle(), matches: FindMatches(index: 3, total: 12),
-            searched: query, step: { _ in }, close: {}) {}
+            searched: query, step: { _ in }, close: {})
         .frame(width: 480)
 }

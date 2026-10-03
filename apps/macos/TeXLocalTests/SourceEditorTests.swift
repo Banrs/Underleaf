@@ -109,13 +109,6 @@ struct SourceEditorTests {
         #expect(!editor.perform(.block, "no such block"))
     }
 
-    /// VoiceOver's line is the source's, as the gutter's, not a row a long line wraps to.
-    @Test func voiceOverReadsTheSourceLine() {
-        editor.scrollView.frame = NSRect(x: 0, y: 0, width: 200, height: 400)
-        open(String(repeating: "word ", count: 100) + "\nnext")
-        #expect(text.accessibilityInsertionPointLineNumber() == 1)
-    }
-
     /// A block's fields, as a completion's: Tab goes from a figure's file to
     /// its caption and label.
     @Test func blocksTabThroughTheirFields() {
@@ -196,8 +189,11 @@ struct SourceEditorTests {
 
     /// A chosen completion goes in as its snippet: typed in one place, a
     /// field is typed in all of its places, and Tab goes to the next.
-    @Test func completionsFillTheirFields() throws {
+    @Test(.timeLimit(.minutes(1)))
+    func completionsFillTheirFields() throws {
         open("  \\beg")
+        // Off screen the system's list doesn't open, but the core's items are asked for.
+        text.complete(nil)
         let range = text.rangeForUserCompletion
         #expect(range == NSRange(location: 2, length: 4))
         var index = 0
@@ -334,49 +330,49 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    @Test func findSelectsAsYouTypeAndReplaces() {
-        var reported = FindMatches()
-        editor.onFindMatches = { reported = $0 }
-        open("a b a b a", caret: 1)
-        editor.setFind(FindQuery(search: "a", replace: "c"))
-        #expect(text.selectedRange() == NSRange(location: 4, length: 1))
-        #expect(reported == FindMatches(index: 2, total: 3))
-        editor.findStep(1)
-        #expect(text.selectedRange() == NSRange(location: 8, length: 1))
-        editor.findStep(1)
-        #expect(text.selectedRange() == NSRange(location: 0, length: 1))
-        editor.replace(all: false)
-        #expect(text.string == "c b a b a" && text.selectedRange() == NSRange(location: 4, length: 1))
-        editor.replace(all: true)
-        #expect(text.string == "c b c b c")
-        #expect(reported.total == 0)
-        // Replace All is one undo step.
-        open("a a", path: "other.tex")
-        editor.replace(all: true)
-        #expect(text.string == "c c")
-        text.undoManager?.undo()
-        #expect(text.string == "a a")
+    private func inWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        return window
     }
 
-    @Test func regexReplacementSeesLookaheadAndFindKeepsRealAnchors() {
-        open("ab ab")
-        editor.setFind(FindQuery(search: "(a)(?=b)", replace: "$1x", regexp: true))
-        editor.replace(all: true)
-        #expect(text.string == "axb axb")
-
-        open("ba", caret: 1)
-        editor.setFind(FindQuery(search: "^a", regexp: true))
-        #expect(text.selectedRange() == NSRange(location: 1, length: 0))
+    /// A new line shows its colours once laid out, without the caret moving again.
+    @Test func newLinesAreColoured() throws {
+        _ = inWindow()
+        open("x")
+        text.insertText("\n\\section", replacementRange: typed)
+        let manager = try #require(text.textLayoutManager)
+        manager.textViewportLayoutController.layoutViewport()
+        let command = try #require(text.textRange((text.string as NSString).range(of: "\\section")))
+        var colour: NSColor?
+        manager.enumerateRenderingAttributes(from: command.location, reverse: false) { _, attributes, _ in
+            colour = attributes[.foregroundColor] as? NSColor
+            return false
+        }
+        #expect(colour == .systemPink)
     }
 
-    @Test func wholeWordSearchTreatsAstralLettersAsLetters() {
-        let source = "𐐀a a" as NSString
-        let hits = FindQuery(search: "a", wholeWord: true).matches(in: source, limit: 10)
-        #expect(hits.ranges == [NSRange(location: 4, length: 1)])
+    /// Command-click goes to the PDF from the clicked spot; a plain click only places the caret.
+    @Test func commandClickGoesToThePDF() throws {
+        let window = inWindow()
+        open("one two", caret: 0)
+        text.layoutSubtreeIfNeeded()
+        var went = false
+        text.forwardSync = { { went = true } }
+        let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
+        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY)),
+                                                    modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        text.mouseDown(with: click)
+        #expect(went)
+        #expect(text.selectedRange() == NSRange(location: 4, length: 0))
     }
 
     /// The text's context menu starts with Go to PDF Position, as the PDF's with
-    /// Go to Source Position, while there's somewhere to go, and holds what source needs.
+    /// Go to Source Position, while there's somewhere to go, over the system's plain-text menu.
     @Test func theContextMenuGoesToThePDF() throws {
         open("x")
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -389,7 +385,9 @@ struct SourceEditorTests {
         #expect(menu.items[1].isSeparatorItem)
         menu.performActionForItem(at: 0)
         #expect(went)
-        // Editing and spelling, without fonts, substitutions, transformations, speech or layout.
-        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste", "-", "Spelling and Grammar"])
+        let titles = menu.items.map(\.title)
+        #expect(["Cut", "Copy", "Paste", "Spelling and Grammar"].allSatisfy(titles.contains))
+        // Plain text: nothing to style.
+        #expect(!titles.contains("Font") && !text.isRichText && !text.importsGraphics && !text.usesFontPanel)
     }
 }
