@@ -363,6 +363,14 @@ struct SourceEditorTests {
         #expect(kept.map(\.resultType) == expected.flatMap { _ in [.spelling, .correction, .replacement] })
     }
 
+    /// Correction and text replacement are the user's system settings, applied in prose only
+    /// (above); smart quotes and dashes would rewrite TeX, so they stay off.
+    @Test func substitutionsFollowTheSystemButQuotesAndDashes() {
+        #expect(text.isAutomaticSpellingCorrectionEnabled == NSSpellChecker.isAutomaticSpellingCorrectionEnabled)
+        #expect(text.isAutomaticTextReplacementEnabled == NSSpellChecker.isAutomaticTextReplacementEnabled)
+        #expect(!text.isAutomaticQuoteSubstitutionEnabled && !text.isAutomaticDashSubstitutionEnabled)
+    }
+
     /// A check can start inside a multiline environment. Text arguments and
     /// comments are still prose, including non-ASCII words inside dollar maths.
     @Test func spellingDistinguishesMathAndVerbatimFromTheirProse() {
