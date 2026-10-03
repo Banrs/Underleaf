@@ -248,6 +248,17 @@ struct PDFFitTests {
         #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Zoom In", "Zoom Out"])
     }
 
+    /// A forward search marks SyncTeX's box beside the page, not with an annotation,
+    /// which Print and VoiceOver would see.
+    @Test func theForwardSearchMarkIsNoAnnotation() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        let document = try pages(2)
+        controller.show(document)
+        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
+        #expect(document.page(at: 0)?.annotations.isEmpty == true)
+    }
+
     private func pages(_ count: Int) throws -> PDFDocument {
         let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
             NSColor.white.setFill()

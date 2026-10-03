@@ -269,16 +269,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if let selection = match?.selection, !finding {
             selection.color = .findHighlightColor
             view.setCurrentSelection(selection, animate: true)
-            return
-        }
-        let mark = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
-        mark.color = NSColor.findHighlightColor.withAlphaComponent(0.4)
-        mark.interiorColor = mark.color
-        mark.border = nil
-        page.addAnnotation(mark)
-        Task {
-            try? await Task.sleep(for: .seconds(2.2))
-            page.removeAnnotation(mark)
+        } else {
+            view.flash(rect, on: page)
         }
     }
 
@@ -317,7 +309,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 }
 
 /// Double-click inverse search runs after PDFKit selects the clicked word.
-final class SyncPDFView: PDFView {
+final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
     private let pagesDark = Atomic(false)
@@ -355,6 +347,54 @@ final class SyncPDFView: PDFView {
         context.setBlendMode(.normal)
         drawPage()
         context.endTransparencyLayer()
+    }
+
+    /// Forward search's marks, in the pages' overlays rather than on the pages: an
+    /// annotation would be printed and read by VoiceOver.
+    private var marks: [(page: PDFPage, rect: CGRect, view: NSView)] = []
+    /// The overlays PDFKit has asked for, which it keeps while their pages show.
+    private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        pageOverlayViewProvider = self
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        pageOverlayViewProvider = self
+    }
+
+    /// Marks `rect` on `page` for 2.2 seconds.
+    func flash(_ rect: CGRect, on page: PDFPage) {
+        let view = MarkView()
+        marks.append((page, rect, view))
+        if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.2))
+            view.removeFromSuperview()
+            self?.marks.removeAll { $0.view === view }
+        }
+    }
+
+    func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
+        let overlay = PageOverlay()
+        overlays.setObject(overlay, forKey: page)
+        return overlay
+    }
+
+    func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
+        for mark in marks where mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
+    }
+
+    /// An overlay spans the page's box, unrotated (PDFKit rotates the overlay itself).
+    private func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
+        let box = page.bounds(for: displayBox)
+        let x = overlay.bounds.width / box.width, y = overlay.bounds.height / box.height
+        mark.frame = CGRect(x: (rect.minX - box.minX) * x, y: (rect.minY - box.minY) * y,
+                            width: rect.width * x, height: rect.height * y)
+        mark.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin, .width, .height]
+        overlay.addSubview(mark)
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -439,6 +479,23 @@ final class SyncPDFView: PDFView {
         guard let document, let page = page(for: location, nearest: true) else { return }
         let point = convert(location, to: page)
         onInverse(document.index(for: page) + 1, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.syncWord(at: point))
+    }
+}
+
+/// A page's overlay, which takes no clicks: the PDF view keeps them all.
+private final class PageOverlay: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The square annotation the mark once was, as PDFKit drew it: Find's colour as a fill
+/// and, over it, a 1 pt border at half the fill's strength.
+private final class MarkView: NSView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.findHighlightColor.withAlphaComponent(0.4).cgColor
+        layer?.borderColor = NSColor.findHighlightColor.withAlphaComponent(0.2).cgColor
+        layer?.borderWidth = 1
     }
 }
 
