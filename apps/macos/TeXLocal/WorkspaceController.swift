@@ -68,9 +68,8 @@ final class WorkspaceController: NSSplitViewController {
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private let searchField = FieldHandle()
 
-    /// The PDF's width and the panel's height as they were hidden, or their first
-    /// sizes. AppKit brings a pane back unanimated (or on 27.0) at its minimum.
-    private var pdfWidth: CGFloat = 0
+    /// The panel's height as it was hidden, or its first. Shown without AppKit's
+    /// animation (`setCollapsed`), it would come back at its minimum.
     private var panelHeight: CGFloat = 0
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
@@ -136,7 +135,7 @@ final class WorkspaceController: NSSplitViewController {
         let inspectorWidth = app.inspectorVisible ? inspectorItem.minimumThickness : 0
         let room = max(size.width - sidebarWidth - inspectorWidth, ColumnMetrics.contentMinimum.width)
         let panes = room - ColumnMetrics.divider
-        pdfWidth = (panes * ColumnMetrics.pdfShare).rounded()
+        let pdfWidth = (panes * ColumnMetrics.pdfShare).rounded()
         panelHeight = (size.height * ColumnMetrics.panelShare).rounded()
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
@@ -251,7 +250,7 @@ final class WorkspaceController: NSSplitViewController {
         watches = [
             track({ app.sidebarVisible }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
-            track({ app.showPDF }) { [weak self] in self?.setPDFShown($0) },
+            track({ app.showPDF }) { [weak self] visible in if let self { setCollapsed(pdfItem, !visible) } },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ app.outlineCollapsed || project.isSearching || !project.isLaTeX }) { [weak self] folded in
                 if let self { setCollapsed(outlineItem, folded) }
@@ -271,20 +270,23 @@ final class WorkspaceController: NSSplitViewController {
         }
     }
 
-    /// With AppKit's collapse animation, unless the window isn't on screen or
-    /// Reduce Motion is on. `done` runs once the pane is at its size.
+    /// Through AppKit's collapse animation, which brings a pane back at the size it
+    /// was hidden at; instantly when the window isn't on screen or Reduce Motion is
+    /// on. `done` runs once the pane is at its size.
     private func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool, done: (@MainActor () -> Void)? = nil) {
         // Repeated model notifications must not snap an animation already heading here.
         guard item.isCollapsed != collapsed else { return done?() ?? () }
         // AppKit's split animation marks descendants as live-resizing, revealing
-        // their scrollers. A build-panel toggle changes layout without that cue.
-        guard animates, item !== panelItem else {
+        // their scrollers, even when instant. A build-panel toggle changes layout
+        // without that cue (`setPanelShown` keeps its height).
+        guard item !== panelItem else {
             item.isCollapsed = collapsed
             view.layoutSubtreeIfNeeded()
             done?()
             return
         }
-        NSAnimationContext.runAnimationGroup { _ in
+        NSAnimationContext.runAnimationGroup { context in
+            if !animates { context.duration = 0 }
             item.animator().isCollapsed = collapsed
         } completionHandler: {
             MainActor.assumeIsolated { done?() }
@@ -307,21 +309,6 @@ final class WorkspaceController: NSSplitViewController {
             MainActor.assumeIsolated {
                 if hidden, accessory.isHidden { accessory.view.isHidden = true }
             }
-        }
-    }
-
-    /// The PDF holds the width it was hidden at as its minimum until it's back.
-    private func setPDFShown(_ shown: Bool, done: (@MainActor () -> Void)? = nil) {
-        guard shown, pdfItem.isCollapsed else {
-            if !shown, !pdfItem.isCollapsed { pdfWidth = pdfItem.viewController.view.frame.width }
-            return setCollapsed(pdfItem, !shown, done: done)
-        }
-        let split = columns.splitView
-        let room = split.bounds.width - split.dividerThickness - ColumnMetrics.sourceMinimum
-        pdfItem.minimumThickness = max(min(pdfWidth, room), ColumnMetrics.pdfMinimum)
-        setCollapsed(pdfItem, false) { [weak self] in
-            self?.pdfItem.minimumThickness = ColumnMetrics.pdfMinimum
-            done?()
         }
     }
 
@@ -358,7 +345,10 @@ final class WorkspaceController: NSSplitViewController {
         field.isDescendant(of: pdfFind.view)
     }
 
+    /// A split animation still running finishes after its window has gone and
+    /// would save its frames as they stood then, over the next window's.
     func close() {
+        for split in [splitView, sidebar.splitView, columns.splitView, area.splitView] { split.autosaveName = nil }
         watches.forEach { $0.cancel() }
         collapses = []
         toolbar.close()
@@ -418,7 +408,7 @@ final class WorkspaceController: NSSplitViewController {
     private func takePDFRequest() {
         guard let action = app.pdfRequest?.action else { return }
         app.pdfRequest = nil
-        setPDFShown(true) { [weak self] in
+        setCollapsed(pdfItem, false) { [weak self] in
             guard let self, project.hasPDF else { return }
             perform(action)
         }

@@ -14,7 +14,8 @@ final class WorkspaceLayoutTests {
     /// The app's defaults the tests change, put back after each.
     private static let keys = [DefaultsKey.sidebarVisible, DefaultsKey.inspectorVisible,
                                DefaultsKey.showPDF, DefaultsKey.outlineCollapsed] + splits
-    private static let size = NSSize(width: 1200, height: 600)
+    /// The app's own new window (`MainWindowController`).
+    private static let size = NSSize(width: 1200, height: 760)
     private let saved: [String: Any]
     private var window: NSWindow?
     private var workspace: WorkspaceController?
@@ -52,10 +53,11 @@ final class WorkspaceLayoutTests {
         app.showPDF = true
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
         project.showLogs = panel
-        let workspace = WorkspaceController(app: app, project: project, size: size)
         let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
                                      styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
+        // Sized as the app sizes it: below the titlebar.
+        let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         window.contentViewController = workspace
         window.setContentSize(size)
         window.alphaValue = 0
@@ -65,8 +67,14 @@ final class WorkspaceLayoutTests {
         return workspace
     }
 
-    private func width(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.width }
-    private func height(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.height }
+    /// A pane as its split lays it out: the split's subview holding the item's view
+    /// and bars. The view itself can stay at its width while the pane animates.
+    private func pane(_ item: NSSplitViewItem) -> NSView {
+        let view = item.viewController.view
+        return sequence(first: view, next: \.superview).first { $0.superview is NSSplitView } ?? view
+    }
+    private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
+    private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
     @Test func thePanelSpansSourceAndPDF() async throws {
         let workspace = open(panel: true)
@@ -135,6 +143,20 @@ final class WorkspaceLayoutTests {
         try await waitUntil { isClose(self.width(workspace.sourceItem), source, within: 1) } state: {
             "source \(self.width(workspace.sourceItem)), was \(source)"
         }
+    }
+
+    /// A window closed while a pane animates leaves the dividers it had saved: the
+    /// animation, ending after the window, doesn't save its frames over them.
+    @Test func aWindowClosedMidAnimationKeepsItsDividers() async throws {
+        let workspace = open()
+        try await waitUntil { UserDefaults.standard.object(forKey: Self.splits[2]) != nil }
+        let saved = UserDefaults.standard.array(forKey: Self.splits[2]) as? [String]
+        workspace.app.showPDF = false
+        try await waitUntil { self.width(workspace.pdfItem) < ColumnMetrics.pdfMinimum }
+        closeWindow()
+        // Past the end of AppKit's collapse animation.
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(UserDefaults.standard.array(forKey: Self.splits[2]) as? [String] == saved)
     }
 
     /// The models, not the last window, say which panes show.
