@@ -354,7 +354,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     private var mathPopover: MathPopover?
 
-    /// Preview maths at the caret only while its source is visible and focused.
+    /// Preview maths at the caret only while the caret is visible and focused:
+    /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
         guard let window, hasKeyboard, !loading,
               let maths = document.mathAt(caret: selectedRange().location),
@@ -362,8 +363,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             mathPopover?.close()
             return
         }
-        let screen = firstRect(forCharacterRange: NSRange(location: maths.start, length: 1), actualRange: nil)
-        let rect = convert(window.convertFromScreen(screen), from: nil)
+        let screen = firstRect(forCharacterRange: NSRange(location: selectedRange().location, length: 0), actualRange: nil)
+        // A point wide: NSPopover takes an empty rect for the whole view.
+        var rect = convert(window.convertFromScreen(screen), from: nil)
+        rect.size.width = max(rect.width, 1)
         // Below the toolbar and the find bar, and above the scroll view's foot.
         let insets = enclosingScrollView?.contentInsets ?? NSEdgeInsetsZero
         var shown = convert(clip.bounds, from: clip)
@@ -374,7 +377,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             return
         }
         if mathPopover == nil { mathPopover = MathPopover() }
-        mathPopover?.show(maths, size: font?.pointSize ?? NSFont.systemFontSize, at: rect, of: self)
+        mathPopover?.show(maths, size: fontSize, at: rect, of: self,
+                          edge: offered != nil && completionList.isAbove ? .maxY : .minY)
     }
 
     /// The character at a UTF-16 offset, if there's one there.
@@ -618,6 +622,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         }
         completionList.show(rows, font: font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
                             under: start, in: host)
+        // Out of the list's way.
+        if host != nil { previewMath() }
     }
 
     /// Arrows move through the open list, Return and Tab accept, Escape closes it.

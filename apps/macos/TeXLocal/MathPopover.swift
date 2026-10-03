@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// The maths at the caret, typeset, in the system's popover over where it
-/// starts: KaTeX (Resources/KaTeX) in a web view that never takes a click or
+/// The maths at the caret, typeset, in the system's popover by the caret:
+/// KaTeX (Resources/KaTeX) in a web view that never takes a click or
 /// the keyboard.
 final class MathPopover {
     private let popover = NSPopover()
@@ -11,7 +11,7 @@ final class MathPopover {
     private let content: NSHostingController<MathView>
     private var loaded = false
     /// The maths asked for, where, and what the popover shows.
-    private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView)?
+    private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
     private var rendering = false
 
@@ -29,9 +29,9 @@ final class MathPopover {
         }
     }
 
-    /// Shows `maths` at `size` points, pointing at `rect` of `view`.
-    func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView) {
-        wanted = (maths, size, rect, view)
+    /// Shows `maths` at `size` points, on `edge` of `rect` of `view`.
+    func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView, edge: NSRectEdge) {
+        wanted = (maths, size, rect, view, edge)
         if rendered?.maths == maths, rendered?.size == size {
             present()
         } else {
@@ -43,7 +43,7 @@ final class MathPopover {
     /// while a closed popover animates out, and a show then brings it back.
     private func present() {
         guard let wanted else { return }
-        popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: .minY)
+        popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
     }
 
     func close() {

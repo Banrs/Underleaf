@@ -98,12 +98,16 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// From the window's left to its labels' text.
     private var textInset: CGFloat = 0
 
+    /// Over the typed text, there being no room under it.
+    private(set) var isAbove = false
+
     /// Moves it under `start`, a screen rect, or over it when there's no room under it.
     func place(under start: NSRect, in parent: NSWindow? = nil) {
         guard let window = parent ?? panel.parent else { return }
         let screen = (window.screen ?? NSScreen.main)?.visibleFrame ?? .infinite
         var frame = NSRect(origin: NSPoint(x: start.minX - textInset, y: start.minY - panel.frame.height), size: panel.frame.size)
-        if frame.minY < screen.minY { frame.origin.y = start.maxY }
+        isAbove = frame.minY < screen.minY
+        if isAbove { frame.origin.y = start.maxY }
         frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - frame.width))
         panel.setFrame(frame, display: true)
     }
