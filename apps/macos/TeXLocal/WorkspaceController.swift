@@ -185,7 +185,7 @@ final class WorkspaceController: NSSplitViewController {
         // A hard scroll edge draws no line over the build panel's still content.
         areaItem.addBottomAlignedAccessoryViewController(Self.separator())
         // Xcode's bottom bar: its height, and its items to the ends.
-        let statusBar = accessory(StatusBar(project: project), clearsCorners: true)
+        let statusBar = accessory(StatusBar(project: project))
         statusBar.automaticallyAppliesContentInsets = false
         statusBar.preferredScrollEdgeEffectStyle = .automatic
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
@@ -226,33 +226,13 @@ final class WorkspaceController: NSSplitViewController {
     }
 
     /// A pane bar sized to its content, inside AppKit's standard accessory insets.
-    /// `clearsCorners` keeps it clear of the window's rounded corners as well.
-    private func accessory(_ content: some View, hidden: Bool = false,
-                           clearsCorners: Bool = false) -> NSSplitViewItemAccessoryViewController {
+    private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
         let host = NSHostingView(rootView: content.environment(app))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         accessory.view = host
-        if clearsCorners {
-            let bar = NSView()
-            host.translatesAutoresizingMaskIntoConstraints = false
-            bar.addSubview(host)
-            let corners = bar.layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))
-            let leading = host.leadingAnchor.constraint(equalTo: bar.leadingAnchor)
-            let trailing = bar.trailingAnchor.constraint(equalTo: host.trailingAnchor)
-            leading.priority = .defaultHigh
-            trailing.priority = .defaultHigh
-            NSLayoutConstraint.activate([
-                leading, trailing,
-                host.leadingAnchor.constraint(greaterThanOrEqualTo: corners.leadingAnchor),
-                corners.trailingAnchor.constraint(greaterThanOrEqualTo: host.trailingAnchor),
-                host.topAnchor.constraint(equalTo: bar.topAnchor),
-                host.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-            ])
-            accessory.view = bar
-        }
         accessory.isHidden = hidden
         accessory.view.isHidden = hidden
         return accessory

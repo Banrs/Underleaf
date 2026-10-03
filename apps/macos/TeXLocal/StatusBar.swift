@@ -9,8 +9,8 @@ struct StatusBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        // Edge to edge, clear of the window's corner: the accessory-bar bezels' own
-        // insets (10 pt) set the items apart, and put the toggle's symbol where Xcode's is.
+        // The accessory-bar bezels' own insets (10 pt; 11 for the toggle's symbol) space
+        // the items, as Xcode's buttons do theirs.
         HStack(spacing: 0) {
             // Reveals the issues, as Xcode's activity view does; the panel's own toggle hides it.
             Button { project.showBuildPanel() } label: { buildStatus }
@@ -37,9 +37,9 @@ struct StatusBar: View {
                     .help("Go to Page")
             }
             if counts != nil || pages {
-                // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle,
-                // 4 pt clear of the bezels either side (measured).
-                Divider().frame(height: 12).padding(.horizontal, 4)
+                // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle, kept
+                // off the bezels, which Xcode's flat toggle doesn't show.
+                Divider().frame(height: 12).padding(.horizontal, 2)
             }
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle")
@@ -52,6 +52,10 @@ struct StatusBar: View {
         .monospacedDigit()
         .controlSize(.small)
         .lineLimit(1)
+        // Xcode's ends, measured: its first title 12.5 pt in, its toggle's symbol 16 pt
+        // from the window's edge, clear of the rounded corner.
+        .padding(.leading, 2)
+        .padding(.trailing, 5)
         .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
         .buttonStyle(.accessoryBar)
     }
