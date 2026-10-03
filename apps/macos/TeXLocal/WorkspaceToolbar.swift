@@ -29,7 +29,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
-    private var watch: Task<Void, Never>?
+    /// What the items show; `watch` sets only what differs from it.
+    private var applied: State?
+    private var closed = false
 
     init(app: AppModel, project: ProjectModel, workspace: WorkspaceController) {
         self.app = app
@@ -40,13 +42,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
-        watch = track({ [weak self] in self?.state }) { [weak self] state in
-            if let state { self?.apply(state) }
-        }
+        watch()
     }
 
     func close() {
-        watch?.cancel()
+        closed = true
     }
 
     // ---------- items ----------
@@ -246,35 +246,55 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               pdfTitle: app.title(.viewTogglePdf, on: project))
     }
 
-    private func apply(_ state: State) {
-        for item in toolbar.items { configure(item, state) }
+    /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
+    /// during layout, and an async `track` would set the new scale a pass later: the toolbar
+    /// would draw each frame of a sidebar's animation twice, laid out, then relabelled.
+    private func watch() {
+        guard !closed else { return }
+        let state = withObservationTracking(options: .didSet) { state } onChange: { [weak self] _ in
+            MainActor.assumeIsolated { self?.watch() }
+        }
+        guard state != applied else { return }
+        for item in toolbar.items { configure(item, state, from: applied) }
+        applied = state
     }
 
-    private func configure(_ item: NSToolbarItem, _ state: State) {
+    /// What changed since `old`, or all of it for a new item: an unchanged segment label
+    /// still lays the toolbar out again.
+    private func configure(_ item: NSToolbarItem, _ state: State, from old: State? = nil) {
+        func changed<Value: Equatable>(_ field: KeyPath<State, Value>) -> Bool {
+            old?[keyPath: field] != state[keyPath: field]
+        }
         switch item.itemIdentifier {
         case .format, .math, .insert:
-            item.isEnabled = state.isLaTeX
+            if changed(\.isLaTeX) { item.isEnabled = state.isLaTeX }
         case .zoom:
             let control = item.view as? NSSegmentedControl
-            // Reapply tabular digits during updates; otherwise Share shifts with the scale.
-            if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
-            control?.setLabel(state.zoomLabel, forSegment: 1)
-            control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0)
-            control?.setEnabled(state.hasPDF, forSegment: 1)
-            control?.setEnabled(state.hasPDF && state.canZoomIn, forSegment: 2)
-            item.isEnabled = state.hasPDF
-            item.isHidden = !state.showsPDF
+            if changed(\.zoomLabel) {
+                // Reapply tabular digits during updates; otherwise Share shifts with the scale.
+                if let font = control?.font { control?.font = .monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular) }
+                control?.setLabel(state.zoomLabel, forSegment: 1)
+            }
+            if changed(\.hasPDF) || changed(\.canZoomOut) { control?.setEnabled(state.hasPDF && state.canZoomOut, forSegment: 0) }
+            if changed(\.hasPDF) {
+                control?.setEnabled(state.hasPDF, forSegment: 1)
+                item.isEnabled = state.hasPDF
+            }
+            if changed(\.hasPDF) || changed(\.canZoomIn) { control?.setEnabled(state.hasPDF && state.canZoomIn, forSegment: 2) }
+            if changed(\.showsPDF) { item.isHidden = !state.showsPDF }
         case .share:
-            item.isEnabled = state.hasPDF
+            if changed(\.hasPDF) { item.isEnabled = state.hasPDF }
         case .compile:
-            let command = state.compiling ? MenuCommand.compileStop : .compileRun
-            item.label = command.title
-            item.toolTip = command.title
-            item.menuFormRepresentation?.title = command.title
-            (item.view as? CompileButton)?.compiling = state.compiling
-            item.isEnabled = state.canCompile
+            if changed(\.compiling) {
+                let command = state.compiling ? MenuCommand.compileStop : .compileRun
+                item.label = command.title
+                item.toolTip = command.title
+                item.menuFormRepresentation?.title = command.title
+                (item.view as? CompileButton)?.compiling = state.compiling
+            }
+            if changed(\.canCompile) { item.isEnabled = state.canCompile }
         case .togglePDF:
-            item.toolTip = state.pdfTitle
+            if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
         default:
             break
         }

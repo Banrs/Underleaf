@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -264,6 +265,30 @@ final class WorkspaceLayoutTests {
         menu.addItem(overflow)
         menu.update()
         #expect(!overflow.isEnabled)
+    }
+
+    /// The toolbar's scale follows a fitted PDF as the sidebar resizes it, in the same
+    /// layout pass: a pass later, each frame of the sidebar's animation draws twice.
+    @Test func theZoomLabelFollowsThePDFInTheSamePass() async throws {
+        let workspace = open()
+        let window = try #require(window)
+        window.toolbar = workspace.toolbar.toolbar
+        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        page.string = "Introduction"
+        // The pane shows the PDF's view once the project has one.
+        workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
+        workspace.pdf.show(try #require(PDFDocument(data: page.dataWithPDF(inside: page.bounds))))
+        let zoom = try #require(window.toolbar?.items.first { $0.itemIdentifier == .zoom }?.view as? NSSegmentedControl)
+        // Fitted to the column once it has its width.
+        try await waitUntil { workspace.pdf.zoomLabel != "100%" && zoom.label(forSegment: 1) == workspace.pdf.zoomLabel } state: {
+            "PDF \(workspace.pdf.zoomLabel), toolbar \(zoom.label(forSegment: 1) ?? "")"
+        }
+        let label = workspace.pdf.zoomLabel
+
+        workspace.splitView.setPosition(ColumnMetrics.sidebarIdeal + 120, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        #expect(workspace.pdf.zoomLabel != label)
+        #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
     }
 }
 
