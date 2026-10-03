@@ -38,14 +38,14 @@ struct HomeView: View {
         List(selection: $selection) {
             // No section header: the list pins its first one with a rule the full width
             // of the window, over cards that have no rule of their own.
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates
             }
             .selectionDisabled()
             .listRowSeparator(.hidden)
-            // The buttons' unseen 10 pt edge runs into the gap before Recent, not on top of it.
-            .padding(.bottom, -10)
+            // The buttons bring their own 10 pt edge.
+            .listRowInsets(EdgeInsets())
             .accessibilityElement(children: .contain)
             .accessibilityLabel("New")
             Section {
@@ -94,8 +94,6 @@ struct HomeView: View {
             }
         }
         .scrollIndicators(.never)
-        // The pages, not the buttons' unseen edges, line up with the headers.
-        .padding(.leading, -10)
     }
 
     /// In the Recent section, not over the list, so the templates stay in view.
@@ -178,14 +176,13 @@ struct ProjectTemplate: Identifiable {
 
     let id: String
     let title: String
-    let detail: String
     let page: Page
 
     static let all = [
-        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document", page: .blank),
-        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections", page: .article),
-        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", page: .report),
-        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", page: .slides),
+        ProjectTemplate(id: "blank", title: "Blank", page: .blank),
+        ProjectTemplate(id: "article", title: "Article", page: .article),
+        ProjectTemplate(id: "report", title: "Report", page: .report),
+        ProjectTemplate(id: "beamer", title: "Presentation", page: .slides),
     ]
 }
 
@@ -214,16 +211,10 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // The page with its name under it, as in a template chooser.
+        VStack(spacing: 8) {
             page
-            VStack(alignment: .leading, spacing: 2) {
-                Text(template.title).font(.headline)
-                Text(template.detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2, reservesSpace: true)
-                    .frame(width: Self.page.width, alignment: .leading)
-            }
+            Text(template.title)
         }
         .accessibilityElement(children: .combine)
     }
