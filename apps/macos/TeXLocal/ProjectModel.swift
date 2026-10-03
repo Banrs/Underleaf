@@ -11,6 +11,10 @@ final class ProjectModel {
     private(set) var initialLoadComplete = false
     var openPath: String?
     var outline: [OutlineItem] = []
+    /// The main file's `\documentclass`, for how its headings are numbered (Aa).
+    private(set) var documentClass: String?
+    /// The main file `documentClass` was read from.
+    @ObservationIgnored private var classFile: String?
     var counts: (words: Int, lines: Int)?
     var cursorLine = 1
     /// The caret's column (UTF-16, from 0), for the status bar.
@@ -328,6 +332,13 @@ final class ProjectModel {
                 return item
             }
             counts = (doc.words, doc.lines)
+            // The class changes with the main file only.
+            guard let main = settings?.mainFile, main == path || main != classFile,
+                  let text = main == path ? editor.document?.text
+                    : try? await core.call("read_file", ["id": id, "path": main], as: FileText.self).text,
+                  !Task.isCancelled else { return }
+            documentClass = HeadingNumbering.documentClass(in: text)
+            classFile = main
         }
     }
 

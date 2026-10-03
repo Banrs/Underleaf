@@ -320,7 +320,7 @@ final class WorkspaceLayoutTests {
         let items = try showToolbar(workspace).items.flatMap { [$0] + (($0 as? NSToolbarItemGroup)?.subitems ?? []) }
         let item = { (id: NSToolbarItem.Identifier) in try #require(items.first { $0.itemIdentifier == id }) }
         let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
-        let format = try #require((editing[0] as? NSMenuToolbarItem)?.menu)
+        let format = try #require(editing[0].menuFormRepresentation?.submenu)
         let bold = { format.update(); return format.item(withTitle: MenuCommand.editBold.title)?.isEnabled }
         project.openPath = "refs.bib"
         #expect(editing.allSatisfy { !$0.isEnabled })
@@ -337,6 +337,29 @@ final class WorkspaceLayoutTests {
         try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
         #expect(inspector.toolTip == "Hide Inspector")
     }
+
+    /// Aa opens its popover under it, on the screen, and again closes it; the menu bar's
+    /// Format and the overflow menu keep the same choices as menu items.
+    @Test func aaOpensItsPopover() async throws {
+        let workspace = open(sidebar: false)
+        let window = try #require(window), toolbar = try showToolbar(workspace)
+        window.layoutIfNeeded()
+        let item = try #require(toolbar.items.first { $0.itemIdentifier == .format })
+        #expect(!(item is NSMenuToolbarItem) && item.menuFormRepresentation?.submenu?.items.map(\.title)
+            .starts(with: [MenuCommand.editBold.title, MenuCommand.editItalic.title]) == true)
+        let popover = workspace.toolbar.format.popover
+        NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        try await waitUntil { popover.isShown && popover.contentViewController?.view.window != nil }
+        let shown = try #require(popover.contentViewController?.view.window).frame
+        let aa = try #require(Self.views(window.contentView!.superview!).first { $0 is NSButton && $0.accessibilityLabel() == "Format" })
+        let anchor = aa.convert(aa.bounds, to: nil).offsetBy(dx: window.frame.minX, dy: window.frame.minY)
+        #expect(shown.minX < anchor.midX && anchor.midX < shown.maxX && shown.maxY <= anchor.minY + 1)
+        #expect(window.screen.map { $0.visibleFrame.contains(shown) } != false && shown.height < 400)
+        NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        try await waitUntil { !popover.isShown }
+    }
+
+    private static func views(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(views) }
 
     /// Off in the toolbar, off in its overflow menu: Share, which the menu asks, and Zoom's
     /// scales, under a submenu that stays available (HIG, Menus).

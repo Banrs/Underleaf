@@ -69,6 +69,27 @@ struct OutlineTests {
     }
 }
 
+/// Aa's markers: how the main file's class numbers each level.
+@MainActor
+struct HeadingNumberingTests {
+    @Test func theClassNumbersTheLevels() {
+        let markers = { (numbering: HeadingNumbering) in HeadingLevel.all.map(numbering.marker) }
+        #expect(markers(HeadingNumbering(documentClass: "article", hasChapters: false))
+            == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
+        #expect(markers(HeadingNumbering(documentClass: "report", hasChapters: false))
+            == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
+        // A class it doesn't know: a book's numbering once there are chapters.
+        #expect(HeadingNumbering(documentClass: "thesis", hasChapters: true) == .book)
+        #expect(HeadingNumbering(documentClass: nil, hasChapters: false) == .article)
+    }
+
+    @Test func theClassIsTheOneNamedOutsideComments() {
+        #expect(HeadingNumbering.documentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == "report")
+        #expect(HeadingNumbering.documentClass(in: "50\\% \\documentclass{book}") == "book")
+        #expect(HeadingNumbering.documentClass(in: "\\section{A}") == nil)
+    }
+}
+
 @MainActor
 struct FindTests {
     @Test func theMatchCountLabel() {

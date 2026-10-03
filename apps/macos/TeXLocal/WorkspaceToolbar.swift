@@ -38,6 +38,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
     private weak var workspace: WorkspaceController?
+    /// Aa's.
+    private(set) lazy var format = FormatPopover(app: app, project: project)
     /// What the items show; `watch` sets only what differs from it.
     private var applied: State?
     private var closed = false
@@ -56,6 +58,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func close() {
         closed = true
+        format.popover.close()
     }
 
     // ---------- items ----------
@@ -237,14 +240,23 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
+    /// Aa opens its popover (`FormatPopover`); the overflow menu has the same as a menu.
     private func formatItem() -> NSToolbarItem {
-        menuItem(.format, "Format", "textformat", Group { [app, project] in
+        let item = button(.format, "Format", "textformat", #selector(showFormat(_:)))
+        let form = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
+        form.image = item.image
+        form.submenu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { [app, project] in
             ForEach([MenuCommand.editBold, .editItalic], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
             }
             Divider()
             SectionLevelItems(project: project)
         })
+        item.menuFormRepresentation = form
+        // Off outside LaTeX, as Math and Insert (`configure`).
+        item.autovalidates = false
+        item.visibilityPriority = .low
+        return item
     }
 
     /// One capsule for its items. Unlabelled, it shows their labels, and the overflow menu
@@ -351,6 +363,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func back() { perform(.projectClose) }
+
+    @objc private func showFormat(_ sender: Any?) {
+        guard let item = sender as? NSToolbarItem ?? toolbar.items.first(where: { $0.itemIdentifier == .format }) else { return }
+        format.toggle(relativeTo: item)
+    }
 
     @objc private func bold() { perform(.editBold) }
 
