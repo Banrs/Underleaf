@@ -1,5 +1,5 @@
 // The shared command surface: the JSON dispatch every host forwards to, and
-// the route table both URL-serving hosts use.
+// the browser's file route table.
 
 use std::path::Path;
 
@@ -33,6 +33,10 @@ async fn call(service: &Service, command: &str, args: Value) -> Value {
 
 async fn status_of(service: &Service, command: &str, args: Value) -> u16 {
     service.call(command, &args).await.unwrap_err().status
+}
+
+async fn labels(service: &Service) -> Value {
+    call(service, "scan_symbols", json!({ "id": "P" })).await["labels"].clone()
 }
 
 #[tokio::test]
@@ -73,6 +77,44 @@ async fn dispatch_round_trips_project_and_file_commands() {
 
     let tree = call(&service, "file_tree", json!({ "id": id })).await;
     assert!(tree.as_array().unwrap().iter().any(|n| n["name"] == "sec"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settings_patches_and_main_file_renames_preserve_both_changes() {
+    let (_dir, service) = with_project();
+    let service = std::sync::Arc::new(service);
+    for index in 0..16 {
+        let (from, to, engine) = if index % 2 == 0 {
+            ("main.tex", "paper.tex", "xelatex")
+        } else {
+            ("paper.tex", "main.tex", "pdflatex")
+        };
+        let start = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let patch = tokio::spawn({
+            let service = service.clone();
+            let start = start.clone();
+            async move {
+                start.wait().await;
+                call(
+                    &service,
+                    "set_settings",
+                    json!({ "id": "P", "patch": { "engine": engine } }),
+                )
+                .await
+            }
+        });
+        start.wait().await;
+        call(
+            &service,
+            "rename_entry",
+            json!({ "id": "P", "from": from, "to": to }),
+        )
+        .await;
+        patch.await.unwrap();
+        let settings = call(&service, "get_settings", json!({ "id": "P" })).await;
+        assert_eq!(settings["mainFile"], to);
+        assert_eq!(settings["engine"], engine);
+    }
 }
 
 #[tokio::test]
@@ -136,7 +178,7 @@ async fn byte_and_absolute_path_operations_are_not_reachable_by_name() {
 }
 
 #[tokio::test]
-async fn writes_invalidate_the_symbols_cache() {
+async fn writes_update_symbol_completions() {
     let (_dir, service) = with_project();
     call(
         &service,
@@ -144,18 +186,72 @@ async fn writes_invalidate_the_symbols_cache() {
         json!({ "id": "P", "path": "a.tex", "text": "\\label{one}" }),
     )
     .await;
-    let first = call(&service, "scan_symbols", json!({ "id": "P" })).await;
-    assert_eq!(first["labels"], json!(["one"]));
+    assert_eq!(labels(&service).await, json!(["one"]));
 
-    // Same length: the new label must still replace the cached one.
+    // Same length: the new label must still replace the previous one.
     call(
         &service,
         "write_file",
         json!({ "id": "P", "path": "a.tex", "text": "\\label{two}" }),
     )
     .await;
-    let second = call(&service, "scan_symbols", json!({ "id": "P" })).await;
-    assert_eq!(second["labels"], json!(["two"]));
+    assert_eq!(labels(&service).await, json!(["two"]));
+}
+
+#[tokio::test]
+async fn external_symbol_files_are_found_and_removed_without_a_service_write() {
+    let (dir, service) = with_project();
+    let root = dir.path().join("P");
+    assert_eq!(labels(&service).await, json!([]));
+
+    std::fs::write(root.join("external.tex"), "\\label{outside}").unwrap();
+    assert_eq!(labels(&service).await, json!(["outside"]));
+
+    std::fs::remove_file(root.join("external.tex")).unwrap();
+    assert_eq!(labels(&service).await, json!([]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn app_writes_update_in_project_symbol_links() {
+    let (dir, service) = with_project();
+    let root = dir.path().join("P");
+    std::fs::write(root.join("real.tex"), "\\label{one}").unwrap();
+    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
+    assert_eq!(labels(&service).await, json!(["one"]));
+
+    call(
+        &service,
+        "write_file",
+        json!({ "id": "P", "path": "real.tex", "text": "\\label{two}" }),
+    )
+    .await;
+    assert_eq!(labels(&service).await, json!(["two"]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn retargeted_symbol_link_uses_its_new_contents_even_with_the_same_stamp() {
+    let (dir, service) = with_project();
+    let root = dir.path().join("P");
+    let first_target = root.join("first.txt");
+    let second_target = root.join("second.txt");
+    let link = root.join("link.tex");
+    std::fs::write(&first_target, "\\label{one}").unwrap();
+    std::fs::write(&second_target, "\\label{two}").unwrap();
+    let fixed_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    for target in [&first_target, &second_target] {
+        std::fs::File::open(target)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(fixed_time))
+            .unwrap();
+    }
+    std::os::unix::fs::symlink(&first_target, &link).unwrap();
+    assert_eq!(labels(&service).await, json!(["one"]));
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&second_target, &link).unwrap();
+    assert_eq!(labels(&service).await, json!(["two"]));
 }
 
 #[test]
@@ -250,7 +346,7 @@ fn an_upload_reports_what_it_would_land_on_and_never_overwrites_unasked() {
     let err = service.upload_file("P", "", "ch", b"x", true).unwrap_err();
     assert_eq!(err.status, 409);
     // However the upload spells it, on a volume that ignores case.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     assert_eq!(
         service
             .upload_file("P", "", "CH", b"x", true)
@@ -303,21 +399,13 @@ fn serve_routes_resolve_through_the_project_boundary() {
     );
 }
 
-/// A folder holding a stand-in `latexmk`. On Unix it runs and prints a
-/// version; on Windows it is not a real program, so it is found but fails.
+/// A folder holding a stand-in `latexmk` that prints a version.
 fn fake_tex(dir: &Path) -> String {
     std::fs::create_dir_all(dir).unwrap();
-    let exe = dir.join(if cfg!(windows) {
-        "latexmk.exe"
-    } else {
-        "latexmk"
-    });
+    let exe = dir.join("latexmk");
     std::fs::write(&exe, "#!/bin/sh\necho 'Latexmk, stub 1.0'\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
     dir.to_string_lossy().into_owned()
 }
 
@@ -347,7 +435,7 @@ async fn set_tex_dir_accepts_only_a_folder_with_latexmk() {
 async fn set_tex_dir_resolves_a_picked_tex_root_to_its_bin_folder() {
     let (_dir, service) = service();
     let root = TempDir::new().unwrap();
-    let bin = fake_tex(&root.path().join("bin").join("windows"));
+    let bin = fake_tex(&root.path().join("bin").join("universal-darwin"));
 
     let status = call(&service, "set_tex_dir", json!({ "dir": root.path() })).await;
     assert_eq!(status["texDir"], bin);
@@ -379,7 +467,7 @@ async fn the_tex_dir_persists_in_the_data_dir_and_clears_to_automatic() {
 }
 
 #[tokio::test]
-async fn changing_the_tex_dir_invalidates_the_cached_status() {
+async fn status_reports_the_current_tex_choice() {
     let (_dir, service) = service();
     let first = call(&service, "status", json!({})).await;
     assert_eq!(first["texDir"], Value::Null);
@@ -390,15 +478,19 @@ async fn changing_the_tex_dir_invalidates_the_cached_status() {
     let chosen = call(&service, "set_tex_dir", json!({ "dir": bin })).await;
     assert_eq!(chosen["texDir"], bin);
     assert_eq!(call(&service, "status", json!({})).await, chosen);
-    if cfg!(unix) {
-        assert_eq!(chosen["available"], true);
-        assert_eq!(chosen["version"], "Latexmk, stub 1.0");
-        assert_eq!(chosen["found"], bin);
-    } else {
-        // First on the PATH but not a program: whatever TeX the first status
-        // found and cached, this one was probed afresh.
-        assert_eq!(chosen["available"], false);
-    }
+    assert_eq!(chosen["available"], true);
+    assert_eq!(chosen["version"], "Latexmk, stub 1.0");
+    assert_eq!(chosen["found"], bin);
+
+    // An update in the same folder is reflected without another folder choice.
+    std::fs::write(
+        tex.path().join("latexmk"),
+        "#!/bin/sh\necho 'Latexmk, stub 2.0'\n",
+    )
+    .unwrap();
+    let updated = call(&service, "status", json!({})).await;
+    assert_eq!(updated["version"], "Latexmk, stub 2.0");
+    assert_eq!(updated["texDir"], bin);
 
     let automatic = call(&service, "set_tex_dir", json!({ "dir": null })).await;
     assert_eq!(automatic["texDir"], Value::Null);

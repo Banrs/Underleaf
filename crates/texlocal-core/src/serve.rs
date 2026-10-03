@@ -1,7 +1,6 @@
 // Serving project files as URLs: the compiled PDF (pdf.js fetches it in
-// ranges) and raw project files (image previews). Shared by every host that
-// serves them — Tauri's texlocal:// scheme and the browser server — so
-// the route table and the sandbox rule exist once.
+// ranges) and raw project files (image previews) for the browser server.
+// The route table and the sandbox rule live here.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -153,23 +152,20 @@ async fn read_file_range(path: &Path, range: Option<(u64, u64)>) -> std::io::Res
     // operation (open, seek, each read) and copies through its own buffer;
     // pdf.js fetches a large PDF as many small ranges.
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || read_range_blocking(&path, range))
-        .await
-        .map_err(std::io::Error::other)?
-}
-
-fn read_range_blocking(path: &Path, range: Option<(u64, u64)>) -> std::io::Result<Vec<u8>> {
-    // fs::read sizes its buffer from the file's length up front.
-    let Some((start, end)) = range else {
-        return std::fs::read(path);
-    };
-    let size = usize::try_from(end - start + 1)
-        .map_err(|_| std::io::Error::other("requested range is too large"))?;
-    let mut file = std::fs::File::open(path)?;
-    file.seek(SeekFrom::Start(start))?;
-    let mut bytes = vec![0; size];
-    file.read_exact(&mut bytes)?;
-    Ok(bytes)
+    tokio::task::spawn_blocking(move || {
+        let Some((start, end)) = range else {
+            return std::fs::read(path);
+        };
+        let size = usize::try_from(end - start + 1)
+            .map_err(|_| std::io::Error::other("requested range is too large"))?;
+        let mut file = std::fs::File::open(path)?;
+        file.seek(SeekFrom::Start(start))?;
+        let mut bytes = vec![0; size];
+        file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 #[cfg(test)]

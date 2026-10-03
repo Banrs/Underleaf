@@ -11,9 +11,6 @@ enum DefaultsKey {
     static let showPDF = "showPDF"
     static let openProject = "openProject"
     static let outlineCollapsed = "OutlineCollapsed"
-    static let outlineFolded = "OutlineFolded"
-    /// Pane sizes set by dragging a divider (`PaneSize`).
-    static let paneSizes = "PaneSizes"
 }
 
 /// An alert: a short, specific title and the detail in the message (HIG, Alerts).
@@ -51,12 +48,14 @@ struct ExportFile: Transferable {
 final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
+    private(set) var settingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
 
     // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
+    var newEntry: NewEntry?
     var openingProject = false
     var addingFiles = false
     /// An item Finder or the Dock handed the app, while the window asks
@@ -83,6 +82,9 @@ final class AppModel {
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
+    /// The PDF column. View › Show PDF and the toolbar keep the choice for later
+    /// launches (`togglePDF`); a PDF command or Go to PDF Position shows it for now.
+    var showPDF: Bool
     /// The sidebar's File Outline folded to its header.
     var outlineCollapsed: Bool {
         didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
@@ -112,6 +114,7 @@ final class AppModel {
         inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
@@ -121,15 +124,22 @@ final class AppModel {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
 
+    func togglePDF() {
+        showPDF.toggle()
+        UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF)
+    }
+
     /// Shows the PDF column too, so the action happens now rather than when
     /// the column next appears. The workspace takes each request once.
     func requestPDF(_ action: PDFAction) {
-        project?.showPDF = true
+        showPDF = true
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
 
     private let core = Core.shared
+    /// The latest TeX status read; a TeX folder choice cancels it.
+    @ObservationIgnored private var texCheck: Task<Void, Never>?
 
     func refresh() async {
         do {
@@ -137,21 +147,35 @@ final class AppModel {
         } catch {
             alert = AppAlert("Couldn’t Load Your Projects", error)
         }
-        tex = try? await core.call("status", as: TexStatus.self)
+        await refreshTeXStatus()
     }
 
-    /// Polls while TeX is missing, so installing it needs no relaunch.
-    func watchForTeX() async {
-        while tex?.available == false, !Task.isCancelled {
-            // Each look runs `status`, which searches the disk for latexmk.
-            try? await Task.sleep(for: .seconds(10))
-            tex = try? await core.call("status", as: TexStatus.self)
+    /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen.
+    func refreshTeXStatus() async {
+        guard !settingTeX else { return }
+        texCheck?.cancel()
+        let check = Task {
+            let status = try? await core.call("status", as: TexStatus.self)
+            if !Task.isCancelled, let status { tex = status }
         }
+        texCheck = check
+        await check.value
     }
 
     /// Nil finds TeX automatically. The core refuses a folder without latexmk.
+    /// Settings turns its buttons off meanwhile.
     func setTeXFolder(_ path: String?) async throws {
-        tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+        settingTeX = true
+        texCheck?.cancel()
+        defer { settingTeX = false }
+        do {
+            tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+        } catch {
+            // A status read started before this choice was discarded. Refresh
+            // after the check ends, even if the chosen folder was refused.
+            Task { await refreshTeXStatus() }
+            throw error
+        }
     }
 
     func create(name: String, template: String) async throws {
@@ -165,18 +189,21 @@ final class AppModel {
 
     static func canOpen(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
-        if url.hasDirectoryPath { return true }
+        var directory: ObjCBool = false
+        if url.hasDirectoryPath || (FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &directory)
+                                   && directory.boolValue) { return true }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it. The
-    /// core removes a project it couldn't finish, so a bad zip leaves none.
-    func importProject(from url: URL) async {
+    /// Copies a folder, .tex file (with its folder) or .zip into the library and opens it, or
+    /// with `open` off only lists it. The core removes a project it couldn't finish, so a bad
+    /// zip leaves none.
+    func importProject(from url: URL, open: Bool = true) async {
         do {
             let info = try await core.call("import_project", ["src": url.path], as: ProjectInfo.self)
             await refresh()
-            await open(info.id)
+            if open { await self.open(info.id) }
         } catch {
             alert = AppAlert("Couldn’t Open “\(url.lastPathComponent)”", error)
         }
@@ -259,6 +286,7 @@ final class AppModel {
     private func dropRequests() {
         pdfRequest = nil
         prompt = nil
+        newEntry = nil
         addingFiles = false
         exporting = nil
     }
@@ -271,4 +299,3 @@ final class AppModel {
         return true
     }
 }
-

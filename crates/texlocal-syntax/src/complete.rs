@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, utf16, Text};
+use crate::{catalog, is, utf16, Text};
 
 /// A place to type in a completion's text. Fields with the same `index`
 /// are one field in several places: what's typed in one goes in all.
@@ -73,16 +73,12 @@ pub fn completions(
             _ => return None,
         };
         let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-        return offer(start, words(matching(names, &before[start..], |n| n)));
+        return offer(start, words(matching(names, &before[start..], |n| n), ""));
     }
     // @article and the like, in a .bib file.
     if let Some(m) = ENTRY_TYPE.find(&before) {
-        let types: Vec<String> = catalog
-            .bib_entry_types
-            .iter()
-            .map(|t| format!("@{t}"))
-            .collect();
-        return offer(m.start(), words(matching(&types, m.as_str(), |t| t)));
+        let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
+        return offer(m.start(), words(names, "@"));
     }
     // \command, once a letter follows the backslash.
     let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
@@ -100,14 +96,17 @@ pub fn completions(
     offer(m.start(), items)
 }
 
-/// Names that go in as they are.
-fn words(names: Vec<&String>) -> Vec<Completion> {
+/// Literal names, with `@` prefixed for bibliography entry types.
+fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
     names
         .into_iter()
-        .map(|name| Completion {
-            label: name.clone(),
-            text: name.clone(),
-            fields: vec![],
+        .map(|name| {
+            let label = format!("{prefix}{name}");
+            Completion {
+                text: label.clone(),
+                label,
+                fields: vec![],
+            }
         })
         .collect()
 }
@@ -128,44 +127,37 @@ fn matching<'a, T>(items: &'a [T], typed: &str, name: impl Fn(&T) -> &String) ->
 /// after the first takes `at`'s line's indentation, and each leading tab one
 /// more level (two spaces, the editor's indent unit).
 pub(crate) fn expand(source: &Text, at: u32, snippet: &str) -> (String, Vec<SnippetField>) {
-    let indentation: String = String::from_utf16_lossy(source.line(source.line_index(at)))
-        .chars()
-        .take_while(|&c| c == ' ' || c == '\t')
-        .collect();
-    let (mut text, mut fields, mut names) = (String::new(), Vec::new(), Vec::<&str>::new());
-    for (n, line) in snippet.split('\n').enumerate() {
-        let tabs = if n == 0 {
-            0
-        } else {
-            line.len() - line.trim_start_matches('\t').len()
-        };
-        if n > 0 {
-            text += &format!("\n{indentation}{}", "  ".repeat(tabs));
-        }
-        let line = &line[tabs..];
-        let mut last = 0;
-        for c in FIELD.captures_iter(line) {
-            let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
-            text += &line[last..whole.start()];
-            // Unnamed fields are each their own.
-            let index = match names.iter().position(|&n| !name.is_empty() && n == name) {
-                Some(index) => index,
-                None => {
-                    names.push(name);
-                    names.len() - 1
-                }
-            };
-            fields.push(SnippetField {
-                start: utf16(&text) as u32,
-                length: utf16(name) as u32,
-                index: index as u32,
+    let line = source.line(source.line_index(at));
+    let indent = line
+        .iter()
+        .take_while(|&&u| is(u, ' ') || is(u, '\t'))
+        .count();
+    let indentation = String::from_utf16_lossy(&line[..indent]);
+    // Catalog tabs are indentation; preserve any tabs in the source's indent.
+    let snippet = snippet
+        .replace('\t', "  ")
+        .replace('\n', &format!("\n{indentation}"));
+    let mut names = Vec::new();
+    let mut fields = Vec::new();
+    let text = FIELD.replace_all(&snippet, |c: &regex::Captures| {
+        let (whole, name) = (c.get(0).unwrap(), c.get(1).unwrap().as_str());
+        // Unnamed fields are each their own.
+        let index = names
+            .iter()
+            .position(|previous| !name.is_empty() && previous == name)
+            .unwrap_or_else(|| {
+                names.push(name.to_owned());
+                names.len() - 1
             });
-            text += name;
-            last = whole.end();
-        }
-        text += &line[last..];
-    }
-    (text, fields)
+        fields.push(SnippetField {
+            // Each earlier field lost its three delimiters: "#{" and "}".
+            start: (utf16(&snippet[..whole.start()]) - 3 * fields.len()) as u32,
+            length: utf16(name) as u32,
+            index: index as u32,
+        });
+        name.to_owned()
+    });
+    (text.into_owned(), fields)
 }
 
 #[cfg(test)]
@@ -204,6 +196,16 @@ mod tests {
                 .map(|f| (f.start, f.length))
                 .collect::<Vec<_>>(),
             [(12, 0)]
+        );
+        let (text, fields) =
+            super::expand(&crate::Text::new("\t\\beg"), 5, "#{😀}\n\t#{}#{é}#{😀}#{}");
+        assert_eq!(text, "😀\n\t  é😀");
+        assert_eq!(
+            fields
+                .iter()
+                .map(|f| (f.start, f.length, f.index))
+                .collect::<Vec<_>>(),
+            [(0, 2, 0), (6, 0, 1), (6, 1, 2), (7, 2, 0), (9, 0, 3)]
         );
     }
 

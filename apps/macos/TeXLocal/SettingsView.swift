@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// One pane, titled "TeXLocal Settings" by the system: six controls need no tabs (HIG, Settings).
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
-    @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
-    @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
@@ -14,20 +12,9 @@ struct SettingsView: View {
         @Bindable var app = app
         Form {
             Section("Editor") {
-                Picker("Font", selection: $font) {
-                    ForEach(EditorFont.allCases) { Text($0.title).tag($0) }
-                }
-                // The stepper next to its field (HIG, Steppers): a form's Stepper with a format
-                // draws its arrows over its own field's end (27.2).
-                LabeledContent("Font Size") {
-                    HStack {
-                        TextField("Font Size", value: size, format: .number)
-                        Stepper("Font Size", value: size, in: Self.sizes)
-                    }
-                    .labelsHidden()
-                }
-                Picker("Syntax Colors", selection: $palette) {
-                    ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
+                Stepper("Font Size", value: size, in: Self.sizes, format: .number.precision(.fractionLength(0)))
+                Picker("Colour Theme", selection: $syntaxTheme) {
+                    ForEach(SyntaxTheme.allCases) { Text($0.title).tag($0) }
                 }
             }
             Section("PDF") {
@@ -37,6 +24,8 @@ struct SettingsView: View {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading.")
                 }
+                // Three fixed choices, all in view (HIG, Toggles: radio buttons for two to five).
+                .pickerStyle(.radioGroup)
             }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
@@ -47,8 +36,9 @@ struct SettingsView: View {
                 LabeledContent {
                     HStack {
                         if app.tex?.available == false { GetMacTeXButton() }
-                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
-                        Button("Choose…") { choosingTeX = true }
+                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) }.disabled(app.settingTeX) }
+                        Button("Choose…") { choosingTeX = true }.disabled(app.settingTeX)
+                        if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking TeX") }
                     }
                 } label: {
                     Text("TeX")
@@ -91,10 +81,12 @@ struct SettingsView: View {
         }
     }
 
-    private static let sizes = 10...28
+    private static let sizes: ClosedRange<Double> = 10...28
 
-    /// A typed size is kept to the stepper's range.
-    private var size: Binding<Int> {
-        Binding(get: { fontSize }, set: { fontSize = min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound) })
+    /// Double: the stepper's formatted value takes only floating point.
+    private var size: Binding<Double> {
+        Binding(get: { Double(fontSize) }, set: {
+            fontSize = Int(min(max($0, Self.sizes.lowerBound), Self.sizes.upperBound).rounded())
+        })
     }
 }

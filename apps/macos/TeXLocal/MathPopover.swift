@@ -2,17 +2,18 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// The maths at the caret, typeset, in the system's popover over where it
-/// starts, as the web's editor shows it: KaTeX (Resources/KaTeX, the web's
-/// build) in a web view that never takes a click or the keyboard.
+/// The maths at the caret, typeset, in the system's popover by the caret:
+/// KaTeX (Resources/KaTeX) in a web view that never takes a click or
+/// the keyboard.
 final class MathPopover {
     private let popover = NSPopover()
     private let page = WebPage()
     private let content: NSHostingController<MathView>
     private var loaded = false
     /// The maths asked for, where, and what the popover shows.
-    private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView)?
+    private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView, edge: NSRectEdge)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
+    private var rendering = false
 
     init() {
         content = NSHostingController(rootView: MathView(page: page))
@@ -28,9 +29,9 @@ final class MathPopover {
         }
     }
 
-    /// Shows `maths` at `size` points, pointing at `rect` of `view`.
-    func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView) {
-        wanted = (maths, size, rect, view)
+    /// Shows `maths` at `size` points, on `edge` of `rect` of `view`.
+    func show(_ maths: MathPreview, size: CGFloat, at rect: NSRect, of view: NSView, edge: NSRectEdge) {
+        wanted = (maths, size, rect, view, edge)
         if rendered?.maths == maths, rendered?.size == size {
             present()
         } else {
@@ -42,7 +43,7 @@ final class MathPopover {
     /// while a closed popover animates out, and a show then brings it back.
     private func present() {
         guard let wanted else { return }
-        popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: .minY)
+        popover.show(relativeTo: wanted.rect, of: wanted.view, preferredEdge: wanted.edge)
     }
 
     func close() {
@@ -51,12 +52,17 @@ final class MathPopover {
     }
 
     private func update() {
-        guard loaded, let asked = wanted else { return }
+        guard loaded, !rendering, let asked = wanted else { return }
+        rendered = nil
+        rendering = true
         Task {
             let box = try? await page.callJavaScript("return render(tex, display, size)",
                 arguments: ["tex": asked.maths.tex, "display": asked.maths.display, "size": asked.size]) as? [Double]
-            // Superseded meanwhile, or closed.
-            guard let box, box.count == 2, let wanted, wanted.maths == asked.maths, wanted.size == asked.size else { return }
+            rendering = false
+            guard let wanted else { return }
+            // Skip intermediate requests.
+            guard wanted.maths == asked.maths, wanted.size == asked.size else { update(); return }
+            guard let box, box.count == 2 else { return }
             rendered = (asked.maths, asked.size)
             content.rootView.size = CGSize(width: box[0], height: box[1])
             popover.contentSize = content.view.fittingSize
@@ -65,7 +71,7 @@ final class MathPopover {
     }
 
     /// The typeset maths in the label colour, as wide as it is (560 pt at
-    /// most, the web's), with no margin of its own.
+    /// most), with no margin of its own.
     private static let html = """
         <!doctype html><meta charset="utf-8">
         <link rel="stylesheet" href="katex.min.css"><script src="katex.min.js"></script>

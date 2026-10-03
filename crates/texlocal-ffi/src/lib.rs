@@ -13,9 +13,9 @@ use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use texlocal_core::service::{arg, Service};
+use texlocal_core::service::{arg, string_arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
 use texlocal_syntax::{SourceDocument, TextRange};
 
@@ -24,54 +24,48 @@ pub struct TlHandle {
     service: Service,
 }
 
-/// Commands only an in-process host may run. They take or return absolute
-/// paths — fine for the app that owns this process, which is why they live
-/// here and not in `Service::call`, which the browser server exposes.
-fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<Value, CoreError>> {
-    let s = |key: &str| arg::<String>(args, key);
-    let path = |p: PathBuf| json!(p.to_string_lossy());
-    Some(match command {
-        "pdf_path" => (|| service.pdf_path(&s("id")?))().map(path),
-        "raw_path" => (|| service.raw_path(&s("id")?, &s("path")?))().map(path),
-        "project_root" => (|| service.project_root(&s("id")?))().map(path),
-        "export_zip" => (|| {
-            let root = service.project_root(&s("id")?)?;
-            zipexport::export_zip(&root, Path::new(&s("dest")?))?;
-            Ok(Value::Null)
-        })(),
-        // On quit, while a compile call may still be in flight — which rules
-        // out tl_close — stop the latexmk trees that would otherwise outlive
-        // the app.
-        "kill_all" => {
-            service.compile.kill_all();
-            Ok(Value::Null)
-        }
-        "import_files" => (|| {
-            let imported = import::import_files(
+impl TlHandle {
+    /// Absolute-path commands belong to the in-process host. Only the shared
+    /// commands are forwarded to `Service::call`, which the browser exposes.
+    fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
+        let service = &self.service;
+        let s = |key: &str| string_arg(args, key);
+        let path = |p: PathBuf| json!(p.to_string_lossy());
+        match command {
+            "pdf_path" => service.pdf_path(s("id")?).map(path),
+            "raw_path" => service.raw_path(s("id")?, s("path")?).map(path),
+            "project_root" => service.project_root(s("id")?).map(path),
+            "export_zip" => {
+                let root = service.project_root(s("id")?)?;
+                zipexport::export_zip(&root, Path::new(s("dest")?))?;
+                Ok(Value::Null)
+            }
+            // On quit, while a compile call may still be in flight — which rules
+            // out tl_close — stop the latexmk trees that would otherwise outlive
+            // the app.
+            "kill_all" => {
+                service.compile.kill_all();
+                Ok(Value::Null)
+            }
+            "import_files" => Ok(json!(import::import_files(
                 service,
-                &s("id")?,
+                s("id")?,
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
                 &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
                 arg(args, "conflict")?,
-            )?;
-            Ok(json!(imported))
-        })(),
-        "import_project" => (|| {
-            let info = import::import_project(service, Path::new(&s("src")?))?;
-            Ok(json!(info))
-        })(),
-        _ => return None,
-    })
+            )?)),
+            "import_project" => Ok(json!(import::import_project(
+                service,
+                Path::new(s("src")?)
+            )?)),
+            _ => self.runtime.block_on(service.call(command, args)),
+        }
+    }
 }
 
-/// The result as a JSON envelope the host frees with `tl_free`.
-fn reply(result: Result<Value, CoreError>) -> *mut c_char {
-    let envelope = match result {
-        Ok(value) => json!({ "ok": value }),
-        Err(err) => json!({ "error": err.message, "status": err.status }),
-    };
+fn json_string(value: impl Serialize) -> *mut c_char {
     // JSON escapes NUL inside strings, so serialized output never contains one.
-    CString::new(envelope.to_string())
+    CString::new(serde_json::to_string(&value).expect("command results serialize"))
         .expect("JSON has no interior NUL")
         .into_raw()
 }
@@ -94,21 +88,16 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
         None if data_dir.is_null() => texlocal_core::default_data_dir(),
         None => return std::ptr::null_mut(),
     };
-    let opened = catch_unwind(|| {
+    catch_unwind(|| {
         std::fs::create_dir_all(&dir).ok()?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .ok()?;
+        let runtime = tokio::runtime::Runtime::new().ok()?;
         Some(Box::new(TlHandle {
             runtime,
             service: Service::new(dir),
         }))
-    });
-    match opened {
-        Ok(Some(handle)) => Box::into_raw(handle),
-        _ => std::ptr::null_mut(),
-    }
+    })
+    .unwrap_or_default()
+    .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
 /// Run `command` with a JSON object of arguments (null means `{}`). Returns
@@ -124,10 +113,10 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let Some(handle) = handle.as_ref() else {
-        return reply(Err(CoreError::bad_request("No handle")));
-    };
-    reply((|| {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = handle
+            .as_ref()
+            .ok_or_else(|| CoreError::bad_request("No handle"))?;
         let command = str_arg(command).ok_or_else(|| CoreError::bad_request("Invalid command"))?;
         let args: Value = match str_arg(args_json) {
             Some(text) => serde_json::from_str(text)
@@ -135,13 +124,13 @@ pub unsafe extern "C" fn tl_call(
             None if args_json.is_null() => json!({}),
             None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
         };
-        let service = &handle.service;
-        catch_unwind(AssertUnwindSafe(|| {
-            native_call(service, command, &args)
-                .unwrap_or_else(|| handle.runtime.block_on(service.call(command, &args)))
-        }))
-        .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")))
-    })())
+        handle.call(command, &args)
+    }))
+    .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")));
+    json_string(match result {
+        Ok(value) => json!({ "ok": value }),
+        Err(err) => json!({ "error": err.message, "status": err.status }),
+    })
 }
 
 /// Free a string `tl_call` returned. Null is ignored.
@@ -285,21 +274,19 @@ pub unsafe extern "C" fn tl_source_call(
     else {
         return std::ptr::null_mut();
     };
-    let result = match str_arg(command).unwrap_or_default() {
-        "completions" => json!(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
-        "toggle_comment" => json!(doc.toggle_comment(&a.selections)),
-        "indent" => json!(doc.indent(&a.selections, a.more)),
-        "set_heading" => json!(doc.set_heading(a.caret, &a.command)),
-        "insert_block" => json!(doc.insert_block(&a.id, a.selection)),
-        "insert_symbol" => json!(doc.insert_symbol(&a.command, a.selection)),
-        "math_at" => json!(doc.math_at(a.caret)),
-        "not_prose" => json!(doc.not_prose(a.selection.start, a.selection.length)),
-        "text" => json!(doc.text()),
-        _ => return std::ptr::null_mut(),
-    };
-    CString::new(result.to_string())
-        .expect("JSON has no interior NUL")
-        .into_raw()
+    match str_arg(command).unwrap_or_default() {
+        "completions" => json_string(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
+        "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
+        "indent" => json_string(doc.indent(&a.selections, a.more)),
+        "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
+        "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
+        "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
+        "math_at" => json_string(doc.math_at(a.caret)),
+        "text_styles" => json_string(doc.text_styles(a.selection)),
+        "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
+        "text" => json_string(doc.text()),
+        _ => std::ptr::null_mut(),
+    }
 }
 
 /// Null is ignored.

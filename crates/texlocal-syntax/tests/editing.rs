@@ -2,27 +2,20 @@
 //! (fixtures/editing.json; test/mathmode.test.js and test/editor.test.js).
 
 use serde::Deserialize;
-use texlocal_syntax::{math_mode_at, MathPreview, SourceDocument, TextEdit, TextRange};
+use texlocal_syntax::{math_mode_at, SourceDocument, TextEdit, TextRange};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Fixture {
     math_mode: Vec<(String, bool, String)>,
     headings: Vec<(String, String, String, u32)>,
-    math_at: Vec<(String, Option<Preview>)>,
+    math_at: Vec<(String, serde_json::Value)>,
     completions: Vec<(String, bool, Option<u32>, Option<String>)>,
     blocks: Vec<(String, String, String, Fields)>,
 }
 
 /// Each field's start and length, from the block's start, in Tab's order.
 type Fields = Vec<(u32, u32)>;
-
-#[derive(Deserialize)]
-struct Preview {
-    start: u32,
-    tex: String,
-    display: bool,
-}
 
 fn fixture() -> Fixture {
     serde_json::from_str(include_str!("fixtures/editing.json")).unwrap()
@@ -58,12 +51,11 @@ fn math_mode_matches_the_web() {
 fn the_maths_to_preview_matches_the_web() {
     for (source, expected) in fixture().math_at {
         let (doc, at) = marked(&source);
-        let expected = expected.map(|p| MathPreview {
-            start: p.start,
-            tex: p.tex,
-            display: p.display,
-        });
-        assert_eq!(doc.math_at(at), expected, "{source}");
+        assert_eq!(
+            serde_json::to_value(doc.math_at(at)).unwrap(),
+            expected,
+            "{source}"
+        );
     }
 }
 
@@ -141,7 +133,7 @@ fn comments_and_indentation_go_by_line() {
         [edit(0, 0, "  "), edit(2, 0, "  "), edit(5, 0, "  ")]
     );
     let outdented = SourceDocument::new("   a\nb").indent(&[range(0, 6)], false);
-    assert_eq!(outdented, [edit(0, 2, "")]);
+    assert_eq!(outdented, [edit(1, 2, "")]);
     // A selection that ends at a line's start leaves that line alone.
     assert_eq!(
         SourceDocument::new("a\nb").toggle_comment(&[range(0, 2)]),

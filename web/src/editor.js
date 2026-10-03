@@ -37,7 +37,7 @@ const jumpFlashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// Xcode 27's Default (Light) and Default (Dark). No
+// Xcode 27's Default (Light) and Default (Dark), from docs/design-tokens.md. No
 // background: the editor follows the panel token, so no seam shows. Dark
 // comments are lightened for AA contrast on both app editor surfaces.
 const XCODE_THEME = {
@@ -55,8 +55,8 @@ const XCODE_THEME = {
   },
 };
 
-// The stex mode's tokens mapped to Xcode's categories by meaning;
-// math delimiters take the preprocessor colour.
+// The stex mode's tokens mapped to Xcode's categories by meaning
+// (docs/design-tokens.md); math delimiters take the preprocessor colour.
 const xcodeHighlight = (c) => HighlightStyle.define([
   { tag: tags.tagName, color: c.keyword },
   { tag: tags.atom, color: c.type },
@@ -164,17 +164,16 @@ export function mathAt(doc, pos) {
 
   // Inline $…$ on the cursor's line (unescaped, non-$$ delimiters).
   const line = doc.lineAt(pos);
-  const spans = [];
+  const col = pos - line.from;
   let start = -1;
   for (let i = 0; i < line.text.length; i++) {
     if (line.text[i] !== '$' || line.text[i - 1] === '\\' || line.text[i + 1] === '$' || line.text[i - 1] === '$') continue;
     if (start === -1) start = i;
-    else { spans.push([start, i]); start = -1; }
-  }
-  const col = pos - line.from;
-  for (const [a, b] of spans) {
-    if (col > a && col <= b) {
-      return { from: line.from + a, tex: texForPreview(null, line.text.slice(a + 1, b)), display: false };
+    else {
+      if (col > start && col <= i) {
+        return { from: line.from + start, tex: texForPreview(null, line.text.slice(start + 1, i)), display: false };
+      }
+      start = -1;
     }
   }
   return null;
@@ -451,7 +450,12 @@ export function headingLine(line, command) {
     // The title runs to the brace that closes the command's.
     let depth = 1;
     let i = m.index + m[0].length;
-    for (; i < line.length && depth; i++) depth += { '{': 1, '}': -1 }[line[i]] ?? 0;
+    for (; i < line.length && depth; i++) {
+      const char = line[i];
+      if (char === '\\') { i++; continue; }
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+    }
     title = line.slice(m.index + m[0].length, depth ? line.length : i - 1);
     rest = depth ? '' : line.slice(i);
   }

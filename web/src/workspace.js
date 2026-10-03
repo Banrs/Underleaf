@@ -31,7 +31,11 @@ let workspaceGeneration = 0;
 let openGeneration = 0;
 let pdfFindTimer = null;
 let pdfFindGeneration = 0;
+let pdfMainFile = null;
 const saveQueue = createSaveQueue();
+
+const currentPdf = (generation, projectId, viewer) => generation === workspaceGeneration
+  && state.projectId === projectId && state.pdf === viewer;
 
 // Editor states of recently open files, so switching back restores the undo
 // history, selection, and scroll position. An entry is reused only while the
@@ -61,6 +65,7 @@ export function destroyWorkspace() {
   texWatcher = null;
   clearTimeout(pdfFindTimer);
   pdfFindTimer = null;
+  pdfMainFile = null;
   clearTimeout(symbolsTimer);
   clearTimeout(docMetaTimer);
   clearTimeout(crumbTimer);
@@ -133,6 +138,7 @@ export async function renderWorkspace(id) {
 // ---------- chrome ----------
 
 function buildChrome(id) {
+  const generation = workspaceGeneration;
   const sidebar = buildSidebar({
     openFile,
     gotoLine: (line) => { ui.layout?.revealEditor(); state.editor?.gotoLine(line); },
@@ -163,7 +169,7 @@ function buildChrome(id) {
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // Tauri's drag region; it skips interactive elements itself.
+  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
   const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
@@ -209,12 +215,11 @@ function buildChrome(id) {
     onclick: () => (state.compiling ? stopCompile() : runCommand('compile.run')),
   }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
-  const pdfScroll = el('div', { class: 'pdf-scroll' });
+  const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '-1' });
   const logsView = buildLogsView({
-    onJump: async (file, line) => {
+    onJump: (file, line) => {
       if (file == null || line == null) return;
-      await openFile(file);
-      if (state.openPath === file) state.editor?.gotoLine(line);
+      return openAt(file, line, () => generation === workspaceGeneration && state.projectId === id);
     },
   });
 
@@ -237,6 +242,9 @@ function buildChrome(id) {
     const generation = ++pdfFindGeneration;
     const viewer = state.pdf;
     const query = findInput.value;
+    // Invalidate an earlier scan now, before this query's debounce expires.
+    viewer?.cancelFind();
+    findCount.textContent = '';
     pdfFindTimer = setTimeout(async () => {
       const result = await viewer.find(query);
       if (generation === pdfFindGeneration && state.pdf === viewer && ui.findInput === findInput && !findBar.hidden) {
@@ -245,7 +253,7 @@ function buildChrome(id) {
     }, 200);
   });
   findInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closePdfFind(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closePdfFind(); return; }
     if (e.key !== 'Enter') return;
     e.preventDefault();
     stepFind(e.shiftKey ? -1 : 1);
@@ -297,18 +305,14 @@ function buildChrome(id) {
     main, workspace, editorPane, pdfPane, paneDivider, paneHandle, switcher, editorButton, previewButton, backdrop,
     prefs, onChange: refreshCommands, pdf: () => state.pdf });
 
-  state.pdf = new PdfViewer(pdfScroll, {
+  const viewer = new PdfViewer(pdfScroll, {
     onZoomChange: (pct) => { zoomLabel.textContent = `${pct}%`; },
     onPageChange: (p, total) => { pageIndicator.textContent = `${p} of ${total}`; },
     onDocument: refreshCommands,
-    onSyncClick: async (page, x, y) => {
-      try {
-        const r = await api.syncInverse(state.projectId, page, Math.round(x), Math.round(y));
-        await openFile(r.file);
-        if (state.openPath === r.file) state.editor?.gotoLine(r.line);
-      } catch { toast('No source location found here'); }
-    },
+    onSyncClick: (page, x, y) => inverseJump(id, viewer, generation, viewer.doc,
+      { page, x: Math.round(x), y: Math.round(y) }, 'No source location found here'),
   });
+  state.pdf = viewer;
 
   document.title = `${id} — TeXLocal`;
 }
@@ -341,6 +345,7 @@ export function syncToolbarState() {
 const hasProject = () => !!state.projectId;
 const hasEditor = () => !!state.editor;
 const hasPdf = () => !!state.pdf?.doc;
+const hasFindTarget = () => hasEditor() || (hasPdf() && !ui.findBar?.hidden);
 
 // Find Next and Previous step the search being typed in. A native menu takes
 // the chord from every field, so the PDF find field steps its own matches and
@@ -349,6 +354,7 @@ function findAgain(delta) {
   const field = document.activeElement;
   if (field === ui.findInput) { ui.stepFind(delta); return; }
   if (field?.matches?.('input, textarea') && !ui.editorHost?.contains(field)) return;
+  if (!state.editor && !ui.findBar?.hidden) { ui.stepFind(delta); return; }
   if (delta > 0) state.editor?.findNext();
   else state.editor?.findPrevious();
 }
@@ -370,8 +376,8 @@ function commandDefs() {
     { id: 'edit.undo', title: 'Undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
     { id: 'edit.redo', title: 'Redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
     { id: 'edit.find', title: 'Find & Replace', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
-    { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasEditor },
-    { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasEditor },
+    { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
+    { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
     { id: 'edit.bold', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
     { id: 'edit.italic', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
     { id: 'edit.math', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
@@ -419,16 +425,20 @@ function openPdfFind() {
   ui.findBar.hidden = false;
   ui.findInput.focus();
   ui.findInput.select();
+  refreshCommands();
 }
 
 function closePdfFind() {
   if (!ui?.findBar) return;
+  const hadFocus = ui.findBar.contains(document.activeElement);
   clearTimeout(pdfFindTimer);
   pdfFindTimer = null;
   pdfFindGeneration++;
   ui.findBar.hidden = true;
   ui.findInput.value = '';
   state.pdf?.clearFind();
+  if (hadFocus) ui.pdfScroll?.focus();
+  refreshCommands();
 }
 
 async function gotoLineFlow() {
@@ -585,8 +595,23 @@ async function openFile(path) {
   refreshCommands();
 }
 
+// Only a file open that still owns the request may place the caret.
+async function openAt(file, line, current) {
+  if (!current()) return;
+  const opened = openFile(file);
+  const request = openGeneration;
+  await opened;
+  if (current() && request === openGeneration && state.openPath === file) state.editor?.gotoLine(line);
+}
+
 export function saveCurrent(options = {}) {
-  return saveQueue.run(() => doSave(options));
+  const generation = workspaceGeneration;
+  const { projectId, openPath, editor } = state;
+  return saveQueue.run(() => {
+    if (generation !== workspaceGeneration || state.projectId !== projectId
+        || state.openPath !== openPath || state.editor !== editor) return;
+    return doSave(options);
+  });
 }
 
 async function doSave({ triggerCompile = true } = {}) {
@@ -681,8 +706,11 @@ async function compile({ auto = false } = {}) {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   const viewer = state.pdf;
+  const mainFile = state.settings?.mainFile;
+  const current = () => currentPdf(generation, projectId, viewer);
   const btn = ui.compileButton;
   let saveFailed = false;
+  let reloadingPdf = false;
   // Busy from the first moment, not only once the save has flushed: the
   // spinner is the only sign a compile (auto, menu, or engine switch) started.
   // Meanwhile the button stops it, so it leaves the command's enabled state.
@@ -698,23 +726,32 @@ async function compile({ auto = false } = {}) {
 
   try {
     if (!(await flushCurrent())) return;
-    if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
+    if (!current() || state.settings?.mainFile !== mainFile) return;
     if (stopRequested) return;
 
     const result = await api.compile(projectId);
-    if (generation !== workspaceGeneration || state.projectId !== projectId || state.pdf !== viewer) return;
+    if (!current() || state.settings?.mainFile !== mainFile) return;
     state.lastResult = result;
-    // The log takes the PDF's place only when a failed build left none.
+    // The log takes the PDF's place only when a failed build left none (docs/web.md).
     const failed = !result.ok && !result.stopped;
     state.logOpen = failed && !result.pdf;
     renderLogs({ pdfScroll: ui.pdfScroll, logsButton: ui.logsButton });
 
     if (result.pdf) {
-      // A new PDF invalidates every match and text position from the previous
-      // document. Closing the bar also invalidates the workspace debounce.
-      closePdfFind();
-      const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
-      setPdfFreshness(loaded ? '' : 'Preview could not reload');
+      if (result.pdfChanged !== false || !viewer.doc || pdfMainFile !== mainFile) {
+        // A changed PDF invalidates matches and text positions. An unchanged
+        // build keeps the current document, scroll position, zoom and find state.
+        closePdfFind();
+        reloadingPdf = true;
+        pdfMainFile = null;
+        const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
+        if (!current()) return;
+        if (state.settings?.mainFile !== mainFile) return;
+        if (loaded) pdfMainFile = mainFile;
+        setPdfFreshness(loaded ? '' : 'Preview could not reload');
+      } else {
+        setPdfFreshness('');
+      }
     } else if (viewer.doc) {
       // A stopped build says nothing about the preview; leave its label be.
       if (!result.stopped) setPdfFreshness('Last successful build');
@@ -732,14 +769,15 @@ async function compile({ auto = false } = {}) {
       }
     }
   } catch (err) {
-    if (generation !== workspaceGeneration || state.projectId !== projectId) return;
+    if (!current()) return;
     saveFailed = !!err.saveFailed;
+    if (reloadingPdf) setPdfFreshness('Preview could not reload');
     if (!saveFailed) {
       if (!auto) toast(err.message, 'error');
       else console.error('Auto-compile failed:', err);
     }
   } finally {
-    if (generation !== workspaceGeneration || state.projectId !== projectId) return;
+    if (!current()) return;
     state.compiling = false;
     if (btn) {
       btn.dataset.command = 'compile.run';
@@ -818,10 +856,16 @@ async function loadPdf() {
   const generation = workspaceGeneration;
   const projectId = state.projectId;
   const viewer = state.pdf;
-  const current = () => generation === workspaceGeneration && state.projectId === projectId && state.pdf === viewer;
+  const mainFile = state.settings?.mainFile;
+  const current = () => currentPdf(generation, projectId, viewer);
   try {
-    const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders) && current();
-    if (loaded) setPdfFreshness('');
+    const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
+    if (!current()) return false;
+    if (state.settings?.mainFile !== mainFile) return false;
+    if (loaded) {
+      pdfMainFile = mainFile;
+      setPdfFreshness('');
+    }
     return loaded;
   } catch {
     if (current()) showPdfEmpty();
@@ -845,24 +889,38 @@ function savePdf() {
 }
 
 async function forwardSync() {
-  if (!state.editor || !state.openPath) return;
+  if (!state.editor || !state.openPath || !state.pdf?.doc) return;
+  const generation = workspaceGeneration;
+  const { projectId, openPath, editor, pdf: viewer } = state;
+  const doc = viewer?.doc;
+  const line = editor.currentLine();
+  const current = () => currentPdf(generation, projectId, viewer) && state.openPath === openPath
+    && state.editor === editor && editor.currentLine() === line && viewer.doc === doc;
   try {
-    const loc = await api.syncForward(state.projectId, state.openPath, state.editor.currentLine());
+    const loc = await api.syncForward(projectId, openPath, line);
+    if (!current()) return;
     ui.layout?.showSurface('preview');
-    state.pdf.highlight(loc);
-  } catch { toast('No PDF location found — compile first?'); }
+    viewer.highlight(loc);
+  } catch { if (current()) toast('No PDF location found — compile first?'); }
+}
+
+async function inverseJump(projectId, viewer, generation, doc, loc, message) {
+  const current = () => currentPdf(generation, projectId, viewer) && viewer.doc === doc;
+  if (!current()) return;
+  try {
+    const { file, line } = await api.syncInverse(projectId, loc.page, loc.x, loc.y);
+    await openAt(file, line, current);
+  } catch { if (current()) toast(message); }
 }
 
 async function inverseSync() {
-  const loc = await state.pdf?.currentLocation();
+  const generation = workspaceGeneration;
+  const { projectId, pdf: viewer } = state;
+  const doc = viewer?.doc;
+  const loc = await viewer?.currentLocation();
+  if (!currentPdf(generation, projectId, viewer) || viewer?.doc !== doc) return;
   if (!loc) { toast('Compile first to produce a PDF'); return; }
-  try {
-    const r = await api.syncInverse(state.projectId, loc.page, loc.x, loc.y);
-    await openFile(r.file);
-    // openFile resolves quietly when the read fails or a newer open wins; the
-    // line belongs to r.file, not to whatever is still in the editor.
-    if (state.openPath === r.file) state.editor?.gotoLine(r.line);
-  } catch { toast('No source location found for this view'); }
+  await inverseJump(projectId, viewer, generation, doc, loc, 'No source location found for this view');
 }
 
 // ---------- panes ----------

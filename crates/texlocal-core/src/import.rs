@@ -100,26 +100,23 @@ pub fn import_files(
         let meta = fs::metadata(abs)?;
         collect(abs, name.into_owned(), meta, &mut files, usize::MAX)?;
     }
-    let (mut specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
+    let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
     let existing = service.validate_uploads(id, dir, &specs)?.existing;
-    match conflict {
-        None if !existing.is_empty() => {
-            return Ok(Imported {
-                saved: Vec::new(),
-                existing,
-            })
-        }
-        Some(Conflict::KeepBoth) => {
-            for spec in &mut specs {
-                spec.path = keep_both(&spec.path, &existing);
-            }
-        }
-        _ => {}
+    if conflict.is_none() && !existing.is_empty() {
+        return Ok(Imported {
+            saved: Vec::new(),
+            existing,
+        });
     }
     let replace = conflict == Some(Conflict::Replace);
     let mut saved = Vec::new();
-    for (spec, abs) in specs.iter().zip(&sources) {
-        saved.push(service.upload_file(id, dir, &spec.path, &fs::read(abs)?, replace)?);
+    for (spec, abs) in specs.into_iter().zip(sources) {
+        let path = if conflict == Some(Conflict::KeepBoth) {
+            keep_both(&spec.path, &existing)
+        } else {
+            spec.path
+        };
+        saved.push(service.upload_file(id, dir, &path, &fs::read(abs)?, replace)?);
     }
     Ok(Imported { saved, existing })
 }
@@ -247,19 +244,16 @@ pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, Core
             };
             service.upload_file(&id, "", &spec.path, &bytes, false)?;
         }
-        let main = match tex {
-            None => projects::guess_main_file(&root)?,
-            chosen => chosen,
+        let main = if let Some(main) = tex {
+            main
+        } else if let Some(main) = projects::guess_main_file(&root)? {
+            main
+        } else {
+            let (file, content) = templates::files("blank")[0];
+            fs::write(root.join(file), content)?;
+            file.to_string()
         };
-        let main = match main {
-            Some(main) => main,
-            None => {
-                let (file, content) = templates::files("blank")[0];
-                fs::write(root.join(file), content)?;
-                file.to_string()
-            }
-        };
-        projects::finish_project(id.clone(), &root, &json!({ "mainFile": main }))
+        projects::finish_project(id, &root, &json!({ "mainFile": main }))
     })();
     if result.is_err() {
         // Only copies are lost: the folder is the one made above.

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// The open project's sheets, alerts and file dialogs, on the source column:
-/// the one pane that always shows.
+/// Workspace sheets, alerts, and file dialogs on the always-visible source column.
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -9,8 +8,7 @@ struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            // Each file dialog on a view of its own: a dialog's labels reach every
-            // dialog presented from the view they're set on.
+            // Separate hosts keep each file dialog's labels with its own panel.
             .background {
                 Color.clear
                     .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
@@ -36,9 +34,6 @@ struct WorkspaceModals: ViewModifier {
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
-                case .newFile(let folder): NewEntrySheet(project: project, directory: false, folder: folder)
-                case .newFolder(let folder): NewEntrySheet(project: project, directory: true, folder: folder)
-                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.editor.reveal(line: $0) }
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
@@ -52,15 +47,15 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .alert(project.diskConflict.map { "“\(($0 as NSString).lastPathComponent)” Changed on Disk" } ?? "",
-                   item: $project.diskConflict) { _ in
+            .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "",
+                   item: $project.diskConflict) { path in
                 // In both alerts, the button that discards the edits is never the default: Return keeps them.
                 Button("Keep Editing", role: .cancel) { project.keepEdits() }
-                Button("Revert", role: .destructive) { Task { await project.revertToDisk() } }
+                Button("Revert", role: .destructive) { Task { await project.revertToDisk(path) } }
             } message: { path in
                 Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
             }
-            .alert(project.missingFile.map { "“\(($0 as NSString).lastPathComponent)” Was Moved or Deleted" } ?? "",
+            .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { _ in
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Close", role: .destructive) { project.closeMissingFile() }
@@ -70,47 +65,9 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// File › New File… and New Folder…: a name, and the folder to make it in.
-private struct NewEntrySheet: View {
-    let project: ProjectModel
-    let directory: Bool
-    @State private var name: String
-    @State private var folder: String
-    @FocusState private var nameFocused: Bool
-    @State private var selection: TextSelection?
-
-    init(project: ProjectModel, directory: Bool, folder: String?) {
-        self.project = project
-        self.directory = directory
-        _name = State(initialValue: directory ? "untitled folder" : "untitled.tex")
-        _folder = State(initialValue: folder ?? project.openPath.map { ($0 as NSString).deletingLastPathComponent } ?? "")
-    }
-
-    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
-
-    var body: some View {
-        DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
-                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/"), failure: { "Couldn’t Create “\(trimmed)”" }) {
-            try await project.createEntry(folder.isEmpty ? trimmed : "\(folder)/\(trimmed)", directory: directory)
-        } fields: {
-            TextField("Name", text: $name, selection: $selection)
-                .focused($nameFocused)
-                .onChange(of: nameFocused) { _, now in
-                    if now, !directory { selection = .baseName(of: name) }
-                }
-            Picker("Where", selection: $folder) {
-                Label(project.id, systemImage: "folder").tag("")
-                ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in
-                    Label(path, systemImage: "folder").tag(path)
-                }
-            }
-        }
-        .defaultFocus($nameFocused, true)
-    }
-}
-
-/// Edit › Go to Line… and Go to Page…; the page also from the status bar.
-/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
+/// Edit › Go to Page…, also from the status bar: a sheet, as Preview's. (Go to Line… is
+/// Xcode's floating field, `GoToLinePanel`.) `limit` is read as the sheet draws, so a
+/// build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?

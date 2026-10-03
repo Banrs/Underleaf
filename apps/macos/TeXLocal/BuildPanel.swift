@@ -5,63 +5,38 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log"
 }
 
+/// Filtering is shared by the native accessory header and the scrolling content.
+@Observable
+final class BuildPanelState {
+    var filter = ""
+    var showWarnings = true
+}
+
 /// The build panel below the editors: the build's issues, or its whole log.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
-    @Bindable var project: ProjectModel
-    @State private var filter = ""
-    @State private var showWarnings = true
+    let project: ProjectModel
+    let state: BuildPanelState
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack { header }
-                // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
-                .frame(height: 24)
-                .padding(.vertical, BarMetrics.inset)
-                .paneBarControls()
-                .buttonStyle(.accessoryBar)
-                .labelStyle(.iconOnly)
-            Group {
-                switch project.panelTab {
-                case .issues: issues
-                case .log: log
-                }
+        Group {
+            switch project.panelTab {
+            case .issues: issues
+            case .log: log
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
         }
-    }
-
-    /// The tabs, then what acts on the one showing; the build's summary is the
-    /// status bar's.
-    @ViewBuilder
-    private var header: some View {
-        Picker("Build Panel", selection: $project.panelTab) {
-            ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Up under the header, which is the clear bar, but not down under the status bar:
+        // the panel rises from the bar's top edge rather than through it from the window's foot.
+        .background(Color(nsColor: .textBackgroundColor), ignoresSafeAreaEdges: .top)
+        .mask { Rectangle().ignoresSafeArea(.container, edges: .top) }
+        // The header in the panel's own content, so it rides the pane's top edge as the split
+        // animates, and the columns' foot follows it.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            BuildPanelHeader(project: project, state: state)
+                .padding(.horizontal, ColumnMetrics.barSideInset)
+                .padding(.vertical, (ColumnMetrics.panelHeader - BuildPanelHeader.height) / 2)
         }
-        .pickerStyle(.tabs)
-        .labelsHidden()
-        .fixedSize()
-        .layoutPriority(1)
-        Spacer(minLength: 0)
-        if project.panelTab == .issues {
-            if project.warningCount > 0 {
-                Toggle(isOn: $showWarnings) {
-                    Label("Warnings", systemImage: "exclamationmark.triangle")
-                }
-                .toggleStyle(.button)
-                .help(showWarnings ? "Hide Warnings" : "Show Warnings")
-            }
-        } else {
-            Button("Copy Log", systemImage: "document.on.document") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
-            }
-            .help("Copy Log")
-            .disabled(project.result?.log.isEmpty ?? true)
-        }
-        SearchField(text: $filter, prompt: "Filter")
-            .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
     }
 
     /// The issues showing, each by its place in the build's errors then warnings, so
@@ -70,13 +45,13 @@ struct BuildPanel: View {
     private var items: [(offset: Int, element: LogItem)] {
         let errors = project.result?.errors ?? []
         return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
-            (showWarnings || offset < errors.count) && matches(item)
+            (state.showWarnings || offset < errors.count) && matches(item)
         }
     }
 
     private func matches(_ item: LogItem) -> Bool {
-        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
-            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
+        state.filter.isEmpty || item.message.localizedCaseInsensitiveContains(state.filter)
+            || (item.file?.localizedCaseInsensitiveContains(state.filter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
@@ -84,14 +59,14 @@ struct BuildPanel: View {
     private var issues: some View {
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !state.showWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
-                Button("Show Warnings") { showWarnings = true }
+                Button("Show Warnings") { state.showWarnings = true }
             }
-        } else if !filter.isEmpty {
-            ContentUnavailableView.search(text: filter)
+        } else if !state.filter.isEmpty {
+            ContentUnavailableView.search(text: state.filter)
         } else {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
@@ -100,15 +75,8 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            let lines = filter.isEmpty
-                ? text
-                : text.split(separator: "\n", omittingEmptySubsequences: false)
-                    .filter { $0.localizedCaseInsensitiveContains(filter) }
-                    .joined(separator: "\n")
-            // On under the status bar, as the issues' list is, its automatic insets
-            // keeping the last line clear.
-            LogTextView(text: lines, scrollsToEnd: filter.isEmpty)
-                .ignoresSafeArea(.container, edges: .bottom)
+            // Between the bars: the native scroll view's insets don't see the header.
+            LogTextView(text: text)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -116,8 +84,53 @@ struct BuildPanel: View {
     }
 }
 
+/// Controls in the panel's header, a clear bar over its scrolling content (`BuildPanel`).
+/// The log has the text view's own find bar, so only the issues have a filter.
+struct BuildPanelHeader: View {
+    /// One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
+    static let height: CGFloat = 24
+    @Bindable var project: ProjectModel
+    @Bindable var state: BuildPanelState
+
+    var body: some View {
+        HStack {
+            Picker("Build Panel", selection: $project.panelTab) {
+                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.tabs)
+            .labelsHidden()
+            .fixedSize()
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+            if project.panelTab == .issues {
+                if project.warningCount > 0 {
+                    Toggle(isOn: $state.showWarnings) {
+                        Label("Warnings", systemImage: "exclamationmark.triangle")
+                    }
+                    .toggleStyle(.button)
+                    .help(state.showWarnings ? "Hide Warnings" : "Show Warnings")
+                }
+                SearchField(text: $state.filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+                    .frame(minWidth: 100, maxWidth: 180)
+            } else {
+                Button("Copy Log", systemImage: "document.on.document") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+                }
+                .help("Copy Log")
+                .disabled(project.result?.log.isEmpty ?? true)
+            }
+        }
+        .frame(height: Self.height)
+        .lineLimit(1)
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.iconOnly)
+    }
+}
+
 /// The errors and warnings. Choosing one shows its line and leaves the keyboard
 /// in the list, as the outline does; a double-click or Return goes into the source.
+/// Rows are places in the build's issues, so a new build starts with none chosen.
 private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
@@ -131,7 +144,7 @@ private struct IssueList: View {
         .contextMenu(forSelectionType: Int.self) { rows in
             if let item = rows.first.flatMap(item) {
                 if item.file != nil {
-                    Button("Go to Line") { open(item) }
+                    Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
                 }
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -143,10 +156,7 @@ private struct IssueList: View {
         }
         // Edit › Copy copies the selected issue.
         .copyable(selection.flatMap(item).map { [$0.message] } ?? [])
-        // Kept while its row shows.
-        .onChange(of: items.map(\.offset)) { _, shown in
-            if let selection, !shown.contains(selection) { self.selection = nil }
-        }
+        .onChange(of: project.compiling) { selection = nil }
         .onChange(of: selection) { _, id in
             if let item = id.flatMap(item) { open(item, focus: false) }
         }
@@ -167,11 +177,11 @@ private struct IssueRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.message).lineLimit(3)
                 if let location = location(line: ":") {
                     Text(location)
-                        .font(Typography.secondary)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -192,23 +202,20 @@ private struct IssueRow: View {
 }
 
 /// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
+/// It opens at its end, where the error usually is.
 private struct LogTextView: NSViewRepresentable {
     let text: String
-    /// Unfiltered, the log opens at its end, where the error usually is.
-    let scrollsToEnd: Bool
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
-        scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
-        view.drawsBackground = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        // Lines the text up with the header's controls; the fragment padding
-        // would put it past them.
-        view.textContainerInset = NSSize(width: BarMetrics.inset, height: BarMetrics.inset)
+        // Lines the text up with the header's controls, at AppKit's accessory
+        // inset; the fragment padding would put it past them.
+        view.textContainerInset = NSSize(width: 10, height: 10)
         view.textContainer?.lineFragmentPadding = 0
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
@@ -221,7 +228,7 @@ private struct LogTextView: NSViewRepresentable {
         let view = scroll.documentView as! NSTextView
         guard view.string != text else { return }
         view.string = text
-        if scrollsToEnd { view.scrollToEndOfDocument(nil) } else { view.scrollToBeginningOfDocument(nil) }
+        view.scrollToEndOfDocument(nil)
     }
 }
 
@@ -236,7 +243,6 @@ private struct LogTextView: NSViewRepresentable {
 }
 
 #Preview("Build log") {
-    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).",
-                scrollsToEnd: false)
+    LogTextView(text: "This is pdfTeX, Version 3.141592653\n(./main.tex\nLaTeX2e <2025-06-01>\n)\nOutput written on main.pdf (4 pages).")
         .frame(width: 480, height: 160)
 }

@@ -1,7 +1,8 @@
 /* TeXLocal interface.
-   Values come from Apple's macOS 27 UI Kit. The Tauri Mac window's chrome is
-   gated on html.mac; a browser tab gets html.browser, and vibrancy that needs
-   a native window falls back to opaque surfaces (html:not(.mac)). */
+   Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
+   extraction. The Tauri Mac window's chrome is gated on html.mac; a browser tab
+   gets html.browser, and vibrancy that needs a native window falls back to
+   opaque surfaces (html:not(.mac)). */
 
 /* ---------- fonts ---------- */
 
@@ -64,7 +65,7 @@
   --green-text: #1e7e34;
   --red-fill: #c42b1c;
 
-  /* Two control sizes from the kit's ramp: 28 below the
+  /* Two control sizes from the kit's ramp (docs/design-tokens.md): 28 below the
      title bar, 36 in it. */
   --h-control: 28px;
   --h-xl: 36px;
@@ -72,7 +73,7 @@
   /* Lists use the kit's Large variant: 40px rows, 15pt text. */
   --h-row: 40px;
 
-  /* Type roles: every font-size in this file is one. */
+  /* Type roles (docs/design-tokens.md): every font-size in this file is one. */
   --fs-large-title: 26px; --lh-large-title: 32px;   /* welcome heading */
   --fs-title: 15px;   --lh-title: 20px;
   --fs-body: 15px;    --lh-body: 20px;

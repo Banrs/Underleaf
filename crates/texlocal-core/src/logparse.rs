@@ -12,8 +12,6 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::paths::is_absolute_like;
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct LogItem {
     #[serde(rename = "type")]
@@ -36,14 +34,15 @@ impl LogItem {
 
 // Sources, and the files LaTeX writes and reads back (.aux, .toc, .bbl …),
 // where a fragile command or a bibliography entry raises its error.
-static FILE_LINE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(.+?\.(?:tex|ltx|sty|cls|bib|bbl|aux|toc|lof|lot|out|ind|nav|snm|def|clo|cfg|fd|tikz|pgf)):(\d+):\s*(.*)$").unwrap()
+static ERROR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:(?i:(?P<file>.+?\.(?:tex|ltx|sty|cls|bib|bbl|aux|toc|lof|lot|out|ind|nav|snm|def|clo|cfg|fd|tikz|pgf))):(?P<line>\d+):\s*|! )(?P<message>.*)$").unwrap()
 });
 static L_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+)").unwrap());
 static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(LaTeX(?: Font| NFSS)?|Package (\S+)|Class (\S+)) Warning:\s*(.*)$").unwrap()
+    Regex::new(r"^(?:LaTeX(?: Font| NFSS)?|Package \S+|Class \S+) Warning:\s*(?P<message>.*)$")
+        .unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
@@ -51,23 +50,14 @@ static BIBTEX_ERROR: LazyLock<Regex> =
 static BIBER_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
 
-fn has_error(items: &[LogItem]) -> bool {
-    items.iter().any(|item| item.kind == "error")
-}
-
 /// A forward-slash project path; None for an absolute TeX distribution path.
 fn project_path(path: &str) -> Option<String> {
-    (!is_absolute_like(path)).then(|| {
-        path.strip_prefix("./")
-            .or_else(|| path.strip_prefix(".\\"))
-            .unwrap_or(path)
-            .replace('\\', "/")
-    })
+    (!path.starts_with('/')).then(|| path.strip_prefix("./").unwrap_or(path).to_string())
 }
 
 /// Follow the files TeX opens and closes on a line. Each "(" pushes the path
 /// it opens, or None for a parenthesis in text, and each ")" pops.
-fn track(open: &mut Vec<Option<String>>, line: &str) {
+fn track<'a>(open: &mut Vec<Option<&'a str>>, line: &'a str) {
     let mut rest = line;
     while let Some(i) = rest.find(['(', ')']) {
         let paren = rest.as_bytes()[i];
@@ -84,42 +74,38 @@ fn track(open: &mut Vec<Option<String>>, line: &str) {
                     .unwrap_or(rest.len()),
             ),
         };
-        open.push(token.contains(['/', '\\']).then(|| token.to_string()));
+        open.push(token.contains('/').then_some(token));
         rest = after;
     }
 }
 
-/// Where a message at `line` points. `named` is the file it names, else it
-/// is the innermost file open; a log that names no files is the main
-/// file's. One of TeX's own files (a package), which the user can't open,
-/// gives way to the project file that loaded it, with no line and the
-/// package file's name before the message.
+/// Prefer the named file, then the innermost open file, then the main file.
+/// An absolute TeX distribution path uses any open project caller without a
+/// line number, and prefixes the message with the distribution file's name.
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
-    open: &[Option<String>],
+    open: &[Option<&str>],
     main_file: &str,
     message: &mut String,
 ) -> (Option<String>, Option<u32>) {
     let Some(line) = line else {
         return (None, None);
     };
-    let mut files = open.iter().rev().flatten().map(String::as_str);
+    let mut files = open.iter().rev().flatten().copied();
     let Some(path) = named.or_else(|| files.clone().next()) else {
         return (Some(main_file.to_string()), Some(line));
     };
     if let Some(rel) = project_path(path) {
         return (Some(rel), Some(line));
     }
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let name = path.rsplit('/').next().unwrap_or(path);
     *message = format!("{name}: {message}");
     (files.find_map(project_path), None)
 }
 
-/// Add the line after `prev` to a message. After a line TeX broke at its
-/// default 79 columns (MiKTeX ignores max_print_line) it runs on mid-word;
-/// otherwise it is a line of its own, which a package indents under its
-/// "(name)".
+/// Join after TeX's 79-column wrap without a space; otherwise separate lines
+/// and drop an indented package "(name)" prefix.
 fn append(message: &mut String, prev: &str, next: &str) {
     if prev.len() == 79 || prev.chars().count() == 79 {
         message.push_str(next);
@@ -134,33 +120,6 @@ fn append(message: &mut String, prev: &str, next: &str) {
     message.push_str(next.trim());
 }
 
-/// The "l.<n>" line that echoes the source at the error on line `i`: its
-/// own, not one that belongs to the next error, as a closing "==> Fatal
-/// error occurred" would borrow.
-fn echo_line(lines: &[&str], i: usize) -> Option<usize> {
-    lines[(i + 1)..(i + 12).min(lines.len())]
-        .iter()
-        .take_while(|next| !next.starts_with('!') && !FILE_LINE.is_match(next))
-        .position(|next| L_NO.is_match(next))
-        .map(|k| i + 1 + k)
-}
-
-/// "Undefined control sequence." with the one TeX means: the last token of
-/// the first context line from the error on line `i` to its echo that ends
-/// in one ("<recently read> \foo", "\x ->\foo", the echo itself).
-fn name_undefined(message: &mut String, lines: &[&str], i: usize, echo: Option<usize>) {
-    let named = echo
-        .filter(|_| message.starts_with("Undefined control sequence."))
-        .and_then(|j| {
-            lines[i + 1..=j]
-                .iter()
-                .find_map(|line| LAST_CS.captures(line))
-        });
-    if let Some(m) = named {
-        *message = format!("Undefined control sequence: {}", &m[1]);
-    }
-}
-
 /// The first blank line from `from`, or the end.
 fn blank_from(lines: &[&str], from: usize) -> usize {
     (from..lines.len())
@@ -169,90 +128,91 @@ fn blank_from(lines: &[&str], from: usize) -> usize {
 }
 
 pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
-    // lines(), not split('\n'): a Windows TeX log or latexmk's own output ends
-    // lines with \r\n, and a kept \r would land mid-message when a
-    // continuation line is appended.
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
-    let mut open: Vec<Option<String>> = Vec::new();
+    let mut open = Vec::new();
     // Lines before this one echo source or a box's contents, whose
     // parentheses needn't pair up, so they aren't tracked.
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        if let Some(m) = FILE_LINE.captures(line) {
-            // Error detail often continues on following lines, up to TeX's
-            // context ("<inserted text>", "<read *>") or the "l.<n>" echo.
-            let mut message = m[3].to_string();
+        // Skip the warning regex for most lines of a long log.
+        let diagnostic = ERROR.captures(line).or_else(|| {
+            line.contains(" Warning:")
+                .then(|| WARNING.captures(line))
+                .flatten()
+        });
+        if let Some(m) = diagnostic {
+            let named = m.name("file").map(|m| m.as_str());
+            let error = named.is_some() || line.starts_with("! ");
+            let mut message = m["message"].to_string();
+            // Find the source echo without borrowing the next error's.
+            let echo = if error {
+                lines[i + 1..(i + 12).min(lines.len())]
+                    .iter()
+                    .take_while(|next| !next.starts_with('!') && !ERROR.is_match(next))
+                    .position(|next| L_NO.is_match(next))
+                    .map(|k| i + 1 + k)
+            } else {
+                None
+            };
+            if error {
+                quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
+            }
+            let continuation = if named.is_some() {
+                3
+            } else if error {
+                0
+            } else {
+                2
+            };
             let mut prev = line;
-            for next in &lines[(i + 1)..(i + 4).min(lines.len())] {
-                if next.trim().is_empty() || next.starts_with(['!', '<']) || L_NO.is_match(next) {
-                    break;
-                }
-                append(&mut message, prev, next);
-                prev = next;
-            }
-            let echo = echo_line(&lines, i);
-            quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-            // TeX's closing "==> Fatal error occurred" takes the place of
-            // the error that stopped it: that error names the place, and
-            // the summary names none of its own. After that error it is
-            // left out, so one mistake counts as one error.
-            let summary = message.trim_start().starts_with("==>");
-            if summary && has_error(&items) {
-                continue;
-            }
-            name_undefined(&mut message, &lines, i, echo);
-            let line_no = (!summary).then(|| m[2].parse().ok()).flatten();
-            let (file, line_no) = locate(Some(&m[1]), line_no, &open, main_file, &mut message);
-            items.push(LogItem {
-                kind: "error",
-                file,
-                line: line_no,
-                message: message.trim().to_string(),
-            });
-        } else if let Some(message) = line.strip_prefix("! ") {
-            let echo = echo_line(&lines, i);
-            quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-            if message.trim_start().starts_with("==>") && has_error(&items) {
-                continue;
-            }
-            let line_no = echo
-                .and_then(|j| L_NO.captures(lines[j]))
-                .and_then(|lm| lm[1].parse().ok());
-            let mut message = message.trim().to_string();
-            name_undefined(&mut message, &lines, i, echo);
-            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
-            items.push(LogItem {
-                kind: "error",
-                file,
-                line: line_no,
-                message,
-            });
-        // The substring test first: most lines of a long log are neither
-        // kind, and it costs far less than a regex call per line.
-        } else if let Some(m) = line
-            .contains(" Warning:")
-            .then(|| WARNING.captures(line))
-            .flatten()
-        {
-            let mut message = m[4].to_string();
-            let mut prev = line;
-            for next in &lines[(i + 1)..(i + 3).min(lines.len())] {
+            for next in &lines[i + 1..(i + 1 + continuation).min(lines.len())] {
                 if next.trim().is_empty()
                     || next.starts_with('!')
-                    || next.contains("Warning")
-                    || next.contains("Error")
+                    || if error {
+                        next.starts_with('<') || L_NO.is_match(next)
+                    } else {
+                        next.contains("Warning") || next.contains("Error")
+                    }
                 {
                     break;
                 }
                 append(&mut message, prev, next);
                 prev = next;
             }
-            let line_no = ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok());
-            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
+            // A fatal summary repeats the stopping error; keep it only alone.
+            let summary = error && message.trim_start().starts_with("==>");
+            if summary && items.iter().any(|item| item.kind == "error") {
+                continue;
+            }
+            // TeX's context or source echo names the undefined command.
+            if let Some(m) = echo
+                .filter(|_| {
+                    message
+                        .trim_start()
+                        .starts_with("Undefined control sequence.")
+                })
+                .and_then(|j| {
+                    lines[i + 1..=j]
+                        .iter()
+                        .find_map(|line| LAST_CS.captures(line))
+                })
+            {
+                message = format!("Undefined control sequence: {}", &m[1]);
+            }
+            let line_no = if summary && named.is_some() {
+                None
+            } else if error {
+                m.name("line")
+                    .or_else(|| echo.and_then(|j| L_NO.captures(lines[j])?.get(1)))
+                    .and_then(|line| line.as_str().parse().ok())
+            } else {
+                ON_LINE.captures(&message).and_then(|lm| lm[1].parse().ok())
+            };
+            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
             items.push(LogItem {
-                kind: "warning",
+                kind: if error { "error" } else { "warning" },
                 file,
                 line: line_no,
                 message: message.trim().to_string(),
@@ -266,29 +226,32 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
         }
     }
 
-    // De-duplicate repeated messages (reruns produce copies), keeping the
-    // first of each in order.
+    // Reruns duplicate messages; keep the first in order.
     let keep: Vec<bool> = {
         let mut seen = HashSet::with_capacity(items.len());
         items.iter().map(|item| seen.insert(item)).collect()
     };
     let mut keep = keep.into_iter();
-    items.retain(|_| keep.next().unwrap_or(false));
+    items.retain(|_| keep.next().unwrap());
     items
 }
 
 /// Errors from bibtex's or biber's own log (.blg). A bibtex error names the
-/// .bib line; biber's name none a user can open.
+/// .bib line, after its message or on the line below it; biber's name none a
+/// user can open.
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
+    let mut previous = "";
     blg.lines()
         .filter_map(|line| {
+            let above = std::mem::replace(&mut previous, line);
             if let Some(m) = BIBTEX_ERROR.captures(line) {
                 let file = project_path(m[3].trim());
+                let message = if m[1].trim().is_empty() { above } else { &m[1] };
                 Some(LogItem {
                     kind: "error",
                     line: file.as_ref().and(m[2].parse().ok()),
                     file,
-                    message: m[1].trim().to_string(),
+                    message: message.trim().to_string(),
                 })
             } else {
                 BIBER_ERROR
@@ -581,34 +544,19 @@ mod tests {
     }
 
     #[test]
+    fn a_bibtex_error_takes_its_message_from_the_line_above_its_place() {
+        let items = parse_blg("I couldn't open database file .bib\n---line 5 of file main.aux\n");
+        assert_eq!(items[0].message, "I couldn't open database file .bib");
+        assert_eq!(items[0].line, Some(5));
+    }
+
+    #[test]
     fn tex_distribution_paths_are_not_the_projects() {
         assert_eq!(project_path("./main.tex"), Some("main.tex".into()));
         assert_eq!(
             project_path("chapters/a.tex"),
             Some("chapters/a.tex".into())
         );
-        assert_eq!(
-            project_path(r".\chapters\a.tex"),
-            Some("chapters/a.tex".into())
-        );
-        for path in [
-            "/usr/local/texlive/a.sty",
-            "C:/texlive/a.sty",
-            "c:\\a.sty",
-            "\\\\server\\a.sty",
-        ] {
-            assert_eq!(project_path(path), None);
-        }
-    }
-
-    #[test]
-    fn windows_relative_log_and_bibliography_paths_use_forward_slashes() {
-        let log = "(./main.tex\n(.\\chapters\\a.tex\nLaTeX Warning: Missing on input line 3.\n.\\chapters\\a.tex:4: Bad command.\nl.4 x\n";
-        let items = parse_log(log, "main.tex");
-        assert_eq!(items[0].file.as_deref(), Some("chapters/a.tex"));
-        assert_eq!(items[1].file.as_deref(), Some("chapters/a.tex"));
-
-        let items = parse_blg("Bad entry---line 5 of file .\\refs\\works.bib\n");
-        assert_eq!(items[0].file.as_deref(), Some("refs/works.bib"));
+        assert_eq!(project_path("/usr/local/texlive/a.sty"), None);
     }
 }

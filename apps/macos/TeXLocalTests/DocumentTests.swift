@@ -44,13 +44,6 @@ struct OutlineTests {
         }
     }
 
-    @Test func theChainIsTheEnclosingHeadings() {
-        let outline = outline("1:A", "2:B", "3:C", "2:D")
-        #expect(Outline.chain(outline, to: 2).map(\.title) == ["A", "B", "C"])
-        #expect(Outline.chain(outline, to: 3).map(\.title) == ["A", "D"])
-        #expect(Outline.chain(outline, to: nil).isEmpty)
-    }
-
     /// A line is under its file's last heading above it, wherever the file is read in;
     /// above the file's first, under none.
     @Test func theCurrentHeadingFollowsTheFile() {
@@ -69,19 +62,51 @@ struct OutlineTests {
     /// the section after it; the subsection under that section is one in.
     @Test func theTreeNestsAsTheHeadingsDo() {
         let tree = Outline.tree(outline("3:(untitled)", "2:A", "3:A1", "4:A1a", "3:A2", "2:B"))
-        #expect(tree.map(\.item).map(Outline.displayTitle) == ["Untitled Subsection", "A", "B"])
+        #expect(tree.map(\.item.displayTitle) == ["Untitled Subsection", "A", "B"])
         #expect(tree[0].children == nil && tree[2].children == nil)
         #expect(tree[1].children?.map(\.item.title) == ["A1", "A2"])
         #expect(tree[1].children?[0].children?.map(\.item.title) == ["A1a"])
     }
+}
 
-    /// A fold is keyed by the heading's file, level, title and which of its
-    /// namesakes there it is, so headings added above leave it where it was.
-    @Test func foldKeysSurviveRenumbering() {
-        let keys = Outline.foldKeys(outline("2:A", "3:Results", "2:B", "3:Results"))
-        #expect(keys == ["main.tex\t2:A#1", "main.tex\t3:Results#1", "main.tex\t2:B#1", "main.tex\t3:Results#2"])
-        let later = Outline.foldKeys(outline("2:New", "3:Other", "2:A", "3:Results", "2:B", "3:Results"))
-        #expect(Array(later.dropFirst(2)) == keys)
+/// Aa's levels: those the main file's class has, numbered and set as it sets them.
+@MainActor
+struct HeadingStylesTests {
+    private func styles(_ name: String?, size: Int = 10, chapters: Bool = false) -> HeadingStyles {
+        HeadingStyles(documentClass: name.map { DocumentClass(name: $0, pointSize: size) }, hasChapters: chapters)
+    }
+
+    private func markers(_ styles: HeadingStyles) -> [String?] {
+        styles.levels.map(styles.marker)
+    }
+
+    @Test func theClassHasItsLevelsAndNumbersThem() {
+        #expect(styles("article").levels.map(\.title) == ["Normal Text", "Part", "Section", "Subsection", "Subsubsection", "Paragraph"])
+        #expect(markers(styles("article")) == [nil, "I", "1", "1.1", "1.1.1", nil])
+        #expect(markers(styles("report")) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
+        #expect(markers(styles("IEEEtran")) == [nil, "I", "A", "1", "a"])
+        #expect(styles("IEEEtran").levels.map(\.title) == ["Normal Text", "Section", "Subsection", "Subsubsection", "Paragraph"])
+        #expect(styles("letter").levels == [.normalText])
+        // A class it doesn't know has every level, numbered as a book's once there are chapters.
+        #expect(markers(styles("thesis", chapters: true)) == [nil, "I", "1", "1.1", "1.1.1", nil, nil])
+        #expect(markers(styles(nil)) == [nil, "I", nil, "1", "1.1", "1.1.1", nil])
+    }
+
+    /// LaTeX's sizes against the text's, at the class's size option.
+    @Test func theClassSetsTheLevelsSizes() {
+        let book = styles("book"), part = HeadingLevel.sections[0], section = HeadingLevel.sections[2]
+        #expect(book.font(part) == .init(scale: 2.488, bold: true, shape: .upright))
+        #expect(abs(styles("article").font(part).scale - 2.074) < 0.001)
+        #expect(abs(styles("article", size: 12).font(section).scale - 1.44) < 0.001)
+        #expect(book.font(.normalText) == .init(scale: 1, bold: false, shape: .upright))
+        #expect(styles("amsart").font(section) == .init(scale: 1, bold: false, shape: .smallCaps))
+    }
+
+    @Test func theClassIsTheOneNamedOutsideComments() {
+        #expect(DocumentClass(in: "% \\documentclass{book}\n\\documentclass[11pt,\n a4paper]{ report }") == DocumentClass(name: "report", pointSize: 11))
+        #expect(DocumentClass(in: "50\\% \\documentclass{book}") == DocumentClass(name: "book"))
+        #expect(DocumentClass(in: "\\documentclass[fontsize=12pt]{scrartcl}")?.pointSize == 12)
+        #expect(DocumentClass(in: "\\section{A}") == nil)
     }
 }
 
@@ -96,35 +121,79 @@ struct FindTests {
         #expect(FindMatches().label(for: "loop") == "Not found")
         #expect(FindMatches().label(for: "").isEmpty)
     }
-
-    @Test func queriesAreTrimmedAndCapped() {
-        #expect(PDFFind.normalize("  theorem \n") == "theorem")
-        #expect(PDFFind.normalize(" \t ").isEmpty)
-        #expect(PDFFind.normalize(String(repeating: "a", count: 300)).count == PDFFind.maxQuery)
-    }
 }
 
 /// The PDF view's fits, off screen.
 @MainActor
 struct PDFFitTests {
-    /// Fit Height shows the whole page, its page-break margins too, and keeps it
-    /// whole as the view resizes.
-    @Test func fitHeightKeepsTheWholePageInView() throws {
-        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+    /// A bottom panel changes height, while PDFKit already preserves the page's top.
+    @Test(arguments: [NSScroller.Style.overlay, .legacy])
+    func heightOnlyResizeKeepsPDFKitsScrollPosition(_ style: NSScroller.Style) throws {
+        let document = try pages(3)
+        let native = PDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        let view = SyncPDFView(frame: native.frame)
+        for pdf in [native, view] {
+            pdf.document = document
+            try #require(pdf.documentView?.enclosingScrollView).scrollerStyle = style
+            pdf.autoScales = true
+            pdf.layoutDocumentView()
+        }
+        let nativeClip = try #require(native.documentView?.enclosingScrollView?.contentView)
+        let clip = try #require(view.documentView?.enclosingScrollView?.contentView)
+        for height in [500.0, 350, 500] {
+            native.setFrameSize(NSSize(width: 600, height: height))
+            view.setFrameSize(NSSize(width: 600, height: height))
+            #expect(isClose(clip.bounds.minX, nativeClip.bounds.minX))
+            #expect(isClose(clip.bounds.minY, nativeClip.bounds.minY))
+            #expect(isClose(view.scaleFactor, native.scaleFactor))
+        }
+    }
+
+    @Test func fittingThePageAgainAtTheSameSizeDoesNotRewritePDFKitState() throws {
+        let controller = PDFController()
+        let view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(3))
+        controller.fitPage()
+        var automaticWrites = 0, scaleWrites = 0
+        let automatic = view.observe(\.autoScales, options: .new) { _, _ in
+            MainActor.assumeIsolated { automaticWrites += 1 }
+        }
+        let scale = view.observe(\.scaleFactor, options: .new) { _, _ in
+            MainActor.assumeIsolated { scaleWrites += 1 }
+        }
+        controller.fitPage()
+        view.setFrameSize(view.frame.size)
+        view.setFrameSize(NSSize(width: 800, height: 500))
+        #expect(automaticWrites == 0 && scaleWrites == 0)
+        #expect(controller.fit == .page)
+        withExtendedLifetime((automatic, scale)) {}
+    }
+
+    /// Fit Page shows the whole page, its page-break margins too, and keeps it whole as
+    /// the view resizes: by its height in a wide view, by its width in a narrow one.
+    @Test(arguments: [0.0, 37.0])
+    func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat) throws {
+        let controller = PDFController()
+        let view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        view.additionalSafeAreaInsets.bottom = bottomInset
         // The pane's mode is PDFView's default.
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
-        view.document = try pages(1)
-        let controller = PDFController()
-        controller.view = view
-        controller.fitHeight()
-        for height in [500.0, 380] {
-            view.setFrameSize(NSSize(width: 600, height: height))
+        controller.show(try pages(1))
+        controller.fitPage()
+        for (width, height) in [(600.0, 500.0), (600, 380), (300, 500), (420, 500)] {
+            view.setFrameSize(NSSize(width: width, height: height))
             view.layoutDocumentView()
             // In page space, magnified by the scale.
-            let shown = try #require(view.documentView).frame.height * view.scaleFactor
-            #expect(isClose(shown, height, within: 1), "pages \(shown) in \(height)")
-            #expect(controller.fit == .height)
+            let pages = try #require(view.documentView).frame.size
+            let shown = CGSize(width: pages.width * view.scaleFactor, height: pages.height * view.scaleFactor)
+            let room = CGSize(width: width, height: height - bottomInset)
+            #expect(shown.width <= room.width + 1 && shown.height <= room.height + 1, "pages \(shown) in \(room)")
+            #expect(isClose(shown.width, room.width, within: 1) || isClose(shown.height, room.height, within: 1),
+                    "pages \(shown) in \(room)")
+            #expect(controller.fit == .page)
         }
     }
 
@@ -132,11 +201,10 @@ struct PDFFitTests {
     /// view's magnification, which posts no PDFViewScaleChanged until a pinch ends),
     /// and any scale but the fitted one ends fitting.
     @Test func theScaleFollowsEveryZoom() throws {
-        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
-        view.autoScales = true
-        view.document = try pages(3)
         let controller = PDFController()
-        controller.view = view
+        let view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(3))
         func follows(_ fit: PDFController.Fit?, _ step: String) {
             #expect(controller.scale == view.scaleFactor, "\(step)")
             #expect(controller.fit == fit, "\(step)")
@@ -147,13 +215,13 @@ struct PDFFitTests {
         follows(.width, "resized")
         controller.zoom(in: true)
         follows(nil, "zoomed in")
-        controller.fitHeight()
-        follows(.height, "fit height")
+        controller.fitPage()
+        follows(.page, "fit page")
         controller.setScale(1.5)
         follows(nil, "set")
         controller.fitWidth()
         follows(.width, "fit width")
-        let scrollView = try #require(view.subviews.lazy.compactMap { $0 as? NSScrollView }.first)
+        let scrollView = try #require(view.documentView?.enclosingScrollView)
         scrollView.magnification = 2
         follows(nil, "pinched")
         #expect(controller.scale == 2)
@@ -162,20 +230,31 @@ struct PDFFitTests {
         follows(.width, "pinched back")
     }
 
+    /// The first pinch's first step shows: the scroll view is watched from the first PDF.
+    @Test func theScaleFollowsTheFirstPinch() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(1))
+        try #require(controller.view.documentView?.enclosingScrollView).magnification = 1.5
+        #expect(controller.scale == 1.5 && controller.fit == nil)
+    }
+
     /// The menus and the saved workspace read the project's own PDF view: Zoom In
     /// stops at PDFKit's limit, Go to PDF Position needs a .tex file, and a
     /// reopened project returns to the page shown.
     @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
         let app = AppModel()
         let project = ProjectModel(id: "PDFFitTests", app: app)
-        (project.pdfVersion, project.pdfURL) = (1, URL(filePath: "/dev/null"))
-        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
-        view.document = try pages(3)
-        project.pdf.view = view
-        // A document's first page is current once it's set: a shown PDF's count comes from it.
-        project.pdf.pageChanged()
-        #expect(project.pdf.pageCount == 3)
+        project.pdfURL = URL(filePath: "/dev/null")
+        let view = project.pdf.view
+        project.pdf.restorePage = 3
+        project.pdf.show(try pages(3))
+        #expect(project.saved.pdfPage == 3)
+        // The PDF can finish loading before SwiftUI gives the owned view its first size.
+        view.setFrameSize(NSSize(width: 600, height: 500))
         view.layoutDocumentView()
+        #expect(project.pdf.pageCount == 3)
+        #expect(project.saved.pdfPage == 3)
         project.pdf.setScale(view.maxScaleFactor)
         #expect(!app.isEnabled(.viewZoomIn, on: project))
         #expect(app.isEnabled(.viewZoomOut, on: project))
@@ -184,24 +263,29 @@ struct PDFFitTests {
         project.openPath = "main.tex"
         #expect(app.isEnabled(.syncForward, on: project))
         project.pdf.go(toPage: 2)
-        project.pdf.pageChanged()
         #expect(project.saved.pdfPage == 2)
     }
 
-    /// The context menu: Go to Source Position, and Copy over a selection, without PDFKit's
-    /// zooms, page layouts and page turns, or the system's plug-ins (Ask Siri, Services).
-    @Test func theContextMenuGoesToTheSource() throws {
+    /// The context menu: Go to Source Position and the zooms, without PDFKit's page
+    /// layouts and page turns.
+    @Test func theContextMenuGoesToTheSourceAndZooms() throws {
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
         view.document = try pages(2)
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 300, y: 250), modifierFlags: [], timestamp: 0,
                                                     windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         let menu = try #require(view.menu(for: click))
-        #expect(menu.items.map(\.title) == [MenuCommand.syncInverse.title])
-        #expect(!menu.allowsContextMenuPlugIns)
-        let label = NSTextField(labelWithString: "Some words")
-        view.document = try #require(PDFDocument(data: label.dataWithPDF(inside: NSRect(x: 0, y: 0, width: 100, height: 30))))
-        view.setCurrentSelection(view.document?.findString("words").first, animate: false)
-        #expect(try #require(view.menu(for: click)).items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Copy"])
+        #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Zoom In", "Zoom Out"])
+    }
+
+    /// A forward search marks SyncTeX's box beside the page, not with an annotation,
+    /// which Print and VoiceOver would see.
+    @Test func theForwardSearchMarkIsNoAnnotation() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        let document = try pages(2)
+        controller.show(document)
+        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
+        #expect(document.page(at: 0)?.annotations.isEmpty == true)
     }
 
     private func pages(_ count: Int) throws -> PDFDocument {
@@ -265,9 +349,9 @@ struct PDFFitTests {
         }
     }
 
-    /// Dark paper draws into the tiles: white turns black, and a hue is kept.
-    /// The knob follows the paper, and VoiceOver names the pane.
-    @Test func darkPaperInvertsTheLightnessOnly() throws {
+    /// App appearance does not recolor the PDF's paper or artwork.
+    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
+    func nativeRenderingPreservesTheDocumentColors(_ appearance: NSAppearance.Name) throws {
         let image = NSImage(size: NSSize(width: 20, height: 10), flipped: false) { _ in
             NSColor.white.setFill()
             NSRect(x: 0, y: 0, width: 10, height: 10).fill()
@@ -279,26 +363,18 @@ struct PDFFitTests {
         let document = PDFDocument()
         document.insert(page, at: 0)
         let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
+        view.appearance = NSAppearance(named: appearance)
         view.document = document
         let box = page.bounds(for: .cropBox)
-        func drawn(dark: Bool) throws -> (white: NSColor, red: NSColor) {
-            view.darkPaper = dark
-            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(box.width), pixelsHigh: Int(box.height),
-                                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                                       colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-            let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap)).cgContext
-            context.translateBy(x: -box.minX, y: -box.minY)
-            view.draw(page, to: context)
-            return (try #require(bitmap.colorAt(x: 5, y: 5)), try #require(bitmap.colorAt(x: 15, y: 5)))
-        }
-        let dark = try drawn(dark: true)
-        #expect(dark.white.brightnessComponent < 0.05)
-        #expect(dark.red.redComponent > dark.red.greenComponent + 0.2, "\(dark.red)")
-        #expect(view.documentView?.enclosingScrollView?.scrollerKnobStyle == .light)
-        let white = try drawn(dark: false)
-        #expect(white.white.brightnessComponent > 0.95)
-        #expect(view.documentView?.enclosingScrollView?.scrollerKnobStyle == .dark)
-        #expect(view.documentView?.enclosingScrollView?.accessibilityLabel() == "PDF")
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(box.width), pixelsHigh: Int(box.height),
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap)).cgContext
+        context.translateBy(x: -box.minX, y: -box.minY)
+        view.draw(page, to: context)
+        let white = try #require(bitmap.colorAt(x: 5, y: 5)), red = try #require(bitmap.colorAt(x: 15, y: 5))
+        #expect(white.brightnessComponent > 0.95)
+        #expect(red.redComponent > 0.95 && red.greenComponent < 0.05 && red.blueComponent < 0.05)
     }
 }
 
@@ -306,10 +382,10 @@ struct PDFFitTests {
 @MainActor
 struct PDFFindTests {
     /// Each page's text drawn as text, so PDFKit finds it.
-    private func document(_ pages: [String]) throws -> PDFDocument {
+    private func document(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
         let document = PDFDocument()
         for text in pages {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 792))
             view.string = text
             let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
             document.insert(page, at: document.pageCount)
@@ -317,18 +393,47 @@ struct PDFFindTests {
         return document
     }
 
-    /// Forward search flashes the word at the caret where it's nearest SyncTeX's
-    /// box: on the box's line, a whole word before one run into others (as PDF
-    /// text may run words TeX sets close), else the next line; nothing further off.
-    @Test func theFlashFindsTheWordNearestTheBox() throws {
-        // Kept: a page holds its document weakly.
-        let pdf = try document(["alphabet alpha\nbeta\n\n\n\n\n\ngamma"]), page = try #require(pdf.page(at: 0))
-        let text = try #require(page.string) as NSString
-        func rect(_ range: NSRange) throws -> CGRect { try #require(page.selection(for: range)).bounds(for: page) }
-        let first = try rect(text.range(of: "alphabet alpha")), second = try rect(text.range(of: "beta"))
-        #expect(page.bounds(of: "alpha", near: first) == (try rect(text.range(of: "alpha", options: .backwards))))
-        #expect(page.bounds(of: "beta", near: first) == second)
-        #expect(page.bounds(of: "gamma", near: second) == nil)
+    @Test func rebuildSearchesCurrentFindText() async throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        let first = try document(["old result"])
+        let second = try document(["new result"])
+        controller.show(first)
+        controller.finding = true
+        controller.findText = "old"
+        controller.find("old")
+        try await waitUntil(timeout: .seconds(5)) {
+            controller.query == "old" && controller.matches.first?.pages.first?.document === first
+        }
+
+        // The field changed, but its debounce has not started a new search yet.
+        controller.findText = "new"
+        controller.show(second)
+        try await waitUntil(timeout: .seconds(5)) {
+            controller.query == "new" && controller.matches.first?.pages.first?.document === second
+        } state: {
+            "query \(controller.query), matches \(controller.matches.count)"
+        }
+        #expect(controller.matches.count == 1)
+    }
+
+    /// Typing back to the found text while a longer one is searched ends with the field's matches.
+    @Test func typingBackKeepsTheFieldsMatches() async throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["a ab a"]))
+        controller.finding = true
+        controller.findText = "a"
+        controller.findTyped()
+        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
+        controller.findText = "ab"
+        controller.findTyped()
+        controller.findText = "a"
+        controller.findTyped()
+        try await waitUntil { controller.query == "a" && controller.matches.count == 3 }
+        // The longer search, had it gone on, would have ended by now.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(controller.query == "a" && controller.matches.count == 3)
     }
 
     /// A double-click sends the word, and where in it the click fell.
@@ -336,37 +441,106 @@ struct PDFFindTests {
         let pdf = try document(["alpha beta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
         let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
-        let word = try #require(page.word(at: CGPoint(x: letter.midX, y: letter.midY)))
-        #expect(word.0 == "beta" && word.offset == 1)
+        // A page holds its document weakly; it's the view's in the app.
+        let word = try #require(withExtendedLifetime(pdf) { page.syncWord(at: CGPoint(x: letter.midX, y: letter.midY)) })
+        #expect(word.text == "beta" && word.offset == 1)
+    }
+
+    /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
+    @Test func aPageWithoutItsDocumentHasNoWord() throws {
+        let page = try autoreleasepool { try #require(try document(["alpha beta"]).page(at: 0)) }
+        #expect(page.document == nil)
+        #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
+    }
+
+    /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
+    @Test func forwardSearchRetainsRepeatedWordsAcrossWrappedRows() throws {
+        let source = String(repeating: "An echo repeats in this sentence. ", count: 8)
+        let pdf = try document([source], width: 180), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string)
+        let sourceRanges = source.ranges(of: "echo"), renderedRanges = rendered.ranges(of: "echo")
+        #expect(sourceRanges.count == 8 && renderedRanges.count == 8)
+        let lines = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).selectionsByLine()
+        let boxes = lines.map { line -> ForwardLoc in
+            let rect = line.bounds(for: page)
+            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        }
+        #expect(boxes.count > 3)
+        let nativeOrder = Array(boxes.dropFirst(boxes.count / 2)) + Array(boxes.prefix(boxes.count / 2))
+        for index in [0, 3, 7] {
+            let word = SyncTeXWord(text: "echo", offset: 0, context: source, contextOffset: NSRange(sourceRanges[index], in: source).location)
+            let hit = try #require(pdf.match(for: word, near: nativeOrder))
+            let expected = try #require(page.selection(for: NSRange(renderedRanges[index], in: rendered))).bounds(for: page)
+            #expect(hit.page === page && hit.rect == expected)
+        }
+    }
+
+    @Test func forwardSearchUsesTheReportedParagraphForIdenticalText() throws {
+        let paragraph = "An echo repeats. An echo repeats. An echo repeats."
+        let pdf = try document([paragraph + "\n\n" + paragraph], width: 180), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string), occurrences = rendered.ranges(of: "echo")
+        #expect(occurrences.count == 6)
+        let expected = try #require(page.selection(for: NSRange(occurrences[5], in: rendered))).bounds(for: page)
+        let loc = ForwardLoc(page: 1, h: expected.minX, v: page.bounds(for: .cropBox).maxY - expected.minY,
+                             width: expected.width, height: expected.height)
+        let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
+                              contextOffset: (paragraph as NSString).range(of: "echo", options: .backwards).location)
+        let hit = try #require(pdf.match(for: word, near: [loc]))
+        #expect(hit.page === page && hit.rect == expected)
+        let inverse = try #require(page.syncWord(at: CGPoint(x: expected.midX, y: expected.midY)))
+        #expect(inverse.text == "echo" && inverse.context == rendered)
+        #expect(inverse.contextOffset == NSRange(occurrences[5], in: rendered).location)
+        let start = NSRange(occurrences[3], in: rendered).location - 3 // "An " before this paragraph’s first echo.
+        let lines = try #require(page.selection(for: NSRange(location: start, length: (rendered as NSString).length - start))).selectionsByLine()
+        let boxes = lines.map { line -> ForwardLoc in
+            let rect = line.bounds(for: page)
+            return ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        }
+        for index in 0..<3 {
+            let word = SyncTeXWord(text: "echo", offset: 0, context: paragraph,
+                                  contextOffset: NSRange(paragraph.ranges(of: "echo")[index], in: paragraph).location)
+            let hit = try #require(pdf.match(for: word, near: boxes))
+            #expect(hit.rect == (try #require(page.selection(for: NSRange(occurrences[index + 3], in: rendered)))).bounds(for: page))
+        }
+    }
+
+    @Test func forwardSearchKeepsTheNativeBoxWhenMacroContextIsAmbiguous() throws {
+        let pdf = try document(["echo echo"]), page = try #require(pdf.page(at: 0))
+        let rendered = try #require(page.string)
+        let rect = try #require(page.selection(for: NSRange(location: 0, length: (rendered as NSString).length))).bounds(for: page)
+        let loc = ForwardLoc(page: 1, h: rect.minX, v: page.bounds(for: .cropBox).maxY - rect.minY, width: rect.width, height: rect.height)
+        let word = SyncTeXWord(text: "echo", offset: 0, context: "\\LaTeX echo", contextOffset: 7)
+        #expect(pdf.match(for: word, near: [loc]) == nil)
     }
 
     /// PDFKit searches off the main thread and posts what it finds to the main queue.
     private func found(_ controller: PDFController, in document: PDFDocument) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while controller.matches.first?.pages.first?.document !== document, .now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        try await waitUntil(timeout: .seconds(5)) {
+            controller.matches.first?.pages.first?.document === document
         }
     }
 
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
     @Test func aRebuildFindsAgainInPlace() async throws {
-        let view = SyncPDFView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
-        let first = try document(["needle", "filler", "needle", "needle"])
-        view.document = first
         let controller = PDFController()
-        controller.view = view
+        let view = controller.view
+        view.setFrameSize(NSSize(width: 600, height: 500))
+        let first = try document(["needle", "filler", "needle", "needle"])
+        controller.show(first)
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
         try await found(controller, in: first)
         controller.step(1)
+        view.layoutDocumentView()
+        let page = first.index(for: try #require(view.currentPage))
+        try #require(page > 0)
+        let place = try #require(view.documentView).visibleRect
 
         let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
-        view.document = rebuilt
+        controller.show(rebuilt)
         view.layoutDocumentView()
-        let place = try #require(view.documentView).visibleRect
-        controller.documentShown()
         try await found(controller, in: rebuilt)
 
         #expect(controller.finding)
@@ -374,6 +548,9 @@ struct PDFFindTests {
         #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
         #expect(controller.matchIndex == 1)
         #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
-        #expect(try #require(view.documentView).visibleRect == place)
+        #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
+        let current = try #require(view.documentView).visibleRect
+        #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
+                "viewport before rebuild \(place), after \(current)")
     }
 }

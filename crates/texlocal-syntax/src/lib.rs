@@ -3,10 +3,6 @@
 //! editor owns the text, its undo and its drawing; a `SourceDocument` mirrors
 //! the text through the editor's edits and answers in UTF-16 offsets, which
 //! NSString, .NET strings and JavaScript all count in.
-//!
-//! A port of the web editor's logic (web/src/editor.js) and of CodeMirror's
-//! stex mode, which the web runs; the fixtures in tests/ hold both to
-//! the same answers.
 
 mod catalog;
 mod complete;
@@ -14,12 +10,14 @@ mod edit;
 mod highlight;
 mod maths;
 mod prose;
+mod style;
 
 use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, Completions, SnippetField};
 pub use highlight::{Highlight, HighlightKind};
 pub use maths::{math_mode_at, MathPreview};
+pub use style::TextStyles;
 
 /// A range of the text, in UTF-16 units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +199,12 @@ impl SourceDocument {
         edit::set_heading(&self.text, caret.min(self.text.len()), command)
     }
 
+    /// The bold, italic and underline the whole selection is in, each as the
+    /// edits that unwrap the command giving it, in order.
+    pub fn text_styles(&self, selection: TextRange) -> TextStyles {
+        style::text_styles(&self.text, clamp(selection, self.text.len()))
+    }
+
     /// The maths to preview at the caret, if it's in some.
     pub fn math_at(&self, caret: u32) -> Option<MathPreview> {
         maths::math_at(&self.text, caret.min(self.text.len()))
@@ -258,6 +262,18 @@ fn clamp(range: TextRange, len: u32) -> TextRange {
     TextRange {
         start,
         length: range.length.min(len - start),
+    }
+}
+
+/// Append a range to an ordered list, joining overlap and adjacency.
+fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
+    if let Some(last) = ranges
+        .last_mut()
+        .filter(|last| range.start <= last.start + last.length)
+    {
+        last.length = last.length.max(range.start + range.length - last.start);
+    } else {
+        ranges.push(range);
     }
 }
 

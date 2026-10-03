@@ -1,118 +1,146 @@
-//! What a spelling checker passes over besides the highlighted commands and
-//! maths: the names commands take, which the highlighting (stex's) leaves
-//! uncoloured when options come first, as in `\usepackage[utf8]{inputenc}`.
+//! Ranges a spelling checker should skip: TeX names, maths and literal code.
+//! Name arguments include cases that the highlighter leaves uncoloured when
+//! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::{catalog::CATALOG, letter, space, Text, TextRange};
+use crate::{catalog::CATALOG, maths, merge_range, space, Text, TextRange};
 
-/// The options and first braced argument of each name command (the
-/// catalog's, its citations' and references') in the paragraphs from
-/// `start` to `end`. They're read from the paragraph's start, as an
-/// argument can't hold a blank line.
+/// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
+/// the shared math scan, plus name arguments from commands in the paragraph.
+/// Name arguments are read from the paragraph's start as they cannot contain
+/// a blank line.
 pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
-    let blank = |line: usize| text.line(line).iter().all(|&u| space(u));
     let mut line = text.line_index(start);
-    while line > 0 && !blank(line - 1) {
+    while line > 0 && !blank(text, line - 1) {
         line -= 1;
     }
-    let (units, mut i) = (&text.units, text.lines[line] as usize);
-    // A unit as a char, a surrogate as NUL; none past the end.
-    let at = |i: usize| {
-        units
-            .get(i)
-            .map(|&u| char::from_u32(u.into()).unwrap_or_default())
-    };
-    let comment_end = |mut i| {
-        while !matches!(at(i), None | Some('\n')) {
-            i += 1;
-        }
-        i
-    };
+    let units = &text.units;
+    let mut parsed_until = text.lines[line] as usize;
+    let end_index = end as usize;
     let mut ranges = Vec::new();
-    while i < end as usize {
+    let mut names = Vec::new();
+    maths::scan(
+        &units[..end_index],
+        |from, to| {
+            merge_range(
+                &mut ranges,
+                TextRange {
+                    start: from as u32,
+                    length: (to - from) as u32,
+                },
+            );
+        },
+        |name, command_start, i| {
+            let catalog = &*CATALOG;
+            if command_start < parsed_until
+                || ![
+                    &catalog.name_commands,
+                    &catalog.cite_commands,
+                    &catalog.ref_commands,
+                ]
+                .iter()
+                .any(|list| list.iter().any(|n| n == name))
+            {
+                return;
+            }
+            parsed_until = argument_ranges(text, i, end_index, &mut names);
+        },
+    );
+    ranges.extend(names);
+    ranges.retain(|r| {
+        let range_end = r.start.saturating_add(r.length);
+        if start == end {
+            r.start <= start && start < range_end
+        } else {
+            r.start < end && range_end > start
+        }
+    });
+    ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
+    ranges.dedup_by(|range, previous| {
+        if range.start > previous.start + previous.length {
+            return false;
+        }
+        previous.length = previous
+            .length
+            .max(range.start + range.length - previous.start);
+        true
+    });
+    ranges
+}
+
+/// Options and the first braced argument, stopping at a blank line or EOF.
+fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
+    let at = |i| char::from_u32(text.units[i] as u32).unwrap_or_default();
+    let paragraph_end =
+        |i| at(i) == '\n' && i + 1 < end && blank(text, text.line_index(i as u32 + 1));
+    let mut push = |from: usize, to: usize| {
+        ranges.push(TextRange {
+            start: from as u32,
+            length: (to - from) as u32,
+        })
+    };
+    let mut close = None;
+    let (mut from, mut depth) = (0, 0);
+    i += (i < end && at(i) == '*') as usize;
+    while i < end && !paragraph_end(i) {
         let c = at(i);
-        i += 1;
-        if c == Some('%') {
-            i = comment_end(i);
-        }
-        if c != Some('\\') {
-            continue;
-        }
-        let name = i;
-        while units.get(i).is_some_and(|&u| letter(u)) {
-            i += 1;
-        }
-        let name = String::from_utf16_lossy(&units[name..i]);
-        let catalog = &*CATALOG;
-        let lists = [
-            &catalog.name_commands,
-            &catalog.cite_commands,
-            &catalog.ref_commands,
-        ];
-        if !lists.iter().any(|list| list.contains(&name)) {
-            i += name.is_empty() as usize; // an escape, as \%
-            continue;
-        }
-        i += (at(i) == Some('*')) as usize;
-        loop {
-            while matches!(at(i), Some(' ' | '\t' | '\r' | '\n' | '%')) {
-                if at(i) == Some('%') {
-                    i = comment_end(i);
-                }
-                if at(i) == Some('\n') && blank(text.line_index(i as u32 + 1)) {
-                    break;
-                }
+        if c == '%' {
+            if close.is_some() {
+                push(from, i);
+            }
+            while i < end && at(i) != '\n' {
                 i += 1;
             }
-            let close = match at(i) {
-                Some('[') => ']',
-                Some('{') => '}',
+            from = i;
+            continue;
+        }
+        if let Some(delimiter) = close {
+            match c {
+                '\\' => {
+                    i = (i + 2).min(end);
+                    continue;
+                }
+                '{' => depth += 1,
+                '}' if depth > 0 => depth -= 1,
+                c if c == delimiter && depth == 0 => {
+                    push(from, i);
+                    i += 1;
+                    close = None;
+                    if delimiter == '}' {
+                        break;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        } else {
+            close = match c {
+                '[' => Some(']'),
+                '{' => Some('}'),
+                ' ' | '\t' | '\r' | '\n' => {
+                    i += 1;
+                    continue;
+                }
                 _ => break,
             };
-            let (mut from, mut depth) = (i + 1, 0);
-            // To its close, or the paragraph's end: an unclosed brace while typing.
-            loop {
-                i += 1;
-                match at(i) {
-                    None => break,
-                    Some('%') => {
-                        ranges.push(TextRange {
-                            start: from as u32,
-                            length: (i - from) as u32,
-                        });
-                        i = comment_end(i);
-                        from = i;
-                        if at(i).is_none() || blank(text.line_index(i as u32 + 1)) {
-                            break;
-                        }
-                    }
-                    Some('\\') => i += 1,
-                    Some('{') => depth += 1,
-                    Some('}') if depth > 0 => depth -= 1,
-                    Some(c) if c == close && depth == 0 => break,
-                    Some('\n') if blank(text.line_index(i as u32 + 1)) => break,
-                    _ => {}
-                }
-            }
-            let to = i.min(units.len());
-            ranges.push(TextRange {
-                start: from as u32,
-                length: (to - from) as u32,
-            });
-            i += 1;
-            if close == '}' {
-                break;
-            }
+            from = i + 1;
         }
+        i += 1;
     }
-    ranges.retain(|r| r.start + r.length >= start);
-    ranges
+    if close.is_some() {
+        push(from, i);
+    }
+    i
+}
+
+fn blank(text: &Text, line: usize) -> bool {
+    text.line(line).iter().all(|&u| space(u))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::SourceDocument;
 
-    /// The names `not_prose` finds in the whole source.
+    /// The name arguments `not_prose` finds in the whole source.
     fn names(source: &str) -> Vec<String> {
         let units: Vec<u16> = source.encode_utf16().collect();
         SourceDocument::new(source)
@@ -155,6 +183,7 @@ mod tests {
         let found = doc.not_prose(25, 1); // in "amssymb"
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].start, 12);
+        assert_eq!(found[0].start + found[0].length, 26);
         assert!(doc.not_prose(36, 2).is_empty()); // in "Text"
     }
 
@@ -178,5 +207,82 @@ mod tests {
         };
         assert!(!covered(text.find("Speling").unwrap()));
         assert!(covered(text.find("amssymb").unwrap()));
+    }
+
+    #[test]
+    fn math_and_code_are_not_prose_but_math_text_commands_are() {
+        let text = "Before $x + \\text{Speling stays} + y$ after\n\\begin{align}\na&=b\\label{eq:one}\\\n\\end{align}\n\\verb|Speling|";
+        let ranges = SourceDocument::new(text).not_prose(0, text.encode_utf16().count() as u32);
+        let covered = |needle: &str| {
+            let at = text.find(needle).unwrap();
+            let start = text[..at].encode_utf16().count() as u32;
+            let length = needle.encode_utf16().count() as u32;
+            ranges
+                .iter()
+                .any(|r| r.start <= start && r.start.saturating_add(r.length) >= start + length)
+        };
+        assert!(covered("$x + "));
+        assert!(!covered("Speling stays"));
+        assert!(covered("y$"));
+        assert!(covered("a&=b"));
+        assert!(covered("\\verb|Speling|"));
+    }
+
+    #[test]
+    fn ranges_started_before_the_checked_slice_remain_absolute() {
+        let text = "first\n\\begin{equation}\n𐐀 + x";
+        let doc = SourceDocument::new(text);
+        let word = text.find("𐐀").unwrap();
+        let start = text[..word].encode_utf16().count() as u32;
+        let found = doc.not_prose(start, 1);
+        let math_start = text.find("\\begin").unwrap();
+        let math_start = text[..math_start].encode_utf16().count() as u32;
+        assert!(found.iter().any(|r| r.start == math_start));
+        assert!(found.iter().any(|r| {
+            r.start <= start && r.start + r.length == start + 1 && r.start + r.length > start
+        }));
+    }
+
+    #[test]
+    fn comments_and_unclosed_literal_code_keep_their_boundaries() {
+        let text = "$x % Speling stays prose\n y$ \\begin{verbatim}\nSpeling code\n\\end{verbatim}\n\\begin{lstlisting}\nopen code";
+        let ranges = SourceDocument::new(text).not_prose(0, text.encode_utf16().count() as u32);
+        let covered_at = |needle: &str| {
+            let at = text.find(needle).unwrap();
+            let offset = text[..at].encode_utf16().count() as u32;
+            ranges
+                .iter()
+                .any(|r| r.start <= offset && offset < r.start + r.length)
+        };
+        assert!(covered_at("x"));
+        assert!(!covered_at("Speling stays"));
+        assert!(covered_at("y$"));
+        assert!(covered_at("Speling code"));
+        assert!(covered_at("open code"));
+
+        let code = text.find("Speling code").unwrap();
+        let code_start = text[..code].encode_utf16().count() as u32;
+        let inside_code = SourceDocument::new(text).not_prose(code_start, 1);
+        let verbatim_start = text.find("\\begin{verbatim}").unwrap();
+        let verbatim_start = text[..verbatim_start].encode_utf16().count() as u32;
+        assert!(inside_code
+            .iter()
+            .any(|r| r.start == verbatim_start && r.start + r.length == code_start + 1));
+    }
+
+    #[test]
+    fn commands_inside_literal_code_do_not_suppress_following_prose() {
+        let text = "\\begin{verbatim}\n\\input{raw\n\\end{verbatim}\nSpeling prose";
+        let units = text.encode_utf16().count() as u32;
+        let doc = SourceDocument::new(text);
+        let ranges = doc.not_prose(0, units);
+        let prose = text.find("Speling").unwrap();
+        let prose = text[..prose].encode_utf16().count() as u32;
+        assert!(!ranges
+            .iter()
+            .any(|r| r.start <= prose && r.start + r.length > prose));
+
+        let checked = doc.not_prose(prose, 1);
+        assert!(checked.is_empty());
     }
 }

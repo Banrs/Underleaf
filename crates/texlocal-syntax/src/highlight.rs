@@ -59,36 +59,36 @@ impl Cache {
     /// The runs in the lines from `start`'s to `end`'s.
     pub fn highlights(&mut self, text: &Text, start: u32, end: u32) -> Vec<Highlight> {
         let (first, last) = (text.line_index(start), text.line_index(end));
-        while self.states.len() <= last {
-            let index = self.states.len() - 1;
-            let mut state = self.states[index].clone();
-            tokenize(text.line(index), &mut state, |_, _, _| {});
-            self.states.push(state);
-        }
+        let from = first.min(self.states.len() - 1);
         let mut runs = Vec::new();
-        for index in first..=last {
-            let mut state = self.states[index].clone();
+        let mut state = self.states[from].clone();
+        for index in from..=last {
             let base = text.lines[index];
             tokenize(text.line(index), &mut state, |from, to, kind| {
-                runs.push(Highlight {
-                    start: base + from as u32,
-                    length: (to - from) as u32,
-                    kind,
-                });
+                if index >= first {
+                    runs.push(Highlight {
+                        start: base + from as u32,
+                        length: (to - from) as u32,
+                        kind,
+                    });
+                }
             });
+            if self.states.len() == index + 1 {
+                self.states.push(state.clone());
+            }
         }
         runs
     }
 }
 
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 struct State {
     mode: Mode,
     /// The commands whose arguments may follow, innermost last (stex's cmdState).
     commands: Vec<Command>,
 }
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default)]
 enum Mode {
     #[default]
     Normal,
@@ -98,26 +98,25 @@ enum Mode {
     Arguments,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 struct Command {
-    /// Its arguments' kinds, the first argument's first; `None` for a
+    /// Its arguments' kinds, the first argument's first; empty for a
     /// command stex has no rule for, or a bare group.
-    styles: Option<&'static [Option<HighlightKind>]>,
+    styles: &'static [Option<HighlightKind>],
     /// Arguments opened so far.
     brackets: usize,
 }
 
 use HighlightKind::*;
 
-fn styles(name: &[u16]) -> Option<&'static [Option<HighlightKind>]> {
-    const ARGUMENT: &[Option<HighlightKind>] = &[Some(Argument)];
-    Some(match String::from_utf16_lossy(name).as_str() {
+fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
+    match String::from_utf16_lossy(name).as_str() {
         "importmodule" => &[Some(StringLiteral), Some(Builtin)],
         "documentclass" => &[None, Some(Argument)],
         "usepackage" | "begin" | "end" | "label" | "ref" | "eqref" | "cite" | "bibitem"
-        | "Bibitem" | "RBibitem" => ARGUMENT,
-        _ => return None,
-    })
+        | "Bibitem" | "RBibitem" => &[Some(Argument)],
+        _ => &[],
+    }
 }
 
 /// A line's runs, given the state it starts in, which it leaves as the next
@@ -135,9 +134,6 @@ fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, H
             Mode::Math(end) => math(&mut s, state, end),
             Mode::Arguments => arguments(&mut s, state),
         };
-        if s.pos == from {
-            s.pos += 1; // every rule consumes; this only guards the loop
-        }
         if let Some(kind) = kind {
             run(from, s.pos, kind);
         }
@@ -186,7 +182,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         None
     } else if one_of(c, "{[") {
         state.commands.push(Command {
-            styles: None,
+            styles: &[],
             brackets: 0,
         });
         None
@@ -196,12 +192,11 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     } else {
         s.eat_while(|u| word(u) || u == b'-' as u16);
         // The innermost command with a rule styles what's in its arguments.
-        let command = state.commands.iter().rev().find(|c| c.styles.is_some())?;
-        let styles = command.styles?;
+        let command = state.commands.iter().rev().find(|c| !c.styles.is_empty())?;
         command
             .brackets
             .checked_sub(1)
-            .and_then(|argument| styles.get(argument).copied().flatten())
+            .and_then(|argument| command.styles.get(argument).copied().flatten())
     }
 }
 
@@ -237,12 +232,11 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
         return None;
     }
     // \d+\.\d*|\d*\.\d+|\d+
-    let digits = |s: &mut Stream| s.eat_while(is_digit);
     if is_digit(c) || (c == b'.' as u16 && next.is_some_and(is_digit)) {
-        digits(s);
+        s.eat_while(is_digit);
         if s.peek() == Some(b'.' as u16) {
             s.pos += 1;
-            digits(s);
+            s.eat_while(is_digit);
         }
         return Some(Number);
     }

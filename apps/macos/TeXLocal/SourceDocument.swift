@@ -1,9 +1,7 @@
 import Foundation
 import TeXLocalCore
 
-/// The core's mirror of the source's text (crates/texlocal-syntax, through
-/// texlocal-ffi's `tl_source_*`): the text view tells it every edit and asks
-/// it what the LaTeX is. Offsets count UTF-16 units, as NSString does.
+/// Rust's syntax mirror through `tl_source_*`; offsets count UTF-16 units.
 final class SourceDocument {
     private let raw: OpaquePointer
 
@@ -33,7 +31,6 @@ final class SourceDocument {
         Int(tl_source_line_count(raw))
     }
 
-    /// The highlighted runs of the lines a range touches.
     func highlights(in range: NSRange) -> [(range: NSRange, kind: HighlightKind)] {
         var count = 0
         guard let runs = tl_source_highlights(raw, UInt32(range.location), UInt32(range.length), &count) else { return [] }
@@ -81,12 +78,17 @@ final class SourceDocument {
         call("insert_symbol", ["command": command, "selection": Self.json(selection)])
     }
 
+    /// The bold, italic and underline the whole selection is in, each as the
+    /// edits that unwrap the command giving it.
+    func textStyles(_ selection: NSRange) -> TextStyles {
+        call("text_styles", ["selection": Self.json(selection)]) ?? TextStyles()
+    }
+
     /// The maths the caret is in or just after, to preview.
     func mathAt(caret: Int) -> MathPreview? {
         call("math_at", ["caret": caret])
     }
 
-    /// The text as the mirror has it.
     var text: String {
         call("text", [:]) ?? ""
     }
@@ -121,6 +123,13 @@ nonisolated struct TextEdit: Decodable, Equatable {
     var range: NSRange { NSRange(location: start, length: length) }
 }
 
+/// The styles a selection is in (crates/texlocal-syntax `TextStyles`).
+nonisolated struct TextStyles: Decodable, Equatable {
+    var bold: [TextEdit]?
+    var italic: [TextEdit]?
+    var underline: [TextEdit]?
+}
+
 /// An edit, where the caret goes after it, and where Tab goes in a block.
 nonisolated struct Insertion: Decodable {
     var edit: TextEdit
@@ -148,8 +157,7 @@ nonisolated struct MathPreview: Decodable, Equatable {
     var display: Bool
 }
 
-/// A place to type in a completion's or block's text, from its start.
-/// Fields with the same index are one field in several places.
+/// A snippet field; repeated indices link fields across an insertion.
 nonisolated struct SnippetField: Decodable {
     var start: Int
     var length: Int

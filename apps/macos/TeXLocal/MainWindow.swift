@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The app's one window: the projects until one opens, then the project. AppKit's
-/// window, so the project's split and toolbar can be AppKit's (`WorkspaceController`);
-/// SwiftUI draws the projects screen, with its own toolbar bridged in, and every pane.
+/// One AppKit window for the SwiftUI projects screen, native project split and
+/// toolbar, and SwiftUI pane content.
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation {
     static let identifier = NSUserInterfaceItemIdentifier("main")
 
@@ -12,13 +11,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     /// screen's alerts and sheets never wait in another's views.
     private var home: NSHostingController<HomeRoot>?
     private(set) var workspace: WorkspaceController?
-    /// Where the restored window was left, opened once the library is in.
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
-    /// Polls for TeX while it's missing; one at a time.
-    private var texWatch: Task<Void, Never>?
-    /// The find bars' fields' field editor.
     private let findEditor = FindPassingTextView()
 
     init(app: AppModel) {
@@ -33,6 +28,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
         window.collectionBehavior.insert(.fullScreenPrimary)
+        // Tab follows the views as panes, bars and Home come and go.
+        window.autorecalculatesKeyViewLoop = true
         super.init(window: window)
         window.delegate = self
         findEditor.isFieldEditor = true
@@ -41,20 +38,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         // After centring: a frame saved by an earlier launch wins.
         window.setFrameAutosaveName("Main Window")
         watches = [
-            track({ [app] in app.project.map(ObjectIdentifier.init) }) { [weak self] _ in self?.showProject() },
-            track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
-            // Installing TeX takes effect without a restart, whichever screen shows.
-            track({ [app] in app.tex?.available }) { [weak self, app] available in
-                self?.texWatch?.cancel()
-                self?.texWatch = available == false ? Task { await app.watchForTeX() } : nil
+            track({ [app] in app.project.flatMap { $0.initialLoadComplete ? ObjectIdentifier($0) : nil } }) {
+                [weak self] _ in self?.showProject()
             },
+            track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
         ]
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Shows the window, then loads the library and opens the project the launch
-    /// argument names, or the one the restored window was left on.
+    /// Opens the launch project or restored project after loading the library.
     func start() {
         showWindow(nil)
         guard Core.shared.isOpen else { return }
@@ -70,14 +63,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     // ---------- content ----------
 
-    /// The open project's workspace, or the projects.
     private func showProject() {
-        guard let project = app.project else {
+        // Wait for the first outline so the workspace does not animate it in.
+        guard let project = app.project, project.initialLoadComplete else {
             showHome()
             return
         }
         guard workspace?.project !== project, let window else { return }
-        // Opening one project from another: the last one's panes let go, their sizes kept.
+        // Let the previous workspace release its panes and keep their sizes.
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace)
@@ -87,7 +80,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         titleWatch?.cancel()
         titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
             guard let window = self?.window else { return }
-            window.title = file.path.map { ($0 as NSString).lastPathComponent } ?? project.id
+            window.title = file.path?.fileName ?? project.id
             window.subtitle = file.path == nil ? "" : project.id
             window.representedURL = file.url
         }
@@ -126,13 +119,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         app.mainWindowIsKey = false
     }
 
-    /// The find bars' fields get the editor that passes Edit › Find's items on.
+    /// The PDF find bar's field gets the editor that passes Edit › Find's items on.
     func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
         guard let field = client as? NSTextField, workspace?.hostsFindField(field) == true else { return nil }
         return findEditor
     }
 
-    /// Edit › Find's items, tagged with their `NSTextFinder.Action`, for the pane with the keyboard.
+    /// Route Edit › Find by action tag to the pane with the keyboard, when the
+    /// source text, which answers it itself, doesn't have it.
     @objc func performFindPanelAction(_ sender: Any?) {
         findAction(for: sender)?()
     }
@@ -143,9 +137,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     }
 
     private func findAction(for sender: Any?) -> (() -> Void)? {
-        guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag,
-              let action = NSTextFinder.Action(rawValue: tag) else { return nil }
-        return workspace?.findAction(action)
+        (sender as? NSValidatedUserInterfaceItem).flatMap { workspace?.findAction($0) }
     }
 
     // ---------- restoration ----------
@@ -171,13 +163,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private static let workspaceKey = "workspace"
 }
 
-/// The file the title names: renaming it moves the URL after the path.
 private nonisolated struct OpenFile: Equatable {
     let path: String?
     let url: URL?
 }
 
-/// The projects screen, with the window's own sheets and alerts.
 struct HomeRoot: View {
     let app: AppModel
 
@@ -190,8 +180,7 @@ struct HomeRoot: View {
     }
 }
 
-/// Runs `apply` with `value()` now (unless `initial` is false), and again each time
-/// something `value` read changes to give a different value, until the task is cancelled.
+/// Applies distinct observed values until cancelled, including the first unless disabled.
 func track<Value: Sendable & Equatable>(_ value: @escaping @MainActor @Sendable () -> Value, initial: Bool = true,
                                           _ apply: @escaping @MainActor (Value) -> Void) -> Task<Void, Never> {
     Task { @MainActor in

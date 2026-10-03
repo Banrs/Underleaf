@@ -1,7 +1,5 @@
 import AppKit
-import SwiftUI
 import Testing
-import WebKit
 @testable import TeXLocal
 
 /// The source editor's own editing, over the core's answers (whose LaTeX
@@ -36,6 +34,19 @@ struct SourceEditorTests {
         #expect(text.undoManager !== a)
     }
 
+    /// A rename onto a name whose file went outside the app keeps the renamed file's undo.
+    @Test func aRenameOntoAFileGoneElsewhereKeepsItsUndo() throws {
+        open("one", caret: 0, path: "a.tex")
+        text.insertText("x", replacementRange: typed)
+        let a = try #require(text.undoManager)
+        open("two", path: "b.tex")
+        open("main", path: "main.tex")
+        // b.tex deleted in the Finder, so its kept state stays; a.tex takes its name.
+        editor.rename(from: "a.tex", to: "b.tex")
+        open("xone", path: "b.tex")
+        #expect(text.undoManager === a)
+    }
+
     @Test func bracketsCloseAndAreSteppedOver() {
         open("")
         text.insertText("{", replacementRange: typed)
@@ -55,6 +66,13 @@ struct SourceEditorTests {
         open("{}", caret: 1)
         text.deleteBackward(nil)
         #expect(text.string == "")
+    }
+
+    @Test func anEmojiAfterAnOpeningBracketIsOccupiedText() {
+        open("😀", caret: 0)
+        text.insertText("(", replacementRange: typed)
+        #expect(text.string == "(😀")
+        #expect(text.selectedRange() == NSRange(location: 1, length: 0))
     }
 
     @Test func newLinesKeepTheIndentation() {
@@ -77,16 +95,21 @@ struct SourceEditorTests {
     }
 
     /// The core's edits go in as one undo step, the selection following the
-    /// text as CodeMirror's does: text put in at its start goes before it.
+    /// text: text put in at its start goes before it.
     @Test func commentsToggleAsOneStep() {
         open("a\n  b")
         text.setSelectedRange(NSRange(location: 0, length: 5))
         #expect(editor.perform(.comment))
-        // At the least indentation of the lines, as CodeMirror puts it.
+        // At the least indentation of the lines.
         #expect(text.string == "% a\n%   b")
         #expect(text.selectedRange() == NSRange(location: 2, length: 7))
+        #expect(editor.document?.text == text.string)
         text.undoManager?.undo()
         #expect(text.string == "a\n  b")
+        #expect(editor.document?.text == text.string)
+        text.undoManager?.redo()
+        #expect(text.string == "% a\n%   b")
+        #expect(editor.document?.text == text.string)
     }
 
     @Test func wrappingKeepsTheSelection() {
@@ -99,15 +122,40 @@ struct SourceEditorTests {
         #expect(!editor.perform(.block, "no such block"))
     }
 
-    /// VoiceOver's line is the source's, as the gutter's, not a row a long line wraps to.
-    @Test func voiceOverReadsTheSourceLine() {
-        editor.scrollView.frame = NSRect(x: 0, y: 0, width: 200, height: 400)
-        open(String(repeating: "word ", count: 100) + "\nnext")
-        #expect(text.accessibilityInsertionPointLineNumber() == 1)
+    /// Bold, Italic and Underline are on where the selection is in their
+    /// command, as a word processor's: they unwrap it, in one step.
+    @Test func aStyleTheSelectionIsInUnwraps() {
+        open("a \\textit{b \\textbf{word} c} d")
+        let word = (text.string as NSString).range(of: "word")
+        text.setSelectedRange(word)
+        #expect(editor.textStyles.bold != nil && editor.textStyles.italic != nil && editor.textStyles.underline == nil)
+        #expect(editor.perform(.bold))
+        #expect(text.string == "a \\textit{b word c} d")
+        #expect(text.selectedRange() == NSRange(location: word.location - 8, length: 4))
+        #expect(editor.textStyles.bold == nil)
+        text.undoManager?.undo()
+        #expect(text.string == "a \\textit{b \\textbf{word} c} d")
+        #expect(editor.document?.text == text.string)
+        text.undoManager?.redo()
+        #expect(editor.perform(.underline))
+        #expect(text.string == "a \\textit{b \\underline{word} c} d")
+        // The caret in it, the whole command goes.
+        text.setSelectedRange(NSRange(location: 11, length: 0))
+        #expect(editor.perform(.italic))
+        #expect(text.string == "a b \\underline{word} c d" && text.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(editor.document?.text == text.string)
     }
 
     /// A block's fields, as a completion's: Tab goes from a figure's file to
     /// its caption and label.
+    /// Escape that reaches the editor through the window, not its own keys, passes up the
+    /// chain instead of to NSTextView, which doesn't take it and would throw.
+    @Test func escapeOutsideASnippetPassesOn() {
+        open("text")
+        text.cancelOperation(nil)
+        #expect(text.string == "text")
+    }
+
     @Test func blocksTabThroughTheirFields() {
         open("")
         #expect(editor.perform(.block, "figure"))
@@ -143,27 +191,25 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
-    /// Xcode's measures at 13 pt: 18 pt from line to line, and the text 51 pt in, past
-    /// room for four digits, and a digit further at 10,000 lines.
-    @Test func theLinesAndMarginAreXcodes() throws {
-        editor.setAppearance(EditorAppearance(palette: .xcode, font: .system, size: 13))
-        let lines = try #require(text.defaultParagraphStyle)
-        #expect(lines.maximumLineHeight + lines.lineSpacing == 18)
-        let textStart = { text.textContainerOrigin.x + (text.textContainer?.lineFragmentPadding ?? 0) }
-        open("a\nb")
-        #expect(textStart() == 51)
-        open(String(repeating: "\n", count: 9_999))
-        #expect(textStart() == 57)
-    }
-
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {
         open("Ünï words \\word, the word\nnext", caret: 1)
-        #expect(editor.currentWord == "Ünï")
+        #expect(editor.currentSyncWord?.text == "Ünï")
         editor.reveal(line: 1, column: 21, focus: false)
         #expect(text.selectedRange() == NSRange(location: 21, length: 4))
-        #expect(editor.currentWord == "word")
+        #expect(editor.currentSyncWord?.text == "word")
+    }
+
+    @Test func syncTeXRetainsTheClickedOccurrenceAndUTF16Column() throws {
+        let source = "before\n😀 echo echo echo\n"
+        let range = (source as NSString).range(of: "echo", options: .backwards)
+        open(source, caret: range.location + 2)
+        let word = try #require(editor.currentSyncWord)
+        #expect(word.text == "echo" && word.offset == 2)
+        #expect(word.context == "😀 echo echo echo\n")
+        #expect(word.contextOffset == 13)
+        #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 
     /// A file opened with the keyboard asked for takes it once the editor shows,
@@ -188,14 +234,16 @@ struct SourceEditorTests {
 
     /// A chosen completion goes in as its snippet: typed in one place, a
     /// field is typed in all of its places, and Tab goes to the next.
-    @Test func completionsFillTheirFields() throws {
+    @Test(.timeLimit(.minutes(1)))
+    func completionsFillTheirFields() throws {
         open("  \\beg")
-        let range = text.rangeForUserCompletion
-        #expect(range == NSRange(location: 2, length: 4))
-        var index = 0
-        let labels = try #require(text.completions(forPartialWordRange: range, indexOfSelectedItem: &index))
-        #expect(labels.first == "\\begin")
-        text.insertCompletion("\\begin", forPartialWordRange: range, movement: NSTextMovement.return.rawValue, isFinal: true)
+        // Without a window the list holds the core's items unseen.
+        text.complete(nil)
+        let offered = try #require(text.offered)
+        #expect(offered.start == 2 && offered.items.first?.label == "\\begin")
+        // Return accepts the selected item, the first.
+        text.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        #expect(text.offered == nil)
         #expect(text.string == "  \\begin{env}\n    \n  \\end{env}")
         #expect(text.selectedRange() == NSRange(location: 9, length: 3))
         text.insertText("itemize", replacementRange: typed)
@@ -209,12 +257,121 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    /// Misspellings count in the prose and comments, not in commands, labels,
-    /// citations, packages or maths; the results are relative to the range checked.
+    /// The list follows typing; arrows choose, Escape and a move away close it
+    /// with nothing put in, and typed keys only go into the document.
+    @Test func theCompletionListTakesOnlyItsKeys() throws {
+        open("\\")
+        text.insertText("b", replacementRange: typed)
+        let all = try #require(text.offered).items.count
+        text.insertText("e", replacementRange: typed)
+        #expect(try #require(text.offered).items.count < all)
+        text.deleteBackward(nil)
+        #expect(text.offered?.items.count == all)
+        text.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(text.offered == nil && text.string == "\\b")
+        // The second item, chosen with the arrow.
+        text.complete(nil)
+        let second = try #require(text.offered?.items[1])
+        text.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        text.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        #expect(text.string == second.text)
+        // A typed key that matches nothing closes it and goes in.
+        open("\\be")
+        text.complete(nil)
+        text.insertText(" ", replacementRange: typed)
+        #expect(text.offered == nil && text.string == "\\be ")
+        // Moving the caret closes it.
+        open("\\be")
+        text.complete(nil)
+        #expect(text.offered != nil)
+        text.setSelectedRange(NSRange(location: 0, length: 0))
+        #expect(text.offered == nil)
+    }
+
+    /// Shown again with fewer rows, in another size, or with none, the list never
+    /// asks for a row it no longer has.
+    @Test func theCompletionListKeepsItsRowsInStep() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        let list = CompletionList()
+        let rows = (0..<20).map { (label: "\\item\($0)", kind: CompletionKind.command) }
+        func show(_ count: Int, size: CGFloat) {
+            list.show(Array(rows.prefix(count)), font: .monospacedSystemFont(ofSize: size, weight: .regular), theme: .overleaf,
+                      under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
+            for child in window.childWindows ?? [] { child.layoutIfNeeded() }
+        }
+        show(20, size: 11)
+        list.move(15)
+        show(2, size: 24)
+        #expect(list.selection == 0 && window.childWindows?.count == 1)
+        show(0, size: 11)
+        #expect(window.childWindows?.isEmpty != false)
+    }
+
+    @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
+        open("start")
+        text.insertText("x", replacementRange: typed)
+        #expect(editor.document?.text == "startx")
+
+        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(text.hasMarkedText())
+        #expect(text.string == "startxあ" && text.document.text == text.string)
+        // ProjectModel's pending autosave reads this payload.
+        #expect(editor.document?.text == "startx")
+        text.setMarkedText("あい", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
+        #expect(text.string == "startxあい" && text.document.text == text.string)
+        #expect(editor.document?.text == "startx")
+
+        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
+        #expect(!text.hasMarkedText())
+        #expect(text.string == "startx" && text.document.text == text.string)
+        #expect(editor.document?.text == text.string)
+
+        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        text.insertText("亜", replacementRange: typed)
+        #expect(!text.hasMarkedText())
+        #expect(text.string == "startx亜" && text.document.text == text.string)
+        #expect(editor.document?.text == text.string)
+    }
+
+    @Test func replacingASelectionStaysProvisionalUntilUnmarked() {
+        open("before old after")
+        text.setSelectedRange(NSRange(location: 7, length: 3))
+        text.setMarkedText("候補", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
+        #expect(text.string == "before 候補 after")
+        #expect(editor.document?.text == "before old after")
+
+        text.unmarkText()
+        #expect(!text.hasMarkedText())
+        #expect(editor.document?.text == "before 候補 after")
+        // A later composition starts from the newly committed text.
+        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == "before 候補 after")
+        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == text.string)
+    }
+
+    @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
+        open("first", path: "a.tex")
+        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == "first")
+
+        open("second", path: "b.tex")
+        #expect(!text.hasMarkedText())
+        #expect(editor.document?.text == "second" && text.document.text == "second")
+        #expect(text.undoManager?.canUndo == false)
+        // The old undo referred to provisional text that wasn't saved to a.tex.
+        open("first", path: "a.tex")
+        text.undoManager?.undo()
+        #expect(text.string == "first" && editor.document?.text == "first")
+    }
+
+    /// Native result ranges are relative to the checked substring; formatted
+    /// prose and comments remain eligible while TeX names stay protected.
     @Test func spellingIsTheProses() {
-        let line = "x \\emph{wrod} \\label{sec:wrod} \\cite[see]{wrod} \\usepackage[utf8]{wrod} $wrod$ % wrod"
+        let line = "🙂 \\emph{wrod} \\label{sec:wrod} \\cite[see]{wrod} \\usepackage[utf8]{wrod} \\includegraphics{wrod.pdf} $wrod$ % wrod"
         open(line)
-        let checked = NSRange(location: 2, length: (line as NSString).length - 2)
+        let checked = NSRange(location: 3, length: (line as NSString).length - 3)
         let text = line as NSString
         let misspelt = ["emph", "wrod"].flatMap { word in
             var ranges: [NSRange] = [], from = checked.location
@@ -224,50 +381,160 @@ struct SourceEditorTests {
             }
             return ranges
         }
-        let results = misspelt.map { NSTextCheckingResult.spellCheckingResult(range: $0) }
+        let results = misspelt.flatMap { range in
+            [NSTextCheckingResult.spellCheckingResult(range: range),
+             NSTextCheckingResult.correctionCheckingResult(range: range, replacementString: "word"),
+             NSTextCheckingResult.replacementCheckingResult(range: range, replacementString: "word")]
+        }
         let kept = editor.textView(self.text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
                                    orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: 6)
         // The emphasised word and the comment's.
-        #expect(kept.map { text.substring(with: NSRange(location: $0.range.location + checked.location, length: $0.range.length)) } == ["wrod", "wrod"])
-        #expect(kept.map { $0.range.location + checked.location } == [8, 81])
+        let expected = [text.range(of: "wrod"), text.range(of: "wrod", options: .backwards)]
+            .map { NSRange(location: $0.location - checked.location, length: $0.length) }
+        #expect(kept.map(\.range) == expected.flatMap { Array(repeating: $0, count: 3) })
+        #expect(kept.map(\.resultType) == expected.flatMap { _ in [.spelling, .correction, .replacement] })
     }
 
-    /// The maths preview's body has SwiftUI's margins and is never narrower
-    /// than it's tall, or a single letter reads as an egg.
-    @Test func mathsPreviewsHaveTheSystemsMargins() {
-        func body(_ width: CGFloat, _ height: CGFloat) -> NSSize {
-            NSHostingController(rootView: MathView(page: WebPage(), size: CGSize(width: width, height: height))).view.fittingSize
+    /// Correction and text replacement are the user's system settings, applied in prose only
+    /// (above); smart quotes and dashes would rewrite TeX, so they stay off.
+    @Test func substitutionsFollowTheSystemButQuotesAndDashes() {
+        #expect(text.isAutomaticSpellingCorrectionEnabled == NSSpellChecker.isAutomaticSpellingCorrectionEnabled)
+        #expect(text.isAutomaticTextReplacementEnabled == NSSpellChecker.isAutomaticTextReplacementEnabled)
+        #expect(!text.isAutomaticQuoteSubstitutionEnabled && !text.isAutomaticDashSubstitutionEnabled)
+    }
+
+    /// A check can start inside a multiline environment. Text arguments and
+    /// comments are still prose, including non-ASCII words inside dollar maths.
+    @Test func spellingDistinguishesMathAndVerbatimFromTheirProse() {
+        let source = """
+        🙂
+        \\begin{align}
+        mathwrod &= \\text{prosewrod} % commentwrod
+        \\end{align}
+        $\\text{naïvve} + dollarwrod$
+        \\verb|verbwrod|
+        \\begin{verbatim}
+        codewrod
+        \\end{verbatim}
+        afterwrod
+        """
+        open(source)
+        let string = source as NSString
+        let start = string.range(of: "mathwrod").location
+        let checked = NSRange(location: start, length: string.length - start)
+        let words = ["mathwrod", "prosewrod", "commentwrod", "naïvve", "dollarwrod", "verbwrod", "codewrod", "afterwrod"]
+        let relative = { (word: String) in
+            let range = string.range(of: word)
+            return NSRange(location: range.location - checked.location, length: range.length)
         }
-        #expect(body(89, 38) == NSSize(width: 121, height: 70))
-        #expect(body(9, 20) == NSSize(width: 52, height: 52))
+        let results = words.map { NSTextCheckingResult.correctionCheckingResult(range: relative($0), replacementString: "word") }
+        let kept = editor.textView(text, didCheckTextIn: checked, types: NSTextCheckingAllTypes, options: [:], results: results,
+                                   orthography: NSOrthography.defaultOrthography(forLanguage: "en"), wordCount: words.count)
+        #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    @Test func findSelectsAsYouTypeAndReplaces() {
-        var reported = FindMatches()
-        editor.onFindMatches = { reported = $0 }
-        open("a b a b a", caret: 1)
-        editor.setFind(FindQuery(search: "a", replace: "c"))
-        #expect(text.selectedRange() == NSRange(location: 4, length: 1))
-        #expect(reported == FindMatches(index: 2, total: 3))
-        editor.findStep(1)
-        #expect(text.selectedRange() == NSRange(location: 8, length: 1))
-        editor.findStep(1)
-        #expect(text.selectedRange() == NSRange(location: 0, length: 1))
-        editor.replace(all: false)
-        #expect(text.string == "c b a b a" && text.selectedRange() == NSRange(location: 4, length: 1))
-        editor.replace(all: true)
-        #expect(text.string == "c b c b c")
-        #expect(reported.total == 0)
-        // Replace All is one undo step.
-        open("a a", path: "other.tex")
-        editor.replace(all: true)
-        #expect(text.string == "c c")
-        text.undoManager?.undo()
-        #expect(text.string == "a a")
+    private func inWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        return window
+    }
+
+    /// The colour the editor draws `word` in, once laid out.
+    private func colour(of word: String) throws -> NSColor? {
+        let manager = try #require(text.textLayoutManager)
+        manager.textViewportLayoutController.layoutViewport()
+        let range = try #require(text.textRange((text.string as NSString).range(of: word)))
+        var colour: NSColor?
+        manager.enumerateRenderingAttributes(from: range.location, reverse: false) { _, attributes, _ in
+            colour = attributes[.foregroundColor] as? NSColor
+            return false
+        }
+        return colour
+    }
+
+    /// A new line shows its colours once laid out, without the caret moving again.
+    @Test func newLinesAreColoured() throws {
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("x")
+        text.insertText("\n\\section", replacementRange: typed)
+        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
+    }
+
+    /// Choosing another colour theme recolours what is open.
+    @Test func aThemeRecoloursTheText() throws {
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open("\\section{A} % note")
+        editor.setSyntaxTheme(.texstudio)
+        #expect(try colour(of: "\\section") == SyntaxTheme.texstudio.colours.command)
+        #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
+        editor.setSyntaxTheme(.system)
+        #expect(try colour(of: "\\section") == NSColor.systemPink)
+        editor.setSyntaxTheme(.overleaf)
+        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
+    }
+
+    /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
+    @Test func aDoubleClickGoesToThePDF() throws {
+        let window = inWindow()
+        open("one two", caret: 0)
+        text.layoutSubtreeIfNeeded()
+        var went = 0
+        text.forwardSync = { { went += 1 } }
+        let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
+        let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
+        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                            context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+        }
+        for clicks in 1...2 {
+            // The release ends the text view's own tracking.
+            NSApp.postEvent(try event(.leftMouseUp, clicks: clicks), atStart: false)
+            text.mouseDown(with: try event(.leftMouseDown, clicks: clicks))
+            #expect(went == clicks - 1)
+        }
+        #expect(text.selectedRange() == NSRange(location: 4, length: 3))
+    }
+
+    /// Go to Line… is Xcode's field, as measured: 640 × 55 pt, centred on the screen a
+    /// quarter of the way down, empty each time. Return goes to a line of the file and
+    /// closes it; anything else is selected to type over; Escape closes it.
+    @Test func goToLineIsXcodesField() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open((1...300).map { "line \($0)" }.joined(separator: "\n"), caret: 0)
+        let panel = editor.lineField
+        defer { panel.dismiss(returningKeyboard: false) }
+        func type(_ typed: String, then command: Selector) throws {
+            let field = try #require(panel.firstResponder as? NSTextView)
+            field.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+            field.doCommand(by: command)
+        }
+        editor.goToLine()
+        #expect(panel.isVisible && panel.frame.size == GoToLinePanel.size && panel.isExcludedFromWindowsMenu)
+        let area = try #require(window.screen ?? NSScreen.main).visibleFrame
+        #expect(isClose(panel.frame.midX, area.midX, within: 1))
+        #expect(isClose(panel.frame.maxY, area.maxY - area.height / 4, within: 1))
+        // Past the end: it stays, the text selected.
+        try type("301", then: #selector(NSResponder.insertNewline(_:)))
+        #expect(panel.isVisible && editor.currentLine == 1)
+        #expect((panel.firstResponder as? NSTextView)?.selectedRange() == NSRange(location: 0, length: 3))
+        try type("120", then: #selector(NSResponder.insertNewline(_:)))
+        #expect(!panel.isVisible && editor.currentLine == 120)
+        editor.goToLine()
+        #expect(panel.isVisible && panel.field.stringValue.isEmpty)
+        try type("12", then: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!panel.isVisible && editor.currentLine == 120)
     }
 
     /// The text's context menu starts with Go to PDF Position, as the PDF's with
-    /// Go to Source Position, while there's somewhere to go, and holds what source needs.
+    /// Go to Source Position, while there's somewhere to go, over the system's plain-text menu.
     @Test func theContextMenuGoesToThePDF() throws {
         open("x")
         let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -280,51 +547,9 @@ struct SourceEditorTests {
         #expect(menu.items[1].isSeparatorItem)
         menu.performActionForItem(at: 0)
         #expect(went)
-        // Editing, without Look Up, Translate, fonts, substitutions, transformations, speech or
-        // layout, nor the system's plug-ins (Ask Siri, AutoFill, Services) as it shows.
-        #expect(menu.items.dropFirst(2).map { $0.isSeparatorItem ? "-" : $0.title } == ["Cut", "Copy", "Paste"])
-        #expect(!menu.allowsContextMenuPlugIns)
-    }
-
-    /// A double-click selects the word and goes to the PDF, once no third click follows;
-    /// not one dragged on over more words, a triple-click, or while there's no PDF.
-    @Test func aDoubleClickGoesToThePDF() async throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
-        editor.shown = true
-        open("alpha beta gamma", caret: 0)
-        var went = 0
-        text.forwardSync = { { went += 1 } }
-        func mouse(_ type: NSEvent.EventType, at location: Int, clicks: Int) throws -> NSEvent {
-            let glyph = window.convertFromScreen(text.firstRect(forCharacterRange: NSRange(location: location, length: 1), actualRange: nil))
-            return try #require(NSEvent.mouseEvent(with: type, location: NSPoint(x: glyph.midX, y: glyph.midY), modifierFlags: [],
-                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                                                   context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
-        }
-        /// The text view's own presses, each tracked until its release, which waits in the app's queue.
-        func click(_ count: Int, dragTo end: Int? = nil) throws {
-            for n in 1...count {
-                if n == count, let end { NSApp.postEvent(try mouse(.leftMouseDragged, at: end, clicks: n), atStart: false) }
-                NSApp.postEvent(try mouse(.leftMouseUp, at: n == count ? end ?? 7 : 7, clicks: n), atStart: false)
-                text.mouseDown(with: try mouse(.leftMouseDown, at: 7, clicks: n))
-            }
-        }
-        func settle() async throws { try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.2)) }
-        try click(2)
-        #expect(text.selectedRange() == NSRange(location: 6, length: 4) && went == 0)
-        try await settle()
-        #expect(went == 1)
-        try click(2, dragTo: 13)
-        #expect(text.selectedRange() == NSRange(location: 6, length: 10))
-        try click(3)
-        #expect(text.selectedRange().length == 16)
-        try await settle()
-        #expect(went == 1)
-        text.forwardSync = { nil }
-        try click(2)
-        try await settle()
-        #expect(went == 1)
+        let titles = menu.items.map(\.title)
+        #expect(["Cut", "Copy", "Paste", "Spelling and Grammar"].allSatisfy(titles.contains))
+        // Plain text: nothing to style.
+        #expect(!titles.contains("Font") && !text.isRichText && !text.importsGraphics && !text.usesFontPanel)
     }
 }

@@ -63,16 +63,20 @@ fn lenient(raw: &Map<String, Value>) -> Settings {
     }
 }
 
-/// The validated subset of a settings patch.
-fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, CoreError> {
+/// Merge known, validated patch keys over current settings, preserving unknown
+/// keys in the file. Validate before the atomic write.
+pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
     let Value::Object(obj) = patch else {
         return Err(CoreError::bad_request("Invalid settings"));
     };
-    let mut out = Map::new();
+    let Value::Object(mut merged) = serde_json::to_value(Settings::default()).unwrap() else {
+        unreachable!("Settings serializes as an object");
+    };
+    merged.extend(read_raw(root));
     match obj.get("engine") {
         None => {}
         Some(Value::String(e)) if engine_flags(e).is_some() => {
-            out.insert("engine".into(), e.as_str().into());
+            merged.insert("engine".into(), e.as_str().into());
         }
         // A string's contents, not its JSON encoding: quotes would otherwise
         // reach the user's toast.
@@ -85,7 +89,7 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
         match obj.get(key) {
             None => {}
             Some(Value::Bool(b)) => {
-                out.insert(key.into(), (*b).into());
+                merged.insert(key.into(), (*b).into());
             }
             Some(_) => return Err(CoreError::bad_request(format!("{key} must be a boolean"))),
         }
@@ -94,24 +98,11 @@ fn validate_settings(root: &Path, patch: &Value) -> Result<Map<String, Value>, C
         let mf = mf
             .as_str()
             .ok_or_else(|| CoreError::bad_request("Missing path"))?;
-        out.insert("mainFile".into(), safe_rel_file(root, mf)?.into());
+        merged.insert("mainFile".into(), safe_rel_file(root, mf)?.into());
     }
-    Ok(out)
-}
-
-/// Merge a validated patch over current settings (unknown keys in the file are
-/// preserved) and write the result.
-pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError> {
-    let validated = validate_settings(root, patch)?;
-    let mut merged = match serde_json::to_value(Settings::default()) {
-        Ok(Value::Object(defaults)) => defaults,
-        _ => Map::new(),
-    };
-    merged.extend(read_raw(root));
-    merged.extend(validated);
-    let text =
-        serde_json::to_string_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
-    atomic::write(&root.join(SETTINGS_FILE), text.as_bytes())?;
+    let bytes =
+        serde_json::to_vec_pretty(&merged).map_err(|e| CoreError::internal(e.to_string()))?;
+    atomic::write(&root.join(SETTINGS_FILE), &bytes)?;
     // What was just written, without reading it back.
     Ok(lenient(&merged))
 }

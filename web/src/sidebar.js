@@ -10,9 +10,11 @@ import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
 import { trashName, deleteLabel } from './bridge.js';
 
-let host = {};          // the workspace's callbacks
+let host = {};          // the mounted workspace's project and callbacks
 let nodes = {};         // elements of the mounted sidebar
 let outlineRequest = 0;
+
+const active = (origin) => host === origin && state.projectId === origin.projectId;
 
 // Expansion state is per project — one shared list would apply project A's
 // expanded folders to project B.
@@ -45,7 +47,8 @@ function remapPath(candidate, from, to) {
 // `titlebarTrailing` is the sidebar toggle, at the band's trailing end: the
 // Tauri Mac window's traffic lights take the leading end.
 export function buildSidebar(callbacks, titlebarTrailing) {
-  host = callbacks;
+  const origin = { ...callbacks, projectId: state.projectId };
+  host = origin;
   loadOpenDirs();
 
   const search = el('input', {
@@ -53,26 +56,26 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     type: 'search',
     placeholder: 'Search',
     'aria-label': 'Search project',
-    oninput: () => scheduleSearch(search.value),
-    onkeydown: (e) => { if (e.key === 'Escape') { search.value = ''; scheduleSearch(''); } },
+    oninput: () => scheduleSearch(search.value, origin),
+    onkeydown: (e) => { if (e.key === 'Escape') { search.value = ''; scheduleSearch('', origin); } },
   });
 
   const fileInput = el('input', {
     type: 'file', multiple: '', class: 'visually-hidden',
     onchange: async () => {
-      if (fileInput.files.length) await upload([...fileInput.files]);
+      if (fileInput.files.length) await upload([...fileInput.files], origin);
       fileInput.value = '';
     },
   });
 
   const tree = el('div', { class: 'tree', role: 'tree', 'aria-label': 'Project files' });
-  setupDropzone(tree);
+  setupDropzone(tree, origin);
 
   const results = el('div', { class: 'search-results', hidden: '' });
   // Files over the open file's outline, as Overleaf's sidebar and the macOS
   // app's: two lists, each with its own selection, split by a divider.
   const outline = el('div', {
-    class: 'outline', role: 'listbox', 'aria-label': 'File outline', onkeydown: outlineKeys,
+    class: 'outline', role: 'listbox', 'aria-label': 'File outline', onkeydown: (e) => outlineKeys(e, origin),
   });
   const outlineSplit = el('div', {
     class: 'sidebar-split', role: 'separator', tabindex: '0',
@@ -84,6 +87,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     class: 'section-header disclosure',
     'aria-expanded': String(prefs.outlineOpen),
     onclick: () => {
+      if (!active(origin)) return;
       prefs.outlineOpen = !prefs.outlineOpen;
       outlineToggle.setAttribute('aria-expanded', String(prefs.outlineOpen));
       renderOutline();
@@ -96,7 +100,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   const engineStatus = el('button', {
     class: `engine-status ${state.tex.available ? '' : 'warn'}`,
     title: state.tex.available ? 'TeX engine — open Settings to change' : 'No LaTeX distribution found — open Settings',
-    onclick: () => host.openSettings?.(),
+    onclick: () => { if (active(origin)) origin.openSettings?.(); },
   }, state.tex.available ? null : icon('warning'), engineSpinner, engineLabel);
 
   nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
@@ -109,9 +113,9 @@ export function buildSidebar(callbacks, titlebarTrailing) {
       el('span', {}, 'Files'),
       el('span', { class: 'spacer' }),
       el('div', { class: 'section-actions' },
-        el('button', { class: 'icon-btn small', title: 'New File', 'aria-label': 'New file', onclick: () => newEntry(false) }, icon('plus')),
-        el('button', { class: 'icon-btn small', title: 'New Folder', 'aria-label': 'New folder', onclick: () => newEntry(true) }, icon('folder-plus')),
-        el('button', { class: 'icon-btn small', title: 'Upload Files', 'aria-label': 'Upload files', onclick: () => fileInput.click() }, icon('upload')),
+        el('button', { class: 'icon-btn small', title: 'New File', 'aria-label': 'New file', onclick: () => newEntry(false, origin) }, icon('plus')),
+        el('button', { class: 'icon-btn small', title: 'New Folder', 'aria-label': 'New folder', onclick: () => newEntry(true, origin) }, icon('folder-plus')),
+        el('button', { class: 'icon-btn small', title: 'Upload Files', 'aria-label': 'Upload files', onclick: () => { if (active(origin)) fileInput.click(); } }, icon('upload')),
       ),
     ),
     results,
@@ -122,7 +126,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
     el('div', { class: 'sidebar-footer' },
       el('button', {
         class: 'icon-btn small', title: `Settings (${accelLabel('CmdOrCtrl+,')})`, 'aria-label': 'Settings',
-        onclick: () => host.openSettings?.(),
+        onclick: () => { if (active(origin)) origin.openSettings?.(); },
       }, icon('gear')),
       engineStatus,
     ),
@@ -158,7 +162,8 @@ function fileIcon(name) {
 
 export function renderTree() {
   if (!nodes.tree) return;
-  nodes.tree.replaceChildren(...state.tree.map((n) => renderNode(n, 1)));
+  const origin = host;
+  nodes.tree.replaceChildren(...state.tree.map((n) => renderNode(n, 1, origin)));
   syncRovingFocus();
 }
 
@@ -177,7 +182,7 @@ export function updateTreeSelection() {
   syncRovingFocus();
 }
 
-function renderNode(node, level) {
+function renderNode(node, level, origin) {
   if (node.type === 'dir') {
     const isOpen = openDirs.has(node.path);
     const row = el('button', {
@@ -186,18 +191,19 @@ function renderNode(node, level) {
       'aria-expanded': String(isOpen),
       'aria-level': String(level),
       dataset: { path: node.path },
-      oncontextmenu: (e) => rowMenu(e, node),
+      oncontextmenu: (e) => rowMenu(e, node, origin),
       onclick: () => {
+        if (!active(origin)) return;
         if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
         persistOpenDirs();
         // Rebuild only this folder's subtree.
-        const fresh = renderNode(node, level);
+        const fresh = renderNode(node, level, origin);
         group.replaceWith(fresh);
         syncRovingFocus();
         // The row was replaced, so keyboard focus needs a new home.
         fresh.firstChild.focus();
       },
-      onkeydown: treeKeys,
+      onkeydown: (e) => { if (active(origin)) treeKeys(e); },
     },
       el('span', { class: 'twisty' }, icon('chevron')),
       el('span', { class: 'row-icon' }, icon(isOpen ? 'folder-open' : 'folder')),
@@ -205,7 +211,7 @@ function renderNode(node, level) {
     );
     const group = el('div', { class: 'tree-group' }, row,
       el('div', { class: 'tree-children', role: 'group' },
-        isOpen ? node.children.map((c) => renderNode(c, level + 1)) : []));
+        isOpen ? node.children.map((c) => renderNode(c, level + 1, origin)) : []));
     return group;
   }
 
@@ -216,9 +222,9 @@ function renderNode(node, level) {
     'aria-level': String(level),
     'aria-current': node.path === state.openPath ? 'true' : undefined,
     dataset: { path: node.path },
-    onclick: () => host.openFile(node.path),
-    oncontextmenu: (e) => rowMenu(e, node),
-    onkeydown: treeKeys,
+    onclick: () => { if (active(origin)) origin.openFile(node.path); },
+    oncontextmenu: (e) => rowMenu(e, node, origin),
+    onkeydown: (e) => { if (active(origin)) treeKeys(e); },
   },
     el('span', { class: 'twisty' }),
     el('span', { class: 'row-icon' }, fileIcon(node.name)),
@@ -252,17 +258,21 @@ function treeKeys(e) {
   else if (e.key === 'ArrowLeft' && e.currentTarget.getAttribute('aria-expanded') === 'true') e.currentTarget.click();
 }
 
-function rowMenu(e, node) {
+function rowMenu(e, node, origin) {
   e.preventDefault();
+  if (!active(origin)) return;
+  const { projectId } = origin;
   const items = [];
   if (node.type === 'file' && node.path.endsWith('.tex') && node.path !== state.settings?.mainFile) {
     items.push({
       label: 'Set as Main File',
       action: async () => {
         try {
-          state.settings = await api.saveSettings(state.projectId, { mainFile: node.path });
+          const settings = await api.saveSettings(projectId, { mainFile: node.path });
+          if (!active(origin)) return;
+          state.settings = settings;
           renderTree();
-          host.onMainFileChange?.();
+          origin.onMainFileChange?.();
         } catch (err) { toast(err.message, 'error'); }
       },
     });
@@ -274,8 +284,9 @@ function rowMenu(e, node) {
         const to = await promptModal({ title: `Rename “${node.name}”`, label: 'Path', value: node.path, confirm: 'Rename' });
         if (!to || to === node.path) return;
         try {
-          await host.beforePathMutation?.();
-          const result = await api.renameEntry(state.projectId, node.path, to);
+          if (active(origin)) await origin.beforePathMutation?.();
+          const result = await api.renameEntry(projectId, node.path, to);
+          if (!active(origin)) return;
           const oldOpen = state.openPath;
           state.openPath = remapPath(oldOpen, node.path, to);
           const oldMain = state.settings?.mainFile;
@@ -286,9 +297,10 @@ function rowMenu(e, node) {
             openDirs.add(remapPath(dir, node.path, to));
           }
           persistOpenDirs();
-          await refreshTree();
-          if (containsPath(node.path, oldOpen)) host.onOpenPathChange?.();
-          if (oldMain !== state.settings?.mainFile) host.onMainFileChange?.();
+          await refreshTree(origin);
+          if (!active(origin)) return;
+          if (containsPath(node.path, oldOpen)) origin.onOpenPathChange?.();
+          if (oldMain !== state.settings?.mainFile) origin.onMainFileChange?.();
         } catch (err) { toast(err.message, 'error'); }
       },
     },
@@ -298,7 +310,8 @@ function rowMenu(e, node) {
       danger: true,
       action: async () => {
         // Refuse before asking, not after the user has already confirmed.
-        if (containsPath(node.path, state.settings?.mainFile)) {
+        const mainFile = state.settings?.mainFile;
+        if (active(origin) && containsPath(node.path, mainFile)) {
           toast('Choose a different main file before deleting this entry', 'error');
           return;
         }
@@ -311,15 +324,15 @@ function rowMenu(e, node) {
         });
         if (!ok) return;
         try {
-          await host.beforePathMutation?.();
-          const closesOpenFile = containsPath(node.path, state.openPath);
-          await api.deleteEntry(state.projectId, node.path);
+          if (active(origin)) await origin.beforePathMutation?.();
+          await api.deleteEntry(projectId, node.path);
+          if (!active(origin)) return;
           // Keep the buffer intact until deletion has actually succeeded. On a
           // Trash/Recycle Bin failure the user can still save or copy its text.
-          if (closesOpenFile) host.closeOpenFile?.();
+          if (containsPath(node.path, state.openPath)) origin.closeOpenFile?.();
           for (const dir of [...openDirs]) if (containsPath(node.path, dir)) openDirs.delete(dir);
           persistOpenDirs();
-          await refreshTree();
+          await refreshTree(origin);
         } catch (err) { toast(err.message, 'error'); }
       },
     },
@@ -330,18 +343,18 @@ function rowMenu(e, node) {
 // Never throws: callers await it inside their own try blocks, and a tree-fetch
 // hiccup must not be reported as the caller's failure (e.g. after a successful
 // upload).
-async function refreshTree() {
-  const projectId = state.projectId;
+async function refreshTree(origin) {
+  const { projectId } = origin;
   if (!projectId) return;
   let tree;
   try { tree = await api.tree(projectId); }
-  catch (err) { toast(`Couldn’t refresh the file list: ${err.message}`, 'error'); return; }
-  if (state.projectId !== projectId) return;
+  catch (err) { if (active(origin)) toast(`Couldn’t refresh the file list: ${err.message}`, 'error'); return; }
+  if (!active(origin)) return;
   state.tree = tree;
   renderTree();
 }
 
-async function newEntry(isDir) {
+async function newEntry(isDir, origin) {
   const path = await promptModal({
     title: isDir ? 'New Folder' : 'New File',
     label: 'Path — folders are created as needed',
@@ -350,19 +363,20 @@ async function newEntry(isDir) {
   });
   if (!path) return;
   try {
-    await api.createEntry(state.projectId, path, isDir);
-    await refreshTree();
-    if (!isDir) host.openFile(path);
+    await api.createEntry(origin.projectId, path, isDir);
+    if (!active(origin)) return;
+    await refreshTree(origin);
+    if (!isDir && active(origin)) origin.openFile(path);
   } catch (err) { toast(err.message, 'error'); }
 }
 
-export function newFileFlow() { return newEntry(false); }
-export function newFolderFlow() { return newEntry(true); }
+export function newFileFlow() { return newEntry(false, host); }
+export function newFolderFlow() { return newEntry(true, host); }
 export function uploadFlow() { nodes.fileInput?.click(); }
 
 // ---------- uploads ----------
 
-function setupDropzone(treeEl) {
+function setupDropzone(treeEl, origin) {
   treeEl.addEventListener('dragover', (e) => { e.preventDefault(); treeEl.classList.add('drop-target'); });
   // dragleave also fires when crossing onto a child row — only clear the
   // highlight when the pointer genuinely left the tree.
@@ -376,7 +390,7 @@ function setupDropzone(treeEl) {
     // refusal); uncaught, the drop would fail silently as an unhandled rejection.
     try {
       const files = await collectDroppedFiles(e.dataTransfer);
-      if (files.length) await upload(files);
+      if (files.length) await upload(files, origin);
     } catch (err) {
       toast(err?.message || 'Could not read the dropped items', 'error');
     }
@@ -439,11 +453,11 @@ function askClash(existing) {
     ]));
 }
 
-async function upload(files) {
+async function upload(files, origin) {
   const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
   let msg, kind;
   try {
-    const { saved, stopped } = await api.upload(state.projectId, files, '', askClash);
+    const { saved, stopped } = await api.upload(origin.projectId, files, '', askClash);
     if (stopped) return;
     msg = `Uploaded ${count(saved.length)}`;
   } catch (err) {
@@ -451,8 +465,10 @@ async function upload(files) {
     msg = `Upload stopped after ${count(err.saved.length)}: ${err.message}`;
     kind = 'error';
   }
-  await refreshTree();
-  host.onFilesChanged?.();
+  if (!active(origin)) return;
+  await refreshTree(origin);
+  if (!active(origin)) return;
+  origin.onFilesChanged?.();
   toast(msg, kind);
 }
 
@@ -464,6 +480,7 @@ const OUTLINE_MIN = 80;
 export function renderOutline() {
   const box = nodes.outline;
   if (!box) return;
+  const origin = host;
   const open = prefs.outlineOpen;
   box.hidden = !open || !!state.searchQuery;
   nodes.outlineSplit.hidden = box.hidden;
@@ -494,7 +511,7 @@ export function renderOutline() {
       'aria-selected': 'false',
       style,
       title: o.title,
-      onclick: () => chooseSection(i),
+      onclick: () => chooseSection(i, false, origin),
     }, el('span', { class: 'row-label' }, o.title));
   }));
   updateOutlineSelection();
@@ -525,30 +542,32 @@ export function updateOutlineSelection() {
 
 // Choosing a section brings it to the top of the source, in its file. Focus
 // stays in the list unless asked for (Enter), so the arrow keys keep walking it.
-async function chooseSection(i, focusEditor = false) {
+async function chooseSection(i, focusEditor, origin) {
+  if (!active(origin)) return;
   const request = ++outlineRequest;
   const entry = state.projectOutline[i];
-  if (entry && entry.file !== state.openPath) await host.openFile(entry.file);
+  if (entry && entry.file !== state.openPath) await origin.openFile(entry.file);
   const row = nodes.outline?.children[i];
-  if (request !== outlineRequest || !entry || !row || entry.file !== state.openPath) return;
+  if (!active(origin) || request !== outlineRequest || !entry || !row || entry.file !== state.openPath) return;
   for (const r of nodes.outline.children) r.tabIndex = r === row ? 0 : -1;
   row.focus();
   state.topLine = entry.line;
   updateOutlineSelection();
-  host.revealSection?.(entry.line, focusEditor);
+  origin.revealSection?.(entry.line, focusEditor);
 }
 
-function outlineKeys(e) {
+function outlineKeys(e, origin) {
+  if (!active(origin)) return;
   const rows = [...nodes.outline.children];
   const i = rows.indexOf(document.activeElement);
   if (i === -1) return;
   const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[e.key];
   if (to !== undefined) {
     e.preventDefault();
-    chooseSection(Math.max(0, Math.min(rows.length - 1, to)));
+    chooseSection(Math.max(0, Math.min(rows.length - 1, to)), false, origin);
   } else if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
-    chooseSection(i, e.key === 'Enter');
+    chooseSection(i, e.key === 'Enter', origin);
   }
 }
 
@@ -596,13 +615,15 @@ function setupOutlineSplit(handle, box) {
 
 let searchTimer;
 
-function scheduleSearch(query) {
+function scheduleSearch(query, origin) {
+  if (!active(origin)) return;
   state.searchQuery = query.trim();
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(runSearch, 250);
+  searchTimer = setTimeout(() => runSearch(origin), 250);
 }
 
-async function runSearch() {
+async function runSearch(origin) {
+  if (!active(origin)) return;
   const { results, tree, outlineToggle } = nodes;
   if (!results || !tree) return;
   const q = state.searchQuery;
@@ -614,13 +635,13 @@ async function runSearch() {
   if (!searching) return;
 
   let hits;
-  try { hits = await api.search(state.projectId, q); }
+  try { hits = await api.search(origin.projectId, q); }
   catch (err) {
-    if (state.searchQuery !== q) return;
+    if (!active(origin) || state.searchQuery !== q) return;
     results.replaceChildren(el('p', { class: 'placeholder' }, `Search failed: ${err.message}`));
     return;
   }
-  if (state.searchQuery !== q) return; // stale response
+  if (!active(origin) || state.searchQuery !== q) return; // stale response
 
   if (!hits.length) {
     results.replaceChildren(el('p', { class: 'placeholder' }, 'No matches'));
@@ -644,8 +665,9 @@ async function runSearch() {
         // open supersedes it; jumping then would move the cursor in whatever
         // file is still open.
         onclick: async () => {
-          await host.openFile(h.file);
-          if (state.openPath === h.file) host.gotoLine(h.line);
+          if (!active(origin)) return;
+          await origin.openFile(h.file);
+          if (active(origin) && state.openPath === h.file) origin.gotoLine(h.line);
         },
       },
         el('span', { class: 'search-line' }, String(h.line)),

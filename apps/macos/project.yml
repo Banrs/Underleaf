@@ -83,11 +83,14 @@ targets:
       - name: Build Rust core
         script: |
           "$SRCROOT/scripts/build-core.sh"
+        # Cargo checks Rust inputs and the archive's freshness itself.
         basedOnDependencyAnalysis: false
     postCompileScripts:
       - name: Copy shared resources
         script: |
           "$SRCROOT/scripts/copy-resources.sh"
+        # KaTeX's font set can change with npm packages; the script runs each
+        # build but leaves unchanged bundle files untouched.
         basedOnDependencyAnalysis: false
   TeXLocalTests:
     type: bundle.unit-test

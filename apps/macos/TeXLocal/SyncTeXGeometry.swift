@@ -1,11 +1,9 @@
 import CoreGraphics
 
-/// SyncTeX measures from a page's top-left corner in PDF points; PDFKit's page
-/// space starts at the bottom-left of the page's box. These are the only two
-/// places the axes meet.
+/// SyncTeX uses top-left PDF points; PDFKit uses bottom-left page-box points.
+/// Their axes meet only here.
 enum SyncTeXGeometry {
-    /// The web's values (web/src/pdfview.js `SYNC_FLASH`), here all in page points;
-    /// the web takes the width and margin in screen pixels.
+    /// Flash dimensions in PDF page points.
     private static let lineHeight: CGFloat = 12
     private static let minimumWidth: CGFloat = 24
     private static let margin: CGFloat = 2

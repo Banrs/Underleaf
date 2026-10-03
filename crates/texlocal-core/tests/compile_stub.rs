@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -60,6 +61,7 @@ async fn compile_happy_path_parses_the_log_it_wrote() {
 
     assert!(result.ok);
     assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
+    assert!(result.pdf_changed);
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].file.as_deref(), Some("main.tex"));
     assert_eq!(result.errors[0].line, Some(3));
@@ -85,6 +87,9 @@ async fn an_incremental_no_op_keeps_the_existing_warnings() {
     let second = compile(&mgr, &root).await;
 
     assert!(first.ok && second.ok);
+    assert!(first.pdf_changed);
+    assert!(!second.pdf_changed);
+    assert_eq!(serde_json::to_value(&second).unwrap()["pdfChanged"], false);
     assert_eq!(second.warnings, first.warnings);
     assert_eq!(second.warnings.len(), 1);
 }
@@ -144,6 +149,7 @@ async fn a_failed_run_does_not_advertise_a_preexisting_pdf() {
 
     assert!(!result.ok);
     assert_eq!(result.pdf, None, "old PDF must not be labelled as this run");
+    assert!(!result.pdf_changed);
     assert!(
         root.join("build/main.pdf").exists(),
         "old preview may remain on disk"
@@ -234,40 +240,51 @@ async fn a_third_compile_can_supersede_a_replacement_before_it_spawns() {
         r#"#!/bin/sh
 case "$*" in
   *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
-  *) sleep 20 ;;
+  *-xelatex*) touch replacement_started; sleep 20 ;;
+  *) touch started; sleep 20 ;;
 esac
 "#,
     );
     let mgr = Arc::new(mgr);
-    let launch = |engine: &str| {
+    let first = tokio::spawn({
         let (mgr, root) = (Arc::clone(&mgr), root.clone());
-        let options = CompileOverrides {
-            engine: Some(engine.to_string()),
-            ..CompileOverrides::default()
-        };
-        tokio::spawn(async move { mgr.compile(&root, &options, None).await.unwrap() })
+        async move { compile(&mgr, &root).await }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !root.join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first latexmk did not start");
+    let options = CompileOverrides {
+        engine: Some("xelatex".into()),
+        ..CompileOverrides::default()
+    };
+    let mut second = Box::pin(mgr.compile(&root, &options, None));
+    // Poll just until it waits on the first build, then register the third
+    // without letting the first release the build directory in between.
+    std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
+        std::task::Poll::Pending => std::task::Poll::Ready(()),
+        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
+    })
+    .await;
+    let third_options = CompileOverrides {
+        engine: Some("lualatex".into()),
+        ..CompileOverrides::default()
     };
 
-    let first = launch("pdflatex");
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    let second = launch("xelatex");
-    // The second request is waiting for the first process to settle and may not
-    // have a child PID yet. The third must still supersede it without deadlock.
-    tokio::time::sleep(Duration::from_millis(5)).await;
-    let third = launch("lualatex");
-
     let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-        (
-            third.await.unwrap(),
-            second.await.unwrap(),
-            first.await.unwrap(),
-        )
+        let (third, second, first) =
+            tokio::join!(mgr.compile(&root, &third_options, None), second, first,);
+        (third.unwrap(), second.unwrap(), first.unwrap())
     })
     .await
     .expect("compile generations deadlocked");
     assert!(third.ok);
     assert!(!second.ok);
     assert!(!first.ok);
+    assert!(!root.join("replacement_started").exists());
     assert_eq!(
         fs::read_to_string(root.join("build/main.pdf")).unwrap(),
         "third"
@@ -275,17 +292,64 @@ esac
 }
 
 #[tokio::test]
+async fn a_cancelled_waiting_replacement_does_not_let_the_next_build_overtake_its_predecessor() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh\nif [ -f fast ]; then\n  if kill -0 \"$(cat first.pid)\" 2>/dev/null; then touch overlap; fi\n  mkdir -p build; printf 'new' > build/main.pdf\nelse\n  echo $$ > first.pid\n  sleep 20\nfi\n",
+    );
+    let mgr = Arc::new(mgr);
+    let first = tokio::spawn({
+        let mgr = Arc::clone(&mgr);
+        let root = root.clone();
+        async move { compile(&mgr, &root).await }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !root.join("first.pid").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first latexmk did not start");
+
+    let options = CompileOverrides::default();
+    let mut replacement = Box::pin(mgr.compile(&root, &options, None));
+    std::future::poll_fn(|cx| match replacement.as_mut().poll(cx) {
+        std::task::Poll::Pending => std::task::Poll::Ready(()),
+        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
+    })
+    .await;
+    drop(replacement);
+
+    fs::write(root.join("fast"), "").unwrap();
+    let third = tokio::time::timeout(Duration::from_secs(5), compile(&mgr, &root))
+        .await
+        .expect("third build waited forever");
+    let first = first.await.unwrap();
+    assert!(third.ok);
+    assert!(first.stopped);
+    assert!(
+        !root.join("overlap").exists(),
+        "third build overtook the first"
+    );
+}
+
+#[tokio::test]
 async fn a_cancelled_compile_takes_its_whole_tree_down() {
     // Dropping the compile future kills latexmk (kill_on_drop), but the
     // engine it started must not keep writing into the build directory.
-    let (_tmp, root, mgr) = setup("#!/bin/sh\n(sleep 1; touch late) &\nsleep 20\n");
+    let (_tmp, root, mgr) = setup("#!/bin/sh\n(touch started; sleep 1; touch late) &\nsleep 20\n");
     let mgr = Arc::new(mgr);
     let task = tokio::spawn({
         let mgr = Arc::clone(&mgr);
         let root = root.clone();
         async move { mgr.compile(&root, &CompileOverrides::default(), None).await }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !root.join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("latexmk descendant did not start");
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
 
@@ -344,6 +408,7 @@ async fn a_failed_run_shows_the_pdf_it_wrote_with_its_errors() {
 
     assert!(!result.ok);
     assert_eq!(result.pdf.as_deref(), Some("build/main.pdf"));
+    assert!(result.pdf_changed);
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].line, Some(4));
 }

@@ -75,10 +75,6 @@ export function migratePrefs() {
 
 // ---------- appearance ----------
 
-// A preference's allowed values; the native apps' copies are checked against
-// these (test/protocol.test.js).
-export const prefChoices = (name) => DEFS[name].values;
-
 export const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18];
 export const UI_SCALES = [80, 90, 100, 110, 120, 130];
 
@@ -106,7 +102,7 @@ function pdfPaperIsDark() {
 }
 
 // White on the accent, as every platform draws it; black only where white
-// fails WCAG's 3:1 for interface components.
+// fails WCAG's 3:1 for interface components (docs/design-tokens.md).
 export function onAccent(hex) {
   const [r, g, b] = [1, 3, 5].map((i) => {
     const v = parseInt(hex.slice(i, i + 2), 16) / 255;

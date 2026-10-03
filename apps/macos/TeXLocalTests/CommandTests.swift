@@ -2,32 +2,9 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// The commands' chords: the shared table's (web/src/shortcuts.json) and the
-/// Mac's own. `test/protocol.test.js` holds the command ids to the web's.
+/// The Mac's native key equivalents.
 @MainActor
 struct MenuCommandTests {
-    @Test func acceleratorsBecomeMenuShortcuts() {
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Return") == KeyboardShortcut(.return, modifiers: .command))
-        #expect(MenuCommand.shortcut(for: "Ctrl+Shift+Return") == KeyboardShortcut(.return, modifiers: [.control, .shift]))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Plus") == KeyboardShortcut("=", modifiers: .command))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Shift+\\") == KeyboardShortcut("\\", modifiers: [.command, .shift]))
-        #expect(MenuCommand.shortcut(for: "CmdOrCtrl+Alt+F") == KeyboardShortcut("f", modifiers: [.command, .option]))
-    }
-
-    /// The build copies the shared table in; without it every shared chord is gone.
-    @Test func theSharedTableIsInTheApp() {
-        #expect(MenuCommand.compileRun.accel == "CmdOrCtrl+Return")
-        #expect(MenuCommand.editBold.shortcut == KeyboardShortcut("b", modifiers: .command))
-    }
-
-    @Test func everyAcceleratorParses() {
-        for command in MenuCommand.allCases {
-            for accel in [command.accel, command.macAccel].compactMap(\.self) {
-                #expect(MenuCommand.shortcut(for: accel) != nil, "\(command.rawValue)")
-            }
-        }
-    }
-
     @Test func noTwoCommandsShareAMacChord() {
         var seen: [KeyboardShortcut: MenuCommand] = [:]
         for command in MenuCommand.allCases {
@@ -35,6 +12,17 @@ struct MenuCommandTests {
             #expect(seen[shortcut] == nil, "\(command.rawValue) and \(seen[shortcut]?.rawValue ?? "")")
             seen[shortcut] = command
         }
+    }
+
+    /// A PDF command or Go to PDF Position shows the PDF for now; only the toggle keeps it for later launches.
+    @Test func onlyTheToggleKeepsThePDFShown() {
+        let defaults = UserDefaults.standard, kept = defaults.object(forKey: DefaultsKey.showPDF)
+        defer { defaults.set(kept, forKey: DefaultsKey.showPDF) }
+        let app = AppModel()
+        if app.showPDF { app.togglePDF() }
+        #expect(!app.showPDF && !defaults.bool(forKey: DefaultsKey.showPDF))
+        app.requestPDF(.find)
+        #expect(app.showPDF && !defaults.bool(forKey: DefaultsKey.showPDF))
     }
 }
 
@@ -79,15 +67,15 @@ struct MenuStructureTests {
         #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
     }
 
-    /// The chords the Mac relies on, its own (`MenuCommand.macAccel`, HIG Keyboards) and the system's.
+    /// The chords the Mac relies on, its own (`MenuCommand.shortcut`, HIG Keyboards) and the system's.
     @Test func eachChordHasItsItem() throws {
         let chords: [(String, NSEvent.ModifierFlags, String)] = [
             ("g", .command, "Find Next"), ("g", [.command, .shift], "Find Previous"),
             ("f", .command, "Find…"), ("f", [.command, .option], "Find and Replace…"),
             ("s", [.command, .control], "Sidebar"), ("0", .command, "Actual Size"),
-            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Height"),
+            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Page"),
             ("l", [.command, .shift], "Build Panel"), ("i", [.command, .option], "Inspector"),
-            ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
+            (",", .command, "Settings…"), ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
             (".", .command, "Stop"), ("w", [.command, .shift], MenuCommand.projectClose.title),
             ("e", [.command, .option], MenuCommand.editMath.title), ("j", [.command, .option], MenuCommand.syncForward.title)]
         for (key, modifiers, title) in chords {
@@ -122,56 +110,43 @@ struct MenuStructureTests {
     /// Format holds the text's attributes; what inserts text is Insert's.
     @Test func formatStylesAndInsertInserts() throws {
         let format = try menu("Format"), insert = try menu("Insert")
-        #expect(titles(format) == ["Bold", "Italic", "Section Level", "Comment Selection"])
+        #expect(titles(format) == ["Bold", "Italic", "Underline", "Section Level", "Comment Selection"])
         #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
         #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
+    }
+
+    /// Insert's maths items say what they put in; its symbols are grids of TeX's glyphs, in full
+    /// rows, each glyph with its command as help and its name and command for VoiceOver, and a
+    /// chosen one isn't marked.
+    @Test func mathShowsWhatItInserts() throws {
+        let insert = try menu("Insert")
+        #expect(insert.items.prefix(4).map(\.subtitle) == ["$ … $", "\\[ … \\]", "\\begin{equation}", "\\begin{align}"])
+        for (title, symbols) in symbolGroups {
+            let rows = try #require(try item(title, in: insert).submenu).items.compactMap(\.submenu)
+            #expect(rows.allSatisfy { $0.presentationStyle == .palette })
+            #expect(Set(rows.map(\.items.count)) == [SymbolItems.columns(symbols.count)], "\(title)")
+            let glyphs = rows.flatMap(\.items)
+            #expect(glyphs.map(\.toolTip) == symbols.map(\.1))
+            #expect(glyphs.allSatisfy { $0.image?.isTemplate == true && $0.title.hasSuffix(", " + ($0.toolTip ?? "")) })
+        }
+        // TeX's \epsilon and \phi, not \varepsilon's and \varphi's.
+        let greek = Dictionary(uniqueKeysWithValues: symbolGroups[0].1.map { ($0.1, $0.0) })
+        #expect(greek["\\epsilon"] == "ϵ" && greek["\\phi"] == "ϕ")
+        let menu = NSHostingMenu(rootView: SymbolItems(project: nil))
+        let row = try #require(all(menu).first { $0.submenu?.presentationStyle == .palette }?.submenu)
+        row.performActionForItem(at: 1)
+        #expect(row.items.allSatisfy { $0.state == .off })
     }
 
     /// Engine lists the engines even with no project to set one for, never an empty submenu.
     @Test func engineListsTheEngines() throws {
         let engine = try #require(try item("Engine", in: menu("Compile")).submenu)
-        #expect(titles(engine).starts(with: texEngines.map(\.1)))
+        #expect(titles(engine).starts(with: ["pdfLaTeX", "XeLaTeX", "LuaLaTeX"]))
     }
 
     /// Share… as the HIG names it, there even with nothing to share.
     @Test func shareIsOneItem() throws {
         let file = try menu("File")
         #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
-    }
-}
-
-/// Edit › Find's items go down the responder chain to the window, which routes
-/// them to the pane with the keyboard (`MainWindowController`).
-@MainActor
-struct FindRoutingTests {
-    /// A find bar's field editor passes the items on, where the shared one
-    /// would take them and turn them off.
-    @Test func aFindFieldsEditorPassesFindOn() {
-        let editor = FindPassingTextView()
-        editor.isFieldEditor = true
-        let window = Responder()
-        editor.nextResponder = window
-        let item = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)),
-                              keyEquivalent: "g")
-        item.tag = NSTextFinder.Action.nextMatch.rawValue
-        #expect(editor.validateMenuItem(item))
-        editor.performFindPanelAction(item)
-        #expect(window.done == [.nextMatch])
-        // A Find the pane can't do is off.
-        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
-        #expect(!editor.validateMenuItem(item))
-    }
-
-    /// Stands in for the window: answers every Find item but Replace.
-    private final class Responder: NSResponder, NSMenuItemValidation {
-        var done: [NSTextFinder.Action] = []
-
-        @objc func performFindPanelAction(_ sender: Any?) {
-            if let tag = (sender as? NSMenuItem)?.tag, let action = NSTextFinder.Action(rawValue: tag) { done.append(action) }
-        }
-
-        func validateMenuItem(_ item: NSMenuItem) -> Bool {
-            item.tag != NSTextFinder.Action.showReplaceInterface.rawValue
-        }
     }
 }

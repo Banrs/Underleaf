@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
     create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
-    scan_symbols, search_project, symbols_fingerprint,
+    scan_symbols, search_project,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
@@ -142,11 +142,18 @@ fn path_traversal_is_rejected_at_every_boundary() {
     fails_with(project_root(data.path(), "../etc"), "Bad project id");
     // A folder inside a project is not a project of its own.
     create_file(&root, "chapters/intro.tex", false).unwrap();
-    for id in ["paths-test/chapters", r"paths-test\chapters"] {
-        assert_eq!(project_root(data.path(), id).unwrap_err().status, 400);
-    }
+    assert_eq!(
+        project_root(data.path(), "paths-test/chapters")
+            .unwrap_err()
+            .status,
+        400
+    );
     assert_eq!(project_root(data.path(), "./paths-test/").unwrap(), root);
-    for path in ["../x", "a/../../b", ".", r"..\x", r"C:\x"] {
+    assert_eq!(
+        safe_rel_file(&root, "./chapters/../chapters//intro.tex").unwrap(),
+        "chapters/intro.tex"
+    );
+    for path in ["../x", "a/../../b", ".", "/x"] {
         fails_with(safe_path(&root, path), "Path escapes project");
     }
     fails_with(safe_path(&root, ""), "Missing path");
@@ -173,7 +180,6 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     let tree = file_tree(&root);
     let hits = search_project(&root, "needle", 100);
     let symbols = scan_symbols(&root);
-    let stamps = symbols_fingerprint(&root);
     lock(&root.join("locked"), 0o755).unwrap();
 
     let tree = tree.unwrap();
@@ -183,7 +189,6 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].file, "main.tex");
     assert_eq!(symbols.unwrap().labels, ["sec:open"]);
-    assert!(stamps.is_ok());
 }
 
 #[cfg(unix)]
@@ -194,14 +199,10 @@ fn existing_symlink_ancestors_cannot_escape_the_project() {
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("secret.tex"), "secret").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.join("outside")).unwrap();
-    fails_with(
-        safe_path(&root, "outside/secret.tex"),
-        "Path escapes project",
-    );
-    fails_with(
-        safe_rel_file(&root, "outside/secret.tex"),
-        "Path escapes project",
-    );
+    for path in ["outside/secret.tex", "outside/new/sub/file.tex"] {
+        fails_with(safe_path(&root, path), "Path escapes project");
+        fails_with(safe_rel_file(&root, path), "Path escapes project");
+    }
 }
 
 #[cfg(unix)]
@@ -220,10 +221,6 @@ fn implicit_project_scans_skip_external_symlink_files() {
 
     assert!(search_project(&root, "needle", 50).unwrap().is_empty());
     assert!(scan_symbols(&root).unwrap().labels.is_empty());
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .all(|(path, _, _)| path != "external.tex"));
     assert!(file_tree(&root)
         .unwrap()
         .iter()
@@ -245,18 +242,6 @@ fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api
         fails_with(safe_path(&root, name), "Reserved file");
     }
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_reserved_device_names_are_rejected() {
-    let data = data_dir();
-    let root = project(data.path(), "windows-aliases");
-    assert!(safe_path(&root, "CON.tex").is_err());
-    assert!(safe_path(&root, "CONIN$").is_err());
-    assert!(safe_path(&root, "COM¹.log").is_err());
-    assert!(safe_path(&root, "paper.tex.").is_err());
-    assert!(safe_path(&root, "paper.tex ").is_err());
 }
 
 #[test]
@@ -297,26 +282,6 @@ fn renaming_an_unrelated_entry_leaves_the_main_file_alone() {
     write_settings(&root, &json!({ "mainFile": "chapters2/other.tex" })).unwrap();
     rename_entry(&root, "chapters", "content").unwrap();
     assert_eq!(read_settings(&root).main_file, "chapters2/other.tex");
-}
-
-#[test]
-fn a_backslash_main_file_from_an_old_settings_file_still_works() {
-    let data = data_dir();
-    let root = project(data.path(), "backslash-test");
-    create_file(&root, "chapters/paper.tex", false).unwrap();
-    fs::write(
-        root.join(".texlocal.json"),
-        r#"{ "mainFile": "chapters\\paper.tex" }"#,
-    )
-    .unwrap();
-    assert_eq!(
-        safe_rel_file(&root, &read_settings(&root).main_file).unwrap(),
-        "chapters/paper.tex"
-    );
-    assert_eq!(
-        compiled_pdf_path(&root).unwrap(),
-        root.join("build").join("paper.pdf")
-    );
 }
 
 #[cfg(unix)]
@@ -395,12 +360,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
     let data = data_dir();
     let root = project(data.path(), "dated-zip");
     fs::create_dir_all(root.join("figs")).unwrap();
-    for litter in [
-        ".DS_Store",
-        "figs/.DS_Store",
-        "figs/Thumbs.db",
-        "Desktop.ini",
-    ] {
+    for litter in [".DS_Store", "figs/.DS_Store"] {
         fs::write(root.join(litter), "x").unwrap();
     }
     fs::write(root.join(".latexmkrc"), "$pdf_mode = 1;").unwrap();
@@ -409,9 +369,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 
     let names = zip_names(&dest);
     assert!(names.contains(&".latexmkrc".to_string()), "{names:?}");
-    for litter in ["DS_Store", "Thumbs.db", "Desktop.ini"] {
-        assert!(!names.iter().any(|n| n.contains(litter)), "{names:?}");
-    }
+    assert!(!names.iter().any(|n| n.contains("DS_Store")), "{names:?}");
     let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
     let dated = archive
         .by_name("main.tex")
@@ -443,7 +401,7 @@ fn zip_export_dates_entries_as_their_files_and_leaves_os_litter_out() {
 }
 
 #[test]
-fn search_is_case_insensitive_in_both_folding_branches() {
+fn search_is_case_insensitive_for_ascii_and_unicode() {
     let data = data_dir();
     let root = project(data.path(), "search");
     fs::write(root.join("ascii.tex"), "One\nThe THEOREM holds\n").unwrap();
@@ -459,7 +417,7 @@ fn search_is_case_insensitive_in_both_folding_branches() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].matched, "ÉCOLE");
     assert!(search_project(&root, "zzz", 50).unwrap().is_empty());
-    // An ASCII line in a non-ASCII file takes the byte branch on its own.
+    // An ASCII match in a file that also contains Unicode.
     fs::write(root.join("mixed.tex"), "Café\nsee Lemma 3\n").unwrap();
     let hits = search_project(&root, "lemma", 50).unwrap();
     assert_eq!(hits.len(), 1);
@@ -503,10 +461,6 @@ fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
         .unwrap()
         .labels
         .contains(&"deep:one".to_string()));
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .any(|(rel, _, _)| rel == "chapters/build/notes.tex"));
 }
 
 #[test]
@@ -521,10 +475,6 @@ fn top_level_build_output_stays_out_of_every_scan() {
         .unwrap()
         .labels
         .contains(&"gen:one".to_string()));
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .all(|(rel, _, _)| !rel.starts_with("build/")));
 }
 
 #[test]
@@ -636,11 +586,8 @@ fn symbol_scan_survives_both_a_bad_byte_and_a_unicode_space() {
 }
 
 #[test]
-fn the_byte_prefilter_never_hides_a_match_the_char_path_would_find() {
-    // U+0130 and the Kelvin sign both lowercase into plain ASCII, so an ASCII
-    // query can match a file holding no such ASCII byte. Skipping a file on one
-    // pass over its bytes is gated on the file being ASCII for exactly that
-    // reason; drop the gate and these two searches quietly return nothing.
+fn unicode_characters_can_match_an_ascii_query() {
+    // U+0130 and the Kelvin sign both lowercase into plain ASCII.
     let data = data_dir();
     let root = project(data.path(), "folding");
     fs::write(root.join("a.tex"), "\u{0130}stanbul\n").unwrap();
@@ -658,50 +605,6 @@ fn the_byte_prefilter_never_hides_a_match_the_char_path_would_find() {
         hits.iter().any(|h| h.file == "b.tex"),
         "U+212A lowercases to an ASCII 'k': {hits:?}"
     );
-}
-
-#[test]
-fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
-    // Settings written by an older build can hold "chapters\main.tex". The
-    // rename normalises separators before comparing, so it still recognises the
-    // file it is moving; without that the main file keeps pointing at the old
-    // path and the next compile fails.
-    let data = data_dir();
-    let root = project(data.path(), "legacy-sep");
-    create_file(&root, "chapters/main.tex", false).unwrap();
-    fs::write(
-        root.join(".texlocal.json"),
-        r#"{"mainFile":"chapters\\main.tex","engine":"pdflatex","shellEscape":false}"#,
-    )
-    .unwrap();
-
-    rename_entry(&root, "chapters", "content").unwrap();
-
-    assert_eq!(read_settings(&root).main_file, "content/main.tex");
-}
-
-#[cfg(unix)]
-#[test]
-fn a_fingerprint_follows_an_in_project_link_to_the_bytes_the_scan_reads() {
-    // scan_symbols reads through the link, so the stamp has to come from the
-    // target. Stamping the link itself leaves the symbol cache serving stale
-    // labels after the real file changed underneath it.
-    let data = data_dir();
-    let root = project(data.path(), "link-stamp");
-    fs::write(root.join("real.tex"), "\\label{a}\n").unwrap();
-    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
-
-    let stamp_of = |v: &[(String, u64, u64)]| {
-        v.iter()
-            .find(|(rel, _, _)| rel == "link.tex")
-            .cloned()
-            .expect("the link is scanned")
-    };
-    let before = stamp_of(&symbols_fingerprint(&root).unwrap());
-    fs::write(root.join("real.tex"), "\\label{a}\n\\label{b}\n").unwrap();
-    let after = stamp_of(&symbols_fingerprint(&root).unwrap());
-
-    assert_ne!(before, after, "the link's stamp must track its target");
 }
 
 #[test]
@@ -821,7 +724,6 @@ fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
     assert_eq!(names, ["main.tex"]);
     assert!(search_project(&root, "documentclass", 50).is_ok());
     assert!(scan_symbols(&root).is_ok());
-    assert!(symbols_fingerprint(&root).is_ok());
     let out = tempfile::tempdir().unwrap();
     export_zip(&root, &out.path().join("out.zip")).unwrap();
     assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);
@@ -840,4 +742,48 @@ fn citations_include_bibitem_keys_and_commented_or_unfilled_labels_are_left_out(
     let found = scan_symbols(&root).unwrap();
     assert_eq!(found.labels, ["kept", "after-percent"]);
     assert_eq!(found.citations, ["knuth", "lamport"]);
+}
+
+#[test]
+fn symbol_completions_keep_file_order_and_remove_duplicates() {
+    let data = data_dir();
+    let root = project(data.path(), "symbol-order");
+    fs::write(
+        root.join("z.tex"),
+        "\\label{shared}\\label{last}\\bibitem{two}",
+    )
+    .unwrap();
+    fs::write(
+        root.join("a.tex"),
+        "\\label{first}\\label{shared}\\bibitem{one}",
+    )
+    .unwrap();
+    fs::write(root.join("refs.bib"), "@article{one,}\n@article{two,}").unwrap();
+
+    let found = scan_symbols(&root).unwrap();
+    assert_eq!(found.labels, ["first", "shared", "last"]);
+    assert_eq!(found.citations, ["one", "two"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn scans_from_an_aliased_root_follow_file_links_and_skip_directory_links() {
+    let data = data_dir();
+    let root = project(data.path(), "scan-alias");
+    fs::write(root.join("source.txt"), "needle \\label{linked}").unwrap();
+    std::os::unix::fs::symlink(root.join("source.txt"), root.join("linked.tex")).unwrap();
+    std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+    let alias = data.path().join("alias");
+    std::os::unix::fs::symlink(&root, &alias).unwrap();
+
+    let tree = file_tree(&alias).unwrap();
+    assert_eq!(
+        tree.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
+        ["linked.tex", "main.tex", "source.txt"]
+    );
+    let hits = search_project(&alias, "needle", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!(hits.iter().any(|h| h.file == "linked.tex"));
+    assert!(hits.iter().any(|h| h.file == "source.txt"));
+    assert_eq!(scan_symbols(&alias).unwrap().labels, ["linked"]);
 }

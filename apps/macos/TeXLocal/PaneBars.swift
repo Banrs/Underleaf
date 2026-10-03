@@ -1,141 +1,96 @@
 import SwiftUI
 
-/// The in-window bars' metrics, from the macOS 27 UI kit.
-enum BarMetrics {
-    /// UI kit, Unified Compact toolbar: items 8 pt from its top, bottom and ends.
-    static let inset: CGFloat = 8
-    /// UI kit: a symbol and its words 4 pt apart.
-    static let spacing: CGFloat = 4
-    /// The status bar and the File Outline header share this height, so the hairlines
-    /// over them run on as one (Xcode's status bar).
-    static let secondaryBarHeight: CGFloat = 36
-    /// UI kit, Unified Compact toolbar: items 12 pt apart.
-    static let itemSpacing: CGFloat = 12
-    /// Design: the least room a find query needs, and the widest a filter grows
-    /// (UI kit search fields are drawn 120 pt).
-    static let fieldMinWidth: CGFloat = 100
-    static let fieldMaxWidth: CGFloat = 180
-}
-
-/// The app's text roles, each a system text style, so a role reads the same
-/// everywhere.
-enum Typography {
-    static let itemTitle: Font = .headline
-    /// Secondary rows and captions: the size `.small` controls use.
-    static let secondary: Font = .subheadline
-    /// UI kit, form rows: the description 2 pt under the title.
-    static let subtitleSpacing: CGFloat = 2
-}
-
-extension View {
-    /// An accessory bar's controls, inset from the pane's edges.
-    func paneBarControls() -> some View {
-        lineLimit(1)
-            .padding(.horizontal, BarMetrics.inset)
-            .frame(maxWidth: .infinity)
-    }
-}
-
-/// The source's and the PDF's find bar, with the source's replace row under it.
-/// Return and Shift-Return step, Escape closes. It lives in its pane's top
-/// accessory, which keeps it in the window while hidden, so `field` can take the
-/// keyboard at once.
-struct FindBar<Replace: View>: View {
+/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
+struct FindBar: View {
     @Binding var query: String
     let prompt: String
     let field: FieldHandle
-    var options: [SearchOption] = []
     let matches: FindMatches
     /// The query the matches are for, which the count reads.
     let searched: String
     let step: @MainActor (Int) -> Void
     let close: @MainActor () -> Void
-    /// The replace row's cells, a `GridRow`: its field, then its buttons.
-    @ViewBuilder var replace: Replace
 
     var body: some View {
-        Grid(alignment: .leading, verticalSpacing: BarMetrics.inset) {
-            GridRow {
-                SearchField(text: $query, prompt: prompt, handle: field, options: options, step: step, close: close)
-                    .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
-                HStack {
-                    ControlGroup {
-                        Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
-                            .help("Previous Match")
-                        Button("Next Match", systemImage: "chevron.forward") { step(1) }
-                            .help("Next Match")
-                    }
-                    .disabled(matches.total == 0)
-                    .fixedSize()
-                    // The first to give way in a narrow pane.
-                    Text(matches.label(for: searched))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .layoutPriority(-1)
-                    Button("Done") { close() }
-                }
-                .gridColumnAlignment(.trailing)
+        HStack {
+            SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
+                .frame(minWidth: 100, maxWidth: .infinity)
+            ControlGroup {
+                Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
+                    .help("Previous Match")
+                Button("Next Match", systemImage: "chevron.forward") { step(1) }
+                    .help("Next Match")
             }
-            replace
+            .disabled(matches.total == 0)
+            .fixedSize()
+            // The first to give way in a narrow pane.
+            Text(matches.label(for: searched))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .layoutPriority(-1)
+            Button("Done") { close() }
         }
-        .padding(.vertical, BarMetrics.inset)
-        .paneBarControls()
+        .lineLimit(1)
     }
 }
 
-/// A choice in a search field's own menu (Match Case, Whole Words…).
-struct SearchOption {
-    let title: String
-    let isOn: Binding<Bool>
+/// Match index starts at 1 (0 for no selected match); `limited` means more exist.
+struct FindMatches: Equatable {
+    var index = 0
+    var total = 0
+    var limited = false
+
+    func label(for query: String) -> String {
+        if query.isEmpty { return "" }
+        if total == 0 { return String(localized: "Not found") }
+        let count = "\(total.formatted())\(limited ? "+" : "")"
+        if index > 0 { return String(localized: "\(index) of \(count)") }
+        if limited { return String(localized: "\(count) matches") }
+        return String(AttributedString(localized: "^[\(total) match](inflect: true)").characters)
+    }
 }
 
-/// A search field the window can give the keyboard to: the field registers
-/// itself here as it's made.
+/// A field the window can focus after AppKit creates it.
 final class FieldHandle {
-    fileprivate(set) weak var field: NSSearchField?
+    fileprivate(set) weak var field: NSTextField?
 
-    /// Takes the keyboard, its text selected, so typing replaces the query.
+    /// With its text selected, to type over.
     func focus() {
         guard let field, let window = field.window else { return }
         if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
         field.currentEditor()?.selectAll(nil)
     }
 
-    /// Whether it, or its field editor, has the keyboard.
     var hasFocus: Bool {
         guard let field, let first = field.window?.firstResponder else { return false }
         return first === field || first === field.currentEditor()
     }
 }
 
-/// NSSearchField in a bar: SwiftUI has search fields only as `.searchable`.
-/// Return steps (Shift-Return back) and Escape closes when `step`/`close` are set.
+/// A native search field with optional Return and Escape actions.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    /// In the magnifying glass's place: a filter's, as Xcode's filter fields.
+    var symbol: String?
     var handle: FieldHandle?
-    var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
-        /// The options' states the field's menu was last made with.
-        var optionStates: [Bool]?
 
         init(_ field: SearchField) { self.field = field }
 
-        // Typing, and the field's clear button, both send the action.
-        @objc func search(_ sender: NSSearchField) {
-            field.text = sender.stringValue
-        }
-
-        @objc func toggleOption(_ sender: NSMenuItem) {
-            guard field.options.indices.contains(sender.tag) else { return }
-            field.options[sender.tag].isOn.wrappedValue.toggle()
+        // Typing and the native clear button both send the action.
+        @objc func changed(_ sender: NSSearchField) {
+            if field.text != sender.stringValue { field.text = sender.stringValue }
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            // Let the input method commit or cancel marked text before the find
+            // bar treats Return and Escape as navigation commands.
+            guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
                 guard let step = field.step else { return false }
@@ -158,45 +113,33 @@ struct SearchField: NSViewRepresentable {
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
-        view.action = #selector(Coordinator.search(_:))
+        view.action = #selector(Coordinator.changed(_:))
+        if let symbol, let cell = view.cell as? NSSearchFieldCell {
+            cell.searchButtonCell?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        }
         handle?.field = view
         return view
     }
 
-    /// As wide as offered: the frame around it sets its least and ideal widths.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
     }
 
     func updateNSView(_ view: NSSearchField, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.field = self
+        context.coordinator.field = self
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        if view.stringValue != text { view.stringValue = text }
-        // The field copies its menu, so it is made again when a state changes.
-        let states = options.map(\.isOn.wrappedValue)
-        if !options.isEmpty, coordinator.optionStates != states {
-            coordinator.optionStates = states
-            let menu = NSMenu(title: "Find Options")
-            for (index, option) in options.enumerated() {
-                let item = NSMenuItem(title: option.title, action: #selector(Coordinator.toggleOption(_:)), keyEquivalent: "")
-                item.target = coordinator
-                item.tag = index
-                item.state = option.isOn.wrappedValue ? .on : .off
-                menu.addItem(item)
-            }
-            view.searchMenuTemplate = menu
+        // A SwiftUI update can arrive during input-method composition; writing
+        // the bound query back then would discard the marked characters.
+        if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
+            view.stringValue = text
         }
     }
 }
 
-/// A text view that passes Edit › Find's items on to the window
-/// (`MainWindowController`), which sends them to the pane with the keyboard,
-/// where a text view would answer them itself: the find bars' field editor
-/// (the shared one turns them off) and the source (`SourceTextView`).
-class FindPassingTextView: NSTextView {
+/// Pass Edit › Find from the PDF find field's editor to the window, which routes it to the PDF.
+final class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
     }
@@ -215,8 +158,6 @@ class FindPassingTextView: NSTextView {
     }
 }
 
-/// A small sheet that asks for a few values: a title and message over a grouped
-/// form. Not an alert with fields: the HIG keeps alerts for important information.
 struct DialogSheet<Fields: View>: View {
     let title: String
     var message: String?
@@ -233,13 +174,13 @@ struct DialogSheet<Fields: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: BarMetrics.spacing) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.title3.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
                 if let message {
                     Text(message)
-                        .font(Typography.secondary)
+                        .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -257,7 +198,7 @@ struct DialogSheet<Fields: View>: View {
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(submitting) }
             ToolbarItem(placement: .confirmationAction) {
                 Button(action) {
                     submitting = true
@@ -273,8 +214,7 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
-/// A list's rename in place. Observable, so typing redraws only the row with
-/// the field, not every row that checks `id`.
+/// A list's rename state; observation redraws only the editing row.
 @Observable
 final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
@@ -287,8 +227,6 @@ final class InPlaceRename<ID: Hashable> {
 
     func cancel() { id = nil }
 
-    /// Ends `id`'s rename: the new name, trimmed, or nil when the rename
-    /// had already ended or left the name empty or as it was.
     func end(_ id: ID, from old: String) -> String? {
         guard self.id == id else { return nil }
         self.id = nil
@@ -305,7 +243,6 @@ struct ItemActions {
     let moveToTrash: () -> Void
 }
 
-/// Move to Trash apart from the rest.
 struct ItemMenuItems: View {
     let actions: ItemActions
 
@@ -341,9 +278,7 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     }
 }
 
-/// A name edited in place: Return or clicking away commits, Escape cancels.
-/// A file's name starts selected up to its extension, so typing replaces the name
-/// and keeps the file's type.
+/// Return or losing focus commits, Escape cancels; file selection preserves the extension.
 struct RenameField: View {
     @Binding var text: String
     var isFile = false
@@ -380,6 +315,6 @@ extension TextSelection {
 #Preview("Find bar") {
     @Previewable @State var query = "theorem"
     FindBar(query: $query, prompt: "Find", field: FieldHandle(), matches: FindMatches(index: 3, total: 12),
-            searched: query, step: { _ in }, close: {}) {}
+            searched: query, step: { _ in }, close: {})
         .frame(width: 480)
 }

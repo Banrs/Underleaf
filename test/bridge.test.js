@@ -6,10 +6,14 @@ const { runQuitFlush, setQuitInteractionLocked } = await import('../web/src/brid
 
 test('quit acknowledges success only after the flush resolves', async () => {
   const events = [];
-  const outcome = await runQuitFlush(
-    async () => { events.push('saved'); },
+  const save = Promise.withResolvers();
+  const quitting = runQuitFlush(
+    async () => { await save.promise; events.push('saved'); },
     async (value) => { events.push(value); },
   );
+  assert.deepEqual(events, [], 'a pending save must not acknowledge quit');
+  save.resolve();
+  const outcome = await quitting;
   assert.deepEqual(events, ['saved', { ok: true, error: null }]);
   assert.deepEqual(outcome, { ok: true, error: null });
 });

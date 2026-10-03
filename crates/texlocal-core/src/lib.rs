@@ -3,9 +3,7 @@
 // without a webview.
 //
 // Path convention: every project-relative path this crate RETURNS or STORES
-// uses forward slashes, on every platform — the frontend splits on '/', and
-// SyncTeX wants '/' regardless of OS. Inputs are accepted with either
-// separator.
+// uses forward slashes — the frontend and SyncTeX both expect '/'.
 
 pub mod analyze;
 mod atomic;

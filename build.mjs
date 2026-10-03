@@ -2,8 +2,7 @@ import * as esbuild from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Anchor every path to this file, not the cwd: Tauri runs this as its
-// beforeDevCommand and beforeBuildCommand.
+// Anchor every path to this file so builds work from any cwd.
 const ROOT = import.meta.dirname;
 const at = (...p) => path.join(ROOT, ...p);
 
@@ -18,6 +17,9 @@ copyInto('web/dist', 'node_modules/katex/dist', ['katex.min.css']);
 // woff2 only — Chromium/WKWebView both support it, so the .woff/.ttf duplicates
 // KaTeX ships (several MB) are never fetched. @font-face lists woff2 first.
 const katexFonts = 'node_modules/katex/dist/fonts';
+// This directory belongs to KaTeX, so an updated package should not leave
+// removed fonts in a later web build.
+fs.rmSync(at('web/dist/fonts'), { recursive: true, force: true });
 copyInto('web/dist/fonts', katexFonts, fs.readdirSync(at(katexFonts)).filter((f) => f.endsWith('.woff2')));
 copyInto('web/dist/fonts-jbm', 'node_modules/@fontsource/jetbrains-mono/files', [
   'jetbrains-mono-latin-400-normal.woff2',
@@ -34,31 +36,24 @@ const common = {
   sourcemap: watch,
   logLevel: 'info',
 };
-// One bundle for the browser version and Tauri; bridge.js picks the backend at
-// runtime. Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
+// Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
 // pdf.js) in chunks/, so the home screen never parses it. Hashed names: clear
 // the previous build's.
 fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });
-const builds = [
-  {
-    ...common,
-    entryPoints: { bundle: at('web/src/main.js') },
-    splitting: true,
-    chunkNames: 'chunks/[name]-[hash]',
-  },
-  // The editor and PDF pages Windows embeds (web/embed/*.html). Each page
-  // loads exactly one of them, so no splitting.
-  {
-    ...common,
-    entryPoints: {
-      'embed-editor': at('web/src/embed/editor.js'),
-      'embed-pdf': at('web/src/embed/pdf.js'),
-    },
-  },
-];
+// Remove bundles from the retired WinUI embedded pages in existing checkouts.
+for (const name of ['embed-editor.js', 'embed-pdf.js']) {
+  fs.rmSync(at('web/dist', name), { force: true });
+}
+const bundle = {
+  ...common,
+  entryPoints: { bundle: at('web/src/main.js') },
+  splitting: true,
+  chunkNames: 'chunks/[name]-[hash]',
+};
 
 if (watch) {
-  for (const opts of builds) { const ctx = await esbuild.context(opts); await ctx.watch(); }
+  const ctx = await esbuild.context(bundle);
+  await ctx.watch();
 } else {
-  await Promise.all(builds.map((opts) => esbuild.build(opts)));
+  await esbuild.build(bundle);
 }

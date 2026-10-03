@@ -8,25 +8,17 @@ struct HomeView: View {
     @State private var rename = InPlaceRename<ProjectInfo.ID>()
     @FocusState private var listFocused: Bool
     @State private var query = ""
-    @State private var dropTargeted = false
 
     var body: some View {
         // Over the list, which runs on under it and the toolbar with one edge effect.
         list.safeAreaBar(edge: .top) {
             if app.tex?.available == false { texMissing }
         }
-        // Copied in, as the Open panel says; anything else is refused.
-        .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
-            guard let url = urls.first else { return }
-            Task { await app.importProject(from: url) }
-        }
-        .overlay(alignment: .bottom) {
-            if dropTargeted {
-                Label("Drop to copy it into your projects", systemImage: "plus.circle.fill")
-                    .padding()
-                    .glassEffect(.regular, in: .capsule)
-                    .padding()
-                    .allowsHitTesting(false)
+        // Projects, copied in, as the Open panel says; other items are left out. One
+        // opens; several stay listed under Recent.
+        .fileDrop(accepts: AppModel.canOpen) { urls in
+            Task {
+                for url in urls { await app.importProject(from: url, open: urls.count == 1) }
             }
         }
         // Named for what the window shows, not the app (HIG, Toolbars).
@@ -44,14 +36,18 @@ struct HomeView: View {
 
     private var list: some View {
         List(selection: $selection) {
-            Section {
+            // No section header: the list pins its first one with a rule the full width
+            // of the window, over cards that have no rule of their own.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New").font(.subheadline).fontWeight(.semibold).foregroundStyle(.secondary)
                 templates
-                    .selectionDisabled()
-                    .listRowSeparator(.hidden)
-            } header: {
-                Text("New")
             }
-            .listSectionSeparator(.hidden)
+            .selectionDisabled()
+            .listRowSeparator(.hidden)
+            // The buttons bring their own 10 pt edge.
+            .listRowInsets(EdgeInsets())
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("New")
             Section {
                 ForEach(shown) { project in
                     // Its own view, so a row redraws only when its rename starts or ends.
@@ -75,7 +71,7 @@ struct HomeView: View {
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in
-            app.projects.first { $0.id == id }.map(actions)
+            shown.first { $0.id == id }.map(actions)
         }
     }
 
@@ -87,12 +83,12 @@ struct HomeView: View {
 
     private var templates: some View {
         ScrollView(.horizontal) {
-            HStack(alignment: .top) {
+            HStack(alignment: .top, spacing: 0) {
                 ForEach(ProjectTemplate.all) { template in
                     Button { app.newProject(template.id) } label: {
                         TemplateCard(template: template)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TemplateButtonStyle())
                     .help("New \(template.title) Project")
                 }
             }
@@ -146,14 +142,14 @@ private struct ProjectRow: View {
 
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
                 if rename.id == project.id {
                     RenameField(text: Bindable(rename).name, ended: ended, commit: commit) { rename.cancel() }
                 } else {
-                    Text(project.name).font(Typography.itemTitle)
+                    Text(project.name).font(.headline)
                 }
                 Text("\(Text(project.mainFile)) · \(Text(.currentDate, format: .reference(to: project.modified)))")
-                    .font(Typography.secondary)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         } icon: {
@@ -180,15 +176,30 @@ struct ProjectTemplate: Identifiable {
 
     let id: String
     let title: String
-    let detail: String
     let page: Page
 
     static let all = [
-        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document", page: .blank),
-        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections", page: .article),
-        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", page: .report),
-        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", page: .slides),
+        ProjectTemplate(id: "blank", title: "Blank", page: .blank),
+        ProjectTemplate(id: "article", title: "Article", page: .article),
+        ProjectTemplate(id: "report", title: "Report", page: .report),
+        ProjectTemplate(id: "beamer", title: "Presentation", page: .slides),
     ]
+}
+
+/// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the
+/// clickable edge, and a fill under the pointer that deepens while pressed.
+private struct TemplateButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        configuration.label
+            .padding(10)
+            .background(.fill.opacity(configuration.isPressed ? 1 : hovered ? 0.5 : 0), in: shape)
+            .contentShape(shape)
+            .contentShape(.focusEffect, shape)
+            .onHover { hovered = $0 }
+    }
 }
 
 /// A template's card: a drawing of its first page, then its name.
@@ -200,22 +211,11 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                page
-                VStack(alignment: .leading, spacing: Typography.subtitleSpacing) {
-                    Text(template.title).font(Typography.itemTitle)
-                    Text(template.detail)
-                        .font(Typography.secondary)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2, reservesSpace: true)
-                        .frame(width: Self.page.width, alignment: .leading)
-                }
-            }
+        // The page with its name under it, as in a template chooser.
+        VStack(spacing: 8) {
+            page
+            Text(template.title)
         }
-        .contentShape(.rect)
-        // The focus ring on the group box's corners, not a square.
-        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous)) // UI kit: Group Boxes
         .accessibilityElement(children: .combine)
     }
 
@@ -256,7 +256,7 @@ private struct PagePreview: View {
                 bar(52, 3).padding(.bottom, 6)
                 ForEach(0..<2, id: \.self) { _ in bar(78, 2) }
                 bar(60, 2).padding(.bottom, 4)
-                heading
+                HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
                 ForEach(0..<4, id: \.self) { _ in bar(88, 2) }
                 bar(50, 2)
                 Spacer(minLength: 0)
@@ -284,10 +284,6 @@ private struct PagePreview: View {
                 Spacer()
             }
         }
-    }
-
-    private var heading: some View {
-        HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
     }
 
     private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {
