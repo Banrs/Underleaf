@@ -37,9 +37,16 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     var matchIndex = 0
     var limited = false
     private(set) var scale: CGFloat = 1
-    var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
+    var zoomLabel: String { Self.label(scale) }
+    /// The longest label of the scales PDFKit allows.
+    var widestZoomLabel: String {
+        [view.minScaleFactor, view.maxScaleFactor].map(Self.label).max { $0.count < $1.count } ?? zoomLabel
+    }
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
+    private static func label(_ scale: CGFloat) -> String {
+        Double(scale).formatted(.percent.precision(.fractionLength(0)))
+    }
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, height }
     private(set) var fit: Fit? = .width
@@ -48,6 +55,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         super.init()
         // Preview's canvas color; the PDF's paper keeps its own colors.
         view.backgroundColor = .controlBackgroundColor
+        // The range PDFKit gives a document (27.2), from the start, so the toolbar's scale keeps
+        // one width before the first PDF (`widestZoomLabel`). Before fitting, which a set
+        // limit turns off.
+        view.maxScaleFactor = 100
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }

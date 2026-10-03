@@ -373,17 +373,27 @@ final class WorkspaceLayoutTests {
         #expect(!left.contains(.toggleSidebar))
     }
 
-    /// Zoom out | scale | zoom in, the scale in tabular digits whatever font the toolbar gives
-    /// the control, so the capsule keeps its width as the scale changes.
-    @Test func theZoomControlKeepsItsSegmentsAndWidth() throws {
-        let workspace = open()
+    /// Zoom out | scale | zoom in, one width from the PDFView's smallest scale to its largest, as
+    /// a pop-up keeps its widest item's, and the same before the first PDF.
+    @Test func theZoomControlKeepsItsSegmentsAndWidth() async throws {
+        let workspace = open(), pdf = workspace.pdf
         let zoom = try #require(showToolbar(workspace).items.first { $0.itemIdentifier == .zoom }?.view as? NSSegmentedControl)
         window?.layoutIfNeeded()
         #expect(zoom.segmentCount == 3 && zoom.image(forSegment: 0) != nil && zoom.image(forSegment: 2) != nil)
-        #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
-        let font = try #require(zoom.font)
-        let width = { (label: String) in NSAttributedString(string: label, attributes: [.font: font]).size().width }
-        #expect(width("111%") == width("888%"))
+        let width = zoom.intrinsicContentSize.width
+        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
+        pdf.show(try #require(PDFDocument(data: page.dataWithPDF(inside: page.bounds))))
+        // Fitted to the column once it has its width.
+        try await waitUntil { pdf.zoomLabel != "100%" }
+        for scale in [pdf.view.minScaleFactor, 0.5, 0.95, 1, pdf.view.maxScaleFactor] {
+            pdf.setScale(scale)
+            try await waitUntil { abs(pdf.scale - scale) < 0.001 && zoom.label(forSegment: 1) == pdf.zoomLabel } state: {
+                "\(pdf.scale), toolbar \(zoom.label(forSegment: 1) ?? "")"
+            }
+            window?.layoutIfNeeded()
+            #expect(zoom.intrinsicContentSize.width == width, "\(pdf.zoomLabel)")
+        }
     }
 }
 

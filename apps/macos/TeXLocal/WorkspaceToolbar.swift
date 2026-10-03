@@ -208,6 +208,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         control.setImage(symbol("minus.magnifyingglass", "Zoom Out"), forSegment: 0)
         control.setImage(symbol("plus.magnifyingglass", "Zoom In"), forSegment: 2)
         control.setLabel(pdf.zoomLabel, forSegment: 1)
+        control.widestLabel = pdf.widestZoomLabel
         control.setMenu(NSHostingMenu(rootView: ScaleMenuItems(pdf: pdf)), forSegment: 1)
         control.setShowsMenuIndicator(true, forSegment: 1)
         for (index, title) in ["Zoom Out", "Scale", "Zoom In"].enumerated() {
@@ -394,12 +395,36 @@ private final class ShareItem: NSSharingServicePickerToolbarItem {
     }
 }
 
-/// Zoom's segments, whose percentage keeps tabular digits in whatever font the toolbar gives
-/// it as it sizes the control: otherwise the capsule, and the items after it, move with the scale.
+/// Zoom's segments, which keep one width as the scale changes, as a pop-up keeps its widest
+/// item's: otherwise the capsule, and the items after it, move. The percentage keeps tabular
+/// digits in whatever font the toolbar gives the control, in the widest label's width.
 private final class ZoomControl: NSSegmentedControl {
+    var widestLabel = "" { didSet { reserveWidth() } }
+
     override var font: NSFont? {
         get { super.font }
-        set { super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) } }
+        set {
+            super.font = newValue.map { .monospacedDigitSystemFont(ofSize: $0.pointSize, weight: .regular) }
+            reserveWidth()
+        }
+    }
+
+    /// AppKit gives the control the size's own font.
+    override var controlSize: NSControl.ControlSize {
+        didSet { font = font }
+    }
+
+    /// A set width gets the same margins as a label's own: the widest label's width, less them.
+    private func reserveWidth() {
+        guard !widestLabel.isEmpty, segmentCount == 3 else { return }
+        let label = label(forSegment: 1) ?? ""
+        setLabel(widestLabel, forSegment: 1)
+        setWidth(0, forSegment: 1)
+        let widest = intrinsicContentSize.width
+        setWidth(widest, forSegment: 1)
+        let margins = intrinsicContentSize.width - widest
+        setWidth(widest - margins, forSegment: 1)
+        setLabel(label, forSegment: 1)
     }
 }
 
