@@ -470,6 +470,37 @@ struct SourceEditorTests {
         #expect(text.selectedRange() == NSRange(location: 4, length: 3))
     }
 
+    /// Go to Line… is Xcode's field, as measured: 640 × 55 pt, centred on the screen a
+    /// quarter of the way down, empty each time. Return goes to a line of the file and
+    /// closes it; anything else is selected to type over; Escape closes it.
+    @Test func goToLineIsXcodesField() throws {
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
+        open((1...300).map { "line \($0)" }.joined(separator: "\n"), caret: 0)
+        let panel = editor.lineField
+        defer { panel.dismiss(returningKeyboard: false) }
+        func type(_ typed: String, then command: Selector) throws {
+            let field = try #require(panel.firstResponder as? NSTextView)
+            field.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+            field.doCommand(by: command)
+        }
+        editor.goToLine()
+        #expect(panel.isVisible && panel.frame.size == GoToLinePanel.size && panel.isExcludedFromWindowsMenu)
+        let area = try #require(window.screen ?? NSScreen.main).visibleFrame
+        #expect(isClose(panel.frame.midX, area.midX, within: 1))
+        #expect(isClose(panel.frame.maxY, area.maxY - area.height / 4, within: 1))
+        // Past the end: it stays, the text selected.
+        try type("301", then: #selector(NSResponder.insertNewline(_:)))
+        #expect(panel.isVisible && editor.currentLine == 1)
+        #expect((panel.firstResponder as? NSTextView)?.selectedRange() == NSRange(location: 0, length: 3))
+        try type("120", then: #selector(NSResponder.insertNewline(_:)))
+        #expect(!panel.isVisible && editor.currentLine == 120)
+        editor.goToLine()
+        #expect(panel.isVisible && panel.field.stringValue.isEmpty)
+        try type("12", then: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!panel.isVisible && editor.currentLine == 120)
+    }
+
     /// The text's context menu starts with Go to PDF Position, as the PDF's with
     /// Go to Source Position, while there's somewhere to go, over the system's plain-text menu.
     @Test func theContextMenuGoesToThePDF() throws {

@@ -118,7 +118,7 @@ enum MenuCommand: String, CaseIterable {
 
 enum Prompt: Identifiable, Hashable {
     /// In the folder given, or the open file's.
-    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
+    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoPage
 
     var id: Self { self }
 }
@@ -196,7 +196,7 @@ extension AppModel {
         case .editItalic: project?.editor.perform(.italic)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
-        case .editGotoLine: prompt = .gotoLine
+        case .editGotoLine: project?.editor.goToLine()
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()

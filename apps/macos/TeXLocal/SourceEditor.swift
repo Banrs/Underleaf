@@ -161,6 +161,19 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
+    /// Edit › Go to Line…'s field, made the first time it's asked for.
+    private(set) lazy var lineField = GoToLinePanel { [unowned self] line in
+        guard line >= 1, line <= textView.document.lineCount else { return false }
+        reveal(line: line)
+        return true
+    }
+
+    /// Edit › Go to Line…, and the status bar's line and column.
+    func goToLine() {
+        guard let window = textView.window else { return }
+        lineField.show(over: window)
+    }
+
     private func scroll(to offset: Int, atTop: Bool) {
         guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
         let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
