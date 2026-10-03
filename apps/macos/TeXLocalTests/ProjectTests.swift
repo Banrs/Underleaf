@@ -114,7 +114,9 @@ struct CoreTests {
 @MainActor
 @Suite(.serialized)
 final class ProjectFlowTests {
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed, DefaultsKey.sidebarVisible]
+    /// The app's defaults the tests change, its window's frame and dividers among them, put back after.
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed, DefaultsKey.sidebarVisible,
+                        "NSWindow Frame Main Window"] + ["Workspace", "Sidebar", "Columns", "Area"].map { "NSSplitView Subview Frames \($0)" }
     private let kept: [Any?]
     private var folders: [URL] = []
     private let files = FileManager.default

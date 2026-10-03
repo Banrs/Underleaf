@@ -190,7 +190,9 @@ final class WorkspaceLayoutTests {
         // Shown lists, files first, by their rows; and the foot of the sidebar each pane's list ends at.
         let rows = { Self.lists(sidebar).map(\.numberOfRows) }
         let bottoms = { Self.lists(sidebar).map { list in
-            let frame = list.enclosingScrollView!.convert(list.enclosingScrollView!.bounds, to: sidebar)
+            // Not forced: a trap would end the whole run with the app's defaults unrestored.
+            let scroll: NSView = list.enclosingScrollView ?? list
+            let frame = scroll.convert(scroll.bounds, to: sidebar)
             return sidebar.isFlipped ? sidebar.bounds.height - frame.maxY : frame.minY
         } }
         let state = { "rows \(rows()), above the foot \(bottoms()), outline collapsed \(workspace.outlineItem.isCollapsed)" }
