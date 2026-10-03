@@ -24,6 +24,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     var page = 0
     /// The page a reopened project's first PDF opens at.
     @ObservationIgnored var restorePage: Int?
+    /// A forward search's spot, until the view has a size to show it in.
+    @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
     var pageCount = 0
     /// The field text can be ahead of the completed PDFKit query.
     var finding = false
@@ -51,6 +53,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             guard let self else { return }
             if fit == .height { fitHeight() }
             restorePageIfReady()
+            if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
         }
         // PDFViewScaleChanged comes only as a pinch ends; magnification follows each step.
         magnification = view.subviews.lazy.compactMap { $0 as? NSScrollView }.first?
@@ -224,6 +227,38 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         go(toPage: number)
     }
 
+    /// A forward search's spot a third of the way down the view, the source's word
+    /// marked as Find marks a match; or SyncTeX's box, when the word can't be told
+    /// from its neighbours or the find bar holds the selection.
+    func reveal(_ loc: ForwardLoc, word: SyncTeXWord?) {
+        guard view.bounds.width > 0, view.shownHeight > 0 else {
+            pendingReveal = (loc, word)
+            return
+        }
+        pendingReveal = nil
+        guard let document = view.document, let locatedPage = document.page(at: Int(loc.page) - 1) else { return }
+        // The source occurrence can wrap beyond the first SyncTeX box.
+        let match = word.flatMap { document.bounds(of: $0, near: loc.matches ?? [loc]) }
+        let page = match?.page ?? locatedPage
+        let rect = match?.rect ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        // A destination lands below the toolbar, a rect under it.
+        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
+        if let selection = match?.selection, !finding {
+            selection.color = .findHighlightColor
+            view.setCurrentSelection(selection, animate: true)
+            return
+        }
+        let mark = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
+        mark.color = NSColor.findHighlightColor.withAlphaComponent(0.4)
+        mark.interiorColor = mark.color
+        mark.border = nil
+        page.addAnnotation(mark)
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            page.removeAnnotation(mark)
+        }
+    }
+
     func step(_ delta: Int) {
         guard !matches.isEmpty else { return }
         matchIndex = (matchIndex + delta + matches.count) % matches.count
@@ -262,7 +297,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 final class SyncPDFView: PDFView {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
-    var highlightToken = 0
     private let pagesDark = Atomic(false)
 
     var darkPaper = false {
@@ -387,30 +421,6 @@ struct PDFRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: SyncPDFView, context: Context) {
         project.pdf.setDarkPaper(darkPaper)
-        // Only on the current build's pages: the jump would be lost to the swap.
-        if let highlight = project.highlight, highlight.token != view.highlightToken {
-            view.highlightToken = highlight.token
-            flash(highlight.loc, word: highlight.word, in: view)
-        }
-    }
-
-    /// The source occurrence can wrap beyond the first SyncTeX box.
-    private func flash(_ loc: ForwardLoc, word: SyncTeXWord?, in view: SyncPDFView) {
-        guard let document = view.document, let locatedPage = document.page(at: Int(loc.page) - 1) else { return }
-        let match = word.flatMap { document.bounds(of: $0, near: loc.matches ?? [loc]) }
-        let page = match?.page ?? locatedPage
-        let rect = match?.rect ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
-        let mark = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
-        mark.color = NSColor.systemYellow.withAlphaComponent(0.4)
-        mark.interiorColor = mark.color
-        mark.border = nil
-        page.addAnnotation(mark)
-        // A third of the way down what shows: a destination lands below the toolbar, a rect under it.
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
-        Task {
-            try? await Task.sleep(for: .seconds(2.2))
-            page.removeAnnotation(mark)
-        }
     }
 }
 
@@ -429,9 +439,11 @@ extension PDFPage {
 }
 
 extension PDFDocument {
+    typealias SyncMatch = (page: PDFPage, rect: CGRect, selection: PDFSelection)
+
     /// Align the source line with rendered text first, so equal words retain their occurrence.
     /// SyncTeX boxes delimit the fallback when commands prevent an exact text alignment.
-    func bounds(of word: SyncTeXWord, near locations: [ForwardLoc]) -> (page: PDFPage, rect: CGRect)? {
+    func bounds(of word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
         guard !locations.isEmpty, pageCount > 0 else { return nil }
         let first = max(0, Int(locations.map(\.page).min()!) - 2)
         let last = min(pageCount - 1, Int(locations.map(\.page).max()!))
@@ -446,16 +458,16 @@ extension PDFDocument {
         let source = SyncText(word.context, source: true), target = SyncText(word.text).letters
         guard !target.isEmpty else { return nil }
         let at = source.ranges.firstIndex { $0.location >= word.contextOffset } ?? source.letters.count
-        func rect(at start: Int, length: Int) -> (page: PDFPage, rect: CGRect)? {
+        func rect(at start: Int, length: Int) -> SyncMatch? {
             guard start >= 0, start + length <= positions.count else { return nil }
             let first = positions[start]
             let samePage = positions[start..<start + length].prefix { $0.page === first.page }
             guard let end = samePage.last,
                   let selection = first.page.selection(for: NSRange(location: first.range.location,
                                                                     length: NSMaxRange(end.range) - first.range.location)) else { return nil }
-            return (first.page, selection.bounds(for: first.page))
+            return (first.page, selection.bounds(for: first.page), selection)
         }
-        func distance(_ hit: (page: PDFPage, rect: CGRect)) -> CGFloat {
+        func distance(_ hit: SyncMatch) -> CGFloat {
             let index = index(for: hit.page) + 1
             return locations.map { loc in
                 let box = SyncTeXGeometry.highlightRect(loc, pageBounds: hit.page.bounds(for: .cropBox))
@@ -466,7 +478,7 @@ extension PDFDocument {
         }
         if at + target.count <= source.letters.count,
            source.letters[at..<at + target.count].elementsEqual(target) {
-            let exact = SyncText.matches(source.letters, in: letters).compactMap { start -> (target: (page: PDFPage, rect: CGRect), distance: CGFloat, anchor: CGFloat)? in
+            let exact = SyncText.matches(source.letters, in: letters).compactMap { start -> (target: SyncMatch, distance: CGFloat, anchor: CGFloat)? in
                 guard let anchor = rect(at: start, length: 1), let end = rect(at: start + source.letters.count - 1, length: 1),
                       let target = rect(at: start + at, length: target.count) else { return nil }
                 // Both context ends constrain rotations of identical sentences across paragraphs.
@@ -478,7 +490,7 @@ extension PDFDocument {
             }
         }
         let before = Array(source.letters.prefix(at)), after = Array(source.letters.dropFirst(min(at + target.count, source.letters.count)))
-        let candidates = SyncText.matches(target, in: letters).compactMap { start -> (hit: (page: PDFPage, rect: CGRect), context: Int, distance: CGFloat)? in
+        let candidates = SyncText.matches(target, in: letters).compactMap { start -> (hit: SyncMatch, context: Int, distance: CGFloat)? in
             guard let hit = rect(at: start, length: target.count) else { return nil }
             let page = Double(index(for: hit.page) + 1)
             let boxes = locations.filter { $0.page == page }.map { SyncTeXGeometry.highlightRect($0, pageBounds: hit.page.bounds(for: .cropBox)) }

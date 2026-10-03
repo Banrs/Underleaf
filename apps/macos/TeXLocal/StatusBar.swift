@@ -15,16 +15,16 @@ struct StatusBar: View {
                 .help("Show Issues")
             Spacer(minLength: 0)
             let counts = project.editsText && app.showWordCount ? project.counts : nil
-            let pages = project.showPDF && project.hasPDF && project.pdf.pageCount > 0
+            let pages = app.showPDF && project.hasPDF
             if let counts {
                 Text("^[\(counts.words) word](inflect: true)")
                     .foregroundStyle(.secondary)
                     .layoutPriority(-1)
             }
             if pages {
-                if let freshness = project.pdfFreshness, freshness == .lastSuccessful {
+                if project.showsLastSuccessfulBuild {
                     Button { project.showBuildPanel() } label: {
-                        Label(freshness.title, systemImage: freshness.systemImage)
+                        Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
                             .labelStyle(.titleAndIcon)
                     }
                     .help("The latest build failed; this is the last one that succeeded. Show Issues")

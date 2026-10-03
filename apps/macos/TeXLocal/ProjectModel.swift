@@ -1,7 +1,5 @@
 import AppKit
 import Observation
-import PDFKit
-import UserNotifications
 
 /// One open project: its files, the document in the editor, and its builds.
 @Observable
@@ -22,17 +20,10 @@ final class ProjectModel {
     private(set) var topHeading: Int?
 
     var dirty = false
-    var saving = false
     var compiling = false
     var result: CompileResult?
-    /// Bumped when the viewer loads a PDF, so its panes update.
-    var pdfVersion = 0
+    /// The PDF the viewer shows; nil until one loads.
     var pdfURL: URL?
-    private(set) var pdfDocument: PDFDocument?
-    private var pdfStamp: PDFStamp?
-    var pdfFreshness: PDFFreshness?
-    /// The token lets the same spot be flashed twice.
-    var highlight: (loc: ForwardLoc, word: SyncTeXWord?, token: Int)?
     var showLogs = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
@@ -42,11 +33,6 @@ final class ProjectModel {
     func showBuildPanel() {
         panelTab = .issues
         showLogs = true
-    }
-
-    /// Shared across projects and launches.
-    var showPDF = UserDefaults.standard.bool(forKey: DefaultsKey.showPDF) {
-        didSet { UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF) }
     }
 
     /// The open file on disk, for the window's document icon.
@@ -61,11 +47,10 @@ final class ProjectModel {
     private var diskText: String?
     private var folderWatcher: FolderWatcher?
     private var treeReload: Task<Void, Never>?
-    private var diskCheck: Task<Void, Never>?
 
     var importClash: ImportClash?
 
-    var searchQuery = "" { didSet { scheduleSearch() } }
+    var searchQuery = ""
     var isSearching: Bool { !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty }
     /// The latest finished search's hits: nil until the first for a query ends,
     /// so its results pane doesn't read No Results while it runs.
@@ -75,48 +60,25 @@ final class ProjectModel {
     private weak var app: AppModel?
     private let core = Core.shared
     private var saveTask: Task<Void, Never>?
-    /// Saves, settings, renames and deletions finish in order, including their model updates.
+    /// Saves, settings, renames, deletions and disk checks finish in order, including their model updates.
     private var lastMutation: Task<Bool, Never>?
-    private var searchTask: Task<Void, Never>?
     private var analysis: Task<Void, Never>?
     private var symbolsTask: Task<Void, Never>?
-    @ObservationIgnored private var syncGeneration = 0
-    /// Bumped by each `open`, so an earlier one still in flight stands down.
-    private var openGeneration = 0
-    /// Changes to the main file invalidate a build that started for its old PDF.
-    private var mainFileGeneration = 0
-    private var pdfLoadGeneration = 0
+    // Each of these is cancelled by the next request of its kind, which then has the editor or viewer.
+    private var openTask: Task<Void, Never>?
+    private var syncTask: Task<Void, Never>?
+    private var pdfLoad: Task<Bool, Never>?
     /// The build asked for while one runs: automatic unless any request wasn't.
     private var compileQueued: Bool?
     /// Stop while the build's save runs, before the core has a build to stop.
     private var stopRequested = false
     /// A build still running when the project closes reports nothing.
     private var closed = false
-    /// Writes that reached the disk while a build may still be running.
-    private var writes = 0
 
     /// Long enough to cover a pause between keystrokes.
     private static let autosaveDelay = Duration.milliseconds(700)
-    /// Each search reads every file in the project; wait for typing to pause.
-    private static let searchDelay = Duration.milliseconds(200)
     /// Several saves during a typing burst need only one symbols scan.
     private static let symbolsDelay = Duration.milliseconds(150)
-
-    private struct PDFStamp: Equatable {
-        let modified: Date
-        let bytes: UInt64
-        let fileNumber: UInt64
-
-        init?(_ url: URL) {
-            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false)),
-                  let modified = attributes[.modificationDate] as? Date,
-                  let bytes = attributes[.size] as? NSNumber,
-                  let fileNumber = attributes[.systemFileNumber] as? NSNumber else { return nil }
-            self.modified = modified
-            self.bytes = bytes.uint64Value
-            self.fileNumber = fileNumber.uint64Value
-        }
-    }
 
     init(id: String, app: AppModel) {
         self.id = id
@@ -130,14 +92,16 @@ final class ProjectModel {
     }
     var editsText: Bool { openPath.map(isTextFile) ?? false }
     var hasUnsavedText: Bool { dirty && openPath != nil && editor.path == openPath }
-    var hasPDF: Bool { pdfVersion > 0 }
+    var hasPDF: Bool { pdfURL != nil }
 
     var errorCount: Int { result?.errors.count ?? 0 }
     var warningCount: Int { result?.warnings.count ?? 0 }
 
     /// A PDF from before the project opened may be on screen, but its
     /// build's issues weren't kept.
-    var noBuildTitle: String { pdfVersion > 0 ? "Not Built Since Opening" : "Not Compiled" }
+    var noBuildTitle: String { hasPDF ? "Not Built Since Opening" : "Not Compiled" }
+    /// The latest build failed without writing a PDF, so the one shown is an earlier build's.
+    var showsLastSuccessfulBuild: Bool { hasPDF && result?.failed == true && result?.pdf == nil }
     var texAvailable: Bool { app?.tex?.available ?? false }
     var autoCompile: Bool { app?.autoCompile ?? false }
 
@@ -145,7 +109,9 @@ final class ProjectModel {
         app?.alert = AppAlert(title, error)
     }
 
-    private func name(_ path: String) -> String { (path as NSString).lastPathComponent }
+    /// The tree's entry at a project path.
+    func node(at path: String) -> TreeNode? { tree.flattened.first { $0.path == path } }
+    var folders: [String] { tree.flattened.filter(\.isDirectory).map(\.path) }
 
     var saved: SavedWorkspace {
         SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.restorePage ?? pdf.page)
@@ -179,15 +145,10 @@ final class ProjectModel {
                 showLogs = saved.buildPanel
                 pdf.restorePage = saved.pdfPage
             }
-            let restored = saved?.file.flatMap { file in tree.flattened.contains { $0.path == file } ? file : nil }
+            let restored = saved?.file.flatMap { node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
             // The workspace is installed only after its first outline is ready.
-            // A file watcher can replace an analysis while we wait.
-            repeat {
-                let pending = analysis
-                await pending?.value
-                if pending == analysis { break }
-            } while !closed
+            await analysis?.value
         } catch {
             if !closed { report(error, "Couldn’t Open “\(id)”") }
         }
@@ -223,63 +184,55 @@ final class ProjectModel {
         }
     }
 
+    /// The main file's PDF on disk, unless a later load replaces this one. A no-op
+    /// build's PDF is already shown: reopening every page would lose PDFKit's state.
     @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true) async -> Bool {
-        pdfLoadGeneration += 1
-        let generation = mainFileGeneration, load = pdfLoadGeneration
-        guard !closed else { return false }
-        guard let path = try? await core.call("pdf_path", ["id": id], as: String.self) else { return false }
-        guard !closed, generation == mainFileGeneration, load == pdfLoadGeneration else { return false }
-        let url = URL(fileURLWithPath: path)
-        // The PDF already loaded was validated when it was first shown.
-        // A no-op build need not reopen every page to keep that document.
-        let stamp = PDFStamp(url)
-        if !reloadIfUnchanged, url == pdfURL, let stamp, stamp == pdfStamp { return true }
-        guard let document = await PDFController.loadDocument(url) else { return false }
-        guard !closed, generation == mainFileGeneration, load == pdfLoadGeneration else { return false }
-        pdfURL = url
-        pdfDocument = document
-        pdf.show(document)
-        pdfStamp = stamp
-        pdfVersion += 1
-        return true
-    }
-
-    private func fileURL(_ path: String) async -> URL? {
-        (try? await core.call("raw_path", ["id": id, "path": path], as: String.self)).map(URL.init(fileURLWithPath:))
+        pdfLoad?.cancel()
+        let load = Task {
+            guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
+                  !Task.isCancelled, !closed else { return false }
+            let url = URL(fileURLWithPath: path)
+            if !reloadIfUnchanged, url == pdfURL { return true }
+            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed else { return false }
+            pdfURL = url
+            pdf.show(document)
+            return true
+        }
+        pdfLoad = load
+        return await load.value
     }
 
     // ---------- editing ----------
 
     /// Text opens in the editor, anything else in a preview. The sidebar
-    /// passes `focus: false` so the arrow keys stay in its list.
-    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true,
-              stillCurrent: (@MainActor () -> Bool)? = nil) async {
-        guard stillCurrent?() != false else { return }
-        // Only the latest open carries on, so the editor can't show one file
-        // while `openPath`, where autosave writes, names another. Checked
-        // after the last await before the editor.
-        openGeneration += 1
-        let generation = openGeneration
-        if path != openPath {
-            guard await saveEdits(), generation == openGeneration, stillCurrent?() != false else { return }
-            do {
-                let text = isTextFile(path) ? try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text : nil
-                let url = await fileURL(path)
-                guard generation == openGeneration, !closed, stillCurrent?() != false else { return }
-                openPath = path
-                openURL = url
-                diskText = text
-                analyze()
-                if let text {
-                    editor.open(path: path, text: text, focus: focus)
-                    cursorLine = editor.currentLine
+    /// passes `focus: false` so the arrow keys stay in its list. Only the latest
+    /// open carries on, so the editor can't show one file while `openPath`,
+    /// where autosave writes, names another.
+    func open(_ path: String, line: Int? = nil, column: Int? = nil, atTop: Bool = false, focus: Bool = true) async {
+        openTask?.cancel()
+        let task = Task {
+            if path != openPath {
+                guard await saveEdits(), !Task.isCancelled, !closed else { return }
+                do {
+                    let text = isTextFile(path) ? try await core.call("read_file", ["id": id, "path": path], as: FileText.self).text : nil
+                    guard !Task.isCancelled, !closed else { return }
+                    openPath = path
+                    openURL = url(path)
+                    diskText = text
+                    analyze()
+                    if let text {
+                        editor.open(path: path, text: text, focus: focus)
+                        cursorLine = editor.currentLine
+                    }
+                } catch {
+                    if !Task.isCancelled, !closed { report(error, "Couldn’t Open “\(path.fileName)”") }
+                    return
                 }
-            } catch {
-                if !closed, stillCurrent?() != false { report(error, "Couldn’t Open “\(name(path))”") }
-                return
             }
+            if let line, editsText, !Task.isCancelled, !closed { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
         }
-        if let line, editsText, generation == openGeneration, !closed { editor.reveal(line: line, column: column, atTop: atTop, focus: focus) }
+        openTask = task
+        await task.value
     }
 
     /// A file of the project on disk, to drag out; nil until its folder is watched.
@@ -292,26 +245,18 @@ final class ProjectModel {
         folderWatcher?.relativePath(FolderWatcher.realPath(url))
     }
 
-    /// A file dropped on the source: the project's own opens in the editor, and a
-    /// project from elsewhere opens as it would from the Dock.
+    /// A file of the project dropped on the source opens in the editor; one from elsewhere goes on the sidebar.
     private func dropped(_ url: URL) -> (() -> Void)? {
-        if let path = projectPath(url) {
-            guard tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) else { return nil }
-            return { [weak self] in Task { await self?.open(path) } }
-        }
-        guard AppModel.canOpen(url) else { return nil }
-        return { [weak app] in app?.pendingImport = url }
+        guard let path = projectPath(url), node(at: path)?.isDirectory == false else { return nil }
+        return { [weak self] in Task { await self?.open(path) } }
     }
 
     func showInFinder(_ path: String) {
-        Task {
-            if let url = await fileURL(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-        }
+        if let url = self.url(path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
     private func edited() {
         dirty = true
-        if pdfVersion > 0, pdfFreshness == nil { pdfFreshness = .edited }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.autosaveDelay)
@@ -334,21 +279,18 @@ final class ProjectModel {
         guard diskConflict == nil, missingFile == nil else { return false }
         // The editor's text, which is the open file's: they change together.
         let (path, text) = document
-        saving = true
-        defer { saving = false }
         // An edit during the write marks it dirty again, and its own save follows.
         dirty = false
         do {
             // Before the write, so its own change event matches.
             diskText = text
             try await core.perform("write_file", ["id": id, "path": path, "text": text])
-            writes += 1
             analyze()
             refreshSymbols(delayed: true)
             return true
         } catch {
             dirty = true
-            report(error, "“\(name(path))” Wasn’t Saved")
+            report(error, "“\(path.fileName)” Wasn’t Saved")
             return false
         }
     }
@@ -405,7 +347,7 @@ final class ProjectModel {
     /// it shows; what it shows (not hidden files or the build's) is the core's.
     private func folderChanged(_ changes: [FolderWatcher.Change]) {
         guard let watcher = folderWatcher else { return }
-        let folders = Set(tree.flattened.filter(\.isDirectory).map(\.path))
+        let folders = Set(self.folders)
         var openFileChanged = false, treeChanged = false
         for change in changes {
             guard let path = watcher.relativePath(change.path) else {
@@ -419,17 +361,17 @@ final class ProjectModel {
             // A folder moves as one change, not one for each file in it.
             openFileChanged = openFileChanged || path == openPath
                 || change.structural && openPath?.hasPrefix(path + "/") == true
-            let parent = (path as NSString).deletingLastPathComponent
+            let parent = path.parentFolder
             treeChanged = treeChanged || change.structural && (parent.isEmpty || folders.contains(parent))
         }
-        // A newer check or reload replaces one that hasn't started.
         if openFileChanged {
-            diskCheck?.cancel()
-            diskCheck = Task { [weak self] in
-                guard !Task.isCancelled else { return }
-                await self?.checkDisk()
+            // In the mutation lane, so our own rename or write is never read as another app's change.
+            Task { [weak self] in
+                guard let self, await mutate(nil, { await $0.checkDisk() }), autoCompile else { return }
+                await compile(auto: true)
             }
         }
+        // A newer reload replaces one that hasn't started.
         if treeChanged {
             treeReload?.cancel()
             treeReload = Task { [weak self] in
@@ -439,35 +381,23 @@ final class ProjectModel {
         }
     }
 
-    /// With no unsaved edits the editor takes the disk's text; otherwise ask.
-    private func checkDisk() async {
-        // Our own rename or write must finish before its event is read as an external change.
-        var mutation: Task<Bool, Never>?
-        repeat {
-            mutation = lastMutation
-            _ = await mutation?.value
-        } while mutation != lastMutation && !closed && !Task.isCancelled
-        guard let path = openPath, !closed, !Task.isCancelled else { return }
+    /// With no unsaved edits the editor takes the disk's text, and true says so; otherwise ask.
+    private func checkDisk() async -> Bool {
+        guard let path = openPath else { return false }
         if let url = openURL, !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             fileGone(path)
-            return
+            return false
         }
-        guard editsText else { return }
-        guard let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
-              path == openPath, !closed, !Task.isCancelled
-        else { return }
-        guard mutation == lastMutation else { return await checkDisk() }
-        guard file.text != diskText else { return }
+        guard editsText, let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
+              path == openPath, !closed, file.text != diskText else { return false }
         diskText = file.text
-        writes += 1
-        if pdfVersion > 0 { pdfFreshness = .edited }
-        if dirty || saving {
+        guard !dirty else {
             saveTask?.cancel()
             diskConflict = path
-        } else {
-            showDiskText(file.text, of: path)
-            if autoCompile { await compile(auto: true) }
+            return false
         }
+        showDiskText(file.text, of: path)
+        return true
     }
 
     /// Another app moved or deleted the open file. It closes, as the sidebar
@@ -475,7 +405,7 @@ final class ProjectModel {
     /// saved meanwhile, which would put the file back unasked.
     private func fileGone(_ path: String) {
         saveTask?.cancel()
-        if hasUnsavedText || saving {
+        if hasUnsavedText {
             missingFile = path
         } else {
             clearOpenFile()
@@ -502,19 +432,18 @@ final class ProjectModel {
         cursorLine = editor.currentLine
     }
 
-    func revertToDisk() async {
-        guard let text = diskText else { return }
-        let generation = openGeneration
+    /// The disk's text of `path`, the file the alert asked about, written back in case
+    /// a save under way when the change came wrote the edits over it.
+    func revertToDisk(_ path: String) async {
         diskConflict = nil
         saveTask?.cancel()
-        _ = await lastMutation?.value
-        guard let path = openPath, !closed, generation == openGeneration else { return }
-        showDiskText(text, of: path)
-        // Written back, in case a save under way when the change came
-        // wrote the edits over it.
-        dirty = true
-        guard await save() else { return }
-        if autoCompile { await compile(auto: true) }
+        let reverted = await mutate { model in
+            guard model.openPath == path, let text = model.diskText else { return false }
+            model.showDiskText(text, of: path)
+            model.dirty = true
+            return await model.write()
+        }
+        if reverted, autoCompile { await compile(auto: true) }
     }
 
     /// The next save writes these edits over the other app's.
@@ -539,42 +468,20 @@ final class ProjectModel {
         // Before the save, so a second request queues instead of racing this one.
         compiling = true
         stopRequested = false
+        // Through the mutation lane, after the settings and renames asked for before.
         let saved = await flush()
-        let settingsGeneration = mainFileGeneration
-        _ = await lastMutation?.value
-        let built = writes
-        let mainFile = settings?.mainFile
-        let mainFileGeneration = self.mainFileGeneration
-        func currentBuild() -> Bool {
-            !closed && mainFileGeneration == self.mainFileGeneration && mainFile == settings?.mainFile
-        }
-        if saved, !stopRequested, !closed, settingsGeneration == mainFileGeneration {
+        if saved, !stopRequested, !closed {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
-                // A main-file change queues a new build. Its older predecessor
-                // must not replace that file's PDF, issues or build status.
-                if currentBuild() {
-                    // A no-op latexmk run keeps PDFKit's document and find state.
-                    // A different output path always loads, even without new bytes.
-                    let showedPDF = if result.pdf != nil {
-                        await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged)
-                    } else { false }
-                    if currentBuild() {
-                        syncGeneration += 1
-                        self.result = result
-                        if showedPDF {
-                            // Edits or saves made while it built aren't in it.
-                            pdfFreshness = dirty || writes != built ? .edited : nil
-                        } else if !result.stopped, pdfVersion > 0 {
-                            pdfFreshness = .lastSuccessful
-                        }
-                        if result.failed, !auto || result.pdf == nil { showBuildPanel() }
-                        if result.ok, panelTab == .issues, result.errors.isEmpty, result.warnings.isEmpty { showLogs = false }
-                        if !result.stopped { notify(result) }
-                    }
+                // The PDF is the main file's now: a main-file change stopped any build of the old one.
+                if result.pdf != nil, !closed { await showPDFOnDisk(reloadIfUnchanged: result.pdfChanged) }
+                if !closed {
+                    self.result = result
+                    if result.failed, !auto || result.pdf == nil { showBuildPanel() }
+                    if result.ok, panelTab == .issues, result.errors.isEmpty, result.warnings.isEmpty { showLogs = false }
                 }
             } catch {
-                if !auto, currentBuild() { report(error, "Couldn’t Compile") }
+                if !auto, !closed { report(error, "Couldn’t Compile") }
             }
         }
         compiling = false
@@ -584,36 +491,19 @@ final class ProjectModel {
         if let again { await compile(auto: again) }
     }
 
-    private func notify(_ result: CompileResult) {
-        guard !NSApp.isActive else { return }
-        let content = UNMutableNotificationContent()
-        // The system already shows the app's name.
-        content.title = id
-        content.body = switch (result.ok, result.errors.count) {
-        case (true, _): "Compiled in \(result.durationText)"
-        case (false, 0): "Build failed"
-        case (false, 1): "Build failed with 1 error"
-        case (false, let n): "Build failed with \(n) errors"
-        }
-        let center = UNUserNotificationCenter.current()
-        Task {
-            _ = try? await center.requestAuthorization(options: [.alert])
-            try? await center.add(UNNotificationRequest(identifier: "compile.\(id)", content: content, trigger: nil))
-        }
-    }
-
-    /// A build still running reports and queues nothing, so it can't
-    /// supersede the next project's.
+    /// A build still running stops and reports nothing, so it can't supersede the next project's.
     func close() {
+        stopCompile()
         closed = true
         compileQueued = nil
         folderWatcher = nil
         saveTask?.cancel()
-        searchTask?.cancel()
         analysis?.cancel()
         symbolsTask?.cancel()
         treeReload?.cancel()
-        diskCheck?.cancel()
+        openTask?.cancel()
+        syncTask?.cancel()
+        pdfLoad?.cancel()
     }
 
     /// Kills the build's process group; the compile returns stopped.
@@ -643,7 +533,7 @@ final class ProjectModel {
     }
 
     @discardableResult
-    private func patchSettings(_ patch: [String: Any]) async -> Bool {
+    func patchSettings(_ patch: [String: Any]) async -> Bool {
         await mutate("Couldn’t Change the Project’s Settings") { model in
             let updated = try await model.core.call("set_settings", ["id": model.id, "patch": patch], as: ProjectSettings.self)
             guard !model.closed else { return false }
@@ -656,70 +546,50 @@ final class ProjectModel {
         if await patchSettings(["engine": engine]) { await compile() }
     }
 
-    func setShellEscape(_ on: Bool) async {
-        await patchSettings(["shellEscape": on])
-    }
-
-    func setStopOnFirstError(_ on: Bool) async {
-        await patchSettings(["stopOnFirstError": on])
-    }
-
     func setMainFile(_ path: String) async {
-        guard !closed else { return }
-        mainFileGeneration += 1
-        syncGeneration += 1
-        let generation = mainFileGeneration
-        _ = await patchSettings(["mainFile": path])
-        guard !closed, generation == mainFileGeneration else { return }
-        // Also resettle after a failed patch: an older in-flight build was
-        // discarded, and an earlier queued main-file patch may have succeeded.
-        await mainFileChanged()
+        if await patchSettings(["mainFile": path]), !closed { await mainFileChanged() }
     }
 
     // ---------- SyncTeX ----------
 
+    /// Each sync replaces the one before; the PDF pane shows the spot once it has its width.
     func forwardSync() async {
         guard let path = openPath else { return }
-        syncGeneration += 1
-        let generation = syncGeneration, opened = openGeneration, version = pdfVersion
-        let selection = editor.textView.selectedRange(), text = editor.textView.string
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
-        func current() -> Bool {
-            !closed && generation == syncGeneration && opened == openGeneration && version == pdfVersion
-                && app?.project === self && openPath == path && editor.textView.selectedRange() == selection && editor.textView.string == text
+        syncTask?.cancel()
+        let task = Task {
+            guard await saveEdits(), !Task.isCancelled, !closed, openPath == path else { return }
+            // Only on the pages it was found in: a rebuild may have moved it.
+            let document = pdf.view.document
+            do {
+                let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
+                guard !Task.isCancelled, !closed, openPath == path, pdf.view.document === document else { return }
+                app?.requestPDF(.reveal(loc, word))
+            } catch {
+                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }
+            }
         }
-        guard await saveEdits(), current() else { return }
-        do {
-            let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
-            guard current() else { return }
-            highlight = (loc, word, generation)
-            showPDF = true
-        } catch {
-            if current() { report(error, "Couldn’t Find This Line in the PDF") }
-        }
+        syncTask = task
+        await task.value
     }
 
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
     func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
-        syncGeneration += 1
-        let generation = syncGeneration, opened = openGeneration, version = pdfVersion, path = openPath
-        let selection = editor.textView.selectedRange(), text = editor.textView.string
-        func current(checkOpen: Bool = true) -> Bool {
-            !closed && generation == syncGeneration && (!checkOpen || opened == openGeneration) && version == pdfVersion
-                && app?.project === self && openPath == path && editor.textView.selectedRange() == selection && editor.textView.string == text
+        syncTask?.cancel()
+        let task = Task {
+            do {
+                // A nil word bridges as null, which the core reads as none.
+                let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
+                                           "context": word?.context as Any, "contextOffset": word?.contextOffset as Any]
+                let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
+                guard !Task.isCancelled, !closed else { return }
+                await open(loc.file, line: loc.line, column: loc.column)
+            } catch {
+                if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Spot in the Source") }
+            }
         }
-        do {
-            // A nil word bridges as null, which the core reads as none.
-            let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
-                                       "context": word?.context as Any, "contextOffset": word?.contextOffset as Any]
-            let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
-            guard current() else { return }
-            let opening = openGeneration + 1
-            await open(loc.file, line: loc.line, column: loc.column, stillCurrent: { current(checkOpen: false) })
-            if generation == syncGeneration, opening == openGeneration, !closed, app?.project === self, openPath == loc.file { editor.focus() }
-        } catch {
-            if current() { report(error, "Couldn’t Find This Spot in the Source") }
-        }
+        syncTask = task
+        await task.value
     }
 
     // ---------- files ----------
@@ -731,61 +601,41 @@ final class ProjectModel {
     }
 
     func renameEntry(_ from: String, to: String) async {
-        guard to != from else { return }
-        guard await saveEdits() else { return }
-        var reopen: (path: String, generation: Int)?
+        guard to != from, await saveEdits() else { return }
+        var reopen: String?
         var mainChanged = false
-        _ = await mutate("Couldn’t Rename “\(name(from))”") { model in
-            let main = model.settings?.mainFile
-            let opened = model.openGeneration
-            mainChanged = main.map { remapPath($0, from: from, to: to) != $0 } ?? false
-            if mainChanged {
-                model.mainFileGeneration += 1
-                model.syncGeneration += 1
-            }
+        _ = await mutate("Couldn’t Rename “\(from.fileName)”") { model in
             let result = try await model.core.call("rename_entry", ["id": model.id, "from": from, "to": to], as: RenameResult.self)
             guard !model.closed else { return false }
             model.editor.rename(from: result.from, to: result.to)
             // The open file may move with its folder. The editor keeps its
             // text; only the save path changes, so the old path can't return.
-            let wasOpen = model.openPath
-            model.openPath = model.openPath.map { remapPath($0, from: result.from, to: result.to) }
-            if let openPath = model.openPath, let wasOpen, openPath != wasOpen {
-                model.openURL = model.url(openPath)
-                if isTextFile(openPath) != isTextFile(wasOpen) || isLaTeXFile(openPath) != isLaTeXFile(wasOpen) {
-                    reopen = (openPath, opened)
-                }
+            if let was = model.openPath, case let now = remapPath(was, from: result.from, to: result.to), now != was {
+                model.openPath = now
+                model.openURL = model.url(now)
+                // Its new kind may edit or preview it differently.
+                if isTextFile(now) != isTextFile(was) || isLaTeXFile(now) != isLaTeXFile(was) { reopen = now }
             }
+            mainChanged = result.mainFile != model.settings?.mainFile
             model.settings = model.settings.map {
                 ProjectSettings(mainFile: result.mainFile, engine: $0.engine,
                                 shellEscape: $0.shellEscape, stopOnFirstError: $0.stopOnFirstError)
-            }
-            if !mainChanged, result.mainFile != main {
-                model.mainFileGeneration += 1
-                model.syncGeneration += 1
-                mainChanged = true
             }
             return true
         }
         // Opening flushes edits, so it must run after this mutation releases the queue.
         guard !closed else { return }
-        if let reopen, openPath == reopen.path, openGeneration == reopen.generation,
-           await saveEdits(), !closed, openPath == reopen.path, openGeneration == reopen.generation {
+        if let reopen, openPath == reopen, await flush(), !closed, openPath == reopen {
             clearOpenFile()
-            await open(reopen.path, focus: false)
-        } else if let path = openPath, openURL == nil {
-            let url = await fileURL(path)
-            if !closed, openPath == path { openURL = url }
+            await open(reopen, focus: false)
         }
         await reloadTree()
         if mainChanged, !closed { await mainFileChanged() }
     }
 
     func deleteEntry(_ path: String) async {
-        // Save before Trash so an autosave cannot recreate the deleted file.
-        guard await saveEdits() else { return }
-        let deleted = await mutate("Couldn’t Move “\(name(path))” to the Trash") { model in
-            // Include edits made while this deletion waited behind another mutation.
+        let deleted = await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
+            // Saved first, so an autosave cannot recreate the deleted file.
             repeat {
                 guard await model.write() else { return false }
             } while model.hasUnsavedText
@@ -801,7 +651,6 @@ final class ProjectModel {
     /// No file editing: the editor may still hold the old text, but nothing saves or analyses it.
     private func clearOpenFile() {
         analysis?.cancel()
-        diskCheck?.cancel()
         openPath = nil
         openURL = nil
         diskText = nil
@@ -810,15 +659,13 @@ final class ProjectModel {
         counts = nil
     }
 
-    /// Update the main file's PDF path while keeping the old preview until replacement.
+    /// The new main file's PDF, if it has one, replaces the old one's; a build of
+    /// the old one stops (the core reports it stopped) and a build of the new one follows.
     private func mainFileChanged() async {
         analyze()
-        let generation = mainFileGeneration
-        _ = await lastMutation?.value
-        guard !closed, generation == mainFileGeneration else { return }
+        stopCompile()
         await showPDFOnDisk()
-        guard !closed, generation == mainFileGeneration else { return }
-        await compile(auto: true)
+        if !closed { await compile(auto: true) }
     }
 
     /// Files dropped on the tree: the project's own move into `dir`, as in Finder,
@@ -828,10 +675,8 @@ final class ProjectModel {
         for url in urls {
             guard let path = projectPath(url) else { outside.append(url); continue }
             // Not into the folder it's in, nor a folder into itself.
-            let folder = (path as NSString).deletingLastPathComponent
-            guard folder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
-            let name = (path as NSString).lastPathComponent
-            await renameEntry(path, to: dir.isEmpty ? name : "\(dir)/\(name)")
+            guard path.parentFolder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
+            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)")
         }
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }
@@ -864,19 +709,14 @@ final class ProjectModel {
 
     // ---------- search ----------
 
-    private func scheduleSearch() {
-        searchTask?.cancel()
-        let query = searchQuery
+    /// Hits for the current query, unless the calling task is cancelled by a newer one.
+    func search() async {
         guard isSearching else {
             searchHits = nil
             return
         }
-        searchTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.searchDelay)
-            guard !Task.isCancelled, let self else { return }
-            let hits = (try? await self.core.call("search_project", ["id": self.id, "query": query], as: [SearchHit].self)) ?? []
-            if !Task.isCancelled { self.searchHits = hits }
-        }
+        let hits = (try? await core.call("search_project", ["id": id, "query": searchQuery], as: [SearchHit].self)) ?? []
+        if !Task.isCancelled { searchHits = hits }
     }
 
     // ---------- editor commands ----------
@@ -910,7 +750,7 @@ struct ImportClash {
         guard names.count == 1, let name = names.first else {
             return "\(names.count) items with these names already exist in this location."
         }
-        return "An item named “\((name as NSString).lastPathComponent)” already exists in this location."
+        return "An item named “\(name.fileName)” already exists in this location."
     }
 
     var message: String {
@@ -921,26 +761,5 @@ struct ImportClash {
         let shown = names.prefix(3).map { "“\($0)”" }
         let more = names.count > shown.count ? ["\(names.count - shown.count) more"] : []
         return (shown + more).formatted(.list(type: .and)) + ". " + replace
-    }
-}
-
-/// How the PDF on screen differs from the source.
-nonisolated enum PDFFreshness {
-    case edited
-    /// The latest build failed; this is the one before it.
-    case lastSuccessful
-
-    var title: String {
-        switch self {
-        case .edited: "Preview Out of Date"
-        case .lastSuccessful: "Last Successful Build"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .edited: "arrow.clockwise"
-        case .lastSuccessful: "exclamationmark.triangle.fill"
-        }
     }
 }

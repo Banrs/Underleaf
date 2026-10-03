@@ -197,7 +197,7 @@ struct PDFFitTests {
     @Test func theMenusAndTheSavedPageReadTheProjectsPDF() throws {
         let app = AppModel()
         let project = ProjectModel(id: "PDFFitTests", app: app)
-        (project.pdfVersion, project.pdfURL) = (1, URL(filePath: "/dev/null"))
+        project.pdfURL = URL(filePath: "/dev/null")
         let view = project.pdf.view
         project.pdf.restorePage = 3
         project.pdf.show(try pages(3))

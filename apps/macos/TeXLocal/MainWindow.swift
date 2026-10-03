@@ -14,8 +14,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     private var restored: SavedWorkspace?
     private var watches: [Task<Void, Never>] = []
     private var titleWatch: Task<Void, Never>?
-    /// Polls for TeX while it's missing; one at a time.
-    private var texWatch: Task<Void, Never>?
     private let findEditor = FindPassingTextView()
 
     init(app: AppModel) {
@@ -42,11 +40,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
                 [weak self] _ in self?.showProject()
             },
             track({ [app] in app.project?.saved }) { [weak self] _ in self?.window?.invalidateRestorableState() },
-            // Installing TeX takes effect without a restart, whichever screen shows.
-            track({ [app] in app.tex?.available }) { [weak self, app] available in
-                self?.texWatch?.cancel()
-                self?.texWatch = available == false ? Task { await app.watchForTeX() } : nil
-            },
         ]
     }
 
@@ -85,7 +78,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         titleWatch?.cancel()
         titleWatch = track({ [project] in OpenFile(path: project.openPath, url: project.openURL) }) { [weak self, project] file in
             guard let window = self?.window else { return }
-            window.title = file.path.map { ($0 as NSString).lastPathComponent } ?? project.id
+            window.title = file.path?.fileName ?? project.id
             window.subtitle = file.path == nil ? "" : project.id
             window.representedURL = file.url
         }

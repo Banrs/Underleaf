@@ -233,7 +233,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var state: State {
         State(isLaTeX: project.isLaTeX,
-              hasPDF: project.hasPDF, showsPDF: project.showPDF,
+              hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling,
               pdfTitle: app.title(.viewTogglePdf, on: project))
@@ -312,6 +312,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     @objc private func togglePDF() { perform(.viewTogglePdf) }
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
-        project.pdfVersion > 0 ? project.pdfURL.map { [$0] } ?? [] : []
+        project.pdfURL.map { [$0] } ?? []
     }
 }

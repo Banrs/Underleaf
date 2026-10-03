@@ -50,15 +50,15 @@ struct WorkspaceModals: ViewModifier {
             } message: { clash in
                 Text(clash.message)
             }
-            .alert(project.diskConflict.map { "“\(($0 as NSString).lastPathComponent)” Changed on Disk" } ?? "",
-                   item: $project.diskConflict) { _ in
+            .alert(project.diskConflict.map { "“\($0.fileName)” Changed on Disk" } ?? "",
+                   item: $project.diskConflict) { path in
                 // In both alerts, the button that discards the edits is never the default: Return keeps them.
                 Button("Keep Editing", role: .cancel) { project.keepEdits() }
-                Button("Revert", role: .destructive) { Task { await project.revertToDisk() } }
+                Button("Revert", role: .destructive) { Task { await project.revertToDisk(path) } }
             } message: { path in
                 Text("Another app changed \(path) while it has unsaved changes here. Revert to the version on disk, or keep editing and save over it.")
             }
-            .alert(project.missingFile.map { "“\(($0 as NSString).lastPathComponent)” Was Moved or Deleted" } ?? "",
+            .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { _ in
                 Button("Save Again") { project.saveMissingFile() }
                 Button("Close", role: .destructive) { project.closeMissingFile() }
@@ -81,7 +81,7 @@ private struct NewEntrySheet: View {
         self.project = project
         self.directory = directory
         _name = State(initialValue: directory ? "untitled folder" : "untitled.tex")
-        _folder = State(initialValue: folder ?? project.openPath.map { ($0 as NSString).deletingLastPathComponent } ?? "")
+        _folder = State(initialValue: folder ?? project.openPath?.parentFolder ?? "")
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
@@ -91,7 +91,7 @@ private struct NewEntrySheet: View {
     }
 
     var body: some View {
-        let folders = project.tree.flattened.filter(\.isDirectory).map(\.path)
+        let folders = project.folders
         let folderAvailable = folder.isEmpty || folders.contains(folder)
         DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
                     enabled: validName && folderAvailable, failure: { "Couldn’t Create “\(trimmed)”" }) {

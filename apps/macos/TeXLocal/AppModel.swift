@@ -81,6 +81,9 @@ final class AppModel {
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
+    /// The PDF column. View › Show PDF and the toolbar keep the choice for later
+    /// launches (`togglePDF`); a PDF command or Go to PDF Position shows it for now.
+    var showPDF: Bool
     /// The sidebar's File Outline folded to its header.
     var outlineCollapsed: Bool {
         didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
@@ -110,6 +113,7 @@ final class AppModel {
         inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
         outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
@@ -119,16 +123,22 @@ final class AppModel {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
     }
 
+    func togglePDF() {
+        showPDF.toggle()
+        UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF)
+    }
+
     /// Shows the PDF column too, so the action happens now rather than when
     /// the column next appears. The workspace takes each request once.
     func requestPDF(_ action: PDFAction) {
-        project?.showPDF = true
+        showPDF = true
         pdfToken += 1
         pdfRequest = (action, pdfToken)
     }
 
     private let core = Core.shared
-    @ObservationIgnored private var texSelectionGeneration = 0
+    /// The latest TeX status read; a TeX folder choice cancels it.
+    @ObservationIgnored private var texCheck: Task<Void, Never>?
 
     func refresh() async {
         do {
@@ -139,29 +149,23 @@ final class AppModel {
         await refreshTeXStatus()
     }
 
-    /// Polls while TeX is missing, so installing it needs no relaunch.
-    func watchForTeX() async {
-        while tex?.available == false, !Task.isCancelled {
-            // Each look runs `status`, which searches the disk for latexmk.
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled else { return }
-            await refreshTeXStatus()
-        }
-    }
-
-    private func refreshTeXStatus() async {
+    /// `status` searches the disk for latexmk. Not while a TeX folder is being chosen.
+    func refreshTeXStatus() async {
         guard !settingTeX else { return }
-        let generation = texSelectionGeneration
-        let status = try? await core.call("status", as: TexStatus.self)
-        guard !Task.isCancelled, !settingTeX, generation == texSelectionGeneration, let status else { return }
-        tex = status
+        texCheck?.cancel()
+        let check = Task {
+            let status = try? await core.call("status", as: TexStatus.self)
+            if !Task.isCancelled, let status { tex = status }
+        }
+        texCheck = check
+        await check.value
     }
 
     /// Nil finds TeX automatically. The core refuses a folder without latexmk.
+    /// Settings turns its buttons off meanwhile.
     func setTeXFolder(_ path: String?) async throws {
-        guard !settingTeX else { throw CoreError(message: "TeX is already being checked. Try again when it finishes.") }
         settingTeX = true
-        texSelectionGeneration += 1
+        texCheck?.cancel()
         defer { settingTeX = false }
         do {
             tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)

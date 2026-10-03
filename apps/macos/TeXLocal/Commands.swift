@@ -125,6 +125,8 @@ enum Prompt: Identifiable, Hashable {
 
 enum PDFAction {
     case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
+    /// Go to PDF Position's result.
+    case reveal(ForwardLoc, SyncTeXWord?)
 }
 
 extension AppModel {
@@ -149,7 +151,7 @@ extension AppModel {
     func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
         let shown: Bool? = switch command {
         case .viewToggleSidebar: sidebarVisible
-        case .viewTogglePdf: project?.showPDF != false
+        case .viewTogglePdf: showPDF
         case .viewToggleInspector: inspectorVisible
         case .viewToggleLogs: project?.showLogs == true
         case .viewToggleWordCount: showWordCount
@@ -198,7 +200,7 @@ extension AppModel {
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
-        case .viewTogglePdf: project?.showPDF.toggle()
+        case .viewTogglePdf: togglePDF()
         case .viewToggleInspector: inspectorVisible.toggle()
         case .viewToggleLogs: project?.showLogs.toggle()
         case .viewToggleWordCount: showWordCount.toggle()

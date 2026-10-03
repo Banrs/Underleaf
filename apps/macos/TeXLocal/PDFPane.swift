@@ -10,7 +10,7 @@ struct PDFPane: View {
     private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     var body: some View {
-        if project.pdfDocument != nil {
+        if project.hasPDF {
             PDFRepresentable(project: project, darkPaper: darkPaper)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {

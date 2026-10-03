@@ -12,9 +12,9 @@ struct InspectorView: View {
                 picker("Main File", project.settings?.mainFile, texFiles.map { ($0, $0) }, set: project.setMainFile)
                 picker("Engine", project.settings?.engine, texEngines, set: project.setEngine)
                 toggle("Shell Escape", "Lets packages such as minted run programs. Only for projects you trust.",
-                       project.settings?.shellEscape ?? false, set: project.setShellEscape)
+                       project.settings?.shellEscape ?? false) { _ = await project.patchSettings(["shellEscape": $0]) }
                 toggle("Stop on First Error", "Ends the build at its first error, rather than showing them all.",
-                       project.settings?.stopOnFirstError ?? false, set: project.setStopOnFirstError)
+                       project.settings?.stopOnFirstError ?? false) { _ = await project.patchSettings(["stopOnFirstError": $0]) }
             }
             // Settings arrive from the core after the project opens.
             .disabled(project.settings == nil)

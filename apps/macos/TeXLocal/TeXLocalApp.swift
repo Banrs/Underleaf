@@ -44,6 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// TeX installed meanwhile in another app counts once the user comes back.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
+    }
+
     /// Open With and Dock drops: imported only once the copy is agreed to.
     func application(_ application: NSApplication, open urls: [URL]) {
         if let url = urls.first(where: AppModel.canOpen) { app.pendingImport = url }

@@ -14,7 +14,12 @@ struct FilesList: View {
 
     var body: some View {
         // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
-        if project.isSearching { results } else { files }
+        Group { if project.isSearching { results } else { files } }
+            // Each search reads every file in the project; it waits for typing to pause.
+            .task(id: project.searchQuery) {
+                if project.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
+                if !Task.isCancelled { await project.search() }
+            }
     }
 
     private var files: some View {
@@ -39,7 +44,7 @@ struct FilesList: View {
         // The clicked row's menu, which leaves the selection (and the open file) as
         // it is; on the list's empty space, the list's own.
         .contextMenu(forSelectionType: String.self) { paths in
-            if let path = paths.first, let node = project.tree.flattened.first(where: { $0.path == path }) {
+            if let path = paths.first, let node = project.node(at: path) {
                 if node.isDirectory {
                     Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
                     Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
@@ -58,12 +63,11 @@ struct FilesList: View {
             }
         } primaryAction: { paths in
             // A folder opens or closes; a file is already open once chosen.
-            guard let path = paths.first, project.tree.flattened.contains(where: { $0.path == path && $0.isDirectory }) else { return }
+            guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
             if expanded.remove(path) == nil { expanded.insert(path) }
         }
         .onChange(of: selection) { _, path in
-            if let path, path != project.openPath,
-               project.tree.flattened.contains(where: { $0.path == path && !$0.isDirectory }) {
+            if let path, path != project.openPath, project.node(at: path)?.isDirectory == false {
                 Task {
                     await project.open(path, focus: false)
                     // It didn't open (reported): the file on screen stays chosen.
@@ -74,19 +78,19 @@ struct FilesList: View {
         .onChange(of: project.openPath, initial: true) { _, path in
             selection = path
             // The open file's folders open, so its row shows.
-            var folder = ((path ?? "") as NSString).deletingLastPathComponent
-            while !folder.isEmpty { expanded.insert(folder); folder = (folder as NSString).deletingLastPathComponent }
+            var folder = path?.parentFolder ?? ""
+            while !folder.isEmpty { expanded.insert(folder); folder = folder.parentFolder }
         }
         // Return renames the chosen item, as in Finder: after the key event, through
         // which the list keeps the keyboard from the field.
         .onKeyPress(.return) {
-            guard rename.id == nil, let node = project.tree.flattened.first(where: { $0.path == selection }) else { return .ignored }
+            guard rename.id == nil, let node = selection.flatMap({ project.node(at: $0) }) else { return .ignored }
             Task { actions(node).rename() }
             return .handled
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
-            project.tree.flattened.first { $0.path == path }.map(actions)
+            project.node(at: path).map(actions)
         }
     }
 
@@ -177,7 +181,7 @@ struct FilesList: View {
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         // Into the folder dropped on, or the dropped-on file's folder.
         .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
-            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            let folder = node.isDirectory ? node.path : node.path.parentFolder
             Task { await project.dropFiles(urls, into: folder) }
         }
         .draggable(file: project.url(node.path))
@@ -189,7 +193,7 @@ struct FilesList: View {
             app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return
         }
-        let folder = (node.path as NSString).deletingLastPathComponent
+        let folder = node.path.parentFolder
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
     }
 }
@@ -240,7 +244,7 @@ private extension Binding<Set<String>> {
 
 #Preview("File tree") {
     @Previewable @State var expanded: Set<String> = ["figures"]
-    let file = { (path: String) in TreeNode(type: "file", name: (path as NSString).lastPathComponent, path: path, children: nil) }
+    let file = { (path: String) in TreeNode(type: "file", name: path.fileName, path: path, children: nil) }
     List {
         Section("Files") {
             TreeRows(nodes: [

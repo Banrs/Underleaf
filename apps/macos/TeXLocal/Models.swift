@@ -27,6 +27,13 @@ extension [TreeNode] {
     var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
 }
 
+/// A project path's parts.
+nonisolated extension String {
+    /// "" at the project's top level.
+    var parentFolder: String { (self as NSString).deletingLastPathComponent }
+    var fileName: String { (self as NSString).lastPathComponent }
+}
+
 nonisolated struct TexStatus: Decodable {
     let available: Bool
     /// The TeX folder chosen in Settings; nil finds TeX automatically.

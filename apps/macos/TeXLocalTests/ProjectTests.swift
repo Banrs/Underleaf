@@ -300,11 +300,11 @@ final class ProjectFlowTests {
         (project.showLogs, project.panelTab) = (true, .log)
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.showLogs)
-        let firstDocument = try #require(project.pdfDocument)
+        let firstDocument = try #require(project.pdf.view.document)
         project.panelTab = .issues
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == false)
-        #expect(project.pdfDocument === firstDocument)
+        #expect(project.pdf.view.document === firstDocument)
         #expect(!project.showLogs)
         await app.close()
     }
@@ -323,7 +323,7 @@ final class ProjectFlowTests {
         #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
 
         let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
-        let flag = Task { await project.setStopOnFirstError(true) }
+        let flag = Task { _ = await project.patchSettings(["stopOnFirstError": true]) }
         let main = Task { await project.setMainFile("second.tex") }
         for change in [rename, flag, main] { await change.value }
         try await waitUntil(timeout: .seconds(30)) {
@@ -446,8 +446,8 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A file dropped on the source opens: the project's own in the editor, a
-    /// .tex from elsewhere as the Dock opens it, and an image from elsewhere not at all.
+    /// A file dropped on the source opens: the project's own in the editor. One
+    /// from elsewhere is refused: the sidebar copies files in.
     @Test(.timeLimit(.minutes(1)))
     func aDroppedFileOpens() async throws {
         let (project, folder) = try await opened()
@@ -459,11 +459,7 @@ final class ProjectFlowTests {
         let openNotes = try #require(drop(notes))
         openNotes()
         try await waitUntil(timeout: .seconds(5)) { project.openPath == "notes.tex" }
-        let outside = files.temporaryDirectory.appending(path: "outside.tex")
-        let openOutside = try #require(drop(outside))
-        openOutside()
-        #expect(app.pendingImport == outside)
-        app.pendingImport = nil
+        #expect(drop(files.temporaryDirectory.appending(path: "outside.tex")) == nil)
         #expect(drop(files.temporaryDirectory.appending(path: "figure.png")) == nil)
         await app.close()
     }

@@ -49,8 +49,8 @@ final class WorkspaceLayoutTests {
         let app = AppModel()
         app.sidebarVisible = sidebar
         app.inspectorVisible = inspector
+        app.showPDF = true
         let project = ProjectModel(id: "WorkspaceLayoutTests", app: app)
-        project.showPDF = true
         project.showLogs = panel
         let workspace = WorkspaceController(app: app, project: project, size: size)
         let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -94,11 +94,11 @@ final class WorkspaceLayoutTests {
             "collapsed \(workspace.pdfItem.isCollapsed), source \(self.width(workspace.sourceItem)), "
                 + "PDF \(self.width(workspace.pdfItem)) (was \(pdfWidth)), columns \(workspace.columns.view.frame.width)"
         }
-        workspace.project.showPDF = false
+        workspace.app.showPDF = false
         try await waitUntil {
             workspace.pdfItem.isCollapsed && isClose(self.width(workspace.sourceItem), workspace.columns.view.frame.width)
         } state: { "hiding: " + state() }
-        workspace.project.showPDF = true
+        workspace.app.showPDF = true
         try await waitUntil {
             !workspace.pdfItem.isCollapsed && isClose(self.width(workspace.pdfItem), pdfWidth, within: 1)
         } state: { "showing: " + state() }
@@ -149,7 +149,7 @@ final class WorkspaceLayoutTests {
     /// The models, not the last window, say which panes show.
     @Test func theNextWindowShowsWhatTheModelsShow() async throws {
         var workspace = open(panel: true)
-        workspace.project.showPDF = false
+        workspace.app.showPDF = false
         try await waitUntil { workspace.pdfItem.isCollapsed }
         closeWindow()
 

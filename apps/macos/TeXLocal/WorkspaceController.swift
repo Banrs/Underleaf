@@ -150,7 +150,7 @@ final class WorkspaceController: NSSplitViewController {
         columns.splitView.autosaveName = "Columns"
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        columns.loaded = { [unowned self] in if !project.showPDF { pdfItem.isCollapsed = true } }
+        columns.loaded = { [unowned self] in if !app.showPDF { pdfItem.isCollapsed = true } }
         // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
         columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
@@ -251,7 +251,7 @@ final class WorkspaceController: NSSplitViewController {
         watches = [
             track({ app.sidebarVisible }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
-            track({ project.showPDF }) { [weak self] in self?.setPDFShown($0) },
+            track({ app.showPDF }) { [weak self] in self?.setPDFShown($0) },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ app.outlineCollapsed || project.isSearching || !project.isLaTeX }) { [weak self] folded in
                 if let self { setCollapsed(outlineItem, folded) }
@@ -373,7 +373,7 @@ final class WorkspaceController: NSSplitViewController {
         guard let action = NSTextFinder.Action(rawValue: item.tag) else { return nil }
         guard pdfHasKeyboard else {
             guard project.editsText else {
-                guard action == .showFindInterface, project.pdfVersion > 0 else { return nil }
+                guard action == .showFindInterface, project.hasPDF else { return nil }
                 return { [weak self] in self?.app.requestPDF(.find) }
             }
             let editor = project.editor
@@ -383,7 +383,7 @@ final class WorkspaceController: NSSplitViewController {
                 editor.textView.performFindPanelAction(item)
             }
         }
-        guard project.pdfVersion > 0 else { return nil }
+        guard project.hasPDF else { return nil }
         switch action {
         case .showFindInterface:
             return { [weak self] in self?.showPDFFind() }
@@ -419,7 +419,7 @@ final class WorkspaceController: NSSplitViewController {
         guard let action = app.pdfRequest?.action else { return }
         app.pdfRequest = nil
         setPDFShown(true) { [weak self] in
-            guard let self, project.pdfVersion > 0 else { return }
+            guard let self, project.hasPDF else { return }
             perform(action)
         }
     }
@@ -434,6 +434,7 @@ final class WorkspaceController: NSSplitViewController {
         case .goToPage(let page): pdf.go(toPage: page)
         case .find: showPDFFind()
         case .print: pdf.view.print(with: .shared, autoRotate: true)
+        case let .reveal(loc, word): pdf.reveal(loc, word: word)
         case .inverseFromView:
             if case let (page, point)? = pdf.sourcePoint() {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
