@@ -68,10 +68,18 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
             restorePageIfReady()
             if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
         }
-        // PDFViewScaleChanged comes only as a pinch ends; magnification follows each step.
-        magnification = view.subviews.lazy.compactMap { $0 as? NSScrollView }.first?
-            .observe(\.magnification, options: .initial) { [weak self] _, _ in MainActor.assumeIsolated { self?.scaleChanged() } }
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
+        // Comes only as a pinch ends; the scroll view's magnification follows each step.
+        NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
+    }
+
+    /// Each step of a pinch, as the magnification of PDFKit's scroll view, which the
+    /// document view leads to once there is a document.
+    private func observeMagnification() {
+        guard magnification == nil, let scrollView = view.documentView?.enclosingScrollView else { return }
+        magnification = scrollView.observe(\.magnification, options: .initial) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.scaleChanged() }
+        }
     }
 
     @objc func pageChanged() {
@@ -80,7 +88,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         pageCount = document.pageCount
     }
 
-    func scaleChanged() {
+    @objc private func scaleChanged() {
         guard view.document != nil, view.bounds.width > 0, view.shownHeight > 0 else { return }
         scale = view.scaleFactor
         canZoomIn = view.canZoomIn
@@ -228,6 +236,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
+        observeMagnification()
         // A document resets the limit (27.2).
         view.maxScaleFactor = Self.maxScale
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")

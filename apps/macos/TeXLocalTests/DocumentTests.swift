@@ -201,13 +201,22 @@ struct PDFFitTests {
         follows(nil, "set")
         controller.fitWidth()
         follows(.width, "fit width")
-        let scrollView = try #require(view.subviews.lazy.compactMap { $0 as? NSScrollView }.first)
+        let scrollView = try #require(view.documentView?.enclosingScrollView)
         scrollView.magnification = 2
         follows(nil, "pinched")
         #expect(controller.scale == 2)
         // Back at the width while autoScales is still on, as through a pinch: fitted again.
         scrollView.magnification = view.scaleFactorForSizeToFit
         follows(.width, "pinched back")
+    }
+
+    /// The first pinch's first step shows: the scroll view is watched from the first PDF.
+    @Test func theScaleFollowsTheFirstPinch() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(1))
+        try #require(controller.view.documentView?.enclosingScrollView).magnification = 1.5
+        #expect(controller.scale == 1.5 && controller.fit == nil)
     }
 
     /// The menus and the saved workspace read the project's own PDF view: Zoom In
