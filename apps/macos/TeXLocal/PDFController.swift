@@ -37,9 +37,19 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     var matchIndex = 0
     var limited = false
     private(set) var scale: CGFloat = 1
-    var zoomLabel: String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
+    var zoomLabel: String { Self.label(scale) }
+    /// The longest label of the scales PDFKit allows.
+    var widestZoomLabel: String {
+        [view.minScaleFactor, view.maxScaleFactor].map(Self.label).max { $0.count < $1.count } ?? zoomLabel
+    }
     private(set) var canZoomIn = true
     private(set) var canZoomOut = true
+    /// 999%, so the toolbar's scale reserves a three-digit label's width (`widestZoomLabel`):
+    /// PDFKit would go to 10,000%, and Pages' zoom stops at 400%.
+    private static let maxScale: CGFloat = 9.99
+    private static func label(_ scale: CGFloat) -> String {
+        Double(scale).formatted(.percent.precision(.fractionLength(0)))
+    }
     /// How the page is fitted to the view, or nil at a set scale.
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
@@ -48,6 +58,9 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         super.init()
         // Preview's canvas color; the PDF's paper keeps its own colors.
         view.backgroundColor = .controlBackgroundColor
+        // From before the first PDF, so the toolbar reserves its scale's width from the start.
+        // Before fitting, which a set limit turns off.
+        view.maxScaleFactor = Self.maxScale
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
@@ -215,6 +228,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.document = document
+        // A document resets the limit (27.2).
+        view.maxScaleFactor = Self.maxScale
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }

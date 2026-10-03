@@ -379,6 +379,20 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Aa numbers the levels as the main file's class does, read whichever file is open.
+    @Test(.timeLimit(.minutes(1)))
+    func theClassIsTheMainFiles() async throws {
+        let (info, folder) = try await project("% \\documentclass{book}\n\\documentclass[11pt]{report}\n\\include{a}")
+        try "\\section{A}\nthree".write(to: folder.appending(path: "a.tex"), atomically: false, encoding: .utf8)
+        await app.open(info.id)
+        let project = try #require(app.project)
+        try await waitUntil { project.documentClass == "report" }
+        project.reveal(project.outline[0])
+        try await waitUntil { project.openPath == "a.tex" }
+        #expect(project.documentClass == "report")
+        await app.close()
+    }
+
     /// After a jump that moves both the caret and the top line into new sections,
     /// the File Outline selects the caret's.
     @Test(.timeLimit(.minutes(1)))

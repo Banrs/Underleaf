@@ -653,9 +653,9 @@ enum ColumnMetrics {
     static let sidebarMinimum: CGFloat = 222
     /// Catches a drag aimed at a detent without trapping one passing through.
     static let detentReach: CGFloat = 8
-    /// About 40 editor columns or a legible fitted page; equal minima split the
-    /// narrowest room evenly between source and PDF.
-    static let sourceMinimum: CGFloat = 320
+    /// About 29 columns of the editor's 13 pt text, or a page fitted at 48%; equal minima
+    /// split the narrowest room evenly between source and PDF.
+    static let sourceMinimum: CGFloat = 300
     static let pdfMinimum: CGFloat = sourceMinimum
     static let pdfShare: CGFloat = 0.5
     /// Source and PDF over the build panel: a find bar and a few lines.
@@ -674,8 +674,9 @@ enum ColumnMetrics {
     static let toolbarInset: CGFloat = 0.5
     /// The window's content at its narrowest, source | PDF, in the whole points the
     /// split keeps: a narrowing window folds the sidebar first (AppKit's way with
-    /// sidebars), so two windows tile side by side on the smallest Mac display. At its
-    /// shortest, the columns over the build panel and the status bar under its line.
+    /// sidebars), so two windows tile side by side, with the tiling margins, on a display
+    /// 1280 points wide. At its shortest, the columns over the build panel and the status
+    /// bar under its line.
     static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + toolbarInset).rounded(.up),
                                        height: columnsMinimum + divider + bar(BuildPanelHeader.height) + panelMinimum
                                            + divider + StatusBar.height)

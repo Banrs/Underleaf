@@ -83,6 +83,14 @@ final class WorkspaceLayoutTests {
     private static func scrollers(_ view: NSView) -> [NSScroller] {
         [view as? NSScroller].compactMap(\.self) + view.subviews.flatMap(scrollers)
     }
+    /// The workspace's toolbar in its window, its layout not saved over the app's.
+    private func showToolbar(_ workspace: WorkspaceController) throws -> NSToolbar {
+        let window = try #require(window)
+        let toolbar = workspace.toolbar.toolbar
+        toolbar.autosavesConfiguration = false
+        window.toolbar = toolbar
+        return toolbar
+    }
     private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
@@ -365,7 +373,7 @@ final class WorkspaceLayoutTests {
     @Test func theZoomLabelFollowsThePDFInTheSamePass() async throws {
         let workspace = open()
         let window = try #require(window)
-        window.toolbar = workspace.toolbar.toolbar
+        _ = try showToolbar(workspace)
         let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
         page.string = "Introduction"
         // The pane shows the PDF's view once the project has one.
@@ -382,6 +390,132 @@ final class WorkspaceLayoutTests {
         window.layoutIfNeeded()
         #expect(workspace.pdf.zoomLabel != label)
         #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
+    }
+
+    /// Format, Math and Insert sit side by side, which shares a capsule, as Notes' tools do; the
+    /// PDF and Inspector toggles are a group. Share is in Customize Toolbar only: File › Share has it.
+    @Test func theToolbarGroupsItsTools() throws {
+        let toolbar = try #require(open().toolbar), bar = toolbar.toolbar
+        let shown = toolbar.toolbarDefaultItemIdentifiers(bar)
+        let format = try #require(shown.firstIndex(of: .format))
+        #expect(Array(shown[format...].prefix(3)) == [.format, .math, .insert])
+        #expect(shown.contains(.pdfInspector) && !shown.contains(.share))
+        #expect(toolbar.toolbarAllowedItemIdentifiers(bar).contains(.share))
+        let group = toolbar.toolbar(bar, itemForItemIdentifier: .pdfInspector, willBeInsertedIntoToolbar: true) as? NSToolbarItemGroup
+        #expect(group?.subitems.map(\.itemIdentifier) == [.togglePDF, .inspectorToggle])
+    }
+
+    /// The editing tools and the toggles follow the window: Format, Math and Insert are off outside
+    /// LaTeX, and so are their menus' items, which the overflow menu opens either way; the toggles'
+    /// help says what they'll do, and the Inspector's shows the window's inspector.
+    @Test func theGroupedItemsFollowTheWindow() async throws {
+        let workspace = open(), project = workspace.project
+        let items = try showToolbar(workspace).items.flatMap { [$0] + (($0 as? NSToolbarItemGroup)?.subitems ?? []) }
+        let item = { (id: NSToolbarItem.Identifier) in try #require(items.first { $0.itemIdentifier == id }) }
+        let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
+        let format = try #require(editing[0].menuFormRepresentation?.submenu)
+        let bold = { format.update(); return format.item(withTitle: MenuCommand.editBold.title)?.isEnabled }
+        project.openPath = "refs.bib"
+        #expect(editing.allSatisfy { !$0.isEnabled })
+        try await waitUntil { bold() == false }
+        project.openPath = "main.tex"
+        #expect(editing.allSatisfy { $0.isEnabled })
+        try await waitUntil { bold() == true }
+
+        let pdf = try item(.togglePDF), inspector = try item(.inspectorToggle)
+        #expect(pdf.toolTip == "Hide PDF" && inspector.toolTip == "Show Inspector")
+        workspace.app.showPDF = false
+        #expect(pdf.toolTip == "Show PDF")
+        NSApp.sendAction(try #require(inspector.action), to: inspector.target, from: inspector)
+        try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
+        #expect(inspector.toolTip == "Hide Inspector")
+    }
+
+    /// Aa opens its popover under it, on the screen, and again closes it; the menu bar's
+    /// Format and the overflow menu keep the same choices as menu items.
+    @Test func aaOpensItsPopover() async throws {
+        let workspace = open(sidebar: false)
+        let window = try #require(window), toolbar = try showToolbar(workspace)
+        window.layoutIfNeeded()
+        let item = try #require(toolbar.items.first { $0.itemIdentifier == .format })
+        #expect(!(item is NSMenuToolbarItem) && item.menuFormRepresentation?.submenu?.items.map(\.title)
+            .starts(with: [MenuCommand.editBold.title, MenuCommand.editItalic.title]) == true)
+        let popover = workspace.toolbar.format.popover
+        NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        try await waitUntil { popover.isShown && popover.contentViewController?.view.window != nil }
+        let shown = try #require(popover.contentViewController?.view.window).frame
+        let aa = try #require(Self.views(window.contentView!.superview!).first { $0 is NSButton && $0.accessibilityLabel() == "Format" })
+        let anchor = aa.convert(aa.bounds, to: nil).offsetBy(dx: window.frame.minX, dy: window.frame.minY)
+        #expect(shown.minX < anchor.midX && anchor.midX < shown.maxX && shown.maxY <= anchor.minY + 1)
+        #expect(window.screen.map { $0.visibleFrame.contains(shown) } != false && shown.height < 400)
+        NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        try await waitUntil { !popover.isShown }
+    }
+
+    private static func views(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(views) }
+
+    /// Off in the toolbar, off in its overflow menu: Share, which the menu asks, and Zoom's
+    /// scales, under a submenu that stays available (HIG, Menus).
+    @Test func theOverflowMenuFollowsTheItems() async throws {
+        let workspace = open(), toolbar = try #require(workspace.toolbar), bar = toolbar.toolbar
+        let share = try #require(toolbar.toolbar(bar, itemForItemIdentifier: .share, willBeInsertedIntoToolbar: true))
+        let scales = try #require(toolbar.toolbar(bar, itemForItemIdentifier: .zoom, willBeInsertedIntoToolbar: true)?
+            .menuFormRepresentation?.submenu)
+        let fitWidth = { scales.update(); return scales.item(withTitle: "Fit Width")?.isEnabled }
+        // The overflow menu's own item for Share, which AppKit's validation turns on whatever the item's state.
+        let overflow = NSMenuItem(title: "Share…", action: Selector(("_simpleOverflowMenuItemClicked:")), keyEquivalent: "")
+        // No PDF yet.
+        #expect(!share.isEnabled && !share.validateMenuItem(overflow))
+        try await waitUntil { fitWidth() == false }
+        workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
+        try await waitUntil { fitWidth() == true }
+    }
+
+    /// A narrowing window overflows the least-used items first: Zoom, then Insert, Math and
+    /// Format; Back, Compile and the toggles stay down to the window's minimum.
+    @Test func theToolbarOverflowsTheLeastUsedFirst() async throws {
+        let workspace = open(sidebar: false)
+        let window = try #require(window), toolbar = try showToolbar(workspace)
+        var left: [NSToolbarItem.Identifier] = []
+        for width in stride(from: Self.size.width, through: ColumnMetrics.contentMinimum.width, by: -5) {
+            window.setContentSize(NSSize(width: width, height: Self.size.height))
+            window.layoutIfNeeded()
+            let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
+            left += toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !left.contains($0) }
+        }
+        #expect(left.filter { !$0.rawValue.hasPrefix("NSToolbar") } == [.zoom, .insert, .math, .format])
+        #expect(!left.contains(.toggleSidebar))
+    }
+
+    /// Zoom out | scale | zoom in, one width from the PDFView's smallest scale to its largest, as
+    /// a pop-up keeps its widest item's, and the same before the first PDF.
+    @Test func theZoomControlKeepsItsSegmentsAndWidth() async throws {
+        let workspace = open(), pdf = workspace.pdf
+        let zoom = try #require(showToolbar(workspace).items.first { $0.itemIdentifier == .zoom }?.view as? NSSegmentedControl)
+        window?.layoutIfNeeded()
+        #expect(zoom.segmentCount == 3 && zoom.image(forSegment: 0) != nil && zoom.image(forSegment: 2) != nil)
+        let width = zoom.intrinsicContentSize.width
+        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
+        pdf.show(try #require(PDFDocument(data: page.dataWithPDF(inside: page.bounds))))
+        // Fitted to the column once it has its width.
+        try await waitUntil { pdf.zoomLabel != "100%" }
+        // A document keeps the cap: three digits at most.
+        #expect(pdf.widestZoomLabel == "999%")
+        for scale in [pdf.view.minScaleFactor, 0.5, 0.95, 1, pdf.view.maxScaleFactor] {
+            pdf.setScale(scale)
+            try await waitUntil { abs(pdf.scale - scale) < 0.001 && zoom.label(forSegment: 1) == pdf.zoomLabel } state: {
+                "\(pdf.scale), toolbar \(zoom.label(forSegment: 1) ?? "")"
+            }
+            window?.layoutIfNeeded()
+            #expect(zoom.intrinsicContentSize.width == width, "\(pdf.zoomLabel)")
+        }
+        // Zoom In stops there.
+        pdf.setScale(9.5)
+        try await waitUntil { pdf.zoomLabel == "950%" }
+        pdf.zoom(in: true)
+        try await waitUntil { pdf.zoomLabel != "950%" }
+        #expect(pdf.zoomLabel == "999%")
     }
 }
 
