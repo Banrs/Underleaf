@@ -115,7 +115,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 app.perform(.editMath, on: project)
             })
         case .insert:
-            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
+            // Notes' ellipsis, which means More (HIG, Icons), with Insert as its name for
+            // VoiceOver, Customize Toolbar and the overflow menu: what it holds is the menu bar's Insert.
+            item = menuItem(id, "Insert", "ellipsis", InsertMenuItems(project: project))
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
             item.visibilityPriority = .low

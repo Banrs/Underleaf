@@ -52,14 +52,14 @@ PDF is one persistent PDFKit view owned by `PDFController`.
 - IME: autosave reads only committed text during composition, and composition ends
   before the per-file undo managers switch.
 - One ordered lane serialises saves, settings, renames and deletes.
-- Toolbar: Aa, Math and + are separate items side by side, which AppKit puts in one capsule
+- Toolbar: Aa, Math and Insert (Notes' ellipsis) are separate items side by side, which AppKit puts in one capsule
   at Notes' spacing (a group spaces its items 8 pt further apart); they show no chevrons, with
   which each draws its own capsule. Aa opens a popover, as Notes' Aa (Bold, Italic and Underline,
   lit where the selection is in their command, then the levels the main file's class has, at its
   sizes and with its numbering); the overflow and menu bar keep plain menus. The PDF and Inspector toggles are one unlabelled
   NSToolbarItemGroup (the system's Inspector toggle draws blank in a group). Zoom is the stock
   minus, percentage menu and plus, its own item. Items overflow from the least used in TeX
-  editors: Zoom, then +, Math and Aa, then Back; Compile and the toggles last. The toolbar is
+  editors: Zoom, then Insert, Math and Aa, then Back; Compile and the toggles last. The toolbar is
   "Workspace 2", so layouts saved before the toggles' group don't come back. The 0.5 pt
   trailing safe-area adjustment.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
