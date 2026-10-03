@@ -51,14 +51,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.selectedTextAttributes = [.backgroundColor: NSColor.sourceSelection]
         text.insertionPointColor = .textColor
         text.allowsUndo = true
-        // Native spelling and correction in prose only (below). Smart dashes
-        // and quotes would rewrite the LaTeX (-- to an em dash).
+        // Native spelling, correction and text replacement in prose only (below); the last
+        // two as the user has them in System Settings, which a text view follows unless
+        // told otherwise (NSSpellChecker.h), and Edit › Substitutions. Smart dashes and
+        // quotes would rewrite the LaTeX (-- to an em dash).
         text.isContinuousSpellCheckingEnabled = EditorPrefs.spellCheck
         text.isGrammarCheckingEnabled = false
-        text.isAutomaticSpellingCorrectionEnabled = true
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
-        text.isAutomaticTextReplacementEnabled = false
         text.isAutomaticLinkDetectionEnabled = false
         text.isAutomaticDataDetectionEnabled = false
         text.isAutomaticTextCompletionEnabled = false
@@ -161,6 +161,19 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         }
     }
 
+    /// Edit › Go to Line…'s field, made the first time it's asked for.
+    private(set) lazy var lineField = GoToLinePanel { [unowned self] line in
+        guard line >= 1, line <= textView.document.lineCount else { return false }
+        reveal(line: line)
+        return true
+    }
+
+    /// Edit › Go to Line…, and the status bar's line and column.
+    func goToLine() {
+        guard let window = textView.window else { return }
+        lineField.show(over: window)
+    }
+
     private func scroll(to offset: Int, atTop: Bool) {
         guard let target = textView.textRange(NSRange(location: offset, length: 0)) else { return }
         let insets = scrollView.contentInsets, shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
@@ -191,8 +204,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         onChanged()
     }
 
-    /// Spelling and correction apply to prose, including comments and math's
-    /// text arguments; commands, math, literal code and TeX names are protected.
+    /// Spelling, correction and text replacement apply to prose, including comments and
+    /// math's text arguments; commands, math, literal code and TeX names are protected.
     func textView(_ view: NSTextView, didCheckTextIn range: NSRange, types checkingTypes: NSTextCheckingTypes,
                   options: [NSSpellChecker.OptionKey: Any], results: [NSTextCheckingResult],
                   orthography: NSOrthography, wordCount: Int) -> [NSTextCheckingResult] {

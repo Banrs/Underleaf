@@ -60,6 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private lazy var dockMenu = DockMenu(app: app) { [unowned self] in
+        NSApp.activate()
+        mainWindow.showWindow(nil)
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        dockMenu.menu
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // A clean editor can still have a settings change or rename in flight.
         guard let project = app.project else { return .terminateNow }
@@ -81,6 +90,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The app is its one window, so closing it quits (and the quit saves).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+}
+
+/// The Dock icon's menu: the recent projects, newest first, as Pages, Xcode and Preview
+/// list their recent documents there. Not the system's recent documents, which come back
+/// through `application(_:open:)` as items to copy in. One opens as from Home's Recent
+/// list, with the window brought forward.
+final class DockMenu: NSObject {
+    private let app: AppModel
+    private let show: () -> Void
+
+    init(app: AppModel, show: @escaping () -> Void) {
+        self.app = app
+        self.show = show
+    }
+
+    var menu: NSMenu? {
+        let recents = app.recents
+        guard !recents.isEmpty else { return nil }
+        let menu = NSMenu()
+        for project in recents {
+            let item = NSMenuItem(title: project.name, action: #selector(open(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = project.id
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func open(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        show()
+        Task { await app.open(id) }
     }
 }
 

@@ -56,6 +56,9 @@ final class ProjectModel {
     private var diskText: String?
     private var folderWatcher: FolderWatcher?
     private var treeReload: Task<Void, Never>?
+    /// The tree's reads, numbered as they start: the latest started, and the latest taken.
+    @ObservationIgnored private var treeReads = 0
+    @ObservationIgnored private var treeTaken = 0
 
     var importClash: ImportClash?
 
@@ -177,10 +180,16 @@ final class ProjectModel {
     }
 
     /// `quietly` for a reload another app's change asked for: its failure
-    /// isn't the user's to act on, and the next change tries again.
+    /// isn't the user's to act on, and the next change tries again. A read that started
+    /// before the last one taken is dropped: a folder change's read ending after a new
+    /// file's would take away the row its name is being typed in.
     func reloadTree(quietly: Bool = false) async {
+        treeReads += 1
+        let read = treeReads
         do {
             let files = try await core.call("file_tree", ["id": id], as: [TreeNode].self)
+            guard read > treeTaken else { return }
+            treeTaken = read
             // A save's temporary file can trigger an unchanged tree reload.
             if files != tree, !closed, !Task.isCancelled {
                 tree = files
@@ -630,10 +639,30 @@ final class ProjectModel {
 
     // ---------- files ----------
 
-    func createEntry(_ path: String, directory: Bool) async throws {
-        try await core.perform("create_entry", ["id": id, "path": path, "dir": directory])
+    /// "untitled.tex", or "untitled folder", in `folder`, numbered past the names taken
+    /// there as Finder numbers them; its path once made. In the lane, after the renames and
+    /// deletions asked for before it. A file opens, leaving the keyboard for its name.
+    func createEntry(in folder: String, directory: Bool) async -> String? {
+        let name = directory ? "untitled folder" : "untitled.tex"
+        var made: String?
+        _ = await mutate("Couldn’t Create “\(name)”") { model in
+            for number in 1... {
+                let free = number == 1 ? name : name.numbered(number)
+                let path = folder.isEmpty ? free : "\(folder)/\(free)"
+                do {
+                    try await model.core.perform("create_entry", ["id": model.id, "path": path, "dir": directory])
+                    made = path
+                    return true
+                } catch let error as CoreError where error.status == 409 {
+                    continue
+                }
+            }
+            return false
+        }
+        guard let made, !closed else { return nil }
         await reloadTree()
-        if !directory { await open(path) }
+        if !directory { await open(made, focus: false) }
+        return made
     }
 
     func renameEntry(_ from: String, to: String) async {

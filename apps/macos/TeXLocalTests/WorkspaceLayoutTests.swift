@@ -79,6 +79,10 @@ final class WorkspaceLayoutTests {
         guard !view.isHidden else { return [] }
         return [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
     }
+    /// The scrollers in a view, hidden panes' too.
+    private static func scrollers(_ view: NSView) -> [NSScroller] {
+        [view as? NSScroller].compactMap(\.self) + view.subviews.flatMap(scrollers)
+    }
     /// The workspace's toolbar in its window, its layout not saved over the app's.
     private func showToolbar(_ workspace: WorkspaceController) throws -> NSToolbar {
         let window = try #require(window)
@@ -140,6 +144,51 @@ final class WorkspaceLayoutTests {
         try await waitUntil { !workspace.panelItem.isCollapsed && isClose(self.height(workspace.panelItem), panelHeight, within: 1) } state: {
             "panel \(self.height(workspace.panelItem)), was \(panelHeight)"
         }
+    }
+
+    /// Show Build Panel rises from the status bar through AppKit's animation, the first time
+    /// too in a window with a source and a PDF open: its header over the status bar and at
+    /// the panel's width throughout, the status bar still, and the scrollers it kept out of
+    /// sight back after a toggle reversed midway.
+    @Test func thePanelRisesFromTheStatusBar() async throws {
+        let workspace = open(), project = workspace.project
+        project.openPath = "main.tex"
+        project.editor.open(path: "main.tex", text: String(repeating: "Some text.\n", count: 200), focus: false)
+        let document = PDFDocument()
+        for index in 0..<3 { document.insert(PDFPage(), at: index) }
+        project.pdfURL = URL(filePath: "/dev/null")
+        project.pdf.show(document)
+        // A moment after the window opens, its first rise would often miss its layouts,
+        // holding over the status bar, then jumping (27.2).
+        try await Task.sleep(for: .milliseconds(1100))
+        let panel = pane(workspace.panelItem), header = workspace.panelItem.topAlignedAccessoryViewControllers[0].view
+        let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
+        let bar = status.convert(status.bounds, to: nil)
+        var heights: [CGFloat] = []
+        project.showLogs = true
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < .seconds(0.6) {
+            if !panel.isHidden {
+                heights.append(panel.frame.height)
+                let place = header.convert(header.bounds, to: nil)
+                #expect(place.minY >= bar.maxY, "header \(place), status bar \(bar)")
+                #expect(isClose(header.frame.width, panel.frame.width - 2 * ColumnMetrics.barSideInset))
+            }
+            #expect(status.convert(status.bounds, to: nil) == bar)
+            try await Task.sleep(for: .milliseconds(4))
+        }
+        let height = try #require(heights.last)
+        #expect(heights.contains { $0 > heights[0] + 1 && $0 < height - 1 }, "heights \(heights)")
+
+        project.showLogs = false
+        try await Task.sleep(for: .milliseconds(80))
+        project.showLogs = true
+        try await waitUntil { !workspace.panelItem.isCollapsed && isClose(panel.frame.height, height) }
+        // Past the animation's end.
+        try await Task.sleep(for: .milliseconds(400))
+        let scrollers = Self.scrollers(workspace.view)
+        #expect(!scrollers.isEmpty && scrollers.allSatisfy { $0.alphaValue == 1 })
+        #expect(header.alphaValue == 1 && workspace.panelItem.viewController.view.alphaValue == 1)
     }
 
     /// The next window opens with the dividers where this one left them.
@@ -247,6 +296,50 @@ final class WorkspaceLayoutTests {
         let outline = try #require(Self.lists(workspace.view).last)
         try await waitUntil { outline.isExpandable(outline.item(atRow: 0)) }
         #expect(outline.isItemExpanded(outline.item(atRow: 0)))
+    }
+
+    /// The menu a right-click there shows, as AppKit finds it: the clicked view's, or the
+    /// first up the responder chain from it.
+    private func contextMenu(at point: NSPoint, in view: NSView) throws -> [String]? {
+        let window = try #require(view.window)
+        let location = view.convert(point, to: nil)
+        let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [],
+                                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        var responder: NSResponder? = window.contentView?.superview?.hitTest(location)
+        while let next = responder {
+            if let menu = (next as? NSView)?.menu(for: event) { return menu.items.filter { !$0.isSeparatorItem }.map(\.title) }
+            responder = next.nextResponder
+        }
+        return nil
+    }
+
+    /// A right-click under the files shows the project's top level's menu, as a Finder
+    /// window's background shows its folder's; a row's shows its own. SwiftUI's menu for
+    /// no row raised there (27.2). The File Outline has none for its empty space.
+    @Test func theFilesEmptySpaceHasTheTopLevelsMenu() async throws {
+        let workspace = open(), project = workspace.project
+        workspace.app.outlineCollapsed = false
+        let file = { (path: String) in TreeNode(type: "file", name: (path as NSString).lastPathComponent, path: path, children: nil) }
+        project.tree = [TreeNode(type: "dir", name: "chapters", path: "chapters", children: [file("chapters/results.tex")]),
+                        file("main.tex")]
+        project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex")]
+        project.openPath = "main.tex"
+        try await waitUntil { Self.lists(workspace.view).map(\.numberOfRows) == [3, 1, 1] } state: {
+            "\(Self.lists(workspace.view).map(\.numberOfRows))"
+        }
+        let files = try #require(Self.lists(workspace.view).first)
+        let below = { (list: NSOutlineView) in
+            let last = list.rect(ofRow: list.numberOfRows - 1)
+            return NSPoint(x: last.midX, y: last.maxY + 30)
+        }
+        #expect(files.row(at: below(files)) == -1)
+        #expect(try contextMenu(at: below(files), in: files) == ["New File", "New Folder", "Add Files…"])
+        let folder = files.rect(ofRow: 1)
+        #expect(try contextMenu(at: NSPoint(x: folder.midX, y: folder.midY), in: files)
+            == ["New File", "New Folder", "Rename", "Show in Finder", "Move to Trash"])
+        let outline = try #require(Self.lists(workspace.view).last)
+        #expect(try contextMenu(at: below(outline), in: outline) == nil)
     }
 
     /// No pane's content raises the window's minimum: it goes down to the app's own,

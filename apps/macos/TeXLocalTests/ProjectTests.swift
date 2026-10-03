@@ -479,6 +479,174 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// The Dock icon's menu lists the recent projects still in the library, newest first,
+    /// as Pages and Xcode list their recent documents; one opens as from Home, its window
+    /// brought forward. With none, the Dock shows only its own items.
+    @Test(.timeLimit(.minutes(1)))
+    func theDockMenuOpensARecentProject() async throws {
+        let first = try await project("first").info, second = try await project("second").info
+        await app.refresh()
+        var shown = 0
+        let dock = DockMenu(app: app) { shown += 1 }
+        app.recentProjects = []
+        #expect(dock.menu == nil)
+        app.recentProjects = [second.id, "Gone", first.id]
+        let menu = try #require(dock.menu)
+        #expect(menu.items.map(\.title) == [second.name, first.name])
+        menu.performActionForItem(at: 1)
+        try await waitUntil(timeout: .seconds(5)) { app.project?.id == first.id && app.project?.initialLoadComplete == true }
+        #expect(shown == 1 && app.recentProjects.first == first.id)
+        #expect(NSApp.delegate?.responds(to: #selector(NSApplicationDelegate.applicationDockMenu(_:))) == true)
+        await app.close()
+    }
+
+    /// New items are "untitled.tex" and "untitled folder", numbered past the names taken
+    /// where they go as Finder numbers them, another app's too before the tree has them.
+    /// A new file opens, without the keyboard, which goes to its name.
+    @Test(.timeLimit(.minutes(1)))
+    func newItemsTakeTheNextFreeName() async throws {
+        let (project, folder) = try await opened()
+        try "x".write(to: folder.appending(path: "untitled.tex"), atomically: false, encoding: .utf8)
+        #expect(await project.createEntry(in: "", directory: false) == "untitled 2.tex")
+        #expect(project.openPath == "untitled 2.tex" && project.editor.document?.text == "")
+        #expect(await project.createEntry(in: "", directory: true) == "untitled folder")
+        #expect(await project.createEntry(in: "", directory: true) == "untitled folder 2")
+        #expect(await project.createEntry(in: "untitled folder", directory: false) == "untitled folder/untitled.tex")
+        #expect(project.tree.flattened.contains { $0.path == "untitled folder/untitled.tex" })
+        #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
+        #expect(".latexmkrc".numbered(2) == ".latexmkrc 2")
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
+    /// File › New File and New Folder make the item in the chosen folder, or the chosen
+    /// file's, choose it and put its name in a field with the base name selected, as
+    /// Finder's New Folder does: Return names it, Escape keeps it. The field stays through
+    /// another app's change, and comes with the sidebar over a search.
+    @Test(.timeLimit(.minutes(1)))
+    func newItemsAreNamedInPlace() async throws {
+        let (project, folder) = try await opened()
+        app.sidebarVisible = true
+        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 1200, height: 760))
+        let window = NSWindow(contentViewController: workspace)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.orderFront(nil)
+        defer { workspace.close(); window.close() }
+        let sidebar = workspace.sidebarItem.viewController.view
+        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
+        func files() throws -> NSOutlineView { try #require(lists(sidebar).first) }
+        /// The name field's editor while it has the keyboard.
+        func field() -> NSTextView? {
+            guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
+                  (editor.delegate as? NSTextField)?.isDescendant(of: sidebar) == true else { return nil }
+            return editor
+        }
+        func key(_ characters: String, _ code: UInt16) throws {
+            window.sendEvent(try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                           context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                           isARepeat: false, keyCode: code)))
+        }
+        /// The chosen row's item, from the tree as the list shows it.
+        func chosen() throws -> String? {
+            let list = try files()
+            var paths: [String] = []
+            func walk(_ nodes: [TreeNode]) {
+                for node in nodes {
+                    paths.append(node.path)
+                    if let kids = node.children, list.isItemExpanded(list.item(atRow: paths.count)) { walk(kids) }
+                }
+            }
+            walk(project.tree)
+            return paths.indices.contains(list.selectedRow - 1) ? paths[list.selectedRow - 1] : nil
+        }
+        let state = { "keyboard \(String(describing: window.firstResponder)), open \(project.openPath ?? "-"), tree \(project.tree.flattened.map(\.path))" }
+        try await waitUntil { (try? files().numberOfRows) == 2 }
+
+        // The open file's folder, the top level; the file opens, the keyboard in its name.
+        app.perform(.fileNew, on: project)
+        try await waitUntil { field()?.string == "untitled.tex" } state: { state() }
+        // The field's own selection, all of it, gives way to the base name's as it takes the keyboard.
+        try await waitUntil { field()?.selectedRange() == NSRange(location: 0, length: 8) } state: { state() }
+        #expect(project.openPath == "untitled.tex" && exists(folder.appending(path: "untitled.tex")))
+        #expect(try chosen() == "untitled.tex")
+
+        // Another app's file comes, and the field stays.
+        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(field()?.string == "untitled.tex")
+
+        // Return names it; the list has the keyboard back, with it chosen.
+        field()?.insertText("chapter", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try key("\r", 36)
+        try await waitUntil(timeout: .seconds(5)) { project.openPath == "chapter.tex" && window.firstResponder === (try? files()) } state: { state() }
+        #expect(exists(folder.appending(path: "chapter.tex")) && !exists(folder.appending(path: "untitled.tex")))
+        try await waitUntil { (try? chosen()) == "chapter.tex" } state: { (try? chosen()) ?? "-" }
+
+        // A folder, whose name is selected whole; Escape keeps it, chosen.
+        app.perform(.fileNewFolder, on: project)
+        try await waitUntil { field()?.string == "untitled folder" } state: { state() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(field()?.selectedRange() == NSRange(location: 0, length: 15))
+        try key("\u{1b}", 53)
+        try await waitUntil { field() == nil && window.firstResponder === (try? files()) } state: { state() }
+        #expect(exists(folder.appending(path: "untitled folder")) && project.openPath == "chapter.tex")
+        #expect(try chosen() == "untitled folder")
+
+        // In the chosen folder, then in the chosen file's.
+        app.perform(.fileNew, on: project)
+        try await waitUntil { field()?.string == "untitled.tex" && project.openPath == "untitled folder/untitled.tex" } state: { state() }
+        try key("\u{1b}", 53)
+        try await waitUntil { field() == nil } state: { state() }
+        app.perform(.fileNewFolder, on: project)
+        try await waitUntil { field()?.string == "untitled folder" } state: { state() }
+        #expect(exists(folder.appending(path: "untitled folder/untitled folder")))
+        try key("\u{1b}", 53)
+        try await waitUntil { field() == nil } state: { state() }
+
+        // From a hidden sidebar over search results: the files show, with the field.
+        app.sidebarVisible = false
+        project.searchQuery = "chapter"
+        try await waitUntil { workspace.sidebarItem.isCollapsed }
+        app.perform(.fileNew, on: project)
+        try await waitUntil { field()?.string == "untitled.tex" } state: { state() }
+        #expect(app.sidebarVisible && project.searchQuery.isEmpty)
+        #expect(project.openPath == "untitled folder/untitled folder/untitled.tex")
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
+    /// A new item below the rows in sight scrolls into view to be named: the list
+    /// makes only the rows it shows.
+    @Test(.timeLimit(.minutes(1)))
+    func aNewItemOutOfSightComesIntoView() async throws {
+        let (project, folder) = try await opened()
+        for number in 1...40 { try "".write(to: folder.appending(path: "a\(number).tex"), atomically: false, encoding: .utf8) }
+        await project.reloadTree()
+        app.sidebarVisible = true
+        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 1200, height: 760))
+        let window = NSWindow(contentViewController: workspace)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.orderFront(nil)
+        defer { workspace.close(); window.close() }
+        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
+        try await waitUntil { (lists(workspace.view).first?.numberOfRows ?? 0) == 42 }
+        let files = try #require(lists(workspace.view).first)
+        files.scrollRowToVisible(0)
+        #expect(!files.rows(in: files.visibleRect).contains(41))
+
+        app.perform(.fileNew, on: project)
+        try await waitUntil {
+            ((window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.isDescendant(of: files) == true
+        } state: { "keyboard \(String(describing: window.firstResponder)), rows \(files.rows(in: files.visibleRect))" }
+        let field = try #require((window.firstResponder as? NSTextView)?.delegate as? NSTextField)
+        #expect(files.visibleRect.contains(field.convert(field.bounds, to: files)))
+        await app.close()
+    }
+
     /// Dropped on the tree, the project's own files move, as in Finder, but a
     /// folder not into itself; a file from elsewhere is copied in.
     @Test(.timeLimit(.minutes(1)))

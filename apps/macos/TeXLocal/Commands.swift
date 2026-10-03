@@ -32,7 +32,7 @@ enum MenuCommand: String, CaseIterable {
     case viewZoomOut = "view.zoomOut"
     case viewActualSize = "view.actualSize"
     case viewFitWidth = "view.fitWidth"
-    case viewFitHeight = "view.fitHeight"
+    case viewFitPage = "view.fitPage"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
     case syncForward = "sync.forward"
@@ -46,8 +46,9 @@ enum MenuCommand: String, CaseIterable {
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
         case .projectSearch: "Find in Project…"
-        case .fileNew: "New File…"
-        case .fileNewFolder: "New Folder…"
+        // No ellipsis: the name is typed in place, as in Finder's New Folder (HIG, Menus).
+        case .fileNew: "New File"
+        case .fileNewFolder: "New Folder"
         case .fileUpload: "Add Files…"
         case .fileSave: "Save"
         case .pdfSave: "Save PDF As…"
@@ -70,7 +71,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewZoomOut: "Zoom Out"
         case .viewActualSize: "Actual Size"
         case .viewFitWidth: "Fit Width"
-        case .viewFitHeight: "Fit Height"
+        case .viewFitPage: "Fit Page"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
         case .syncForward: "Go to PDF Position"
@@ -109,7 +110,7 @@ enum MenuCommand: String, CaseIterable {
         case .viewZoomOut: KeyboardShortcut("-")
         case .viewActualSize: KeyboardShortcut("0")
         case .viewFitWidth: KeyboardShortcut("9")
-        case .viewFitHeight: KeyboardShortcut("9", modifiers: [.command, .option])
+        case .viewFitPage: KeyboardShortcut("9", modifiers: [.command, .option])
         case .compileRun: KeyboardShortcut(.return)
         case .compileStop: KeyboardShortcut(".")
         // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
@@ -120,14 +121,20 @@ enum MenuCommand: String, CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    /// In the folder given, or the open file's.
-    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
+    case gotoPage
 
     var id: Self { self }
 }
 
+/// File › New File or New Folder, for the sidebar to make and name in place: in `folder`,
+/// or the folder chosen there.
+struct NewEntry: Equatable {
+    var directory: Bool
+    var folder: String?
+}
+
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
+    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView, print
     /// Go to PDF Position's result.
     case reveal(ForwardLoc, SyncTeXWord?)
 }
@@ -143,7 +150,7 @@ extension AppModel {
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
-        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitHeight, .syncInverse:
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
         default: project != nil
@@ -183,8 +190,9 @@ extension AppModel {
         case .projectSearch:
             sidebarVisible = true
             searchFocusToken += 1
-        case .fileNew: prompt = .newFile()
-        case .fileNewFolder: prompt = .newFolder()
+        case .fileNew, .fileNewFolder:
+            sidebarVisible = true
+            newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
         case .pdfSave:
@@ -200,7 +208,7 @@ extension AppModel {
         case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
-        case .editGotoLine: prompt = .gotoLine
+        case .editGotoLine: project?.editor.goToLine()
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()
@@ -212,7 +220,7 @@ extension AppModel {
         case .viewZoomOut: requestPDF(.zoomOut)
         case .viewActualSize: requestPDF(.actualSize)
         case .viewFitWidth: requestPDF(.fitWidth)
-        case .viewFitHeight: requestPDF(.fitHeight)
+        case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .syncForward: Task { await project?.forwardSync() }
@@ -314,7 +322,7 @@ struct AppCommands: Commands {
                 .disabled(project?.isLaTeX != true || !app.sidebarVisible)
             items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
-            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight])
+            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
             Divider()
         }
         // The app's own menus go between View and Window (HIG, The menu bar).

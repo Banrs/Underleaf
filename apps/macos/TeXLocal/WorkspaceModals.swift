@@ -34,9 +34,6 @@ struct WorkspaceModals: ViewModifier {
             }
             .sheet(item: $app.prompt) { prompt in
                 switch prompt {
-                case .newFile(let folder): NewEntrySheet(project: project, directory: false, folder: folder)
-                case .newFolder(let folder): NewEntrySheet(project: project, directory: true, folder: folder)
-                case .gotoLine: GoToSheet(noun: "Line", limit: { project.counts?.lines }) { project.editor.reveal(line: $0) }
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
@@ -68,56 +65,9 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// File › New File… and New Folder…: a name, and the folder to make it in.
-private struct NewEntrySheet: View {
-    let project: ProjectModel
-    let directory: Bool
-    @State private var name: String
-    @State private var folder: String
-    @FocusState private var nameFocused: Bool
-    @State private var selection: TextSelection?
-
-    init(project: ProjectModel, directory: Bool, folder: String?) {
-        self.project = project
-        self.directory = directory
-        _name = State(initialValue: directory ? "untitled folder" : "untitled.tex")
-        _folder = State(initialValue: folder ?? project.openPath?.parentFolder ?? "")
-    }
-
-    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
-    private var validName: Bool {
-        !trimmed.isEmpty && trimmed != "." && trimmed != ".."
-            && !trimmed.contains("/") && !trimmed.contains("\\")
-    }
-
-    var body: some View {
-        let folders = project.folders
-        let folderAvailable = folder.isEmpty || folders.contains(folder)
-        DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
-                    enabled: validName && folderAvailable, failure: { "Couldn’t Create “\(trimmed)”" }) {
-            try await project.createEntry(folder.isEmpty ? trimmed : "\(folder)/\(trimmed)", directory: directory)
-        } fields: {
-            TextField("Name", text: $name, selection: $selection)
-                .focused($nameFocused)
-                .onChange(of: nameFocused) { _, now in
-                    if now, !directory { selection = .baseName(of: name) }
-                }
-            Picker("Where", selection: $folder) {
-                Label(project.id, systemImage: "folder").tag("")
-                if !folderAvailable {
-                    Label("\(folder) (Unavailable)", systemImage: "folder").tag(folder)
-                }
-                ForEach(folders, id: \.self) { path in
-                    Label(path, systemImage: "folder").tag(path)
-                }
-            }
-        }
-        .defaultFocus($nameFocused, true)
-    }
-}
-
-/// Edit › Go to Line… and Go to Page…; the page also from the status bar.
-/// `limit` is read as the sheet draws, so a build finishing meanwhile counts.
+/// Edit › Go to Page…, also from the status bar: a sheet, as Preview's. (Go to Line… is
+/// Xcode's floating field, `GoToLinePanel`.) `limit` is read as the sheet draws, so a
+/// build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?

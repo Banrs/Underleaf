@@ -20,70 +20,109 @@ struct FilesList: View {
                 if project.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
                 if !Task.isCancelled { await project.search() }
             }
+            // File › New File and New Folder, taken once.
+            .onChange(of: app.newEntry, initial: true) { _, entry in
+                guard let entry else { return }
+                app.newEntry = nil
+                create(entry)
+            }
     }
 
     private var files: some View {
-        List(selection: $selection) {
-            Section("Files") {
-                // Between the top-level rows, into the project's top level.
-                TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) },
-                         insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
-                    row(node).tag(node.path)
+        ScrollViewReader { proxy in
+            List(selection: $selection) {
+                Section("Files") {
+                    // Between the top-level rows, into the project's top level.
+                    TreeRows(nodes: project.tree, children: \.children, isExpanded: { $expanded.contains($0.path) },
+                             insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
+                        row(node).tag(node.path)
+                    }
                 }
             }
-        }
-        .listStyle(.sidebar)
-        .accessibilityLabel("Files")
-        // The clicked row's menu, which leaves the selection (and the open file) as
-        // it is; on the list's empty space, the list's own.
-        .contextMenu(forSelectionType: String.self) { paths in
-            if let path = paths.first, let node = project.node(at: path) {
-                if node.isDirectory {
-                    Button(MenuCommand.fileNew.title) { app.prompt = .newFile(in: node.path) }
-                    Button(MenuCommand.fileNewFolder.title) { app.prompt = .newFolder(in: node.path) }
-                    Divider()
-                } else if isLaTeXFile(node.path) {
-                    Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
-                        .disabled(node.path == project.settings?.mainFile)
-                    Divider()
+            .listStyle(.sidebar)
+            .accessibilityLabel("Files")
+            // The clicked row's menu, which leaves the selection (and the open file) as
+            // it is. None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
+            .contextMenu(forSelectionType: String.self) { paths in
+                if let path = paths.first, let node = project.node(at: path) {
+                    if node.isDirectory {
+                        Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: node.path)) }
+                        Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
+                        Divider()
+                    } else if isLaTeXFile(node.path) {
+                        Button("Set as Main File") { Task { await project.setMainFile(node.path) } }
+                            .disabled(node.path == project.settings?.mainFile)
+                        Divider()
+                    }
+                    ItemMenuItems(actions: actions(node))
                 }
-                ItemMenuItems(actions: actions(node))
-            } else {
-                Button(MenuCommand.fileNew.title) { app.perform(.fileNew, on: project) }
-                Button(MenuCommand.fileNewFolder.title) { app.perform(.fileNewFolder, on: project) }
+            } primaryAction: { paths in
+                // A folder opens or closes; a file is already open once chosen.
+                guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
+                if expanded.remove(path) == nil { expanded.insert(path) }
+            }
+            // The empty space's: the project's top level's, as a Finder window's background
+            // has its folder's.
+            .contextMenu {
+                Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
+                Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: "")) }
                 Divider()
                 Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
             }
-        } primaryAction: { paths in
-            // A folder opens or closes; a file is already open once chosen.
-            guard let path = paths.first, project.node(at: path)?.isDirectory == true else { return }
-            if expanded.remove(path) == nil { expanded.insert(path) }
-        }
-        .onChange(of: selection) { _, path in
-            if let path, path != project.openPath, project.node(at: path)?.isDirectory == false {
-                Task {
-                    await project.open(path, focus: false)
-                    // It didn't open (reported): the file on screen stays chosen.
-                    if project.openPath != path, selection == path { selection = project.openPath }
+            .onChange(of: selection) { _, path in
+                if let path, path != project.openPath, project.node(at: path)?.isDirectory == false {
+                    Task {
+                        await project.open(path, focus: false)
+                        // It didn't open (reported): the file on screen stays chosen.
+                        if project.openPath != path, selection == path { selection = project.openPath }
+                    }
                 }
             }
+            .onChange(of: project.openPath, initial: true) { _, path in
+                selection = path
+                if let path { showRow(path) }
+            }
+            // Return renames the chosen item, as in Finder: after the key event, through
+            // which the list keeps the keyboard from the field.
+            .onKeyPress(.return) {
+                guard rename.id == nil, let node = selection.flatMap({ project.node(at: $0) }) else { return .ignored }
+                Task { actions(node).rename() }
+                return .handled
+            }
+            .focused($listFocused)
+            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
+                project.node(at: path).map(actions)
+            }
+            // A row named in place comes into view first: the list makes only the rows it shows.
+            .onChange(of: rename.id) { _, id in
+                if let id { Task { proxy.scrollTo(id) } }
+            }
         }
-        .onChange(of: project.openPath, initial: true) { _, path in
+    }
+
+    /// Its folders open, so its row shows.
+    private func showRow(_ path: String) {
+        var folder = path.parentFolder
+        while !folder.isEmpty { expanded.insert(folder); folder = folder.parentFolder }
+    }
+
+    /// The chosen folder, or the chosen file's; the top level with neither.
+    private var chosenFolder: String {
+        guard let path = selection, let node = project.node(at: path) else { return "" }
+        return node.isDirectory ? path : path.parentFolder
+    }
+
+    /// Made in the chosen folder, or the chosen file's, as Xcode makes a new file; then
+    /// chosen with its name ready to type over, as Finder's New Folder is. Escape keeps it.
+    private func create(_ entry: NewEntry) {
+        let folder = entry.folder ?? chosenFolder
+        // The files show it, not the search's results.
+        if project.isSearching { project.searchQuery = "" }
+        Task {
+            guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
+            showRow(path)
             selection = path
-            // The open file's folders open, so its row shows.
-            var folder = path?.parentFolder ?? ""
-            while !folder.isEmpty { expanded.insert(folder); folder = folder.parentFolder }
-        }
-        // Return renames the chosen item, as in Finder: after the key event, through
-        // which the list keeps the keyboard from the field.
-        .onKeyPress(.return) {
-            guard rename.id == nil, let node = selection.flatMap({ project.node(at: $0) }) else { return .ignored }
-            Task { actions(node).rename() }
-            return .handled
-        }
-        .focused($listFocused)
-        .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
-            project.node(at: path).map(actions)
+            rename.begin(path, name: path.fileName)
         }
     }
 
@@ -187,7 +226,12 @@ struct FilesList: View {
             return
         }
         let folder = node.path.parentFolder
-        Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
+        let path = folder.isEmpty ? name : "\(folder)/\(name)"
+        Task {
+            await project.renameEntry(node.path, to: path)
+            // A renamed folder stays chosen, as in Finder; a file follows the open file.
+            if selection == node.path, project.node(at: path) != nil { selection = path }
+        }
     }
 }
 
