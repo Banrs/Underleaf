@@ -730,12 +730,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         setSelectedRange(selection)
     }
 
-    /// Command-click goes to the PDF from the clicked spot.
+    /// A double-click goes to the PDF, as one in the PDF comes here.
     override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.contains(.command), let sync = forwardSync() else { return super.mouseDown(with: event) }
-        window?.makeFirstResponder(self)
-        setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), length: 0))
-        sync()
+        // Let AppKit select the word before SyncTeX reads the source position.
+        super.mouseDown(with: event)
+        if event.type == .leftMouseDown, event.clickCount == 2 { forwardSync()?() }
     }
 
     // MARK: file drops open

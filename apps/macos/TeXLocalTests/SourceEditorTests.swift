@@ -385,20 +385,26 @@ struct SourceEditorTests {
         #expect(colour == .systemPink)
     }
 
-    /// Command-click goes to the PDF from the clicked spot; a plain click only places the caret.
-    @Test func commandClickGoesToThePDF() throws {
+    /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
+    @Test func aDoubleClickGoesToThePDF() throws {
         let window = inWindow()
         open("one two", caret: 0)
         text.layoutSubtreeIfNeeded()
-        var went = false
-        text.forwardSync = { { went = true } }
+        var went = 0
+        text.forwardSync = { { went += 1 } }
         let glyph = text.firstRect(forCharacterRange: NSRange(location: 4, length: 1), actualRange: nil)
-        let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY)),
-                                                    modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
-                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        text.mouseDown(with: click)
-        #expect(went)
-        #expect(text.selectedRange() == NSRange(location: 4, length: 0))
+        let point = window.convertPoint(fromScreen: NSPoint(x: glyph.minX + 1, y: glyph.midY))
+        func event(_ type: NSEvent.EventType, clicks: Int) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                            context: nil, eventNumber: 0, clickCount: clicks, pressure: 1))
+        }
+        for clicks in 1...2 {
+            // The release ends the text view's own tracking.
+            NSApp.postEvent(try event(.leftMouseUp, clicks: clicks), atStart: false)
+            text.mouseDown(with: try event(.leftMouseDown, clicks: clicks))
+            #expect(went == clicks - 1)
+        }
+        #expect(text.selectedRange() == NSRange(location: 4, length: 3))
     }
 
     /// The text's context menu starts with Go to PDF Position, as the PDF's with
