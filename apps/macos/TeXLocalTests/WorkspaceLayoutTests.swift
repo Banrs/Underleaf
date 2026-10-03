@@ -314,17 +314,22 @@ final class WorkspaceLayoutTests {
         #expect(items(.pdfInspector) == [.togglePDF, .inspectorToggle])
     }
 
-    /// The grouped items follow the window: Format, Math and Insert are off outside LaTeX; the
-    /// toggles' help says what they'll do, and the Inspector's shows the window's inspector.
+    /// The grouped items follow the window: Format, Math and Insert are off outside LaTeX, and
+    /// so are their menus' items, which the overflow menu opens either way; the toggles' help
+    /// says what they'll do, and the Inspector's shows the window's inspector.
     @Test func theGroupedItemsFollowTheWindow() async throws {
         let workspace = open(), project = workspace.project
         let subitems = try showToolbar(workspace).items.compactMap { $0 as? NSToolbarItemGroup }.flatMap(\.subitems)
         let item = { (id: NSToolbarItem.Identifier) in try #require(subitems.first { $0.itemIdentifier == id }) }
         let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
+        let format = try #require((editing[0] as? NSMenuToolbarItem)?.menu)
+        let bold = { format.update(); return format.item(withTitle: MenuCommand.editBold.title)?.isEnabled }
         project.openPath = "refs.bib"
         #expect(editing.allSatisfy { !$0.isEnabled })
+        try await waitUntil { bold() == false }
         project.openPath = "main.tex"
         #expect(editing.allSatisfy { $0.isEnabled })
+        try await waitUntil { bold() == true }
 
         let pdf = try item(.togglePDF), inspector = try item(.inspectorToggle)
         #expect(pdf.toolTip == "Hide PDF" && inspector.toolTip == "Show Inspector")
@@ -333,6 +338,23 @@ final class WorkspaceLayoutTests {
         NSApp.sendAction(try #require(inspector.action), to: inspector.target, from: inspector)
         try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
         #expect(inspector.toolTip == "Hide Inspector")
+    }
+
+    /// Off in the toolbar, off in its overflow menu: Share, which the menu asks, and Zoom's
+    /// scales, under a submenu that stays available (HIG, Menus).
+    @Test func theOverflowMenuFollowsTheItems() async throws {
+        let workspace = open(), toolbar = try #require(workspace.toolbar), bar = toolbar.toolbar
+        let share = try #require(toolbar.toolbar(bar, itemForItemIdentifier: .share, willBeInsertedIntoToolbar: true))
+        let scales = try #require(toolbar.toolbar(bar, itemForItemIdentifier: .zoom, willBeInsertedIntoToolbar: true)?
+            .menuFormRepresentation?.submenu)
+        let fitWidth = { scales.update(); return scales.item(withTitle: "Fit Width")?.isEnabled }
+        // The overflow menu's own item for Share, which AppKit's validation turns on whatever the item's state.
+        let overflow = NSMenuItem(title: "Share…", action: Selector(("_simpleOverflowMenuItemClicked:")), keyEquivalent: "")
+        // No PDF yet.
+        #expect(!share.isEnabled && !share.validateMenuItem(overflow))
+        try await waitUntil { fitWidth() == false }
+        workspace.project.pdfURL = FileManager.default.temporaryDirectory.appending(path: "main.pdf")
+        try await waitUntil { fitWidth() == true }
     }
 }
 

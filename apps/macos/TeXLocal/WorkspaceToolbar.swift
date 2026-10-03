@@ -110,9 +110,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .formatMathInsert:
             item = group(id, "Format/Math/Insert", [
                 formatItem(),
-                menuItem(.math, "Math", "radicand.squareroot",
-                         NSHostingMenu(rootView: MathMenuItems(project: project, inlineMath: inlineMath))),
-                menuItem(.insert, "Insert", "plus", NSHostingMenu(rootView: InsertMenuItems(project: project))),
+                menuItem(.math, "Math", "radicand.squareroot", MathMenuItems(project: project, inlineMath: inlineMath)),
+                menuItem(.insert, "Insert", "plus", InsertMenuItems(project: project)),
             ])
             item.visibilityPriority = .low
         case .bold:
@@ -127,7 +126,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .zoom:
             item = zoomItem()
         case .share:
-            let share = NSSharingServicePickerToolbarItem(itemIdentifier: id)
+            let share = ShareItem(itemIdentifier: id)
             share.delegate = self
             share.toolTip = "Share PDF"
             share.visibilityPriority = .low
@@ -193,7 +192,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private func zoomItem() -> NSToolbarItem {
         let form = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
         form.image = symbol("plus.magnifyingglass", "Zoom")
-        let menu = NSHostingMenu(rootView: Group { [app, project, pdf] in
+        let menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.hasPDF }) { [app, project, pdf] in
             // The menu bar's items carry the shortcuts.
             ForEach([MenuCommand.viewZoomIn, .viewZoomOut], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
@@ -222,25 +221,26 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
+    /// An editing menu, off with its items outside LaTeX (`configure`).
     private func menuItem(_ id: NSToolbarItem.Identifier, _ title: String, _ image: String,
-                          _ menu: NSMenu) -> NSMenuToolbarItem {
+                          _ items: some View) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: id)
         item.label = title
         item.toolTip = title
         item.image = symbol(image, title)
-        item.menu = menu
+        item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
         item.showsIndicator = Self.menuIndicators
         return item
     }
 
     private func formatItem() -> NSToolbarItem {
-        menuItem(.format, "Format", "textformat", NSHostingMenu(rootView: Group { [app, project] in
+        menuItem(.format, "Format", "textformat", Group { [app, project] in
             ForEach([MenuCommand.editBold, .editItalic], id: \.self) { command in
                 Button(command.title) { app.perform(command, on: project) }
             }
             Divider()
             SectionLevelItems(project: project)
-        }))
+        })
     }
 
     /// One capsule for its items. Unlabelled, it shows their labels, and the overflow menu
@@ -384,6 +384,25 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] {
         project.pdfURL.map { [$0] } ?? []
+    }
+}
+
+/// Share, off in the overflow menu as in the toolbar: the menu asks the item, and AppKit's
+/// answer for it ignores `isEnabled` (27.2).
+private final class ShareItem: NSSharingServicePickerToolbarItem {
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        isEnabled && super.validateMenuItem(menuItem)
+    }
+}
+
+/// A toolbar menu's items, off while its item is: the overflow menu still opens the menu,
+/// which stays available with its items dimmed (HIG, Menus).
+private struct ToolbarMenuItems<Content: View>: View {
+    let isEnabled: () -> Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content().disabled(!isEnabled())
     }
 }
 
