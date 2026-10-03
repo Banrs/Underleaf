@@ -321,7 +321,7 @@ struct OutlineList: View {
                         HeadingRow(item: node.item).equatable().tag(node.id)
                     }
                 } header: {
-                    Text("File Outline")
+                    OutlineHeaderTitle()
                 }
             }
             .listStyle(.sidebar)
@@ -347,7 +347,8 @@ struct OutlineList: View {
 }
 
 /// The folded File Outline's header, at the foot of the files where the outline's
-/// pane, collapsed, leaves it: its own list, as tall as the header, unfolding the pane.
+/// pane, collapsed, leaves it: its own list, its header row as tall as the status bar
+/// (centred between the list's even insets), unfolding the pane.
 struct FoldedOutlineHeader: View {
     @Environment(AppModel.self) private var app
     @State private var height: CGFloat?
@@ -356,19 +357,32 @@ struct FoldedOutlineHeader: View {
         List {
             Section(isExpanded: Binding(get: { false }, set: { if $0 { app.outlineCollapsed = false } })) {
             } header: {
-                Text("File Outline")
+                OutlineHeaderTitle()
             }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .scrollDisabled(true)
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
-        } action: { _, content in
-            height = content
-        }
+        .environment(\.defaultMinListHeaderHeight, StatusBar.height)
+        .onScrollGeometryChange(for: CGFloat.self, of: \.contentSize.height) { _, content in height = content }
         .frame(height: height)
+        .frame(height: StatusBar.height)
         .accessibilityLabel("File Outline")
+    }
+}
+
+/// The File Outline's section header, its whole row a button that folds or unfolds the
+/// outline, as its disclosure chevron does.
+private struct OutlineHeaderTitle: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Button { app.outlineCollapsed.toggle() } label: {
+            Text("File Outline")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
     }
 }
 

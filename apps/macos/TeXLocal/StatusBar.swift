@@ -3,13 +3,15 @@ import SwiftUI
 /// Status below source and PDF. Page uses PDFKit numbering, which can differ
 /// from LaTeX; save failures, caret line and engine appear elsewhere.
 struct StatusBar: View {
-    /// Its content's height, one in every state.
-    static let height: CGFloat = 20
+    /// Xcode 27's bottom bar, measured; the File Outline's header matches it.
+    static let height: CGFloat = 36
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
     var body: some View {
-        HStack {
+        // Edge to edge, clear of the window's corner: the accessory-bar bezels' own
+        // insets (10 pt) set the items apart, and put the toggle's symbol where Xcode's is.
+        HStack(spacing: 0) {
             // Reveals the issues, as Xcode's activity view does; the panel's own toggle hides it.
             Button { project.showBuildPanel() } label: { buildStatus }
                 .help("Show Issues")
@@ -19,6 +21,8 @@ struct StatusBar: View {
             if let counts {
                 Text("^[\(counts.words) word](inflect: true)")
                     .foregroundStyle(.secondary)
+                    // As a bezel's title is inset (10 pt, small accessory bar).
+                    .padding(.horizontal, 10)
                     .layoutPriority(-1)
             }
             if pages {
@@ -33,8 +37,9 @@ struct StatusBar: View {
                     .help("Go to Page")
             }
             if counts != nil || pages {
-                // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
-                Divider().frame(height: 12)
+                // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle,
+                // 4 pt clear of the bezels either side (measured).
+                Divider().frame(height: 12).padding(.horizontal, 4)
             }
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle")

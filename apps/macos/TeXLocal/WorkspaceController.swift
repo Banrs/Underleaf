@@ -66,6 +66,7 @@ final class WorkspaceController: NSSplitViewController {
     private(set) var inspectorItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     private var foldedOutline: NSSplitViewItemAccessoryViewController!
+    private let foldedLine = separator()
     private var pdfFind: NSSplitViewItemAccessoryViewController!
     private let searchField = FieldHandle()
 
@@ -114,10 +115,13 @@ final class WorkspaceController: NSSplitViewController {
         sidebar.splitView.autosaveName = "Sidebar"
         let filesItem = NSSplitViewItem(viewController: host(FilesList(project: project)))
         filesItem.minimumThickness = ColumnMetrics.filesMinimum
-        // Folded, the outline's pane collapses and its header stays at the foot of the files.
+        // Folded, the outline's pane collapses and its header stays at the foot of the files,
+        // under the status bar's line and as tall as the bar, so the two line up.
         foldedOutline = accessory(FoldedOutlineHeader())
         foldedOutline.automaticallyAppliesContentInsets = false
-        if OutlineState(app, project) == .folded { filesItem.addBottomAlignedAccessoryViewController(foldedOutline) }
+        // The separator draws the line; the sidebar's automatic edge would add its own over it.
+        for bar in [foldedLine, foldedOutline!] { bar.preferredScrollEdgeEffectStyle = .soft }
+        if OutlineState(app, project) == .folded { addFoldedOutline(to: filesItem) }
         outlineItem = NSSplitViewItem(viewController: host(OutlineList(project: project),
                                                             height: (height * ColumnMetrics.outlineShare).rounded()))
         outlineItem.minimumThickness = ColumnMetrics.outlineMinimum
@@ -177,14 +181,11 @@ final class WorkspaceController: NSSplitViewController {
         area.loaded = { [unowned self] in if !project.showLogs { panelItem.isCollapsed = true } }
 
         let areaItem = NSSplitViewItem(viewController: area)
-        // The system separator over the status bar, edge to edge, outside the bar's insets.
-        let separator = NSSplitViewItemAccessoryViewController()
-        let line = NSBox(frame: NSRect(x: 0, y: 0, width: 100, height: 1))
-        line.boxType = .separator
-        separator.view = line
-        separator.automaticallyAppliesContentInsets = false
-        areaItem.addBottomAlignedAccessoryViewController(separator)
+        // A hard scroll edge draws no line over the build panel's still content.
+        areaItem.addBottomAlignedAccessoryViewController(Self.separator())
+        // Xcode's bottom bar: its height, and its items to the ends.
         let statusBar = accessory(StatusBar(project: project), clearsCorners: true)
+        statusBar.automaticallyAppliesContentInsets = false
         statusBar.preferredScrollEdgeEffectStyle = .automatic
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)
@@ -211,6 +212,16 @@ final class WorkspaceController: NSSplitViewController {
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
+    }
+
+    /// The system separator, edge to edge over a bar, outside its insets.
+    private static func separator() -> NSSplitViewItemAccessoryViewController {
+        let separator = NSSplitViewItemAccessoryViewController()
+        let line = NSBox(frame: NSRect(x: 0, y: 0, width: 100, height: 1))
+        line.boxType = .separator
+        separator.view = line
+        separator.automaticallyAppliesContentInsets = false
+        return separator
     }
 
     /// A pane bar sized to its content, inside AppKit's standard accessory insets.
@@ -301,7 +312,7 @@ final class WorkspaceController: NSSplitViewController {
         // Hidden before its first layout, a bottom accessory still insets its pane (27.2).
         if state == .folded, !files.bottomAlignedAccessoryViewControllers.contains(foldedOutline) {
             showFoldedOutline(false)
-            files.addBottomAlignedAccessoryViewController(foldedOutline)
+            addFoldedOutline(to: files)
         }
         if state != .folded { showFoldedOutline(false) }
         setCollapsed(outlineItem, state != .open) { [weak self] in
@@ -310,9 +321,16 @@ final class WorkspaceController: NSSplitViewController {
         }
     }
 
+    private func addFoldedOutline(to files: NSSplitViewItem) {
+        files.addBottomAlignedAccessoryViewController(foldedLine)
+        files.addBottomAlignedAccessoryViewController(foldedOutline)
+    }
+
     private func showFoldedOutline(_ shown: Bool) {
-        foldedOutline.isHidden = !shown
-        foldedOutline.view.isHidden = !shown
+        for bar in [foldedLine, foldedOutline!] {
+            bar.isHidden = !shown
+            bar.view.isHidden = !shown
+        }
     }
 
     /// The bar's view hides too: a hidden accessory only folds to no height, and its
@@ -506,7 +524,7 @@ enum ColumnMetrics {
     /// shortest, the columns over the build panel and the status bar under its line.
     static let contentMinimum = CGSize(width: (sourceMinimum + divider + pdfMinimum + toolbarInset).rounded(.up),
                                        height: columnsMinimum + divider + bar(BuildPanelHeader.height) + panelMinimum
-                                           + divider + bar(StatusBar.height))
+                                           + divider + StatusBar.height)
 
     /// A pane bar's content within AppKit's standard accessory insets (27.2).
     private static func bar(_ content: CGFloat) -> CGFloat { content + 2 * 9 }
