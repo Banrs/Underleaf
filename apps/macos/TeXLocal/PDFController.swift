@@ -46,6 +46,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     override init() {
         super.init()
+        // Preview's canvas color; the PDF's paper keeps its own colors.
+        view.backgroundColor = .controlBackgroundColor
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
@@ -305,15 +307,11 @@ final class SyncPDFView: PDFView {
     var onResize: () -> Void = {}
     private let pagesDark = Atomic(false)
 
-    /// White paper sits on PDFView's own canvas, the system's colour for areas revealed
-    /// behind documents (NSColor.h): the page stands off it in Light. Dark paper keeps the
-    /// content background.
     var darkPaper = false {
         didSet {
             guard darkPaper != oldValue else { return }
             pagesDark.store(darkPaper, ordering: .relaxed)
             pageShadowsEnabled = !darkPaper
-            backgroundColor = darkPaper ? .controlBackgroundColor : .underPageBackgroundColor
             matchScroller()
         }
     }
