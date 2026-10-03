@@ -70,11 +70,14 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// the typed text's start, `start`: a screen rect of `window`'s. Without a
     /// window it holds them unseen.
     func show(_ rows: [(label: String, kind: CompletionKind)], font: NSFont, theme: SyntaxTheme, under start: NSRect, in window: NSWindow?) {
+        guard !rows.isEmpty else { return close() }
+        let line = { (font: NSFont) in (font.ascender - font.descender + font.leading).rounded(.up) }
+        let rowHeight = systemRowHeight + max(0, line(font) - line(.systemFont(ofSize: NSFont.systemFontSize)))
+        // Before the rows change: a new height lays out the rows the table counted.
+        if table.rowHeight != rowHeight { table.rowHeight = rowHeight }
         self.rows = rows
         self.font = font
         self.theme = theme
-        let line = { (font: NSFont) in (font.ascender - font.descender + font.leading).rounded(.up) }
-        table.rowHeight = systemRowHeight + max(0, line(font) - line(.systemFont(ofSize: NSFont.systemFontSize)))
         table.reloadData()
         select(0)
         guard let window else { return }
@@ -148,6 +151,8 @@ final class CompletionList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { Row() }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        // A layout before a reload can still count the rows there were.
+        guard rows.indices.contains(row) else { return nil }
         let cell = tableView.makeView(withIdentifier: Cell.identifier, owner: nil) as? Cell ?? Cell()
         let (label, kind) = rows[row], badge = kind.badge(in: theme)
         cell.textField?.stringValue = label

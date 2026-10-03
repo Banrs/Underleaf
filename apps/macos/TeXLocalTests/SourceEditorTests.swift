@@ -243,6 +243,26 @@ struct SourceEditorTests {
         #expect(text.offered == nil)
     }
 
+    /// Shown again with fewer rows, in another size, or with none, the list never
+    /// asks for a row it no longer has.
+    @Test func theCompletionListKeepsItsRowsInStep() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        let list = CompletionList()
+        let rows = (0..<20).map { (label: "\\item\($0)", kind: CompletionKind.command) }
+        func show(_ count: Int, size: CGFloat) {
+            list.show(Array(rows.prefix(count)), font: .monospacedSystemFont(ofSize: size, weight: .regular), theme: .overleaf,
+                      under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
+            for child in window.childWindows ?? [] { child.layoutIfNeeded() }
+        }
+        show(20, size: 11)
+        list.move(15)
+        show(2, size: 24)
+        #expect(list.selection == 0 && window.childWindows?.count == 1)
+        show(0, size: 11)
+        #expect(window.childWindows?.isEmpty != false)
+    }
+
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
         open("start")
         text.insertText("x", replacementRange: typed)
