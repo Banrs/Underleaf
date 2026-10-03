@@ -357,6 +357,22 @@ final class WorkspaceLayoutTests {
         try await waitUntil { fitWidth() == true }
     }
 
+    /// A narrowing window overflows the least-used items first: Zoom, then Format, Math and
+    /// Insert; Back, Compile and the toggles stay down to the window's minimum.
+    @Test func theToolbarOverflowsTheLeastUsedFirst() async throws {
+        let workspace = open(sidebar: false)
+        let window = try #require(window), toolbar = try showToolbar(workspace)
+        var left: [NSToolbarItem.Identifier] = []
+        for width in stride(from: Self.size.width, through: ColumnMetrics.contentMinimum.width, by: -5) {
+            window.setContentSize(NSSize(width: width, height: Self.size.height))
+            window.layoutIfNeeded()
+            let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
+            left += toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !left.contains($0) }
+        }
+        #expect(left.filter { !$0.rawValue.hasPrefix("NSToolbar") } == [.zoom, .formatMathInsert])
+        #expect(!left.contains(.toggleSidebar))
+    }
+
     /// Zoom out | scale | zoom in, the scale in tabular digits whatever font the toolbar gives
     /// the control, so the capsule keeps its width as the scale changes.
     @Test func theZoomControlKeepsItsSegmentsAndWidth() throws {

@@ -55,9 +55,10 @@ PDF is one persistent PDFKit view owned by `PDFController`.
 - Toolbar: Aa, Math and + are one unlabelled NSToolbarItemGroup, as are the PDF and
   Inspector toggles (the system's Inspector toggle draws blank in a group), so the overflow
   menu lists their menus at its top level; they show no chevrons, with which AppKit draws the
-  first group as three capsules. Zoom is the stock minus, percentage menu and plus, its own item, left to
-  automatic overflow. The toolbar is "Workspace 2", so layouts saved before the groups don't
-  come back. The 0.5 pt trailing safe-area adjustment.
+  first group as three capsules. Zoom is the stock minus, percentage menu and plus, its own
+  item. Items overflow from the least used in TeX editors: Zoom, then Aa/Math/+, then Back;
+  Compile and the toggles last. The toolbar is "Workspace 2", so layouts saved before the
+  groups don't come back. The 0.5 pt trailing safe-area adjustment.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
 

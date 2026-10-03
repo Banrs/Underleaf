@@ -28,7 +28,8 @@ extension NSToolbarItem.Identifier {
 
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Related tools share a capsule, as Pages groups its own (HIG, Toolbars), and a group moves and
-/// overflows as one. Editing tools overflow before Zoom; Compile and window toggles take priority.
+/// overflows as one. Items overflow from the least used in TeX editors: Zoom, then the editing
+/// tools (equal priorities leave from the right), then Back, and Compile and the toggles last.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed with the groups: a layout saved under "Workspace" lists the separate items,
@@ -217,6 +218,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.label = "Zoom"
         item.view = control
         item.menuFormRepresentation = form
+        item.visibilityPriority = .low
         return item
     }
 
