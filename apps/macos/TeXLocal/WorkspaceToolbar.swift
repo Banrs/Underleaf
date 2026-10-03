@@ -5,8 +5,6 @@ extension NSToolbarItem.Identifier {
     static let back = Self("back")
     static let undo = Self("undo")
     static let redo = Self("redo")
-    /// Format, Math and Insert in one capsule.
-    static let formatMathInsert = Self("formatMathInsert")
     static let format = Self("sectionLevel")
     static let bold = Self("bold")
     static let italic = Self("italic")
@@ -27,13 +25,14 @@ extension NSToolbarItem.Identifier {
 }
 
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
-/// Related tools share a capsule, as Pages groups its own (HIG, Toolbars), and a group moves and
-/// overflows as one. Items overflow from the least used in TeX editors: Zoom, then the editing
-/// tools (equal priorities leave from the right), then Back, and Compile and the toggles last.
+/// Related tools share a capsule (HIG, Toolbars): side by side, the editing tools share one, as
+/// Notes' do, and the PDF and Inspector toggles are a group, which moves and overflows as one.
+/// Items overflow from the least used in TeX editors: Zoom, then the editing tools (equal
+/// priorities leave from the right), then Back, and Compile and the toggles last.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
-    /// Renamed with the groups: a layout saved under "Workspace" lists the separate items,
-    /// which would come back ungrouped.
+    /// Renamed with the toggles' group: a layout saved under "Workspace" lists them apart,
+    /// and Share, which would come back.
     let toolbar = NSToolbar(identifier: "Workspace 2")
     private let app: AppModel
     private let project: ProjectModel
@@ -62,14 +61,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     // ---------- items ----------
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .formatMathInsert,
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .zoom, .flexibleSpace, .compile,
          .inspectorTrackingSeparator, .flexibleSpace, .pdfInspector]
     }
 
     /// Share is here only: File › Share has it.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.undo, .redo, .formatMathInsert, .bold, .italic]
+        [.undo, .redo, .format, .bold, .italic, .math, .insert]
             + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
             + [.zoom, .share, .space, .flexibleSpace]
             + toolbarImmovableItemIdentifiers(toolbar)
@@ -105,13 +104,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "Redo", "arrow.uturn.forward", Selector(("redo:")))
             item.target = nil
             item.visibilityPriority = .low
-        case .formatMathInsert:
-            item = group(id, "Format/Math/Insert", [
-                formatItem(),
-                menuItem(.math, "Math", "radicand.squareroot", MathMenuItems(project: project, inlineMath: inlineMath)),
-                menuItem(.insert, "Insert", "plus", InsertMenuItems(project: project)),
-            ])
-            item.visibilityPriority = .low
+        case .format:
+            item = formatItem()
+        case .math:
+            item = menuItem(id, "Math", "radicand.squareroot", MathMenuItems(project: project, inlineMath: inlineMath))
+        case .insert:
+            item = menuItem(id, "Insert", "plus", InsertMenuItems(project: project))
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
             item.visibilityPriority = .low
@@ -231,9 +229,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.toolTip = title
         item.image = symbol(image, title)
         item.menu = NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in project.isLaTeX }) { items })
-        // No chevrons: with them, the group draws a capsule for each menu (27.2); without, one
-        // for all three, as Pages' insert tools.
+        // No chevrons, as Notes' tools: with them, each menu draws its own capsule (27.2).
         item.showsIndicator = false
+        item.visibilityPriority = .low
         return item
     }
 
@@ -248,7 +246,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     /// One capsule for its items. Unlabelled, it shows their labels, and the overflow menu
-    /// lists their menus at its top level; a group's label would nest them a menu down.
+    /// lists them at its top level; a group's label would nest them a menu down.
     private func group(_ id: NSToolbarItem.Identifier, _ paletteLabel: String,
                        _ items: [NSToolbarItem]) -> NSToolbarItemGroup {
         let group = NSToolbarItemGroup(itemIdentifier: id)

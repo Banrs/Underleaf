@@ -299,28 +299,26 @@ final class WorkspaceLayoutTests {
         #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
     }
 
-    /// Format, Math and Insert share a capsule, as do the PDF and Inspector toggles. Share is
-    /// in Customize Toolbar only: File › Share has it.
+    /// Format, Math and Insert sit side by side, which shares a capsule, as Notes' tools do; the
+    /// PDF and Inspector toggles are a group. Share is in Customize Toolbar only: File › Share has it.
     @Test func theToolbarGroupsItsTools() throws {
         let toolbar = try #require(open().toolbar), bar = toolbar.toolbar
         let shown = toolbar.toolbarDefaultItemIdentifiers(bar)
-        #expect(shown.contains(.formatMathInsert) && shown.contains(.pdfInspector) && !shown.contains(.share))
+        let format = try #require(shown.firstIndex(of: .format))
+        #expect(Array(shown[format...].prefix(3)) == [.format, .math, .insert])
+        #expect(shown.contains(.pdfInspector) && !shown.contains(.share))
         #expect(toolbar.toolbarAllowedItemIdentifiers(bar).contains(.share))
-        let items = { (id: NSToolbarItem.Identifier) in
-            (toolbar.toolbar(bar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true) as? NSToolbarItemGroup)?
-                .subitems.map(\.itemIdentifier)
-        }
-        #expect(items(.formatMathInsert) == [.format, .math, .insert])
-        #expect(items(.pdfInspector) == [.togglePDF, .inspectorToggle])
+        let group = toolbar.toolbar(bar, itemForItemIdentifier: .pdfInspector, willBeInsertedIntoToolbar: true) as? NSToolbarItemGroup
+        #expect(group?.subitems.map(\.itemIdentifier) == [.togglePDF, .inspectorToggle])
     }
 
-    /// The grouped items follow the window: Format, Math and Insert are off outside LaTeX, and
-    /// so are their menus' items, which the overflow menu opens either way; the toggles' help
-    /// says what they'll do, and the Inspector's shows the window's inspector.
+    /// The editing tools and the toggles follow the window: Format, Math and Insert are off outside
+    /// LaTeX, and so are their menus' items, which the overflow menu opens either way; the toggles'
+    /// help says what they'll do, and the Inspector's shows the window's inspector.
     @Test func theGroupedItemsFollowTheWindow() async throws {
         let workspace = open(), project = workspace.project
-        let subitems = try showToolbar(workspace).items.compactMap { $0 as? NSToolbarItemGroup }.flatMap(\.subitems)
-        let item = { (id: NSToolbarItem.Identifier) in try #require(subitems.first { $0.itemIdentifier == id }) }
+        let items = try showToolbar(workspace).items.flatMap { [$0] + (($0 as? NSToolbarItemGroup)?.subitems ?? []) }
+        let item = { (id: NSToolbarItem.Identifier) in try #require(items.first { $0.itemIdentifier == id }) }
         let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
         let format = try #require((editing[0] as? NSMenuToolbarItem)?.menu)
         let bold = { format.update(); return format.item(withTitle: MenuCommand.editBold.title)?.isEnabled }
@@ -357,8 +355,8 @@ final class WorkspaceLayoutTests {
         try await waitUntil { fitWidth() == true }
     }
 
-    /// A narrowing window overflows the least-used items first: Zoom, then Format, Math and
-    /// Insert; Back, Compile and the toggles stay down to the window's minimum.
+    /// A narrowing window overflows the least-used items first: Zoom, then Insert, Math and
+    /// Format; Back, Compile and the toggles stay down to the window's minimum.
     @Test func theToolbarOverflowsTheLeastUsedFirst() async throws {
         let workspace = open(sidebar: false)
         let window = try #require(window), toolbar = try showToolbar(workspace)
@@ -369,7 +367,7 @@ final class WorkspaceLayoutTests {
             let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
             left += toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !left.contains($0) }
         }
-        #expect(left.filter { !$0.rawValue.hasPrefix("NSToolbar") } == [.zoom, .formatMathInsert])
+        #expect(left.filter { !$0.rawValue.hasPrefix("NSToolbar") } == [.zoom, .insert, .math, .format])
         #expect(!left.contains(.toggleSidebar))
     }
 
