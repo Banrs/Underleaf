@@ -24,6 +24,8 @@ struct SettingsView: View {
                     Text("Document Paper")
                     Text("Dark paper inverts the rendered PDF for night reading.")
                 }
+                // Three fixed choices, all in view (HIG, Toggles: radio buttons for two to five).
+                .pickerStyle(.radioGroup)
             }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
