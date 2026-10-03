@@ -445,7 +445,8 @@ extension PDFPage {
     /// PDFKit's characterIndex is inaccurate for pdfTeX's T1 fonts on 27.2;
     /// measure each letter's selection to retain the clicked source occurrence.
     func syncWord(at point: CGPoint) -> SyncTeXWord? {
-        guard let word = selectionForWord(at: point), let text = word.string, let context = string else { return nil }
+        // PDFKit's word lookup crashes on a page whose document has gone (it holds it weakly).
+        guard document != nil, let word = selectionForWord(at: point), let text = word.string, let context = string else { return nil }
         let range = word.range(at: 0, on: self)
         let offset = (0..<range.length).first { i in
             selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false

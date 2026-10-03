@@ -357,8 +357,16 @@ struct PDFFindTests {
         let pdf = try document(["alpha beta"]), page = try #require(pdf.page(at: 0))
         let text = try #require(page.string) as NSString
         let letter = try #require(page.selection(for: text.range(of: "e"))).bounds(for: page)
-        let word = try #require(page.syncWord(at: CGPoint(x: letter.midX, y: letter.midY)))
+        // A page holds its document weakly; it's the view's in the app.
+        let word = try #require(withExtendedLifetime(pdf) { page.syncWord(at: CGPoint(x: letter.midX, y: letter.midY)) })
         #expect(word.text == "beta" && word.offset == 1)
+    }
+
+    /// PDFKit's word lookup crashes on a page whose document has gone; it has no word.
+    @Test func aPageWithoutItsDocumentHasNoWord() throws {
+        let page = try autoreleasepool { try #require(try document(["alpha beta"]).page(at: 0)) }
+        #expect(page.document == nil)
+        #expect(page.syncWord(at: CGPoint(x: 10, y: 10)) == nil)
     }
 
     /// One source line spans many PDF rows, and SyncTeX can report a middle row first.
