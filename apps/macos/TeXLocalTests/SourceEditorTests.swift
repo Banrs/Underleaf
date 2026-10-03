@@ -417,7 +417,9 @@ struct SourceEditorTests {
 
     /// A new line shows its colours once laid out, without the caret moving again.
     @Test func newLinesAreColoured() throws {
-        _ = inWindow()
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
         open("x")
         text.insertText("\n\\section", replacementRange: typed)
         #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
@@ -425,7 +427,9 @@ struct SourceEditorTests {
 
     /// Choosing another colour theme recolours what is open.
     @Test func aThemeRecoloursTheText() throws {
-        _ = inWindow()
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
         open("\\section{A} % note")
         editor.setSyntaxTheme(.texstudio)
         #expect(try colour(of: "\\section") == SyntaxTheme.texstudio.colours.command)
