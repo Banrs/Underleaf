@@ -8,9 +8,8 @@ web/dist/
 release/
 *.app/
 
-# Rust / Tauri build output
+# Rust build output
 target/
-src-tauri/gen/
 
 # Logs
 *.log

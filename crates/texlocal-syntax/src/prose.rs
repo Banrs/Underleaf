@@ -2,134 +2,50 @@
 //! Name arguments include cases that the highlighter leaves uncoloured when
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::{catalog::CATALOG, letter, maths, merge_range, space, Text, TextRange};
+use crate::{catalog::CATALOG, maths, merge_range, space, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments from commands in the paragraph.
 /// Name arguments are read from the paragraph's start as they cannot contain
 /// a blank line.
 pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
-    let blank = |line: usize| text.line(line).iter().all(|&u| space(u));
     let mut line = text.line_index(start);
-    while line > 0 && !blank(line - 1) {
+    while line > 0 && !blank(text, line - 1) {
         line -= 1;
     }
-    let (units, mut i) = (&text.units, text.lines[line] as usize);
-    // A unit as a char, a surrogate as NUL; none past the end.
-    let at = |i: usize| {
-        units
-            .get(i)
-            .map(|&u| char::from_u32(u.into()).unwrap_or_default())
-    };
+    let units = &text.units;
+    let mut parsed_until = text.lines[line] as usize;
     let end_index = end as usize;
-    let comment_end = |mut i| {
-        while i < end_index && at(i) != Some('\n') {
-            i += 1;
-        }
-        i
-    };
-    let paragraph_end =
-        |i| at(i) == Some('\n') && i + 1 < end_index && blank(text.line_index(i as u32 + 1));
-    // An open context only needs to extend to the checked range's end.
-    let opaque_ranges = maths::scan(&text.units[..end_index], true).1;
     let mut ranges = Vec::new();
-    let mut opaque = opaque_ranges.iter().peekable();
-    while i < end_index {
-        while opaque
-            .peek()
-            .is_some_and(|r| r.start + r.length <= i as u32)
-        {
-            opaque.next();
-        }
-        if let Some(range) = opaque.peek().filter(|r| r.start <= i as u32) {
-            i = (range.start + range.length) as usize;
-            opaque.next();
-            continue;
-        }
-        let c = at(i);
-        i += 1;
-        if c == Some('%') {
-            i = comment_end(i);
-        }
-        if c != Some('\\') {
-            continue;
-        }
-        let name = i;
-        while i < end_index && letter(units[i]) {
-            i += 1;
-        }
-        let name = String::from_utf16_lossy(&units[name..i]);
-        let catalog = &*CATALOG;
-        let lists = [
-            &catalog.name_commands,
-            &catalog.cite_commands,
-            &catalog.ref_commands,
-        ];
-        if !lists.iter().any(|list| list.contains(&name)) {
-            i += (name.is_empty() && i < end_index) as usize; // an escape, as \%
-            continue;
-        }
-        i += (i < end_index && at(i) == Some('*')) as usize;
-        loop {
-            while i < end_index && matches!(at(i), Some(' ' | '\t' | '\r' | '\n' | '%')) {
-                if at(i) == Some('%') {
-                    i = comment_end(i);
-                }
-                if i >= end_index {
-                    break;
-                }
-                if paragraph_end(i) {
-                    break;
-                }
-                i += 1;
+    let mut names = Vec::new();
+    maths::scan(
+        &units[..end_index],
+        |from, to| {
+            merge_range(
+                &mut ranges,
+                TextRange {
+                    start: from as u32,
+                    length: (to - from) as u32,
+                },
+            );
+        },
+        |name, command_start, i| {
+            let catalog = &*CATALOG;
+            if command_start < parsed_until
+                || ![
+                    &catalog.name_commands,
+                    &catalog.cite_commands,
+                    &catalog.ref_commands,
+                ]
+                .iter()
+                .any(|list| list.iter().any(|n| n == name))
+            {
+                return;
             }
-            if i >= end_index {
-                break;
-            }
-            let close = match at(i) {
-                Some('[') => ']',
-                Some('{') => '}',
-                _ => break,
-            };
-            let (mut from, mut depth) = (i + 1, 0);
-            // To its close, or the paragraph's end: an unclosed brace while typing.
-            loop {
-                if i + 1 >= end_index {
-                    i = end_index;
-                    break;
-                }
-                i += 1;
-                match at(i).unwrap() {
-                    '%' => {
-                        ranges.push(TextRange {
-                            start: from as u32,
-                            length: (i - from) as u32,
-                        });
-                        i = comment_end(i);
-                        from = i;
-                        if i >= end_index || paragraph_end(i) {
-                            break;
-                        }
-                    }
-                    '\\' => i += 1,
-                    '{' => depth += 1,
-                    '}' if depth > 0 => depth -= 1,
-                    c if c == close && depth == 0 => break,
-                    '\n' if paragraph_end(i) => break,
-                    _ => {}
-                }
-            }
-            ranges.push(TextRange {
-                start: from as u32,
-                length: (i - from) as u32,
-            });
-            i = (i + 1).min(end_index);
-            if close == '}' {
-                break;
-            }
-        }
-    }
-    ranges.extend(opaque_ranges);
+            parsed_until = argument_ranges(text, i, end_index, &mut names);
+        },
+    );
+    ranges.extend(names);
     ranges.retain(|r| {
         let range_end = r.start.saturating_add(r.length);
         if start == end {
@@ -139,11 +55,85 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
         }
     });
     ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
-    let mut merged: Vec<TextRange> = Vec::with_capacity(ranges.len());
-    for range in ranges {
-        merge_range(&mut merged, range);
+    ranges.dedup_by(|range, previous| {
+        if range.start > previous.start + previous.length {
+            return false;
+        }
+        previous.length = previous
+            .length
+            .max(range.start + range.length - previous.start);
+        true
+    });
+    ranges
+}
+
+/// Options and the first braced argument, stopping at a blank line or EOF.
+fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
+    let at = |i| char::from_u32(text.units[i] as u32).unwrap_or_default();
+    let paragraph_end =
+        |i| at(i) == '\n' && i + 1 < end && blank(text, text.line_index(i as u32 + 1));
+    let mut push = |from: usize, to: usize| {
+        ranges.push(TextRange {
+            start: from as u32,
+            length: (to - from) as u32,
+        })
+    };
+    let mut close = None;
+    let (mut from, mut depth) = (0, 0);
+    i += (i < end && at(i) == '*') as usize;
+    while i < end && !paragraph_end(i) {
+        let c = at(i);
+        if c == '%' {
+            if close.is_some() {
+                push(from, i);
+            }
+            while i < end && at(i) != '\n' {
+                i += 1;
+            }
+            from = i;
+            continue;
+        }
+        if let Some(delimiter) = close {
+            match c {
+                '\\' => {
+                    i = (i + 2).min(end);
+                    continue;
+                }
+                '{' => depth += 1,
+                '}' if depth > 0 => depth -= 1,
+                c if c == delimiter && depth == 0 => {
+                    push(from, i);
+                    i += 1;
+                    close = None;
+                    if delimiter == '}' {
+                        break;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        } else {
+            close = match c {
+                '[' => Some(']'),
+                '{' => Some('}'),
+                ' ' | '\t' | '\r' | '\n' => {
+                    i += 1;
+                    continue;
+                }
+                _ => break,
+            };
+            from = i + 1;
+        }
+        i += 1;
     }
-    merged
+    if close.is_some() {
+        push(from, i);
+    }
+    i
+}
+
+fn blank(text: &Text, line: usize) -> bool {
+    text.line(line).iter().all(|&u| space(u))
 }
 
 #[cfg(test)]

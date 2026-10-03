@@ -6,7 +6,7 @@ use std::{borrow::Cow, sync::LazyLock};
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, is, letter, merge_range, space, utf16, Text, TextRange};
+use crate::{catalog, is, letter, space, utf16, Text};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
@@ -36,16 +36,19 @@ fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {
 /// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
 /// pair, the caret between) is maths.
 pub fn math_mode_at(src: &[u16]) -> bool {
-    scan(src, false).0
+    scan(src, |_, _| {}, |_, _, _| {})
 }
 
-/// Scan once for both the math mode at EOF and non-prose math/code runs.
-/// Math comments and text arguments remain prose.
-pub(crate) fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) {
+/// Read math/code ranges and commands outside them in one pass. Callers merge
+/// adjacent ranges; no range storage is needed when only the mode is wanted.
+pub(crate) fn scan(
+    src: &[u16],
+    mut range: impl FnMut(usize, usize),
+    mut command: impl FnMut(&str, usize, usize),
+) -> bool {
     let catalog = &*catalog::CATALOG;
     let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
-    // Open groups, innermost last: whether they're maths, and what closes
-    // them: "$", "$$", "\)", "\]", "}" or "env:<name>".
+    // Open groups, innermost last: whether they're maths, and what closes them.
     let mut stack: Vec<(bool, Cow<'static, str>)> = Vec::new();
     let math = |stack: &[(bool, Cow<'static, str>)]| stack.last().is_some_and(|g| g.0);
     let close = |stack: &mut Vec<(bool, Cow<'static, str>)>, end: &str| {
@@ -53,193 +56,148 @@ pub(crate) fn scan(src: &[u16], collect_ranges: bool) -> (bool, Vec<TextRange>) 
             stack.truncate(k);
         }
     };
-    // The next { opens a text argument (\text{).
-    let mut text_argument = false;
-    let mut ranges = RangeCollector {
-        enabled: collect_ranges,
-        math_start: None,
-        ranges: Vec::new(),
-    };
+    let mut text_argument = false; // The next { opens a text argument (\text{).
+    let mut math_run = false;
     let n = src.len();
     let mut i = 0;
     while i < n {
         let token_start = i;
-        let c = src[i];
-        if is(c, '%') {
-            // The line feed itself is read next, for the blank-line rule.
-            ranges.end_math(i);
-            let Some(eol) = find(src, i, &['\n' as u16]) else {
-                break;
-            };
-            i = eol;
-            continue;
-        }
-        if is(c, '\n') {
-            let mut j = i + 1;
-            while j < n && [' ', '\t', '\r'].iter().any(|&w| is(src[j], w)) {
-                j += 1;
+        let c = char::from_u32(src[i] as u32).unwrap_or_default();
+        let mut code = false;
+        i += 1;
+        match c {
+            '%' => {
+                // Comments remain prose, including the following line feed.
+                math_run = false;
+                let Some(eol) = find(src, i, &['\n' as u16]) else {
+                    break;
+                };
+                i = eol;
+                continue;
             }
-            if j < n && is(src[j], '\n') {
-                if let Some(k) = stack
+            '\n' => {
+                let j = i + src[i..]
                     .iter()
-                    .position(|g| ["$", "$$", "\\)", "\\]"].contains(&g.1.as_ref()))
-                {
-                    stack.truncate(k);
+                    .take_while(|&&u| matches!(u, 9 | 13 | 32))
+                    .count();
+                if src.get(j).is_some_and(|&u| is(u, '\n')) {
+                    if let Some(k) = stack
+                        .iter()
+                        .position(|g| matches!(g.1.as_ref(), "$" | "$$" | "\\)" | "\\]"))
+                    {
+                        stack.truncate(k);
+                    }
+                    text_argument = false;
+                }
+                if math_run {
+                    range(token_start, i);
+                }
+                math_run = math(&stack);
+                continue;
+            }
+            '$' => {
+                let double = src.get(i).is_some_and(|&u| is(u, '$'));
+                match stack.last().map(|g| g.1.as_ref()) {
+                    Some(end @ ("$" | "$$")) => {
+                        i += (end == "$$" && double) as usize;
+                        stack.pop();
+                    }
+                    _ if math(&stack) => {} // a stray $ in an environment's maths
+                    _ => {
+                        stack.push((true, if double { "$$" } else { "$" }.into()));
+                        i += double as usize;
+                    }
                 }
                 text_argument = false;
             }
-            i += 1;
-            ranges.transition(math(&stack), i, i);
-            continue;
-        }
-        if is(c, '$') {
-            let double = src.get(i + 1).is_some_and(|&u| is(u, '$'));
-            match stack.last().map(|g| g.1.as_ref()) {
-                Some("$") => {
-                    stack.pop();
+            '{' => {
+                stack.push((!text_argument && math(&stack), "}".into()));
+                text_argument = false;
+            }
+            '}' => close(&mut stack, "}"),
+            '\\' if i < n => {
+                let in_math = math(&stack);
+                text_argument = false;
+                if !letter(src[i]) {
+                    let d = char::from_u32(src[i] as u32).unwrap_or_default();
+                    match d {
+                        '(' | '[' if !in_math => {
+                            stack.push((true, if d == '(' { "\\)" } else { "\\]" }.into()))
+                        }
+                        ')' | ']' => close(&mut stack, if d == ')' { "\\)" } else { "\\]" }),
+                        _ => {}
+                    }
                     i += 1;
-                }
-                Some("$$") => {
-                    stack.pop();
-                    i += 1 + double as usize;
-                }
-                _ if math(&stack) => i += 1, // a stray $ in an environment's maths
-                _ => {
-                    stack.push((true, if double { "$$" } else { "$" }.into()));
-                    i += 1 + double as usize;
+                } else {
+                    let name_start = i;
+                    while i < n && letter(src[i]) {
+                        i += 1;
+                    }
+                    let name = String::from_utf16_lossy(&src[name_start..i]);
+                    let name_end = i;
+                    let literal_end: Option<(Cow<'_, [u16]>, usize)> = match name.as_str() {
+                        "verb" => {
+                            code = true;
+                            i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
+                            src.get(i).map(|_| (Cow::Borrowed(&src[i..i + 1]), i + 1))
+                        }
+                        "begin" | "end" => {
+                            if let Some((name_units, after)) = environment_name(src, i) {
+                                let environment = String::from_utf16_lossy(name_units);
+                                let environment = trim_js_space(&environment);
+                                i = after;
+                                if name == "end" {
+                                    close(&mut stack, &format!("env:{environment}"));
+                                    None
+                                } else if listed(&catalog.verbatim_environments, environment) {
+                                    code = true;
+                                    Some((
+                                        format!("\\end{{{environment}}}")
+                                            .encode_utf16()
+                                            .collect::<Vec<_>>()
+                                            .into(),
+                                        i,
+                                    ))
+                                } else {
+                                    let bare = environment.strip_suffix('*').unwrap_or(environment);
+                                    stack.push((
+                                        listed(&catalog.math_environments, bare) || in_math,
+                                        format!("env:{environment}").into(),
+                                    ));
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => {
+                            text_argument = listed(&catalog.text_commands, &name) && in_math;
+                            None
+                        }
+                    };
+                    if let Some((end, from)) = literal_end {
+                        i = find(src, from, &end).map_or_else(
+                            || {
+                                stack.clear();
+                                n
+                            },
+                            |at| at + end.len(),
+                        );
+                    }
+                    if !in_math && !code {
+                        command(&name, token_start, name_end);
+                    }
                 }
             }
-            text_argument = false;
-            ranges.transition(math(&stack), token_start, i);
-            continue;
+            _ => text_argument &= space(src[token_start]),
         }
-        if is(c, '{') {
-            let maths = !text_argument && math(&stack);
-            stack.push((maths, "}".into()));
-            text_argument = false;
-            i += 1;
-            ranges.transition(math(&stack), token_start, i);
-            continue;
+        let next_math = math(&stack);
+        if code || math_run || next_math {
+            range(token_start, i);
         }
-        if is(c, '}') {
-            // The innermost open brace, and anything unclosed inside it.
-            close(&mut stack, "}");
-            i += 1;
-            ranges.transition(math(&stack), token_start, i);
-            continue;
-        }
-        if !is(c, '\\') {
-            text_argument &= space(c);
-            i += 1;
-            continue;
-        }
-        let Some(&d) = src.get(i + 1) else { break };
-        if !letter(d) {
-            // A control symbol: \( \) \[ \] open and close maths; any other
-            // (\$, \%, \\, \{) is an escape and nothing more.
-            if (is(d, '(') || is(d, '[')) && !math(&stack) {
-                stack.push((true, if is(d, '(') { "\\)" } else { "\\]" }.into()));
-            } else if is(d, ')') || is(d, ']') {
-                close(&mut stack, if is(d, ')') { "\\)" } else { "\\]" });
-            }
-            text_argument = false;
-            i += 2;
-            ranges.transition(math(&stack), token_start, i);
-            continue;
-        }
-        let j = i + 1 + src[i + 1..].iter().take_while(|&&u| letter(u)).count();
-        let name = String::from_utf16_lossy(&src[i + 1..j]);
-        i = j;
-        text_argument = false;
-        if name == "verb" {
-            i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
-            let Some(&delimiter) = src.get(i) else {
-                ranges.code(token_start, n);
-                ranges.end_math(n);
-                return (math(&stack), ranges.ranges);
-            };
-            let Some(close) = find(src, i + 1, &[delimiter]) else {
-                ranges.code(token_start, n);
-                ranges.end_math(n);
-                return (false, ranges.ranges); // inside \verb|…
-            };
-            i = close + 1;
-            ranges.code(token_start, i);
-        } else if name == "begin" || name == "end" {
-            let Some((name_units, after)) = environment_name(src, i) else {
-                continue;
-            };
-            let environment = String::from_utf16_lossy(name_units);
-            let environment = trim_js_space(&environment);
-            i = after;
-            if name == "end" {
-                close(&mut stack, &format!("env:{environment}"));
-            } else if listed(&catalog.verbatim_environments, environment) {
-                let end: Vec<u16> = format!("\\end{{{environment}}}").encode_utf16().collect();
-                let Some(at) = find(src, i, &end) else {
-                    ranges.code(token_start, n);
-                    ranges.end_math(n);
-                    return (false, ranges.ranges); // inside verbatim
-                };
-                i = at + end.len();
-                ranges.code(token_start, i);
-            } else {
-                let bare = environment.strip_suffix('*').unwrap_or(environment);
-                let maths = listed(&catalog.math_environments, bare) || math(&stack);
-                stack.push((maths, format!("env:{environment}").into()));
-            }
-        } else if listed(&catalog.text_commands, &name) && math(&stack) {
-            text_argument = true;
-        }
-        ranges.transition(math(&stack), token_start, i);
+        math_run = next_math;
     }
-    ranges.end_math(n);
-    (math(&stack), ranges.ranges)
-}
-
-/// Collects ordered UTF-16 math and literal-code ranges while the shared
-/// scanner moves through the source. A math run absorbs code nested inside it.
-struct RangeCollector {
-    enabled: bool,
-    math_start: Option<u32>,
-    ranges: Vec<TextRange>,
-}
-
-impl RangeCollector {
-    fn transition(&mut self, is_math: bool, token_start: usize, token_end: usize) {
-        if !self.enabled {
-            return;
-        }
-        if is_math {
-            self.math_start.get_or_insert(token_start as u32);
-        } else {
-            self.end_math(token_end);
-        }
-    }
-
-    fn end_math(&mut self, end: usize) {
-        if let Some(start) = self.math_start.take() {
-            self.push(start as usize, end);
-        }
-    }
-
-    fn code(&mut self, start: usize, end: usize) {
-        if self.enabled && self.math_start.is_none() {
-            self.push(start, end);
-        }
-    }
-
-    fn push(&mut self, start: usize, end: usize) {
-        if start < end {
-            merge_range(
-                &mut self.ranges,
-                TextRange {
-                    start: start as u32,
-                    length: (end - start) as u32,
-                },
-            );
-        }
-    }
+    math(&stack)
 }
 
 /// Maths to preview: where it starts, its TeX as KaTeX reads it, and

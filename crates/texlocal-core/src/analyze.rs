@@ -122,41 +122,10 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
     else {
         return;
     };
-    let lines = add(
-        into,
-        &crate::lossy_string(text),
-        Some(&file),
-        &mut |into, name| {
-            if let Some(input) = resolve(root, name) {
-                read(root, &input, open, seen, into);
-            }
-        },
-    );
-    if is_open {
-        into.lines = lines;
-    }
-}
-
-/// The project file `\input{name}` reads: name.tex, which TeX tries first, or name.
-fn resolve(root: &Path, name: &str) -> Option<String> {
-    let name = name.trim();
-    let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
-    [tex, name.to_owned()]
-        .into_iter()
-        .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
-}
-
-/// Adds a file's headings and words to `into`, reading each file a line names
-/// through `input` there, and returns its line count. Lines break where
-/// CodeMirror breaks them, at CR LF, CR or LF, so the count is the editor's.
-fn add(
-    into: &mut Analysis,
-    text: &str,
-    file: Option<&str>,
-    input: &mut dyn FnMut(&mut Analysis, &str),
-) -> usize {
+    let text = crate::lossy_string(text);
     let mut lines = 0;
-    let mut literal = None;
+    let mut literal: Option<String> = None;
+    // CodeMirror breaks lines at CR LF, CR or LF, including a trailing break.
     for line in text
         .split('\n')
         .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
@@ -171,45 +140,50 @@ fn add(
                     depth: LEVELS.iter().position(|l| *l == &m[1]).unwrap_or(2),
                     title: plain_title(title),
                     line: lines,
-                    file: file.map(Into::into),
+                    file: Some(file.clone()),
                 });
             }
         }
         into.words += words(line);
-        inputs(line, &mut literal, &mut |name| input(into, name));
+        let mut code = line;
+        loop {
+            if let Some(end) = literal.as_ref() {
+                let Some((_, rest)) = code.split_once(end.as_str()) else {
+                    break;
+                };
+                code = rest;
+                literal = None;
+            }
+            let Some(m) = INPUT.captures(code) else {
+                break;
+            };
+            let token = m.get(0).unwrap();
+            if token.as_str() == "%" {
+                break;
+            }
+            code = &code[token.end()..];
+            if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
+                let name = name.as_str().trim();
+                let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
+                // TeX tries name.tex before the name as written.
+                if let Some(input) = [tex, name.to_owned()]
+                    .into_iter()
+                    .find(|rel| paths::safe_path(root, rel).is_ok_and(|path| path.is_file()))
+                {
+                    read(root, &input, open, seen, into);
+                }
+            } else if let Some(environment) = m.name("literal") {
+                literal = Some(format!("\\end{{{}}}", environment.as_str()));
+            } else if let Some(delimiter) = m.name("delimiter") {
+                let Some((_, rest)) = code.split_once(delimiter.as_str()) else {
+                    break;
+                };
+                code = rest;
+            }
+        }
     }
-    lines
-}
-
-/// Follow only executable input commands, keeping literal environments across
-/// lines. A percent in \verb or verbatim is text, not the start of a comment.
-fn inputs(mut line: &str, literal: &mut Option<String>, input: &mut dyn FnMut(&str)) {
-    loop {
-        if let Some(end) = literal.as_ref() {
-            let Some((_, rest)) = line.split_once(end.as_str()) else {
-                return;
-            };
-            line = rest;
-            *literal = None;
-        }
-        let Some(m) = INPUT.captures(line) else {
-            return;
-        };
-        let token = m.get(0).unwrap();
-        if token.as_str() == "%" {
-            return;
-        }
-        line = &line[token.end()..];
-        if let Some(file) = m.name("braced").or_else(|| m.name("bare")) {
-            input(file.as_str());
-        } else if let Some(environment) = m.name("literal") {
-            *literal = Some(format!("\\end{{{}}}", environment.as_str()));
-        } else if let Some(delimiter) = m.name("delimiter") {
-            let Some((_, rest)) = line.split_once(delimiter.as_str()) else {
-                return;
-            };
-            line = rest;
-        }
+    if is_open {
+        into.lines = lines;
     }
 }
 
@@ -269,13 +243,6 @@ fn words(line: &str) -> usize {
 mod tests {
     use super::*;
 
-    /// One file's analysis, as `analyzeDoc` reads the editor's.
-    fn analyze(text: &str) -> Analysis {
-        let mut analysis = Analysis::default();
-        analysis.lines = add(&mut analysis, text, None, &mut |_, _| {});
-        analysis
-    }
-
     /// The cases web/src/state.js is held to as well (test/analyze.test.js).
     #[test]
     fn matches_the_shared_fixtures() {
@@ -287,8 +254,18 @@ mod tests {
         }
         let cases: Vec<Case> =
             serde_json::from_str(include_str!("../tests/fixtures/analyze.json")).unwrap();
-        for case in cases {
-            assert_eq!(analyze(&case.text), case.expected, "{}", case.name);
+        let dir = tempfile::tempdir().unwrap();
+        for mut case in cases {
+            fs::write(dir.path().join("main.tex"), case.text).unwrap();
+            for heading in &mut case.expected.outline {
+                heading.file = Some("main.tex".into());
+            }
+            assert_eq!(
+                analyze_project(dir.path(), "main.tex", "main.tex"),
+                case.expected,
+                "{}",
+                case.name
+            );
         }
     }
 

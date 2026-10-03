@@ -13,7 +13,7 @@ use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use texlocal_core::service::{arg, string_arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
@@ -63,9 +63,9 @@ impl TlHandle {
     }
 }
 
-fn json_string(value: Value) -> *mut c_char {
+fn json_string(value: impl Serialize) -> *mut c_char {
     // JSON escapes NUL inside strings, so serialized output never contains one.
-    CString::new(value.to_string())
+    CString::new(serde_json::to_string(&value).expect("command results serialize"))
         .expect("JSON has no interior NUL")
         .into_raw()
 }
@@ -274,19 +274,18 @@ pub unsafe extern "C" fn tl_source_call(
     else {
         return std::ptr::null_mut();
     };
-    let result = match str_arg(command).unwrap_or_default() {
-        "completions" => json!(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
-        "toggle_comment" => json!(doc.toggle_comment(&a.selections)),
-        "indent" => json!(doc.indent(&a.selections, a.more)),
-        "set_heading" => json!(doc.set_heading(a.caret, &a.command)),
-        "insert_block" => json!(doc.insert_block(&a.id, a.selection)),
-        "insert_symbol" => json!(doc.insert_symbol(&a.command, a.selection)),
-        "math_at" => json!(doc.math_at(a.caret)),
-        "not_prose" => json!(doc.not_prose(a.selection.start, a.selection.length)),
-        "text" => json!(doc.text()),
-        _ => return std::ptr::null_mut(),
-    };
-    json_string(result)
+    match str_arg(command).unwrap_or_default() {
+        "completions" => json_string(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
+        "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
+        "indent" => json_string(doc.indent(&a.selections, a.more)),
+        "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
+        "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
+        "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
+        "math_at" => json_string(doc.math_at(a.caret)),
+        "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
+        "text" => json_string(doc.text()),
+        _ => std::ptr::null_mut(),
+    }
 }
 
 /// Null is ignored.

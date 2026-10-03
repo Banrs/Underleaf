@@ -148,7 +148,7 @@ mod tests {
             assert_eq!(template[0].0, "main.tex", "{name}");
             for (file, _) in template {
                 assert!(
-                    !file.contains(['/', '\\']) && !file.starts_with('.'),
+                    !file.contains('/') && !file.starts_with('.'),
                     "{name}: {file}"
                 );
             }

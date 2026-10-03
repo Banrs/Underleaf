@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const tauri = JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
 const cargo = await readFile(new URL('../Cargo.toml', import.meta.url), 'utf8');
 const workspaceVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 // The macOS project is kept by hand beside project.yml, so both are checked.
@@ -12,7 +11,6 @@ const expected = pkg.version;
 const versions = {
   'package.json': pkg.version,
   'Cargo.toml [workspace.package]': workspaceVersion,
-  'src-tauri/tauri.conf.json': tauri.version,
   'apps/macos/project.yml': macSpec.match(/MARKETING_VERSION: "([^"]+)"/)?.[1],
   'apps/macos/TeXLocal.xcodeproj': pbxVersions.length === 1 ? pbxVersions[0] : pbxVersions.join(', ') || undefined,
 };

@@ -3,7 +3,7 @@
 Reference values come from **Apple's macOS 27 UI Kit** (Sketch, from
 [Apple Design Resources](https://developer.apple.com/design/resources/), kept
 locally in the gitignored `design/`). App-specific adjustments are marked below.
-This is the `web/styles.css` specification for browser and Tauri clients. The
+This is the `web/styles.css` specification for the browser client. The
 native Mac app uses AppKit controls and metrics (`BarMetrics` and `Typography`);
 its accepted design and live verification are recorded in `HANDOFF.md`.
 
@@ -71,11 +71,8 @@ work on both opaque panels and vibrant materials.
 | Separator | `rgba(60,60,67,.29)` | `rgba(255,255,255,.15)` |
 | Window background | `#ffffff` | `#1e1e1e` |
 
-**The accent is the user's where the host reports it.** Tauri replaces
-`--accent` at startup with the one chosen in System Settings —
-`NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
-`src-tauri/src/accent.rs`) — read once, so a change shows after a restart. A
-browser tab keeps the CSS fallback, a darker blue than the kit's (which misses 4.5:1).
+The browser uses the CSS `--accent` fallback, a darker blue than the kit's
+(which misses 4.5:1).
 
 `--on-accent` stays white, which is what every desktop draws on an accent fill,
 and flips to black only where white drops under WCAG's 3:1 floor for interface
@@ -120,7 +117,7 @@ that sets the app's overall legibility:
 | **Expanded toolbar ← in-pane bars here** | titlebar 32 + toolbar **44** |
 | Utility panel | 56 |
 
-**Web/Tauri control sizes:** **36 (XL)** in the 52px title
+**Web control sizes:** **36 (XL)** in the 52px title
 bar, **28** for every interactive control below it (toolbar buttons, inputs,
 segmented controls, steppers, search). No mini/small controls anywhere.
 
@@ -141,7 +138,6 @@ nothing needs an ad-hoc radius.
 | Sidebar section header | 36 tall here (the kit's is 20), 13 Bold, **no gap before the rows** |
 | Section header accessory | 28 square here (the kit's `Headers - Trailing` is 20 wide) |
 | Sidebar footer | 44, a toolbar band |
-| Traffic lights | 68 × 14 at x **19**, y **19** (native insets on Golden Gate/macOS 27; tao's x is literal, its y takes that value **+ 9** — see `window.rs`) |
 | Menu row | kit 24 tall (28 here), radius 6, min-width 160, separator 11 |
 | Switch (regular) | 54 × 24 |
 | Dialog | kit 390 wide / 20 inset (Settings 520 wide, 52-tall rows) |
@@ -198,7 +194,5 @@ AppKit owns native control metrics and materials, including scroll-edge effects.
 
 ## Hosts
 
-`html.mac` (the Tauri Mac window: vibrancy materials, the traffic-light inset,
-accent-filled menu rows) is set from the host platform, never assumed.
-Everywhere else the same tokens run on opaque surfaces, and a browser tab also
-gets `html.browser`: 14/20 controls and 13/18 small text.
+Browser tabs use opaque surfaces and `html.browser`: 14/20 controls and
+13/18 small text. The native macOS app uses AppKit metrics and materials.

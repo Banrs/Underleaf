@@ -64,74 +64,12 @@ pub struct Symbols {
     pub labels: Vec<String>,
 }
 
-#[derive(Default)]
-pub(crate) struct SymbolCache {
-    files: BTreeMap<String, CachedSymbols>,
-}
-
-struct CachedSymbols {
-    stamp: (u64, u64),
-    /// Also invalidates in-project links when their target is written by the app.
-    target: PathBuf,
-    symbols: Symbols,
-}
-
-impl SymbolCache {
-    pub(crate) fn invalidate_file(&mut self, root: &Path, rel: &str) {
-        let written = fold_case(rel);
-        let target = fs::canonicalize(root.join(rel)).ok();
-        self.files.retain(|path, cached| {
-            fold_case(path) != written && target.as_ref() != Some(&cached.target)
-        });
-    }
-}
-
 fn since_epoch(meta: &fs::Metadata) -> Option<Duration> {
     meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()
 }
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {
     since_epoch(meta).map_or(0, |d| d.as_millis() as u64)
-}
-
-fn mtime_ns(meta: &fs::Metadata) -> u64 {
-    since_epoch(meta).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(0))
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EntryKind {
-    File,
-    Dir,
-}
-
-// Directory symlinks are skipped to prevent cycles. File symlinks are retained
-// only when their resolved target remains inside the canonical project root.
-fn classify_entry(
-    root_canonical: &Path,
-    entry: &fs::DirEntry,
-) -> Result<Option<EntryKind>, CoreError> {
-    let file_type = entry.file_type()?;
-    if file_type.is_dir() {
-        return Ok(Some(EntryKind::Dir));
-    }
-    if file_type.is_file() {
-        return Ok(Some(EntryKind::File));
-    }
-    if !file_type.is_symlink() {
-        return Ok(None);
-    }
-
-    // A dangling, looping or unreadable link cannot prove it stays in the
-    // project; skip it without failing the walk.
-    let Ok(target) = fs::canonicalize(entry.path()) else {
-        return Ok(None);
-    };
-    if !target.starts_with(root_canonical) {
-        return Ok(None);
-    }
-    Ok(fs::metadata(entry.path())?
-        .is_file()
-        .then_some(EntryKind::File))
 }
 
 /// A vanished or unreadable entry is skipped without failing a project scan.
@@ -150,19 +88,11 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-struct Entry {
-    path: PathBuf,
-    name: String,
-    /// Project-relative, forward slashes.
-    rel: String,
-    kind: EntryKind,
-}
-
 /// Shared tree rules for file listing, search and symbols: hide dotfiles and
 /// top-level build output, and follow only links within the project. An
 /// unreadable subfolder is empty; the project root must be readable.
-fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>, CoreError> {
-    let read = if prefix.is_empty() {
+fn entries(root: &Path, dir: &Path) -> Result<Vec<fs::DirEntry>, CoreError> {
+    let read = if dir == root {
         fs::read_dir(dir)?
     } else {
         match skip_unreadable(fs::read_dir(dir))? {
@@ -174,26 +104,23 @@ fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>
     for entry in read {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let rel = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
         // Only top-level build/ is output; a nested build belongs to the author.
-        if rel.eq_ignore_ascii_case(BUILD_DIR) {
+        if name.starts_with('.') || (dir == root && name.eq_ignore_ascii_case(BUILD_DIR)) {
             continue;
         }
-        if let Some(kind) = classify_entry(root_canonical, &entry)? {
-            out.push(Entry {
-                path: entry.path(),
-                name,
-                rel,
-                kind,
-            });
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            // Skip directory links (cycles) and links without a proven in-project target.
+            let Ok(target) = fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            if !target.starts_with(root) || !fs::metadata(entry.path())?.is_file() {
+                continue;
+            }
+        } else if !kind.is_file() && !kind.is_dir() {
+            continue;
         }
+        out.push(entry);
     }
     Ok(out)
 }
@@ -205,15 +132,21 @@ fn visit_files(
     visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
     fn walk(
-        root_canonical: &Path,
+        root: &Path,
         dir: &Path,
-        prefix: &str,
         visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
-        for entry in entries(root_canonical, dir, prefix)? {
-            let go_on = match entry.kind {
-                EntryKind::Dir => walk(root_canonical, &entry.path, &entry.rel, visit)?,
-                EntryKind::File => visit(&entry.path, entry.rel)?,
+        for entry in entries(root, dir)? {
+            let path = entry.path();
+            let go_on = if entry.file_type()?.is_dir() {
+                walk(root, &path, visit)?
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                visit(&path, rel)?
             };
             if !go_on {
                 return Ok(false);
@@ -222,7 +155,8 @@ fn visit_files(
         Ok(true)
     }
 
-    walk(&fs::canonicalize(root)?, root, "", visit)?;
+    let root = fs::canonicalize(root)?;
+    walk(&root, &root, visit)?;
     Ok(())
 }
 
@@ -359,13 +293,12 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
-/// case-insensitive volume, the default on macOS and Windows, a case-only
+/// case-insensitive volume, the default on macOS, a case-only
 /// rename's destination already "exists" because it is `src` itself.
 fn occupied(src: &Path, dest: &Path) -> bool {
     fs::symlink_metadata(dest).is_ok() && !same_entry(src, dest)
 }
 
-#[cfg(unix)]
 fn same_entry(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
@@ -374,23 +307,12 @@ fn same_entry(a: &Path, b: &Path) -> bool {
     }
 }
 
-// std has no file identity on Windows, so there it is two spellings that
-// differ only in case and resolve to one final path.
-#[cfg(not(unix))]
-fn same_entry(a: &Path, b: &Path) -> bool {
-    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-        && matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
-}
-
 /// Delete to the platform's trash, so a mis-click is recoverable. A trash
 /// failure is reported and the original is left in place; it must never become
 /// an implicit permanent-delete request.
 fn discard(path: &Path) -> Result<(), CoreError> {
-    trash::delete(path).map_err(|err| {
-        CoreError::internal(format!(
-            "Could not move the item to Trash or Recycle Bin: {err}"
-        ))
-    })
+    trash::delete(path)
+        .map_err(|err| CoreError::internal(format!("Could not move the item to Trash: {err}")))
 }
 
 pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
@@ -400,17 +322,23 @@ pub fn delete_project(data_dir: &Path, id: &str) -> Result<(), CoreError> {
 // ---------- files ----------
 
 pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
-    fn walk(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<TreeNode>, CoreError> {
+    fn walk(root: &Path, dir: &Path) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
-        for entry in entries(root_canonical, dir, prefix)? {
-            let (kind, children) = match entry.kind {
-                EntryKind::Dir => ("dir", Some(walk(root_canonical, &entry.path, &entry.rel)?)),
-                EntryKind::File => ("file", None),
+        for entry in entries(root, dir)? {
+            let path = entry.path();
+            let (kind, children) = if entry.file_type()?.is_dir() {
+                ("dir", Some(walk(root, &path)?))
+            } else {
+                ("file", None)
             };
             nodes.push(TreeNode {
                 kind,
-                name: entry.name,
-                path: entry.rel,
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
                 children,
             });
         }
@@ -425,7 +353,8 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
         Ok(nodes)
     }
 
-    walk(&fs::canonicalize(root)?, root, "")
+    let root = fs::canonicalize(root)?;
+    walk(&root, &root)
 }
 
 const TEXT_EXT: &[&str] = &[
@@ -459,12 +388,6 @@ fn is_under(path: &str, dir: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// The stored main file in the forward-slash form `rel_key` produces. An
-/// older build could store it with backslashes.
-fn main_file_key(root: &Path) -> String {
-    read_settings(root).main_file.replace('\\', "/")
-}
-
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
     let src = safe_path(root, from)?;
     let dest = safe_write_path(root, to)?;
@@ -487,7 +410,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         fs::create_dir_all(parent)?;
     }
 
-    let mut main_file = main_file_key(root);
+    let mut main_file = read_settings(root).main_file;
     let updates_main = main_file == from_rel || is_under(&main_file, &from_rel);
     if updates_main {
         main_file = format!("{to_rel}{}", &main_file[from_rel.len()..]);
@@ -518,7 +441,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 /// file may go, since the file taking its place keeps it valid; a folder
 /// holding it may not, however the upload spells its name.
 pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> {
-    if is_under(&fold_case(&main_file_key(root)), &fold_case(rel)) {
+    if is_under(&fold_case(&read_settings(root).main_file), &fold_case(rel)) {
         return Err(CoreError::conflict(
             "Choose a different main file before replacing this folder",
         ));
@@ -546,7 +469,7 @@ fn delete_entry_using(
 ) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
     let target = rel_key(rel)?;
-    let main_file = main_file_key(root);
+    let main_file = read_settings(root).main_file;
     if main_file == target || is_under(&main_file, &target) {
         return Err(CoreError::conflict(
             "Choose a different main file before deleting this entry",
@@ -655,64 +578,30 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
     Symbols { citations, labels }
 }
 
-impl SymbolCache {
-    /// Walk the safe project tree once; read only files whose target changed.
-    pub(crate) fn scan(&mut self, root: &Path) -> Result<Symbols, CoreError> {
-        let mut previous = std::mem::take(&mut self.files);
-        let mut files = BTreeMap::new();
-        visit_files(root, &mut |abs, rel| {
-            let ext = ext_of(&rel);
-            if ext != "bib" && ext != "tex" {
-                return Ok(true);
-            }
-            // Follow an in-project link to stamp the bytes the parser sees.
-            let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
-                return Ok(true);
-            };
-            let stamp = (mtime_ns(&meta), meta.len());
-            let Some(target) = skip_unreadable(fs::canonicalize(abs))? else {
-                return Ok(true);
-            };
-            let symbols = if let Some(cached) = previous
-                .remove(&rel)
-                .filter(|cached| cached.stamp == stamp && cached.target == target)
-            {
-                cached.symbols
-            } else {
-                let Some(bytes) = skip_unreadable(fs::read(abs))? else {
-                    return Ok(true);
-                };
-                parse_symbols(&bytes, &ext)
-            };
-            files.insert(
-                rel,
-                CachedSymbols {
-                    stamp,
-                    target,
-                    symbols,
-                },
-            );
-            Ok(true)
-        })?;
-
-        fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
-            let mut seen = HashSet::new();
-            symbols
-                .filter(|symbol| seen.insert(*symbol))
-                .cloned()
-                .collect()
-        }
-        // BTreeMap order keeps completions stable; borrow keys while deduplicating.
-        self.files = files;
-        Ok(Symbols {
-            citations: dedup(self.files.values().flat_map(|c| &c.symbols.citations)),
-            labels: dedup(self.files.values().flat_map(|c| &c.symbols.labels)),
-        })
-    }
-}
-
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    SymbolCache::default().scan(root)
+    let mut files = BTreeMap::new();
+    visit_files(root, &mut |abs, rel| {
+        let ext = ext_of(&rel);
+        if ext == "bib" || ext == "tex" {
+            if let Some(bytes) = skip_unreadable(fs::read(abs))? {
+                files.insert(rel, parse_symbols(&bytes, &ext));
+            }
+        }
+        Ok(true)
+    })?;
+
+    fn dedup<'a>(symbols: impl Iterator<Item = &'a String>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        symbols
+            .filter(|symbol| seen.insert(*symbol))
+            .cloned()
+            .collect()
+    }
+    // File-name order keeps completions stable, retaining the first occurrence.
+    Ok(Symbols {
+        citations: dedup(files.values().flat_map(|s| &s.citations)),
+        labels: dedup(files.values().flat_map(|s| &s.labels)),
+    })
 }
 
 #[cfg(test)]
@@ -764,7 +653,7 @@ mod tests {
         let (_data, root) = project();
         create_file(&root, "chapters/main.tex", false).unwrap();
         write_settings(&root, &json!({ "mainFile": "chapters/main.tex" })).unwrap();
-        for path in ["chapters", "chapters/main.tex", r"chapters\main.tex"] {
+        for path in ["chapters", "chapters/main.tex"] {
             let err =
                 delete_entry_using(&root, path, |_| panic!("{path} was trashed")).unwrap_err();
             assert_eq!(err.status, 409, "{path}");

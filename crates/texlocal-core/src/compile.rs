@@ -5,10 +5,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -42,68 +42,35 @@ pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
 
 // ---------- TeX PATH discovery ----------
 
-fn four_digit_years(dir: &Path) -> Vec<String> {
-    let mut years: Vec<String> = std::fs::read_dir(dir)
+/// Year/architecture-specific TeX Live bin dirs, newest year first.
+fn texlive_bins() -> impl Iterator<Item = PathBuf> {
+    let mut years: Vec<_> = std::fs::read_dir("/usr/local/texlive")
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.len() == 4 && n.bytes().all(|b| b.is_ascii_digit()))
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|entry| entry.path().join("bin"))
         .collect();
     years.sort_unstable_by(|a, b| b.cmp(a));
-    years
+    years.into_iter().flat_map(|bin| {
+        std::fs::read_dir(bin)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+    })
 }
-
-/// Year/architecture-specific TeX Live bin dirs, newest year first.
-fn texlive_bins() -> Vec<PathBuf> {
-    let root = Path::new(if cfg!(windows) {
-        r"C:\texlive"
-    } else {
-        "/usr/local/texlive"
-    });
-    let mut dirs = Vec::new();
-    for year in four_digit_years(root) {
-        let bin = root.join(year).join("bin");
-        if cfg!(windows) {
-            dirs.extend([bin.join("windows"), bin.join("win32")]);
-        } else if let Ok(rd) = std::fs::read_dir(bin) {
-            dirs.extend(rd.filter_map(Result::ok).map(|e| e.path()));
-        }
-    }
-    dirs
-}
-
-fn tex_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        let mut dirs = texlive_bins();
-        if let Ok(lad) = std::env::var("LOCALAPPDATA") {
-            dirs.push(PathBuf::from(lad).join(r"Programs\MiKTeX\miktex\bin\x64"));
-        }
-        dirs.push(PathBuf::from(r"C:\Program Files\MiKTeX\miktex\bin\x64"));
-        dirs
-    } else {
-        let mut dirs = vec![
-            PathBuf::from("/Library/TeX/texbin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-        ];
-        dirs.extend(texlive_bins());
-        dirs
-    }
-}
-
-const LATEXMK: &str = if cfg!(windows) {
-    "latexmk.exe"
-} else {
-    "latexmk"
-};
 
 /// PATH for spawned TeX tools: the folder the user chose first, then the
 /// user's PATH, then the discovered TeX dirs. Built per use — a couple of
 /// read_dirs — so a TeX install performed while the app runs is found without
 /// a restart.
 pub fn tex_path(chosen: Option<&Path>) -> String {
-    let delim = if cfg!(windows) { ";" } else { ":" };
     let mut parts: Vec<String> = Vec::new();
     if let Some(dir) = chosen {
         parts.push(dir.to_string_lossy().into_owned());
@@ -113,16 +80,14 @@ pub fn tex_path(chosen: Option<&Path>) -> String {
             parts.push(cur);
         }
     }
-    parts.extend(
-        tex_dirs()
-            .into_iter()
-            .map(|p| p.to_string_lossy().into_owned()),
-    );
-    parts.join(delim)
+    parts
+        .extend(["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"].map(str::to_string));
+    parts.extend(texlive_bins().map(|p| p.to_string_lossy().into_owned()));
+    parts.join(":")
 }
 
 pub fn has_latexmk(dir: &Path) -> bool {
-    dir.join(LATEXMK).is_file()
+    dir.join("latexmk").is_file()
 }
 
 pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
@@ -130,54 +95,26 @@ pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
 }
 
 /// The TeX programs folder `dir` names: `dir` itself, or the bin folder of a
-/// TeX Live or MiKTeX root picked in its place.
+/// TeX Live root picked in its place.
 pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
-    [
-        dir.to_path_buf(),
-        dir.join("miktex").join("bin").join("x64"),
-    ]
-    .into_iter()
-    .chain(
-        std::fs::read_dir(dir.join("bin"))
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .map(|e| e.path()),
-    )
-    .find(|c| has_latexmk(c))
+    std::iter::once(dir.to_path_buf())
+        .chain(
+            std::fs::read_dir(dir.join("bin"))
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|e| e.path()),
+        )
+        .find(|c| has_latexmk(c))
 }
 
 // ---------- process plumbing ----------
 
-#[cfg(windows)]
-fn taskkill(pid: u32) -> std::process::Command {
-    use std::os::windows::process::CommandExt;
-    let mut command = std::process::Command::new("taskkill");
-    command
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .creation_flags(0x0800_0000);
-    command
-}
-
-/// Synchronous kill, at quit and when a run is dropped. On Windows it waits for
-/// taskkill, so a quitting app leaves no console helper behind.
+/// Kill the process group, including the engines latexmk started.
 fn kill_pid_tree(pid: u32) {
-    #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
-    #[cfg(windows)]
-    let _ = taskkill(pid).status();
-}
-
-/// Async equivalent used while the application remains live. Waiting for the
-/// Windows helper is load-bearing: otherwise a replacement compile can start
-/// while descendants of the previous latexmk still own and write build files.
-async fn terminate_pid_tree(pid: u32) {
-    #[cfg(unix)]
-    kill_pid_tree(pid);
-    #[cfg(windows)]
-    let _ = tokio::process::Command::from(taskkill(pid)).status().await;
 }
 
 fn base_command(
@@ -186,8 +123,7 @@ fn base_command(
     path_env: &str,
 ) -> std::io::Result<tokio::process::Command> {
     // A full path avoids std's fork fallback, which can crash a child of the
-    // multithreaded Mac app before exec. Windows uses CreateProcess instead.
-    #[cfg(unix)]
+    // multithreaded Mac app before exec.
     let program = std::env::split_paths(path_env)
         .map(|dir| dir.join(program))
         .find(|path| path.is_file())
@@ -205,16 +141,7 @@ fn base_command(
     if let Some(dir) = cwd {
         std_cmd.current_dir(dir);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        std_cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        std_cmd.creation_flags(0x0800_0000);
-    }
+    std_cmd.process_group(0);
     let mut cmd = tokio::process::Command::from(std_cmd);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -269,7 +196,7 @@ async fn drive(
                 Ok(status) => (status.ok(), false),
                 Err(_) => {
                     if let Some(pid) = pid {
-                        terminate_pid_tree(pid).await;
+                        kill_pid_tree(pid);
                     }
                     let _ = child.start_kill();
                     (child.wait().await.ok(), true)
@@ -322,8 +249,7 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
     }
 }
 
-/// latexmk's own version line. TeX Live's latexmk on Windows first reports
-/// the console code pages it changed, so the first line is not it.
+/// latexmk's own version line, falling back to the first nonempty line.
 fn version_line(stdout: &str) -> String {
     let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");
@@ -361,8 +287,10 @@ pub struct CompileResult {
     pub log: String,
 }
 
+#[derive(Default)]
 struct RunningEntry {
-    token: u64,
+    gate: Arc<ProjectGate>,
+    latest: Option<Arc<()>>,
     pid: Option<u32>,
     stopped: bool,
 }
@@ -374,53 +302,57 @@ type ProjectGate = tokio::sync::Mutex<()>;
 #[derive(Default)]
 pub struct CompileManager {
     running: Mutex<Registry>,
-    // A cancelled replacement can leave the registry while its predecessor
-    // still owns the build directory. Weak entries let the next request find
-    // that predecessor's gate without retaining idle mutexes.
-    gates: Mutex<HashMap<PathBuf, Weak<ProjectGate>>>,
-    next_token: AtomicU64,
     pub path_env: Option<String>,
     pub timeout: Option<Duration>,
 }
 
-/// A compile's entry in the registry, and the child it spawned. Dropping it,
-/// on every exit path, removes the entry if it is still this run's, drops the
-/// child, then releases the project's gate. A run dropped before its
-/// child settled (the compile future was cancelled) kills the tree first,
-/// while latexmk still lives: kill_on_drop reaches only latexmk, and Windows'
-/// taskkill /T finds the engine only under a living parent.
+/// Keeps the project's gate alive through waiting, running, and cancellation.
+/// Dropping a live child kills its whole tree before releasing the gate.
 struct Registration<'a> {
     manager: &'a CompileManager,
     root: &'a Path,
-    token: u64,
+    gate: Arc<ProjectGate>,
+    request: Arc<()>,
     gate_guard: Option<OwnedMutexGuard<()>>,
     child: Option<tokio::process::Child>,
 }
 
 impl Registration<'_> {
-    /// Stop marked it, a newer run replaced it, or kill_all cleared it.
+    /// Stop marked it, a newer request replaced it, or kill_all cleared it.
     fn stopped(&self, running: &Registry) -> bool {
-        running
-            .get(self.root)
-            .is_none_or(|entry| entry.token != self.token || entry.stopped)
+        let entry = &running[self.root];
+        entry.stopped
+            || !entry
+                .latest
+                .as_ref()
+                .is_some_and(|r| Arc::ptr_eq(r, &self.request))
     }
 }
 
 impl Drop for Registration<'_> {
     fn drop(&mut self) {
         let mut running = self.manager.running();
-        if running.get(self.root).map(|entry| entry.token) == Some(self.token) {
-            running.remove(self.root);
+        let entry = running.get_mut(self.root).expect("registered project");
+        if entry
+            .latest
+            .as_ref()
+            .is_some_and(|r| Arc::ptr_eq(r, &self.request))
+        {
+            entry.latest = None;
         }
-        drop(running);
-        // A newer request may already have replaced this registry entry, but
-        // its kill can itself be cancelled before it reaches this child.
         if let Some(pid) = self.child.as_ref().and_then(tokio::process::Child::id) {
             kill_pid_tree(pid);
+        }
+        if self.gate_guard.is_some() {
+            entry.pid = None;
         }
         self.child = None;
         // On cancellation, Tokio reaps the killed child after this guard releases.
         self.gate_guard = None;
+        // Only the registry and this registration still own the idle gate.
+        if Arc::strong_count(&self.gate) == 2 {
+            running.remove(self.root);
+        }
     }
 }
 
@@ -473,7 +405,7 @@ impl CompileRun<'_> {
 /// find the project's own rc instead, so only absolute paths count.
 fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let dir = |key| var(key).map(PathBuf::from).filter(|p| p.is_absolute());
-    let home = dir("HOME").or_else(|| dir("USERPROFILE"))?;
+    let home = dir("HOME")?;
     let config = dir("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
     [
         config.join("latexmk").join("latexmkrc"),
@@ -494,12 +426,12 @@ impl CompileManager {
 
     pub fn kill_all(&self) {
         let mut running = self.running();
-        for entry in running.values() {
+        for entry in running.values_mut() {
+            entry.latest = None;
             if let Some(pid) = entry.pid {
                 kill_pid_tree(pid);
             }
         }
-        running.clear();
     }
 
     /// Stop a project's build, and say whether one was running. Its entry
@@ -507,50 +439,36 @@ impl CompileManager {
     /// the run reports itself stopped; one that hasn't started latexmk yet
     /// doesn't start it.
     pub async fn stop(&self, root: &Path) -> bool {
-        let Some(pid) = self.running().get_mut(root).map(|entry| {
-            entry.stopped = true;
-            entry.pid
-        }) else {
+        let mut running = self.running();
+        let Some(entry) = running.get_mut(root).filter(|entry| entry.latest.is_some()) else {
             return false;
         };
-        if let Some(pid) = pid {
-            terminate_pid_tree(pid).await;
+        entry.stopped = true;
+        if let Some(pid) = entry.pid {
+            kill_pid_tree(pid);
         }
         true
     }
 
-    fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Arc<ProjectGate>, Option<u32>) {
-        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
-        let gate = {
-            let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
-            gates.retain(|_, gate| gate.strong_count() != 0);
-            if let Some(gate) = gates.get(root).and_then(Weak::upgrade) {
-                gate
-            } else {
-                let gate = Arc::new(ProjectGate::new(()));
-                gates.insert(root.to_path_buf(), Arc::downgrade(&gate));
-                gate
-            }
-        };
-        let previous_pid = self
-            .running()
-            .insert(
-                root.to_path_buf(),
-                RunningEntry {
-                    token,
-                    pid: None,
-                    stopped: false,
-                },
-            )
-            .and_then(|entry| entry.pid);
-        let registration = Registration {
+    fn register<'a>(&'a self, root: &'a Path) -> Registration<'a> {
+        let mut running = self.running();
+        let entry = running.entry(root.to_path_buf()).or_default();
+        let request = Arc::new(());
+        entry.latest = Some(Arc::clone(&request));
+        entry.stopped = false;
+        // The PID belongs to the gate's active owner, even when the latest
+        // request is still waiting or an intervening request was cancelled.
+        if let Some(pid) = entry.pid {
+            kill_pid_tree(pid);
+        }
+        Registration {
             manager: self,
             root,
-            token,
+            gate: Arc::clone(&entry.gate),
+            request,
             gate_guard: None,
             child: None,
-        };
-        (registration, gate, previous_pid)
+        }
     }
 
     fn stopped_early(start: Instant) -> CompileResult {
@@ -629,15 +547,12 @@ impl CompileManager {
         }
         args.push(&main_arg);
 
-        let (mut registration, gate, previous_pid) = self.register(root);
+        let mut registration = self.register(root);
 
         // The gate keeps a successor off the build directory until its
         // predecessor settles, even if an intermediate request is cancelled.
         // Cancelling the active future can only signal the tree, not await reap.
-        if let Some(pid) = previous_pid {
-            terminate_pid_tree(pid).await;
-        }
-        registration.gate_guard = Some(gate.lock_owned().await);
+        registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
 
         if registration.stopped(&self.running()) {
             return Ok(Self::stopped_early(request_started));
@@ -667,13 +582,14 @@ impl CompileManager {
             // A successor or Stop therefore sees either no child or the actual
             // PID, never an unkillable gap between the two.
             let mut running = self.running();
-            match running.get_mut(root) {
-                Some(entry) if entry.token == registration.token && !entry.stopped => Some(
+            if registration.stopped(&running) {
+                None
+            } else {
+                Some(
                     base_command("latexmk", Some(root), &path_env)
                         .and_then(|mut cmd| cmd.args(&args).spawn())
-                        .inspect(|child| entry.pid = child.id()),
-                ),
-                _ => None,
+                        .inspect(|child| running.get_mut(root).unwrap().pid = child.id()),
+                )
             }
         };
 
@@ -819,14 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn the_version_skips_windows_code_page_notices() {
-        let windows = "Initial Win CP for (console input, console output, system): (CP437, CP437, CP1252)\r\n\
-                       I changed them all to CP1252\r\n\
-                       Latexmk, John Collins, 9 March 2026. Version 4.88\r\n";
-        assert_eq!(
-            version_line(windows),
-            "Latexmk, John Collins, 9 March 2026. Version 4.88"
-        );
+    fn the_version_names_latexmk() {
         assert_eq!(
             version_line("Latexmk, John Collins, 1 Jan 2025. Version 4.86\n"),
             "Latexmk, John Collins, 1 Jan 2025. Version 4.86"

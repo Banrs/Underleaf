@@ -6,7 +6,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -171,7 +171,7 @@ where
     F: Future<Output = Response>,
     C: Fn(&Request) -> Option<Response>,
 {
-    let (head, mut body) = incoming.into_parts();
+    let (head, body) = incoming.into_parts();
     let head_only = head.method == hyper::Method::HEAD;
     let mut req = Request {
         method: head.method.to_string(),
@@ -205,17 +205,11 @@ where
     if let Some(refused) = check(&req) {
         return response(refused, head_only);
     }
-    let read = async {
-        while let Some(frame) = body.frame().await {
-            let frame = frame?;
-            if let Ok(bytes) = frame.into_data() {
-                req.body.extend_from_slice(&bytes);
-            }
+    match tokio::time::timeout(BODY_TIME, Limited::new(body, max_body).collect()).await {
+        Ok(Ok(body)) => {
+            req.body = body.to_bytes().into();
+            response(handler(req).await, head_only)
         }
-        Ok::<_, hyper::Error>(())
-    };
-    match tokio::time::timeout(BODY_TIME, read).await {
-        Ok(Ok(())) => response(handler(req).await, head_only),
         Ok(Err(_)) => response(Response::text(400, "Incomplete request body"), head_only),
         Err(_) => response(Response::text(408, "Request body timed out"), head_only),
     }

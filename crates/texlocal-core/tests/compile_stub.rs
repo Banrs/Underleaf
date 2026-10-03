@@ -240,40 +240,51 @@ async fn a_third_compile_can_supersede_a_replacement_before_it_spawns() {
         r#"#!/bin/sh
 case "$*" in
   *-lualatex*) mkdir -p build; printf 'third' > build/main.pdf; exit 0 ;;
-  *) sleep 20 ;;
+  *-xelatex*) touch replacement_started; sleep 20 ;;
+  *) touch started; sleep 20 ;;
 esac
 "#,
     );
     let mgr = Arc::new(mgr);
-    let launch = |engine: &str| {
+    let first = tokio::spawn({
         let (mgr, root) = (Arc::clone(&mgr), root.clone());
-        let options = CompileOverrides {
-            engine: Some(engine.to_string()),
-            ..CompileOverrides::default()
-        };
-        tokio::spawn(async move { mgr.compile(&root, &options, None).await.unwrap() })
+        async move { compile(&mgr, &root).await }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !root.join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first latexmk did not start");
+    let options = CompileOverrides {
+        engine: Some("xelatex".into()),
+        ..CompileOverrides::default()
+    };
+    let mut second = Box::pin(mgr.compile(&root, &options, None));
+    // Poll just until it waits on the first build, then register the third
+    // without letting the first release the build directory in between.
+    std::future::poll_fn(|cx| match second.as_mut().poll(cx) {
+        std::task::Poll::Pending => std::task::Poll::Ready(()),
+        std::task::Poll::Ready(_) => panic!("replacement did not wait for the first build"),
+    })
+    .await;
+    let third_options = CompileOverrides {
+        engine: Some("lualatex".into()),
+        ..CompileOverrides::default()
     };
 
-    let first = launch("pdflatex");
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    let second = launch("xelatex");
-    // The second request is waiting for the first process to settle and may not
-    // have a child PID yet. The third must still supersede it without deadlock.
-    tokio::time::sleep(Duration::from_millis(5)).await;
-    let third = launch("lualatex");
-
     let (third, second, first) = tokio::time::timeout(Duration::from_secs(5), async {
-        (
-            third.await.unwrap(),
-            second.await.unwrap(),
-            first.await.unwrap(),
-        )
+        let (third, second, first) =
+            tokio::join!(mgr.compile(&root, &third_options, None), second, first,);
+        (third.unwrap(), second.unwrap(), first.unwrap())
     })
     .await
     .expect("compile generations deadlocked");
     assert!(third.ok);
     assert!(!second.ok);
     assert!(!first.ok);
+    assert!(!root.join("replacement_started").exists());
     assert_eq!(
         fs::read_to_string(root.join("build/main.pdf")).unwrap(),
         "third"

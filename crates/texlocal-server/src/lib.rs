@@ -190,8 +190,7 @@ impl App {
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
-    /// the same shape as Tauri's `upload_file` invoke; `X-Replace: true`
-    /// moves an entry in its place to the Trash.
+    /// `X-Replace: true` moves an entry in its place to the Trash.
     async fn upload(&self, req: Request) -> Response {
         self.blocking(move |service| {
             let header = |name: &str| {
@@ -229,14 +228,14 @@ impl App {
     async fn asset(&self, path: &str) -> Response {
         let rel = segments(path).join("/");
         let web_dir = Arc::clone(&self.web_dir);
-        let located = tokio::task::spawn_blocking(move || {
-            let rel = if rel.is_empty() { "index.html" } else { &rel };
-            paths::safe_path(&web_dir, rel).ok()
-        })
-        .await;
-        match located {
-            Ok(Some(abs)) => served(serve::respond(&abs, None, false).await),
-            _ => Response::text(404, "Not found"),
+        match self
+            .blocking(move |_| {
+                paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })
+            })
+            .await
+        {
+            Ok(abs) => served(serve::respond(&abs, None, false).await),
+            Err(_) => Response::text(404, "Not found"),
         }
     }
 
