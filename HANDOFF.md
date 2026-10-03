@@ -68,7 +68,8 @@ PDF is one persistent PDFKit view owned by `PDFController`.
   trailing safe-area adjustment.
 - Build panel: it rises from the status bar's top edge and sinks back through AppKit's split
   animation; the status bar stays at the window's foot. Only the panel's header is clear over
-  its content; the panel's background stops at the status bar, so it no longer shows through
+  its content while it shows: the status bar is solid from the panel's rise until it's back
+  down, and clear over the text otherwise; the panel's background stops at the status bar, so it no longer shows through
   the bar from the window's foot as it rises. The Filter field has Xcode's filter symbol.
 - Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
   output limits, shell escape off unless a project turns it on.
