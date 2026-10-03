@@ -16,26 +16,21 @@ extension NSToolbarItem.Identifier {
     static let zoom = Self("zoom")
     static let share = Self("share")
     static let compile = Self("compile")
-    /// The PDF and Inspector toggles in one capsule.
-    static let pdfInspector = Self("pdfInspector")
     static let togglePDF = Self("togglePDF")
-    /// The app's own: the system's Inspector toggle draws blank inside a group (27.2).
-    static let inspectorToggle = Self("inspectorToggle")
 
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Related tools share a capsule (HIG, Toolbars): the editing tools are separate items that
-/// AppKit joins side by side, as Xcode's and Notes', and the PDF and Inspector toggles are a
-/// group, which moves and overflows as one.
+/// AppKit joins side by side, as Xcode's and Notes'; the PDF and Inspector toggles stay apart.
 /// Items overflow from the least used in TeX editors: Zoom, then the editing tools (equal
 /// priorities leave from the right), then Back, and Compile and the toggles last.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
-    /// Renamed with the toggles' group: a layout saved under "Workspace" lists them apart,
-    /// and Share, which would come back.
-    let toolbar = NSToolbar(identifier: "Workspace 2")
+    /// Renamed as the defaults change: a layout saved under "Workspace" has Share, and one
+    /// under "Workspace 2" the toggles' former group, which would come back or go missing.
+    let toolbar = NSToolbar(identifier: "Workspace 3")
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -68,7 +63,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .zoom, .flexibleSpace, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .pdfInspector]
+         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
     }
 
     /// Share is here only: File › Share has it.
@@ -83,12 +78,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
-         .inspectorTrackingSeparator, .pdfInspector]
+         .inspectorTrackingSeparator, .toggleInspector]
     }
 
-    /// The system's toggle goes to the window's split, not the nested ones, which would answer first.
+    /// The system's toggles go to the window's split, not the nested ones, which would answer first.
     func toolbarWillAddItem(_ notification: Notification) {
-        guard let item = notification.userInfo?["item"] as? NSToolbarItem, item.itemIdentifier == .toggleSidebar else { return }
+        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.target = workspace
     }
 
@@ -140,10 +136,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             share.visibilityPriority = .low
             item = share
         case .compile:
-            // The window's one prominent action (HIG Toolbars), titled: a play symbol alone reads as media.
+            // The window's one prominent action (HIG Toolbars), as a word: a play symbol reads as
+            // media. Customize Toolbar gets a title, as it draws custom views without their style.
             item = NSToolbarItem(itemIdentifier: id)
             item.label = MenuCommand.compileRun.title
-            item.view = CompileButton(target: self, action: #selector(compile))
+            if flag {
+                item.view = NSHostingView(rootView: compileButton(compiling: project.compiling, enabled: canCompile))
+            } else {
+                item.title = MenuCommand.compileRun.title
+            }
             // The labelled form too: sized for the longer of its two labels.
             item.possibleLabels = [MenuCommand.compileRun.title, MenuCommand.compileStop.title]
             let form = NSMenuItem(title: MenuCommand.compileRun.title, action: #selector(compile), keyEquivalent: "")
@@ -151,14 +152,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.menuFormRepresentation = form
             item.style = .prominent
             item.visibilityPriority = .high
-        case .pdfInspector:
+        case .togglePDF:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
-            let pdfToggle = button(.togglePDF, MenuCommand.viewTogglePdf.title, "richtext.page", #selector(togglePDF))
-            // The system toggle's symbol and action, to the window's split.
-            let inspectorToggle = button(.inspectorToggle, MenuCommand.viewToggleInspector.title, "sidebar.right",
-                                         #selector(NSSplitViewController.toggleInspector(_:)))
-            inspectorToggle.target = workspace
-            item = group(id, "PDF/Inspector", [pdfToggle, inspectorToggle])
+            item = button(id, "PDF", "richtext.page", #selector(togglePDF))
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -266,16 +262,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
-    /// One capsule for its items. Unlabelled, it shows their labels, and the overflow menu
-    /// lists them at its top level; a group's label would nest them a menu down.
-    private func group(_ id: NSToolbarItem.Identifier, _ paletteLabel: String,
-                       _ items: [NSToolbarItem]) -> NSToolbarItemGroup {
-        let group = NSToolbarItemGroup(itemIdentifier: id)
-        group.subitems = items
-        group.paletteLabel = paletteLabel
-        return group
-    }
-
     // ---------- state ----------
 
     private nonisolated struct State: Equatable {
@@ -288,7 +274,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let compiling: Bool
         let canCompile: Bool
         let pdfTitle: String
-        let inspectorTitle: String
     }
 
     private var state: State {
@@ -296,8 +281,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project),
-              inspectorTitle: app.title(.viewToggleInspector, on: project))
+              pdfTitle: app.title(.viewTogglePdf, on: project))
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -340,13 +324,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                 item.label = command.title
                 item.toolTip = command.title
                 item.menuFormRepresentation?.title = command.title
-                (item.view as? CompileButton)?.compiling = state.compiling
+                // Stop on clear glass: still prominent, whose glass stays its own, where a plain
+                // item's joins its neighbours'.
+                item.backgroundTintColor = state.compiling ? .clear : nil
             }
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
+            if changed(\.compiling) || changed(\.canCompile) {
+                (item.view as? NSHostingView<CompileButton>)?.rootView = compileButton(compiling: state.compiling,
+                                                                                      enabled: state.canCompile)
+            }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
-        case .inspectorToggle:
-            if changed(\.inspectorTitle) { item.toolTip = state.inspectorTitle }
         default:
             break
         }
@@ -399,6 +387,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     /// The overflow menu's Compile, which the item's own view doesn't enable.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action != #selector(compile) || canCompile
+    }
+
+    private func compileButton(compiling: Bool, enabled: Bool) -> CompileButton {
+        CompileButton(compiling: compiling, enabled: enabled) { [weak self] in self?.compile() }
     }
 
     @objc private func togglePDF() { perform(.viewTogglePdf) }
@@ -460,54 +452,34 @@ private struct ToolbarMenuItems<Content: View>: View {
     }
 }
 
-/// Compile's button in the item's place, drawn as the toolbar draws its own (title and
-/// symbol on the item's prominent glass). Stop shows the stock spinner in the symbol's
-/// place and keeps Compile's width, so the toolbar doesn't shift as a build starts.
-private final class CompileButton: NSButton {
-    private static let play = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)!
-    private let spinner = NSProgressIndicator()
-    private var compileWidth: CGFloat = 0
+/// Compile as its word, and Stop with a spinner in Compile's width. It fills the item's glass,
+/// which doesn't pass clicks on to an undersized custom view.
+private struct CompileButton: View {
+    let compiling: Bool
+    let enabled: Bool
+    let action: () -> Void
 
-    convenience init(target: AnyObject, action: Selector) {
-        self.init(title: MenuCommand.compileRun.title, image: Self.play, target: target, action: action)
-        bezelStyle = .toolbar
-        imagePosition = .imageLeading
-        // Stop's shorter title keeps the spinner beside it in Compile's width.
-        imageHugsTitle = true
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        // Light, as the title on the tinted glass in either appearance.
-        spinner.appearance = NSAppearance(named: .darkAqua)
-        // The button's title says Stop; the status bar says Compiling.
-        spinner.setAccessibilityElement(false)
-        addSubview(spinner)
-    }
-
-    var compiling = false {
-        didSet {
-            guard compiling != oldValue else { return }
-            title = compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title
-            // A blank of the symbol's size keeps the title where the spinner leaves it.
-            image = compiling ? NSImage(size: Self.play.size) : Self.play
-            if compiling { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
-            needsLayout = true
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Text(MenuCommand.compileRun.title)
+                    .opacity(compiling ? 0 : 1)
+                HStack(spacing: 4) {
+                    // The button stays a button to VoiceOver; the status bar says Compiling.
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text(MenuCommand.compileStop.title)
+                }
+                .opacity(compiling ? 1 : 0)
+            }
+            // The item's glass: 36 points high, its title 12 points in from each end.
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .contentShape(.capsule)
         }
-    }
-
-    /// Compile's width as the toolbar lays it out, which is wider than outside it.
-    /// The toolbar sizes the item's glass from this, not from constraints.
-    override var intrinsicContentSize: NSSize {
-        var size = super.intrinsicContentSize
-        if compiling { size.width = max(size.width, compileWidth) } else { compileWidth = size.width }
-        return size
-    }
-
-    override func layout() {
-        super.layout()
-        guard let place = cell?.imageRect(forBounds: bounds) else { return }
-        let size = spinner.fittingSize
-        spinner.frame = NSRect(x: place.midX - size.width / 2, y: place.midY - size.height / 2,
-                               width: size.width, height: size.height)
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(compiling ? MenuCommand.compileStop.title : MenuCommand.compileRun.title)
     }
 }

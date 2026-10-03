@@ -392,17 +392,15 @@ final class WorkspaceLayoutTests {
         #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
     }
 
-    /// Format, Math and Insert sit side by side, which shares a capsule, as Notes' tools do; the
-    /// PDF and Inspector toggles are a group. Share is in Customize Toolbar only: File › Share has it.
+    /// Format, Math and Insert sit side by side, which shares a capsule; the PDF and Inspector
+    /// toggles are items of their own. Share is in Customize Toolbar only: File › Share has it.
     @Test func theToolbarGroupsItsTools() throws {
         let toolbar = try #require(open().toolbar), bar = toolbar.toolbar
         let shown = toolbar.toolbarDefaultItemIdentifiers(bar)
         let format = try #require(shown.firstIndex(of: .format))
         #expect(Array(shown[format...].prefix(3)) == [.format, .math, .insert])
-        #expect(shown.contains(.pdfInspector) && !shown.contains(.share))
+        #expect(shown.suffix(2) == [.togglePDF, .toggleInspector] && !shown.contains(.share))
         #expect(toolbar.toolbarAllowedItemIdentifiers(bar).contains(.share))
-        let group = toolbar.toolbar(bar, itemForItemIdentifier: .pdfInspector, willBeInsertedIntoToolbar: true) as? NSToolbarItemGroup
-        #expect(group?.subitems.map(\.itemIdentifier) == [.togglePDF, .inspectorToggle])
     }
 
     /// The editing tools and the toggles follow the window: Format, Math and Insert are off outside
@@ -410,7 +408,7 @@ final class WorkspaceLayoutTests {
     /// help says what they'll do, and the Inspector's shows the window's inspector.
     @Test func theGroupedItemsFollowTheWindow() async throws {
         let workspace = open(), project = workspace.project
-        let items = try showToolbar(workspace).items.flatMap { [$0] + (($0 as? NSToolbarItemGroup)?.subitems ?? []) }
+        let items = try showToolbar(workspace).items
         let item = { (id: NSToolbarItem.Identifier) in try #require(items.first { $0.itemIdentifier == id }) }
         let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
         let format = try #require(editing[0].menuFormRepresentation?.submenu)
@@ -422,13 +420,12 @@ final class WorkspaceLayoutTests {
         #expect(editing.allSatisfy { $0.isEnabled })
         try await waitUntil { bold() == true }
 
-        let pdf = try item(.togglePDF), inspector = try item(.inspectorToggle)
-        #expect(pdf.toolTip == "Hide PDF" && inspector.toolTip == "Show Inspector")
+        let pdf = try item(.togglePDF), inspector = try item(.toggleInspector)
+        #expect(pdf.toolTip == "Hide PDF")
         workspace.app.showPDF = false
         #expect(pdf.toolTip == "Show PDF")
         NSApp.sendAction(try #require(inspector.action), to: inspector.target, from: inspector)
         try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
-        #expect(inspector.toolTip == "Hide Inspector")
     }
 
     /// Aa opens its popover under it, on the screen, and again closes it; its styles are lit
