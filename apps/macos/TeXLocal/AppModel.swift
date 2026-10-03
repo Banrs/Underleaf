@@ -55,6 +55,7 @@ final class AppModel {
     // Requests from menu commands to the views that own the UI.
     var newProjectTemplate: ProjectTemplate?
     var prompt: Prompt?
+    var newEntry: NewEntry?
     var openingProject = false
     var addingFiles = false
     /// An item Finder or the Dock handed the app, while the window asks
@@ -285,6 +286,7 @@ final class AppModel {
     private func dropRequests() {
         pdfRequest = nil
         prompt = nil
+        newEntry = nil
         addingFiles = false
         exporting = nil
     }

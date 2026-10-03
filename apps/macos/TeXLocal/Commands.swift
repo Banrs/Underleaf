@@ -45,8 +45,9 @@ enum MenuCommand: String, CaseIterable {
         case .projectClose: "Close Project"
         case .projectExport: "Export Project as ZIP…"
         case .projectSearch: "Find in Project…"
-        case .fileNew: "New File…"
-        case .fileNewFolder: "New Folder…"
+        // No ellipsis: the name is typed in place, as in Finder's New Folder (HIG, Menus).
+        case .fileNew: "New File"
+        case .fileNewFolder: "New Folder"
         case .fileUpload: "Add Files…"
         case .fileSave: "Save"
         case .pdfSave: "Save PDF As…"
@@ -117,10 +118,16 @@ enum MenuCommand: String, CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    /// In the folder given, or the open file's.
-    case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
+    case gotoLine, gotoPage
 
     var id: Self { self }
+}
+
+/// File › New File or New Folder, for the sidebar to make and name in place: in `folder`,
+/// or the folder chosen there.
+struct NewEntry: Equatable {
+    var directory: Bool
+    var folder: String?
 }
 
 enum PDFAction {
@@ -180,8 +187,9 @@ extension AppModel {
         case .projectSearch:
             sidebarVisible = true
             searchFocusToken += 1
-        case .fileNew: prompt = .newFile()
-        case .fileNewFolder: prompt = .newFolder()
+        case .fileNew, .fileNewFolder:
+            sidebarVisible = true
+            newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
         case .pdfSave:

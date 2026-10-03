@@ -3,6 +3,8 @@ import TeXLocalCore
 
 nonisolated struct CoreError: LocalizedError {
     let message: String
+    /// The core's HTTP-style code: 409 for a name already taken.
+    var status: Int?
     var errorDescription: String? { message }
 }
 
@@ -47,6 +49,7 @@ final class Core {
     private nonisolated struct Envelope<T: Decodable>: Decodable {
         let ok: T?
         let error: String?
+        let status: Int?
     }
 
     /// Accepts any JSON, for commands whose result is not needed.
@@ -63,7 +66,7 @@ final class Core {
             DispatchQueue.global(qos: .userInitiated).async {
                 done.resume(with: Result {
                     let envelope = try JSONDecoder().decode(Envelope<T>.self, from: Core.run(handle, command, json))
-                    if let error = envelope.error { throw CoreError(message: error) }
+                    if let error = envelope.error { throw CoreError(message: error, status: envelope.status) }
                     return envelope.ok
                 })
             }

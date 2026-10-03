@@ -326,10 +326,10 @@ final class WorkspaceLayoutTests {
             return NSPoint(x: last.midX, y: last.maxY + 30)
         }
         #expect(files.row(at: below(files)) == -1)
-        #expect(try contextMenu(at: below(files), in: files) == ["New File…", "New Folder…", "Add Files…"])
+        #expect(try contextMenu(at: below(files), in: files) == ["New File", "New Folder", "Add Files…"])
         let folder = files.rect(ofRow: 1)
         #expect(try contextMenu(at: NSPoint(x: folder.midX, y: folder.midY), in: files)
-            == ["New File…", "New Folder…", "Rename", "Show in Finder", "Move to Trash"])
+            == ["New File", "New Folder", "Rename", "Show in Finder", "Move to Trash"])
         let outline = try #require(Self.lists(workspace.view).last)
         #expect(try contextMenu(at: below(outline), in: outline) == nil)
     }

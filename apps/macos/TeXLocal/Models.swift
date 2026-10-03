@@ -32,6 +32,13 @@ nonisolated extension String {
     /// "" at the project's top level.
     var parentFolder: String { (self as NSString).deletingLastPathComponent }
     var fileName: String { (self as NSString).lastPathComponent }
+
+    /// A name numbered as Finder numbers another of it, before its extension:
+    /// "untitled 2.tex", "untitled folder 2" (the core's `numbered`).
+    func numbered(_ number: Int) -> String {
+        guard let dot = lastIndex(of: "."), dot > startIndex else { return "\(self) \(number)" }
+        return "\(self[..<dot]) \(number)\(self[dot...])"
+    }
 }
 
 nonisolated struct TexStatus: Decodable {
