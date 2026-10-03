@@ -171,27 +171,29 @@ struct ProjectTemplate: Identifiable {
     let id: String
     let title: String
     let detail: String
-    let symbol: String
 
     static let all = [
-        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document", symbol: "document"),
-        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections", symbol: "text.document"),
-        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page", symbol: "book.closed"),
-        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides", symbol: "rectangle.on.rectangle"),
+        ProjectTemplate(id: "blank", title: "Blank", detail: "An empty document"),
+        ProjectTemplate(id: "article", title: "Article", detail: "Paper with abstract and sections"),
+        ProjectTemplate(id: "report", title: "Report", detail: "Chapters and a title page"),
+        ProjectTemplate(id: "beamer", title: "Presentation", detail: "Beamer slides"),
     ]
 }
 
-/// A template's card: its symbol, then its name.
+/// A template's card: its first page as TeX sets it, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
 
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Image(systemName: template.symbol)
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                    // The card reads as its name ("Blank", not "Document, Blank").
+                // The page the template compiles to (Assets.xcassets, one PDF each).
+                Image("Template-\(template.id)")
+                    .resizable()
+                    .scaledToFit()
+                    .border(.separator)
+                    .frame(width: 120, height: 150)
+                    // The card reads as its name ("Blank", not "Image, Blank").
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(template.title).font(.headline)
