@@ -5,6 +5,8 @@ extension NSToolbarItem.Identifier {
     static let back = Self("back")
     static let undo = Self("undo")
     static let redo = Self("redo")
+    /// Format, Math and Insert in one capsule.
+    static let formatMathInsert = Self("formatMathInsert")
     static let format = Self("sectionLevel")
     static let bold = Self("bold")
     static let italic = Self("italic")
@@ -15,16 +17,26 @@ extension NSToolbarItem.Identifier {
     static let zoom = Self("zoom")
     static let share = Self("share")
     static let compile = Self("compile")
+    /// The PDF and Inspector toggles in one capsule.
+    static let pdfInspector = Self("pdfInspector")
     static let togglePDF = Self("togglePDF")
+    /// The app's own: the system's Inspector toggle draws blank inside a group (27.2).
+    static let inspectorToggle = Self("inspectorToggle")
 
     static func template(_ template: Template) -> Self { Self("template." + template.title) }
 }
 
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
-/// Editing tools and Share overflow before Zoom; Compile and window toggles take priority.
+/// Related tools share a capsule, as Pages groups its own (HIG, Toolbars), and a group moves and
+/// overflows as one. Editing tools overflow before Zoom; Compile and window toggles take priority.
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
-    let toolbar = NSToolbar(identifier: "Workspace")
+    /// Renamed with the groups: a layout saved under "Workspace" lists the separate items,
+    /// which would come back ungrouped.
+    let toolbar = NSToolbar(identifier: "Workspace 2")
+    /// AppKit's menu indicators on Format, Math and Insert. With them, the group draws a
+    /// capsule for each (27.2); without, one for all three, as Pages' insert tools.
+    private static let menuIndicators = false
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -52,13 +64,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     // ---------- items ----------
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
-         .pdfSeparator, .zoom, .share, .flexibleSpace, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .formatMathInsert,
+         .pdfSeparator, .zoom, .flexibleSpace, .compile,
+         .inspectorTrackingSeparator, .flexibleSpace, .pdfInspector]
     }
 
+    /// Share is here only: File › Share has it.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.undo, .redo, .format, .bold, .italic, .math, .insert]
+        [.undo, .redo, .formatMathInsert, .bold, .italic]
             + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
             + [.zoom, .share, .space, .flexibleSpace]
             + toolbarImmovableItemIdentifiers(toolbar)
@@ -67,14 +80,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private static let buttonTemplates = (referenceTemplates + insertTemplates + listTemplates).filter { $0.symbol != nil }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile, .togglePDF,
-         .inspectorTrackingSeparator, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .back, .pdfSeparator, .compile,
+         .inspectorTrackingSeparator, .pdfInspector]
     }
 
-    /// The system's toggles go to the window's split, not the nested ones, which would answer first.
+    /// The system's toggle goes to the window's split, not the nested ones, which would answer first.
     func toolbarWillAddItem(_ notification: Notification) {
-        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
-              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
+        guard let item = notification.userInfo?["item"] as? NSToolbarItem, item.itemIdentifier == .toggleSidebar else { return }
         item.target = workspace
     }
 
@@ -95,19 +107,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "Redo", "arrow.uturn.forward", Selector(("redo:")))
             item.target = nil
             item.visibilityPriority = .low
-        case .format:
-            item = formatItem()
+        case .formatMathInsert:
+            item = group(id, "Format/Math/Insert", [
+                formatItem(),
+                menuItem(.math, "Math", "radicand.squareroot",
+                         NSHostingMenu(rootView: MathMenuItems(project: project, inlineMath: inlineMath))),
+                menuItem(.insert, "Insert", "plus", NSHostingMenu(rootView: InsertMenuItems(project: project))),
+            ])
+            item.visibilityPriority = .low
         case .bold:
             item = button(id, MenuCommand.editBold.title, "bold", #selector(bold))
             item.visibilityPriority = .low
         case .italic:
             item = button(id, MenuCommand.editItalic.title, "italic", #selector(italic))
             item.visibilityPriority = .low
-        case .math:
-            item = menuItem(id, "Math", "radicand.squareroot",
-                            NSHostingMenu(rootView: MathMenuItems(project: project, inlineMath: inlineMath)))
-        case .insert:
-            item = menuItem(id, "Insert", "plus", NSHostingMenu(rootView: InsertMenuItems(project: project)))
         case .pdfSeparator:
             guard let split = workspace?.columns.splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split, dividerIndex: 0)
@@ -131,9 +144,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.menuFormRepresentation = form
             item.style = .prominent
             item.visibilityPriority = .high
-        case .togglePDF:
+        case .pdfInspector:
             // A document's symbol: the PDF is the source's peer, not a sidebar or an inspector.
-            item = button(id, "PDF", "richtext.page", #selector(togglePDF))
+            let pdfToggle = button(.togglePDF, MenuCommand.viewTogglePdf.title, "richtext.page", #selector(togglePDF))
+            // The system toggle's symbol and action, to the window's split.
+            let inspectorToggle = button(.inspectorToggle, MenuCommand.viewToggleInspector.title, "sidebar.right",
+                                         #selector(NSSplitViewController.toggleInspector(_:)))
+            inspectorToggle.target = workspace
+            item = group(id, "PDF/Inspector", [pdfToggle, inspectorToggle])
             item.visibilityPriority = .high
         default:
             guard let template = Self.buttonTemplates.first(where: { .template($0) == id }),
@@ -142,12 +160,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item.visibilityPriority = .low
         }
         // Plain buttons and their overflow copies validate through their targets.
-        // Other controls take their state from the models (`apply`).
-        if (item.target !== self && ![.undo, .redo].contains(id)) || item.view != nil {
+        // Other controls take their state from the models (`configure`).
+        for item in Self.withSubitems(item)
+        where (item.target !== self && ![.undo, .redo].contains(item.itemIdentifier)) || item.view != nil {
             item.autovalidates = false
         }
-        if flag { configure(item, state) }
+        if flag { Self.withSubitems(item).forEach { configure($0, state) } }
         return item
+    }
+
+    /// An item and, for a group, its items, which the toolbar doesn't list.
+    private static func withSubitems(_ item: NSToolbarItem) -> [NSToolbarItem] {
+        [item] + ((item as? NSToolbarItemGroup)?.subitems ?? [])
     }
 
     private func symbol(_ name: String, _ description: String) -> NSImage? {
@@ -205,7 +229,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.toolTip = title
         item.image = symbol(image, title)
         item.menu = menu
-        item.visibilityPriority = .low
+        item.showsIndicator = Self.menuIndicators
         return item
     }
 
@@ -217,6 +241,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             Divider()
             SectionLevelItems(project: project)
         }))
+    }
+
+    /// One capsule for its items. Unlabelled, it shows their labels, and the overflow menu
+    /// lists their menus at its top level; a group's label would nest them a menu down.
+    private func group(_ id: NSToolbarItem.Identifier, _ paletteLabel: String,
+                       _ items: [NSToolbarItem]) -> NSToolbarItemGroup {
+        let group = NSToolbarItemGroup(itemIdentifier: id)
+        group.subitems = items
+        group.paletteLabel = paletteLabel
+        return group
     }
 
     /// Inline Math for the toolbar's menus; the menu bar's carries the shortcut.
@@ -236,6 +270,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let compiling: Bool
         let canCompile: Bool
         let pdfTitle: String
+        let inspectorTitle: String
     }
 
     private var state: State {
@@ -243,7 +278,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project))
+              pdfTitle: app.title(.viewTogglePdf, on: project),
+              inspectorTitle: app.title(.viewToggleInspector, on: project))
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -255,7 +291,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             MainActor.assumeIsolated { self?.watch() }
         }
         guard state != applied else { return }
-        for item in toolbar.items { configure(item, state, from: applied) }
+        for item in toolbar.items.flatMap(Self.withSubitems) { configure(item, state, from: applied) }
         applied = state
     }
 
@@ -295,6 +331,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             if changed(\.canCompile) { item.isEnabled = state.canCompile }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
+        case .inspectorToggle:
+            if changed(\.inspectorTitle) { item.toolTip = state.inspectorTitle }
         default:
             break
         }

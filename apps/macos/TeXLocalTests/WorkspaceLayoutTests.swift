@@ -79,6 +79,14 @@ final class WorkspaceLayoutTests {
         guard !view.isHidden else { return [] }
         return [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
     }
+    /// The workspace's toolbar in its window, its layout not saved over the app's.
+    private func showToolbar(_ workspace: WorkspaceController) throws -> NSToolbar {
+        let window = try #require(window)
+        let toolbar = workspace.toolbar.toolbar
+        toolbar.autosavesConfiguration = false
+        window.toolbar = toolbar
+        return toolbar
+    }
     private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
@@ -272,7 +280,7 @@ final class WorkspaceLayoutTests {
     @Test func theZoomLabelFollowsThePDFInTheSamePass() async throws {
         let workspace = open()
         let window = try #require(window)
-        window.toolbar = workspace.toolbar.toolbar
+        _ = try showToolbar(workspace)
         let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
         page.string = "Introduction"
         // The pane shows the PDF's view once the project has one.
@@ -289,6 +297,42 @@ final class WorkspaceLayoutTests {
         window.layoutIfNeeded()
         #expect(workspace.pdf.zoomLabel != label)
         #expect(zoom.label(forSegment: 1) == workspace.pdf.zoomLabel)
+    }
+
+    /// Format, Math and Insert share a capsule, as do the PDF and Inspector toggles. Share is
+    /// in Customize Toolbar only: File › Share has it.
+    @Test func theToolbarGroupsItsTools() throws {
+        let toolbar = try #require(open().toolbar), bar = toolbar.toolbar
+        let shown = toolbar.toolbarDefaultItemIdentifiers(bar)
+        #expect(shown.contains(.formatMathInsert) && shown.contains(.pdfInspector) && !shown.contains(.share))
+        #expect(toolbar.toolbarAllowedItemIdentifiers(bar).contains(.share))
+        let items = { (id: NSToolbarItem.Identifier) in
+            (toolbar.toolbar(bar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true) as? NSToolbarItemGroup)?
+                .subitems.map(\.itemIdentifier)
+        }
+        #expect(items(.formatMathInsert) == [.format, .math, .insert])
+        #expect(items(.pdfInspector) == [.togglePDF, .inspectorToggle])
+    }
+
+    /// The grouped items follow the window: Format, Math and Insert are off outside LaTeX; the
+    /// toggles' help says what they'll do, and the Inspector's shows the window's inspector.
+    @Test func theGroupedItemsFollowTheWindow() async throws {
+        let workspace = open(), project = workspace.project
+        let subitems = try showToolbar(workspace).items.compactMap { $0 as? NSToolbarItemGroup }.flatMap(\.subitems)
+        let item = { (id: NSToolbarItem.Identifier) in try #require(subitems.first { $0.itemIdentifier == id }) }
+        let editing = try [NSToolbarItem.Identifier.format, .math, .insert].map(item)
+        project.openPath = "refs.bib"
+        #expect(editing.allSatisfy { !$0.isEnabled })
+        project.openPath = "main.tex"
+        #expect(editing.allSatisfy { $0.isEnabled })
+
+        let pdf = try item(.togglePDF), inspector = try item(.inspectorToggle)
+        #expect(pdf.toolTip == "Hide PDF" && inspector.toolTip == "Show Inspector")
+        workspace.app.showPDF = false
+        #expect(pdf.toolTip == "Show PDF")
+        NSApp.sendAction(try #require(inspector.action), to: inspector.target, from: inspector)
+        try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
+        #expect(inspector.toolTip == "Hide Inspector")
     }
 }
 
