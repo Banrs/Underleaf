@@ -2,7 +2,7 @@
 //! Name arguments include cases that the highlighter leaves uncoloured when
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::{catalog::CATALOG, letter, maths, space, Text, TextRange};
+use crate::{catalog::CATALOG, letter, maths, merge_range, space, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments from commands in the paragraph.
@@ -102,9 +102,8 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
                     break;
                 }
                 i += 1;
-                match at(i) {
-                    None => break,
-                    Some('%') => {
+                match at(i).unwrap() {
+                    '%' => {
                         ranges.push(TextRange {
                             start: from as u32,
                             length: (i - from) as u32,
@@ -112,7 +111,6 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
                         i = comment_end(i, end_index);
                         from = i;
                         if i >= end_index
-                            || at(i).is_none()
                             || (at(i) == Some('\n')
                                 && i + 1 < end_index
                                 && blank(text.line_index(i as u32 + 1)))
@@ -120,20 +118,17 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
                             break;
                         }
                     }
-                    Some('\\') => i += 1,
-                    Some('{') => depth += 1,
-                    Some('}') if depth > 0 => depth -= 1,
-                    Some(c) if c == close && depth == 0 => break,
-                    Some('\n') if i + 1 < end_index && blank(text.line_index(i as u32 + 1)) => {
-                        break
-                    }
+                    '\\' => i += 1,
+                    '{' => depth += 1,
+                    '}' if depth > 0 => depth -= 1,
+                    c if c == close && depth == 0 => break,
+                    '\n' if i + 1 < end_index && blank(text.line_index(i as u32 + 1)) => break,
                     _ => {}
                 }
             }
-            let to = i.min(units.len());
             ranges.push(TextRange {
                 start: from as u32,
-                length: (to - from) as u32,
+                length: (i - from) as u32,
             });
             i = (i + 1).min(end_index);
             if close == '}' {
@@ -153,18 +148,7 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
     ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
     let mut merged: Vec<TextRange> = Vec::with_capacity(ranges.len());
     for range in ranges {
-        if let Some(last) = merged
-            .last_mut()
-            .filter(|last| range.start <= last.start.saturating_add(last.length))
-        {
-            let end = last
-                .start
-                .saturating_add(last.length)
-                .max(range.start.saturating_add(range.length));
-            last.length = end.saturating_sub(last.start);
-        } else {
-            merged.push(range);
-        }
+        merge_range(&mut merged, range);
     }
     merged
 }

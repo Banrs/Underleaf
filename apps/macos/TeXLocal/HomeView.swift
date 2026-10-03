@@ -17,7 +17,10 @@ struct HomeView: View {
         }
         // Copied in, as the Open panel says; anything else is refused.
         .fileDrop(accepts: AppModel.canOpen, targeted: { dropTargeted = $0 }) { urls in
-            guard let url = urls.first else { return }
+            guard urls.count == 1, let url = urls.first else {
+                app.alert = AppAlert("Drop One Project at a Time", "Choose a single folder, .tex file or .zip to copy.")
+                return
+            }
             Task { await app.importProject(from: url) }
         }
         .overlay(alignment: .bottom) {
@@ -75,7 +78,7 @@ struct HomeView: View {
         }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in
-            app.projects.first { $0.id == id }.map(actions)
+            shown.first { $0.id == id }.map(actions)
         }
     }
 
@@ -256,7 +259,7 @@ private struct PagePreview: View {
                 bar(52, 3).padding(.bottom, 6)
                 ForEach(0..<2, id: \.self) { _ in bar(78, 2) }
                 bar(60, 2).padding(.bottom, 4)
-                heading
+                HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
                 ForEach(0..<4, id: \.self) { _ in bar(88, 2) }
                 bar(50, 2)
                 Spacer(minLength: 0)
@@ -284,10 +287,6 @@ private struct PagePreview: View {
                 Spacer()
             }
         }
-    }
-
-    private var heading: some View {
-        HStack { bar(40, 3); Spacer() }.padding(.horizontal, 16)
     }
 
     private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {

@@ -2,8 +2,7 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// The commands' chords: the shared table's (web/src/shortcuts.json) and the
-/// Mac's own. `test/protocol.test.js` holds the command ids to the web's.
+/// Shared shortcut parsing and the Mac's native key equivalents.
 @MainActor
 struct MenuCommandTests {
     @Test func acceleratorsBecomeMenuShortcuts() {
@@ -130,48 +129,12 @@ struct MenuStructureTests {
     /// Engine lists the engines even with no project to set one for, never an empty submenu.
     @Test func engineListsTheEngines() throws {
         let engine = try #require(try item("Engine", in: menu("Compile")).submenu)
-        #expect(titles(engine).starts(with: texEngines.map(\.1)))
+        #expect(titles(engine).starts(with: ["pdfLaTeX", "XeLaTeX", "LuaLaTeX"]))
     }
 
     /// Share… as the HIG names it, there even with nothing to share.
     @Test func shareIsOneItem() throws {
         let file = try menu("File")
         #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
-    }
-}
-
-/// Edit › Find's items go down the responder chain to the window, which routes
-/// them to the pane with the keyboard (`MainWindowController`).
-@MainActor
-struct FindRoutingTests {
-    /// A find bar's field editor passes the items on, where the shared one
-    /// would take them and turn them off.
-    @Test func aFindFieldsEditorPassesFindOn() {
-        let editor = FindPassingTextView()
-        editor.isFieldEditor = true
-        let window = Responder()
-        editor.nextResponder = window
-        let item = NSMenuItem(title: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)),
-                              keyEquivalent: "g")
-        item.tag = NSTextFinder.Action.nextMatch.rawValue
-        #expect(editor.validateMenuItem(item))
-        editor.performFindPanelAction(item)
-        #expect(window.done == [.nextMatch])
-        // A Find the pane can't do is off.
-        item.tag = NSTextFinder.Action.showReplaceInterface.rawValue
-        #expect(!editor.validateMenuItem(item))
-    }
-
-    /// Stands in for the window: answers every Find item but Replace.
-    private final class Responder: NSResponder, NSMenuItemValidation {
-        var done: [NSTextFinder.Action] = []
-
-        @objc func performFindPanelAction(_ sender: Any?) {
-            if let tag = (sender as? NSMenuItem)?.tag, let action = NSTextFinder.Action(rawValue: tag) { done.append(action) }
-        }
-
-        func validateMenuItem(_ item: NSMenuItem) -> Bool {
-            item.tag != NSTextFinder.Action.showReplaceInterface.rawValue
-        }
     }
 }

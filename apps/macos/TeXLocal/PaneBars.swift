@@ -17,8 +17,6 @@ enum BarMetrics {
     static let fieldMaxWidth: CGFloat = 180
 }
 
-/// The app's text roles, each a system text style, so a role reads the same
-/// everywhere.
 enum Typography {
     static let itemTitle: Font = .headline
     /// Secondary rows and captions: the size `.small` controls use.
@@ -28,7 +26,6 @@ enum Typography {
 }
 
 extension View {
-    /// An accessory bar's controls, inset from the pane's edges.
     func paneBarControls() -> some View {
         lineLimit(1)
             .padding(.horizontal, BarMetrics.inset)
@@ -36,10 +33,7 @@ extension View {
     }
 }
 
-/// The source's and the PDF's find bar, with the source's replace row under it.
-/// Return and Shift-Return step, Escape closes. It lives in its pane's top
-/// accessory, which keeps it in the window while hidden, so `field` can take the
-/// keyboard at once.
+/// Shared source and PDF find bar. Its pane accessory keeps the field ready to focus.
 struct FindBar<Replace: View>: View {
     @Binding var query: String
     let prompt: String
@@ -50,7 +44,6 @@ struct FindBar<Replace: View>: View {
     let searched: String
     let step: @MainActor (Int) -> Void
     let close: @MainActor () -> Void
-    /// The replace row's cells, a `GridRow`: its field, then its buttons.
     @ViewBuilder var replace: Replace
 
     var body: some View {
@@ -83,51 +76,46 @@ struct FindBar<Replace: View>: View {
     }
 }
 
-/// A choice in a search field's own menu (Match Case, Whole Words…).
 struct SearchOption {
     let title: String
     let isOn: Binding<Bool>
 }
 
-/// A search field the window can give the keyboard to: the field registers
-/// itself here as it's made.
+/// A field the window can focus after AppKit creates it.
 final class FieldHandle {
-    fileprivate(set) weak var field: NSSearchField?
+    fileprivate(set) weak var field: NSTextField?
 
-    /// Takes the keyboard, its text selected, so typing replaces the query.
-    func focus() {
+    func focus(selectAll: Bool = true) {
         guard let field, let window = field.window else { return }
         if window.firstResponder !== field.currentEditor() { window.makeFirstResponder(field) }
-        field.currentEditor()?.selectAll(nil)
+        if selectAll { field.currentEditor()?.selectAll(nil) }
     }
 
-    /// Whether it, or its field editor, has the keyboard.
     var hasFocus: Bool {
         guard let field, let first = field.window?.firstResponder else { return false }
         return first === field || first === field.currentEditor()
     }
 }
 
-/// NSSearchField in a bar: SwiftUI has search fields only as `.searchable`.
-/// Return steps (Shift-Return back) and Escape closes when `step`/`close` are set.
+/// Native find and replace fields with optional Return and Escape actions.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
     var handle: FieldHandle?
+    var replacing = false
     var options: [SearchOption] = []
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
-        /// The options' states the field's menu was last made with.
         var optionStates: [Bool]?
 
         init(_ field: SearchField) { self.field = field }
 
-        // Typing, and the field's clear button, both send the action.
-        @objc func search(_ sender: NSSearchField) {
-            field.text = sender.stringValue
+        // Typing and the native clear button both send the action.
+        @objc func changed(_ sender: NSSearchField) {
+            if field.text != sender.stringValue { field.text = sender.stringValue }
         }
 
         @objc func toggleOption(_ sender: NSMenuItem) {
@@ -136,6 +124,9 @@ struct SearchField: NSViewRepresentable {
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            // Let the input method commit or cancel marked text before the find
+            // bar treats Return and Escape as navigation commands.
+            guard !textView.hasMarkedText() else { return false }
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
                 guard let step = field.step else { return false }
@@ -158,12 +149,16 @@ struct SearchField: NSViewRepresentable {
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
-        view.action = #selector(Coordinator.search(_:))
+        view.action = #selector(Coordinator.changed(_:))
+        if replacing, let button = (view.cell as? NSSearchFieldCell)?.searchButtonCell {
+            button.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: prompt)
+            button.alternateImage = button.image
+            button.setAccessibilityLabel(prompt)
+        }
         handle?.field = view
         return view
     }
 
-    /// As wide as offered: the frame around it sets its least and ideal widths.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
     }
@@ -174,7 +169,11 @@ struct SearchField: NSViewRepresentable {
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
-        if view.stringValue != text { view.stringValue = text }
+        // A SwiftUI update can arrive during input-method composition; writing
+        // the bound query back then would discard the marked characters.
+        if view.stringValue != text, (view.currentEditor() as? NSTextView)?.hasMarkedText() != true {
+            view.stringValue = text
+        }
         // The field copies its menu, so it is made again when a state changes.
         let states = options.map(\.isOn.wrappedValue)
         if !options.isEmpty, coordinator.optionStates != states {
@@ -192,10 +191,7 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
-/// A text view that passes Edit › Find's items on to the window
-/// (`MainWindowController`), which sends them to the pane with the keyboard,
-/// where a text view would answer them itself: the find bars' field editor
-/// (the shared one turns them off) and the source (`SourceTextView`).
+/// Pass Edit › Find from the field editor to the window, which routes it to the active pane.
 class FindPassingTextView: NSTextView {
     override func performFindPanelAction(_ sender: Any?) {
         nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
@@ -215,8 +211,6 @@ class FindPassingTextView: NSTextView {
     }
 }
 
-/// A small sheet that asks for a few values: a title and message over a grouped
-/// form. Not an alert with fields: the HIG keeps alerts for important information.
 struct DialogSheet<Fields: View>: View {
     let title: String
     var message: String?
@@ -257,7 +251,7 @@ struct DialogSheet<Fields: View>: View {
         // macOS 27 resets the control size in sheets: set it here.
         .controlSize(.regular)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(submitting) }
             ToolbarItem(placement: .confirmationAction) {
                 Button(action) {
                     submitting = true
@@ -273,8 +267,7 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
-/// A list's rename in place. Observable, so typing redraws only the row with
-/// the field, not every row that checks `id`.
+/// A list's rename state; observation redraws only the editing row.
 @Observable
 final class InPlaceRename<ID: Hashable> {
     private(set) var id: ID?
@@ -287,8 +280,6 @@ final class InPlaceRename<ID: Hashable> {
 
     func cancel() { id = nil }
 
-    /// Ends `id`'s rename: the new name, trimmed, or nil when the rename
-    /// had already ended or left the name empty or as it was.
     func end(_ id: ID, from old: String) -> String? {
         guard self.id == id else { return nil }
         self.id = nil
@@ -305,7 +296,6 @@ struct ItemActions {
     let moveToTrash: () -> Void
 }
 
-/// Move to Trash apart from the rest.
 struct ItemMenuItems: View {
     let actions: ItemActions
 
@@ -341,9 +331,7 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
     }
 }
 
-/// A name edited in place: Return or clicking away commits, Escape cancels.
-/// A file's name starts selected up to its extension, so typing replaces the name
-/// and keeps the file's type.
+/// Return or losing focus commits, Escape cancels; file selection preserves the extension.
 struct RenameField: View {
     @Binding var text: String
     var isFile = false

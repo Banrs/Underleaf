@@ -51,10 +51,6 @@ static BIBTEX_ERROR: LazyLock<Regex> =
 static BIBER_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[\d+\] .*> ERROR - (.*)$").unwrap());
 
-fn has_error(items: &[LogItem]) -> bool {
-    items.iter().any(|item| item.kind == "error")
-}
-
 /// A forward-slash project path; None for an absolute TeX distribution path.
 fn project_path(path: &str) -> Option<String> {
     (!is_absolute_like(path)).then(|| {
@@ -89,11 +85,9 @@ fn track(open: &mut Vec<Option<String>>, line: &str) {
     }
 }
 
-/// Where a message at `line` points. `named` is the file it names, else it
-/// is the innermost file open; a log that names no files is the main
-/// file's. One of TeX's own files (a package), which the user can't open,
-/// gives way to the project file that loaded it, with no line and the
-/// package file's name before the message.
+/// Prefer the named file, then the innermost open file, then the main file.
+/// An absolute TeX distribution path uses any open project caller without a
+/// line number, and prefixes the message with the distribution file's name.
 fn locate(
     named: Option<&str>,
     line: Option<u32>,
@@ -116,10 +110,8 @@ fn locate(
     (files.find_map(project_path), None)
 }
 
-/// Add the line after `prev` to a message. After a line TeX broke at its
-/// default 79 columns (MiKTeX ignores max_print_line) it runs on mid-word;
-/// otherwise it is a line of its own, which a package indents under its
-/// "(name)".
+/// Join after TeX's 79-column wrap without a space; otherwise separate lines
+/// and drop an indented package "(name)" prefix.
 fn append(message: &mut String, prev: &str, next: &str) {
     if prev.len() == 79 || prev.chars().count() == 79 {
         message.push_str(next);
@@ -134,9 +126,7 @@ fn append(message: &mut String, prev: &str, next: &str) {
     message.push_str(next.trim());
 }
 
-/// The "l.<n>" line that echoes the source at the error on line `i`: its
-/// own, not one that belongs to the next error, as a closing "==> Fatal
-/// error occurred" would borrow.
+/// Find this error's "l.<n>" source echo without borrowing the next error's.
 fn echo_line(lines: &[&str], i: usize) -> Option<usize> {
     lines[(i + 1)..(i + 12).min(lines.len())]
         .iter()
@@ -145,9 +135,8 @@ fn echo_line(lines: &[&str], i: usize) -> Option<usize> {
         .map(|k| i + 1 + k)
 }
 
-/// "Undefined control sequence." with the one TeX means: the last token of
-/// the first context line from the error on line `i` to its echo that ends
-/// in one ("<recently read> \foo", "\x ->\foo", the echo itself).
+/// Name TeX's undefined command from the first context line through its echo
+/// that ends in one ("<recently read> \foo", "\x ->\foo", or the echo).
 fn name_undefined(message: &mut String, lines: &[&str], i: usize, echo: Option<usize>) {
     let named = echo
         .filter(|_| message.starts_with("Undefined control sequence."))
@@ -169,9 +158,7 @@ fn blank_from(lines: &[&str], from: usize) -> usize {
 }
 
 pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
-    // lines(), not split('\n'): a Windows TeX log or latexmk's own output ends
-    // lines with \r\n, and a kept \r would land mid-message when a
-    // continuation line is appended.
+    // lines() drops CR from Windows logs before assembling continuations.
     let lines: Vec<&str> = log.lines().collect();
     let mut items: Vec<LogItem> = Vec::new();
     let mut open: Vec<Option<String>> = Vec::new();
@@ -180,57 +167,49 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        if let Some(m) = FILE_LINE.captures(line) {
-            // Error detail often continues on following lines, up to TeX's
-            // context ("<inserted text>", "<read *>") or the "l.<n>" echo.
-            let mut message = m[3].to_string();
-            let mut prev = line;
-            for next in &lines[(i + 1)..(i + 4).min(lines.len())] {
-                if next.trim().is_empty() || next.starts_with(['!', '<']) || L_NO.is_match(next) {
-                    break;
-                }
-                append(&mut message, prev, next);
-                prev = next;
-            }
+        let file_error = FILE_LINE.captures(line);
+        if file_error.is_some() || line.starts_with("! ") {
             let echo = echo_line(&lines, i);
             quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-            // TeX's closing "==> Fatal error occurred" takes the place of
-            // the error that stopped it: that error names the place, and
-            // the summary names none of its own. After that error it is
-            // left out, so one mistake counts as one error.
+            let (mut message, line_no) = if let Some(m) = file_error.as_ref() {
+                // File-line errors can continue up to TeX's context or echo.
+                let mut message = m[3].to_string();
+                let mut prev = line;
+                for next in &lines[(i + 1)..(i + 4).min(lines.len())] {
+                    if next.trim().is_empty() || next.starts_with(['!', '<']) || L_NO.is_match(next)
+                    {
+                        break;
+                    }
+                    append(&mut message, prev, next);
+                    prev = next;
+                }
+                (message, m[2].parse().ok())
+            } else {
+                let line_no = echo
+                    .and_then(|j| L_NO.captures(lines[j]))
+                    .and_then(|lm| lm[1].parse().ok());
+                (line[2..].trim().to_string(), line_no)
+            };
+            // A fatal summary repeats the stopping error; keep it only alone.
             let summary = message.trim_start().starts_with("==>");
-            if summary && has_error(&items) {
+            if summary && items.iter().any(|item| item.kind == "error") {
                 continue;
             }
             name_undefined(&mut message, &lines, i, echo);
-            let line_no = (!summary).then(|| m[2].parse().ok()).flatten();
-            let (file, line_no) = locate(Some(&m[1]), line_no, &open, main_file, &mut message);
+            let line_no = if summary && file_error.is_some() {
+                None
+            } else {
+                line_no
+            };
+            let named = file_error.as_ref().map(|m| m.get(1).unwrap().as_str());
+            let (file, line_no) = locate(named, line_no, &open, main_file, &mut message);
             items.push(LogItem {
                 kind: "error",
                 file,
                 line: line_no,
                 message: message.trim().to_string(),
             });
-        } else if let Some(message) = line.strip_prefix("! ") {
-            let echo = echo_line(&lines, i);
-            quiet_until = echo.map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-            if message.trim_start().starts_with("==>") && has_error(&items) {
-                continue;
-            }
-            let line_no = echo
-                .and_then(|j| L_NO.captures(lines[j]))
-                .and_then(|lm| lm[1].parse().ok());
-            let mut message = message.trim().to_string();
-            name_undefined(&mut message, &lines, i, echo);
-            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message);
-            items.push(LogItem {
-                kind: "error",
-                file,
-                line: line_no,
-                message,
-            });
-        // The substring test first: most lines of a long log are neither
-        // kind, and it costs far less than a regex call per line.
+        // Skip the warning regex for most lines of a long log.
         } else if let Some(m) = line
             .contains(" Warning:")
             .then(|| WARNING.captures(line))
@@ -266,8 +245,7 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
         }
     }
 
-    // De-duplicate repeated messages (reruns produce copies), keeping the
-    // first of each in order.
+    // Reruns duplicate messages; keep the first in order.
     let keep: Vec<bool> = {
         let mut seen = HashSet::with_capacity(items.len());
         items.iter().map(|item| seen.insert(item)).collect()

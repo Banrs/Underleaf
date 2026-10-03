@@ -18,10 +18,6 @@ enum MenuCommand: String, CaseIterable {
     case filePrint = "file.print"
     case editUndo = "edit.undo"
     case editRedo = "edit.redo"
-    case editFind = "edit.find"
-    case editFindAndReplace = "edit.findAndReplace"
-    case editFindNext = "edit.findNext"
-    case editFindPrevious = "edit.findPrevious"
     case editBold = "edit.bold"
     case editItalic = "edit.italic"
     case editMath = "edit.math"
@@ -62,10 +58,6 @@ enum MenuCommand: String, CaseIterable {
         case .filePrint: "Print…"
         case .editUndo: "Undo"
         case .editRedo: "Redo"
-        case .editFind: "Find…"
-        case .editFindAndReplace: "Find and Replace…"
-        case .editFindNext: "Find Next"
-        case .editFindPrevious: "Find Previous"
         case .editBold: "Bold"
         case .editItalic: "Italic"
         case .editMath: "Inline Math"
@@ -107,7 +99,6 @@ enum MenuCommand: String, CaseIterable {
         case .projectOpen: "CmdOrCtrl+O"
         case .filePageSetup: "CmdOrCtrl+Shift+P"
         case .filePrint: "CmdOrCtrl+P"
-        case .editFindAndReplace: "CmdOrCtrl+Alt+F"
         case .viewToggleSidebar: "Ctrl+CmdOrCtrl+S"
         case .viewToggleInspector: "CmdOrCtrl+Alt+I"
         case .viewActualSize: "CmdOrCtrl+0"
@@ -159,7 +150,6 @@ enum MenuCommand: String, CaseIterable {
     }
 }
 
-/// A sheet the workspace asks for a value with.
 enum Prompt: Identifiable, Hashable {
     /// In the folder given, or the open file's.
     case newFile(in: String? = nil), newFolder(in: String? = nil), gotoLine, gotoPage
@@ -167,7 +157,6 @@ enum Prompt: Identifiable, Hashable {
     var id: Self { self }
 }
 
-/// What the menus ask of the PDF pane (`AppModel.requestPDF`).
 enum PDFAction {
     case zoomIn, zoomOut, actualSize, fitWidth, fitHeight, goToPage(Int), find, inverseFromView, print
 }
@@ -253,10 +242,8 @@ extension AppModel {
         case .viewFitHeight: requestPDF(.fitHeight)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
-        // A Toggle bound to `autoCompile` in the menu. Undo, Redo and the Find items
-        // are the system's, which reach whatever has the keyboard (the source's
-        // text view, `MainWindowController.performFindPanelAction`).
-        case .compileToggleAuto, .editUndo, .editRedo, .editFind, .editFindAndReplace, .editFindNext, .editFindPrevious:
+        // Auto compile binds in the menu; Undo and Redo use AppKit's responder chain.
+        case .compileToggleAuto, .editUndo, .editRedo:
             break
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
@@ -275,6 +262,10 @@ struct AppCommands: Commands {
         // ⌘N follows whether a project is open, not which window is key.
         .keyboardShortcut(app.shortcut(command, on: app.project))
         .disabled(!app.isEnabled(command, on: project))
+    }
+
+    private func items(_ commands: [MenuCommand]) -> some View {
+        ForEach(commands, id: \.self) { item($0) }
     }
 
     var body: some Commands {
@@ -297,9 +288,7 @@ struct AppCommands: Commands {
                     .disabled(app.recents.isEmpty)
             }
             Divider()
-            item(.fileNew)
-            item(.fileNewFolder)
-            item(.fileUpload)
+            items([.fileNew, .fileNewFolder, .fileUpload])
             Divider()
             // Not MenuCommands: the web has no command ids for them. They act on the
             // chosen item of the list with the keyboard.
@@ -319,11 +308,8 @@ struct AppCommands: Commands {
             Divider()
             item(.projectClose)
             Divider()
-            // Always shown, disabled while there's no PDF.
-            item(.pdfSave)
-            item(.projectExport)
+            items([.pdfSave, .projectExport])
             Divider()
-            // The system's Share… item. Not a MenuCommand: the web has no command id for it.
             if let project, project.hasPDF, let url = project.pdfURL {
                 ShareLink(item: url)
             } else {
@@ -345,41 +331,35 @@ struct AppCommands: Commands {
             item(.pdfFind)
         }
         CommandGroup(replacing: .textFormatting) {
-            item(.editBold)
-            item(.editItalic)
+            items([.editBold, .editItalic])
             Divider()
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
             Divider()
             item(.editComment)
         }
-        // The columns left to right, then the build panel below them.
         CommandGroup(after: .sidebar) {
             item(.viewToggleSidebar)
             // Not a MenuCommand: the web has no command id for it. The keyboard's
             // and VoiceOver's way to the sidebar header's fold.
             Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
                 .disabled(project?.isLaTeX != true || !app.sidebarVisible)
-            item(.viewTogglePdf)
-            item(.viewToggleInspector)
-            item(.viewToggleLogs)
-            item(.viewToggleWordCount)
+            items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
             Divider()
-            item(.viewZoomIn)
-            item(.viewZoomOut)
-            item(.viewActualSize)
-            item(.viewFitWidth)
-            item(.viewFitHeight)
+            items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitHeight])
             Divider()
         }
         // The app's own menus go between View and Window (HIG, The menu bar).
         CommandMenu("Insert") {
-            InsertMenuItems(project: project, inlineMath: item(.editMath))
-                .disabled(project?.isLaTeX != true)
+            Group {
+                MathMenuItems(project: project, inlineMath: item(.editMath))
+                Divider()
+                InsertMenuItems(project: project)
+            }
+            .disabled(project?.isLaTeX != true)
         }
         CommandMenu("Compile") {
-            item(.compileRun)
-            item(.compileStop)
+            items([.compileRun, .compileStop])
             Toggle(MenuCommand.compileToggleAuto.title, isOn: Bindable(app).autoCompile)
             // Only with a project's settings, and their engine always a choice: a
             // selection no tag matches, nil included, is a SwiftUI fault.
@@ -397,8 +377,7 @@ struct AppCommands: Commands {
             }
             .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
             Divider()
-            item(.syncForward)
-            item(.syncInverse)
+            items([.syncForward, .syncInverse])
         }
     }
 }

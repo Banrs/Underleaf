@@ -2,7 +2,7 @@
 //! dir; all returned paths use forward slashes.
 
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -64,8 +64,27 @@ pub struct Symbols {
     pub labels: Vec<String>,
 }
 
-/// One scannable file's identity for cache invalidation: (rel path, mtime ns, len).
-pub type FileStamp = (String, u64, u64);
+#[derive(Default)]
+pub(crate) struct SymbolCache {
+    files: BTreeMap<String, CachedSymbols>,
+}
+
+struct CachedSymbols {
+    stamp: (u64, u64),
+    /// Also invalidates in-project links when their target is written by the app.
+    target: PathBuf,
+    symbols: Symbols,
+}
+
+impl SymbolCache {
+    pub(crate) fn invalidate_file(&mut self, root: &Path, rel: &str) {
+        let written = fold_case(rel);
+        let target = fs::canonicalize(root.join(rel)).ok();
+        self.files.retain(|path, cached| {
+            fold_case(path) != written && target.as_ref() != Some(&cached.target)
+        });
+    }
+}
 
 fn since_epoch(meta: &fs::Metadata) -> Option<Duration> {
     meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()
@@ -102,9 +121,8 @@ fn classify_entry(
         return Ok(None);
     }
 
-    // A link that does not resolve (dangling, a loop, an unreadable target)
-    // cannot be shown to stay inside the project, so it is not content, and
-    // must not fail the whole walk.
+    // A dangling, looping or unreadable link cannot prove it stays in the
+    // project; skip it without failing the walk.
     let Ok(target) = fs::canonicalize(entry.path()) else {
         return Ok(None);
     };
@@ -116,9 +134,7 @@ fn classify_entry(
         .then_some(EntryKind::File))
 }
 
-/// The result of reading one entry during a scan, or None when it vanished or
-/// may not be read: a folder of root-owned output, a file deleted mid-walk.
-/// One such entry must not fail the whole tree, search or library listing.
+/// A vanished or unreadable entry is skipped without failing a project scan.
 fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError> {
     match result {
         Ok(value) => Ok(Some(value)),
@@ -134,7 +150,6 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
-/// One entry of a project folder that a walk descends into or reports.
 struct Entry {
     path: PathBuf,
     name: String,
@@ -143,12 +158,9 @@ struct Entry {
     kind: EntryKind,
 }
 
-/// A folder's content entries, in directory order. The file tree, search,
-/// symbol scanning and fingerprinting all walk through here, so they cannot
-/// disagree about what a project contains: dotfiles are hidden, the top-level
-/// `build/` is compile output rather than content, and links are followed only
-/// while they stay inside the project. The project root itself must be
-/// readable; a subfolder that is not reads as empty.
+/// Shared tree rules for file listing, search and symbols: hide dotfiles and
+/// top-level build output, and follow only links within the project. An
+/// unreadable subfolder is empty; the project root must be readable.
 fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>, CoreError> {
     let read = if prefix.is_empty() {
         fs::read_dir(dir)?
@@ -170,10 +182,7 @@ fn entries(root_canonical: &Path, dir: &Path, prefix: &str) -> Result<Vec<Entry>
         } else {
             format!("{prefix}/{name}")
         };
-        // Only the project's own build directory holds compile output, in
-        // any case, as safe_write_path reserves it. A `build` deeper in the
-        // tree is the author's, and the ZIP export keeps it, so every walk
-        // here must too.
+        // Only top-level build/ is output; a nested build belongs to the author.
         if rel.eq_ignore_ascii_case(BUILD_DIR) {
             continue;
         }
@@ -217,7 +226,6 @@ fn visit_files(
     Ok(())
 }
 
-/// A project-relative path's extension, lowercased.
 fn ext_of(rel: &str) -> String {
     Path::new(rel)
         .extension()
@@ -273,7 +281,6 @@ pub fn create_project(
     template: &str,
 ) -> Result<ProjectInfo, CoreError> {
     let (clean, root) = new_project_dir(data_dir, name)?;
-    // Template paths are plain file names, fixed at build time.
     for (file, content) in templates::files(template) {
         fs::write(root.join(file), content)?;
     }
@@ -302,7 +309,6 @@ pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, Pa
     unreachable!("a free name")
 }
 
-/// Write a new project's settings, and the project as the library lists it.
 pub(crate) fn finish_project(
     name: String,
     root: &Path,
@@ -441,7 +447,6 @@ pub fn create_file(root: &Path, rel: &str, dir: bool) -> Result<(), CoreError> {
     }
 }
 
-/// Write a file whole, creating the folders it sits in.
 pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<(), CoreError> {
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
@@ -685,60 +690,86 @@ fn uncommented(line: &str) -> &str {
     line
 }
 
-pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
-    let mut keys: Vec<String> = Vec::new();
-    let mut labels: Vec<String> = Vec::new();
-    visit_files(root, &mut |abs, rel| {
-        let ext = ext_of(&rel);
-        if ext != "bib" && ext != "tex" {
-            return Ok(true);
+fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
+    let mut citations = Vec::new();
+    let mut labels = Vec::new();
+    let text = String::from_utf8_lossy(bytes);
+    let found = |re: &Regex, text: &str, out: &mut Vec<String>| {
+        out.extend(re.captures_iter(text).map(|m| m[1].to_string()));
+    };
+    if ext == "bib" {
+        found(&BIB_KEY, &text, &mut citations);
+    } else {
+        for line in text.lines().map(uncommented) {
+            found(&LABEL, line, &mut labels);
+            found(&BIBITEM, line, &mut citations);
         }
-        let Some(bytes) = skip_unreadable(fs::read(abs))? else {
-            return Ok(true);
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let found = |re: &Regex, text: &str, out: &mut Vec<String>| {
-            out.extend(re.captures_iter(text).map(|m| m[1].to_string()));
-        };
-        if ext == "bib" {
-            found(&BIB_KEY, &text, &mut keys);
-        } else {
-            for line in text.lines().map(uncommented) {
-                found(&LABEL, line, &mut labels);
-                found(&BIBITEM, line, &mut keys);
-            }
-        }
-        Ok(true)
-    })?;
-
-    fn dedup(mut v: Vec<String>) -> Vec<String> {
-        let mut seen = HashSet::new();
-        v.retain(|s| seen.insert(s.clone()));
-        v
     }
-    Ok(Symbols {
-        citations: dedup(keys),
-        labels: dedup(labels),
-    })
+    Symbols { citations, labels }
 }
 
-pub fn symbols_fingerprint(root: &Path) -> Result<Vec<FileStamp>, CoreError> {
-    let mut out = Vec::new();
-    visit_files(root, &mut |abs, rel| {
-        let ext = ext_of(&rel);
-        if ext != "bib" && ext != "tex" {
-            return Ok(true);
+impl SymbolCache {
+    /// Walk the safe project tree once; read only files whose target changed.
+    pub(crate) fn scan(&mut self, root: &Path) -> Result<Symbols, CoreError> {
+        let mut previous = std::mem::take(&mut self.files);
+        let mut files = BTreeMap::new();
+        visit_files(root, &mut |abs, rel| {
+            let ext = ext_of(&rel);
+            if ext != "bib" && ext != "tex" {
+                return Ok(true);
+            }
+            // Follow an in-project link to stamp the bytes the parser sees.
+            let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
+                return Ok(true);
+            };
+            let stamp = (mtime_ns(&meta), meta.len());
+            let Some(target) = skip_unreadable(fs::canonicalize(abs))? else {
+                return Ok(true);
+            };
+            let symbols = if let Some(cached) = previous
+                .remove(&rel)
+                .filter(|cached| cached.stamp == stamp && cached.target == target)
+            {
+                cached.symbols
+            } else {
+                let Some(bytes) = skip_unreadable(fs::read(abs))? else {
+                    return Ok(true);
+                };
+                parse_symbols(&bytes, &ext)
+            };
+            files.insert(
+                rel,
+                CachedSymbols {
+                    stamp,
+                    target,
+                    symbols,
+                },
+            );
+            Ok(true)
+        })?;
+
+        fn dedup(mut v: Vec<String>) -> Vec<String> {
+            let mut seen = HashSet::new();
+            v.retain(|s| seen.insert(s.clone()));
+            v
         }
-        // fs::metadata follows the link, so a symlinked source is stamped by
-        // the bytes scan_symbols actually reads rather than by the link itself.
-        let Some(meta) = skip_unreadable(fs::metadata(abs))? else {
-            return Ok(true);
-        };
-        out.push((rel, mtime_ns(&meta), meta.len()));
-        Ok(true)
-    })?;
-    out.sort();
-    Ok(out)
+        // The map keeps completion order stable across filesystem traversals.
+        let mut citations = Vec::new();
+        let mut labels = Vec::new();
+        for cached in files.values() {
+            citations.extend(cached.symbols.citations.iter().cloned());
+            labels.extend(cached.symbols.labels.iter().cloned());
+        }
+        self.files = files;
+        Ok(Symbols {
+            citations: dedup(citations),
+            labels: dedup(labels),
+        })
+    }
+}
+
+pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
+    SymbolCache::default().scan(root)
 }
 
 #[cfg(test)]

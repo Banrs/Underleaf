@@ -1,52 +1,23 @@
-import PDFKit
 import SwiftUI
 
-/// The compiled PDF in PDFKit: native rendering, selection, zoom and find. Its
-/// tools are the toolbar's, its find bar is the column's top accessory, and its
-/// page is in the status bar.
+/// Native PDFKit pages, with controls in the toolbar, find accessory and status bar.
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
-    @Bindable var project: ProjectModel
-    /// The document read for a `pdfVersion`.
-    @State private var loaded: (version: Int, document: PDFDocument)?
+    let project: ProjectModel
+    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     var body: some View {
-        pages
-            // Keyed on hasPDF too: the URL can arrive after the version.
-            .task(id: project.hasPDF ? project.pdfVersion : 0) {
-                let version = project.pdfVersion
-                guard project.hasPDF, let url = project.pdfURL else { return }
-                // A newer version's read may have finished first.
-                if let document = await Self.loadDocument(url), !Task.isCancelled { loaded = (version, document) }
-            }
-    }
-
-    /// Read whole: the next build rewrites the file in place.
-    @concurrent nonisolated static func loadDocument(_ url: URL) async -> sending PDFDocument? {
-        guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) else { return nil }
-        // Keep hyperlinks active without hyperref's visible annotation boxes.
-        for index in 0..<document.pageCount {
-            for annotation in document.page(at: index)?.annotations ?? [] where annotation.type == "Link" {
-                let border = PDFBorder()
-                border.lineWidth = 0
-                annotation.border = border
-            }
-        }
-        return document
-    }
-
-    @ViewBuilder
-    private var pages: some View {
-        if project.pdfVersion > 0 {
-            PDFRepresentable(project: project, document: loaded?.document, current: loaded?.version == project.pdfVersion)
+        if project.pdfDocument != nil {
+            PDFRepresentable(project: project, darkPaper: darkPaper)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    /// No PDF: TeX to install, a build that failed before making one, or
-    /// nothing compiled yet.
     @ViewBuilder
     private var emptyState: some View {
         if !project.texAvailable {
@@ -82,7 +53,6 @@ struct PDFPane: View {
     }
 }
 
-/// Find in PDF: the source's find bar without its replace row.
 struct PDFFindBar: View {
     @Bindable var controller: PDFController
 
@@ -100,9 +70,7 @@ struct PDFFindBar: View {
     }
 }
 
-/// The fits and preset scales, the one in use checked (none while it's between
-/// presets), for the toolbar's scale menu (`NSHostingMenu`); View has the fits and
-/// the zooms with their shortcuts.
+/// Toolbar scale choices; no preset is checked between the listed scales.
 struct ScaleMenuItems: View {
     let pdf: PDFController
     private static let presets = [50, 75, 100, 125, 150, 200]
@@ -119,21 +87,37 @@ struct ScaleMenuItems: View {
         }
     }
 
-    /// Checked while in use; choosing it, checked or not, applies it.
+    /// Choosing an already checked scale reapplies it.
     private func choice(_ inUse: Bool, apply: @escaping () -> Void) -> Binding<Bool> {
         Binding(get: { inUse }, set: { _ in apply() })
     }
 }
 
-/// The find bar's rules, shared with the web's (web/src/findsession.js and
-/// workspace.js `showCount`, `pdfFindTimer`).
 enum PDFFind {
     static let maxQuery = 256
     static let maxMatches = 5000
-    /// So typing doesn't search every prefix.
     static let debounce: Duration = .milliseconds(200)
 
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
     }
+}
+
+enum PDFPaper: String, CaseIterable, Identifiable {
+    case white, dark, auto
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .white: "White"
+        case .dark: "Dark"
+        case .auto: "Match Appearance"
+        }
+    }
+}
+
+enum PDFPrefs {
+    static let paperKey = "pdfPaper"
+    static let paper = PDFPaper.white
 }

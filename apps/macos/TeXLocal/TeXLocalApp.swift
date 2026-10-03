@@ -22,8 +22,8 @@ struct TeXLocalApp: App {
     }
 }
 
-/// Owns the app model and the window; Quit waits for the open document's save,
-/// and refuses when it fails rather than drop the only copy of the edits.
+/// Owns the app model and the window; Quit waits for the project's writes,
+/// and refuses when a save fails rather than drop the only copy of the edits.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// For window restoration, which asks a class for the window.
     private(set) static weak var shared: AppDelegate?
@@ -56,8 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // A save in flight has cleared `dirty` before its write is on disk.
-        guard let project = app.project, project.hasUnsavedText || project.saving else { return .terminateNow }
+        // A clean editor can still have a settings change or rename in flight.
+        guard let project = app.project else { return .terminateNow }
         Task {
             let saved = await project.flush()
             // Not saved, the quit stops: the window its alert shows in comes back if

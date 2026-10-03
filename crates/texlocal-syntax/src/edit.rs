@@ -30,7 +30,7 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
     lines
 }
 
-fn edit(start: u32, length: u32, text: &str) -> TextEdit {
+fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
     TextEdit {
         start,
         length,
@@ -59,8 +59,8 @@ pub fn toggle_comment(text: &Text, selections: &[TextRange]) -> Vec<TextEdit> {
         .collect()
 }
 
-/// Two spaces more, or up to two fewer, at the start of each line the
-/// selections touch (CodeMirror's indentMore and indentLess).
+/// Two spaces more, or one two-column indent unit fewer, at the start of
+/// each line the selections touch (CodeMirror's indentMore and indentLess).
 pub fn indent(text: &Text, selections: &[TextRange], more: bool) -> Vec<TextEdit> {
     touched_lines(text, selections)
         .into_iter()
@@ -69,13 +69,30 @@ pub fn indent(text: &Text, selections: &[TextRange], more: bool) -> Vec<TextEdit
             if more {
                 return Some(edit(start, 0, "  "));
             }
-            let spaces = text
-                .line(l)
+            let line = text.line(l);
+            let indent = &line[..line.iter().take_while(|&&u| space(u)).count()];
+            if indent.is_empty() {
+                return None;
+            }
+            // CodeMirror's default tab size is four columns.
+            let columns = indent.iter().fold(0usize, |col, &u| {
+                if is(u, '\t') {
+                    col + 4 - col % 4
+                } else {
+                    col + 1
+                }
+            });
+            let remaining = columns.saturating_sub(2);
+            let keep = indent
                 .iter()
-                .take(2)
+                .take(remaining)
                 .take_while(|&&u| is(u, ' '))
                 .count();
-            (spaces > 0).then(|| edit(start, spaces as u32, ""))
+            Some(edit(
+                start + keep as u32,
+                (indent.len() - keep) as u32,
+                " ".repeat(remaining - keep),
+            ))
         })
         .collect()
 }
@@ -91,11 +108,7 @@ pub fn set_heading(text: &Text, caret: u32, command: &str) -> Insertion {
     let (line, start) = (text.line(index), text.lines[index]);
     let (new, cursor) = heading_line(&String::from_utf16_lossy(line), command);
     Insertion {
-        edit: TextEdit {
-            start,
-            length: line.len() as u32,
-            text: new,
-        },
+        edit: edit(start, line.len() as u32, new),
         caret: start + cursor as u32,
         fields: vec![],
     }
@@ -111,7 +124,16 @@ fn heading_line(line: &str, command: &str) -> (String, usize) {
             let body = &line[open.end()..];
             // The title runs to the brace that closes the command's.
             let mut depth = 1;
+            let mut escaped = false;
             let close = body.find(|ch| {
+                if ch == '\\' {
+                    escaped = !escaped;
+                    return false;
+                }
+                if escaped {
+                    escaped = false;
+                    return false;
+                }
                 depth += match ch {
                     '{' => 1,
                     '}' => -1,
@@ -152,11 +174,26 @@ pub fn insert_block(text: &Text, id: &str, selection: TextRange) -> Option<Inser
     let (block, fields) = complete::expand(text, selection.start, &format!("{newline}{template}"));
     Some(Insertion {
         caret: selection.start + fields.first().map_or(utf16(&block) as u32, |f| f.start),
-        edit: TextEdit {
-            start: selection.start,
-            length: selection.length,
-            text: block,
-        },
+        edit: edit(selection.start, selection.length, block),
         fields,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edit;
+    use crate::{SourceDocument, TextRange};
+
+    #[test]
+    fn outdent_keeps_visual_columns_and_the_matching_prefix() {
+        let doc = SourceDocument::new("🙂\n\tb\n \tc\n    d");
+        let edits = doc.indent(
+            &[TextRange {
+                start: 3,
+                length: 12,
+            }],
+            false,
+        );
+        assert_eq!(edits, [edit(3, 1, "  "), edit(7, 1, " "), edit(12, 2, ""),]);
+    }
 }

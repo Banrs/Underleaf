@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// The section levels, the caret line's ticked; choosing one makes the line that
-/// heading. The Format menu's and the toolbar's (`NSHostingMenu`).
+/// Shared Format and toolbar choices; the caret's level is checked.
 struct SectionLevelItems: View {
     let project: ProjectModel?
 
@@ -9,7 +8,6 @@ struct SectionLevelItems: View {
         ForEach(HeadingLevel.all, id: \.self) { level in
             Toggle(level.title, isOn: Binding(get: { project?.headingLevel == level },
                                               set: { _ in project?.editor.perform(.heading, level.command) }))
-            if level == .normalText { Divider() }
         }
     }
 }
@@ -32,9 +30,7 @@ struct SymbolItems: View {
     }
 }
 
-/// The Insert menu's items, the menu bar's and the toolbar's (`NSHostingMenu`); the
-/// section level is Format's, a style.
-struct InsertMenuItems<InlineMath: View>: View {
+struct MathMenuItems<InlineMath: View>: View {
     let project: ProjectModel?
     /// Inline Math: the menu bar's own item carries its shortcut.
     let inlineMath: InlineMath
@@ -42,9 +38,18 @@ struct InsertMenuItems<InlineMath: View>: View {
     var body: some View {
         inlineMath
         Button("Display Math") { project?.editor.perform(.displayMath) }
-        items(mathTemplates)
+        ForEach(mathTemplates, id: \.title) { template in
+            Button(template.title) { project?.insert(template) }
+        }
         // A section, so a symbol is one submenu down (HIG, Menus); it brings its own separators.
         Section("Symbols") { SymbolItems(project: project) }
+    }
+}
+
+struct InsertMenuItems: View {
+    let project: ProjectModel?
+
+    var body: some View {
         items(insertTemplates)
         Menu("List") { items(listTemplates) }
         Divider()

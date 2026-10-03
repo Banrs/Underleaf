@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
 use texlocal_core::projects::{
     create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
-    scan_symbols, search_project, symbols_fingerprint,
+    scan_symbols, search_project,
 };
 use texlocal_core::settings::{compiled_pdf_path, read_settings, write_settings, Settings};
 use texlocal_core::zipexport::export_zip;
@@ -173,7 +173,6 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     let tree = file_tree(&root);
     let hits = search_project(&root, "needle", 100);
     let symbols = scan_symbols(&root);
-    let stamps = symbols_fingerprint(&root);
     lock(&root.join("locked"), 0o755).unwrap();
 
     let tree = tree.unwrap();
@@ -183,7 +182,6 @@ fn an_unreadable_folder_or_file_does_not_fail_the_scans() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].file, "main.tex");
     assert_eq!(symbols.unwrap().labels, ["sec:open"]);
-    assert!(stamps.is_ok());
 }
 
 #[cfg(unix)]
@@ -220,10 +218,6 @@ fn implicit_project_scans_skip_external_symlink_files() {
 
     assert!(search_project(&root, "needle", 50).unwrap().is_empty());
     assert!(scan_symbols(&root).unwrap().labels.is_empty());
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .all(|(path, _, _)| path != "external.tex"));
     assert!(file_tree(&root)
         .unwrap()
         .iter()
@@ -503,10 +497,6 @@ fn scans_reach_a_nested_build_directory_the_tree_and_zip_both_keep() {
         .unwrap()
         .labels
         .contains(&"deep:one".to_string()));
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .any(|(rel, _, _)| rel == "chapters/build/notes.tex"));
 }
 
 #[test]
@@ -521,10 +511,6 @@ fn top_level_build_output_stays_out_of_every_scan() {
         .unwrap()
         .labels
         .contains(&"gen:one".to_string()));
-    assert!(symbols_fingerprint(&root)
-        .unwrap()
-        .iter()
-        .all(|(rel, _, _)| !rel.starts_with("build/")));
 }
 
 #[test]
@@ -680,30 +666,6 @@ fn a_rename_follows_a_main_file_an_older_build_stored_with_backslashes() {
     assert_eq!(read_settings(&root).main_file, "content/main.tex");
 }
 
-#[cfg(unix)]
-#[test]
-fn a_fingerprint_follows_an_in_project_link_to_the_bytes_the_scan_reads() {
-    // scan_symbols reads through the link, so the stamp has to come from the
-    // target. Stamping the link itself leaves the symbol cache serving stale
-    // labels after the real file changed underneath it.
-    let data = data_dir();
-    let root = project(data.path(), "link-stamp");
-    fs::write(root.join("real.tex"), "\\label{a}\n").unwrap();
-    std::os::unix::fs::symlink(root.join("real.tex"), root.join("link.tex")).unwrap();
-
-    let stamp_of = |v: &[(String, u64, u64)]| {
-        v.iter()
-            .find(|(rel, _, _)| rel == "link.tex")
-            .cloned()
-            .expect("the link is scanned")
-    };
-    let before = stamp_of(&symbols_fingerprint(&root).unwrap());
-    fs::write(root.join("real.tex"), "\\label{a}\n\\label{b}\n").unwrap();
-    let after = stamp_of(&symbols_fingerprint(&root).unwrap());
-
-    assert_ne!(before, after, "the link's stamp must track its target");
-}
-
 #[test]
 fn the_file_tree_lists_folders_first_then_names_ignoring_case() {
     let data = data_dir();
@@ -821,7 +783,6 @@ fn a_link_loop_in_the_project_is_skipped_rather_than_failing_every_scan() {
     assert_eq!(names, ["main.tex"]);
     assert!(search_project(&root, "documentclass", 50).is_ok());
     assert!(scan_symbols(&root).is_ok());
-    assert!(symbols_fingerprint(&root).is_ok());
     let out = tempfile::tempdir().unwrap();
     export_zip(&root, &out.path().join("out.zip")).unwrap();
     assert_eq!(zip_names(&out.path().join("out.zip")), ["main.tex"]);

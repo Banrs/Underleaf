@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// The open project's sheets, alerts and file dialogs, on the source column:
-/// the one pane that always shows.
+/// Workspace sheets, alerts, and file dialogs on the always-visible source column.
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -9,8 +8,7 @@ struct WorkspaceModals: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var app = app
         content
-            // Each file dialog on a view of its own: a dialog's labels reach every
-            // dialog presented from the view they're set on.
+            // Separate hosts keep each file dialog's labels with its own panel.
             .background {
                 Color.clear
                     .fileImporter(isPresented: $app.addingFiles, allowedContentTypes: [.item, .folder],
@@ -87,10 +85,16 @@ private struct NewEntrySheet: View {
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+    private var validName: Bool {
+        !trimmed.isEmpty && trimmed != "." && trimmed != ".."
+            && !trimmed.contains("/") && !trimmed.contains("\\")
+    }
 
     var body: some View {
+        let folders = project.tree.flattened.filter(\.isDirectory).map(\.path)
+        let folderAvailable = folder.isEmpty || folders.contains(folder)
         DialogSheet(title: directory ? "New Folder" : "New File", action: "Create",
-                    enabled: !trimmed.isEmpty && !trimmed.hasPrefix("/"), failure: { "Couldn’t Create “\(trimmed)”" }) {
+                    enabled: validName && folderAvailable, failure: { "Couldn’t Create “\(trimmed)”" }) {
             try await project.createEntry(folder.isEmpty ? trimmed : "\(folder)/\(trimmed)", directory: directory)
         } fields: {
             TextField("Name", text: $name, selection: $selection)
@@ -100,7 +104,10 @@ private struct NewEntrySheet: View {
                 }
             Picker("Where", selection: $folder) {
                 Label(project.id, systemImage: "folder").tag("")
-                ForEach(project.tree.flattened.filter(\.isDirectory).map(\.path), id: \.self) { path in
+                if !folderAvailable {
+                    Label("\(folder) (Unavailable)", systemImage: "folder").tag(folder)
+                }
+                ForEach(folders, id: \.self) { path in
                     Label(path, systemImage: "folder").tag(path)
                 }
             }

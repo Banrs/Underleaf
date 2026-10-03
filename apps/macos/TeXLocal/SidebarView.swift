@@ -62,8 +62,12 @@ struct FilesList: View {
     /// The folder a drop would go into ("" the project's top level): the
     /// row's, or the folder of the file it's over.
     private var dropFolder: String? {
-        rowTargeted.map { $0.isDirectory ? $0.path : ($0.path as NSString).deletingLastPathComponent }
+        rowTargeted.map(dropDestination)
             ?? (listTargeted ? "" : nil)
+    }
+
+    private func dropDestination(for node: TreeNode) -> String {
+        node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
     }
 
     private var files: some View {
@@ -152,6 +156,9 @@ struct FilesList: View {
         List(selection: $hit) { searchResults }
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
+            // A new query can reuse a file/line ID. Clear the old selection so
+            // the first click on that new hit opens it.
+            .onChange(of: project.searchQuery, initial: true) { _, _ in hit = nil }
             .onChange(of: hit) { _, id in open(id, focus: false) }
             .contextMenu(forSelectionType: SearchHit.ID.self) { _ in } primaryAction: { ids in open(ids.first, focus: true) }
             .overlay {
@@ -227,14 +234,18 @@ struct FilesList: View {
         .fileDrop(moves: { project.projectPath($0) != nil }, targeted: { over in
             if over { rowTargeted = node } else if rowTargeted?.path == node.path { rowTargeted = nil }
         }) { urls in
-            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            let folder = dropDestination(for: node)
             Task { await project.dropFiles(urls, into: folder) }
         }
         .draggable(file: project.url(node.path))
     }
 
     private func commitRename(_ node: TreeNode) {
-        guard let name = rename.end(node.path, from: node.name), !name.contains("/") else { return }
+        guard let name = rename.end(node.path, from: node.name) else { return }
+        guard !name.contains("/") else {
+            app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
+            return
+        }
         let folder = (node.path as NSString).deletingLastPathComponent
         Task { await project.renameEntry(node.path, to: folder.isEmpty ? name : "\(folder)/\(name)") }
     }
@@ -408,7 +419,10 @@ struct OutlineList: View {
                 } else {
                     TreeRows(nodes: Outline.tree(outline), children: \.children,
                              isExpanded: { $folded.contains(keys[$0.id], inverted: true) }) { node in
-                        HeadingRow(project: project, item: node.item).equatable().tag(node.id)
+                        HeadingRow(item: node.item).equatable().tag(node.id)
+                            .simultaneousGesture(TapGesture().onEnded {
+                                if current == node.id { project.reveal(node.item) }
+                            })
                     }
                 }
             }
@@ -427,15 +441,15 @@ struct OutlineList: View {
             .environment(\.sidebarRowSize, outlineRowSize)
             .onChange(of: project.topHeading) { line = project.topLine }
             .onChange(of: project.cursorLine, initial: true) { _, cursor in line = cursor }
-            // The current heading always shows: its sections open, then it's
-            // scrolled to the middle, clear of the header.
+            // The current heading always shows: its sections open, then the row
+            // comes into view if needed.
             .onChange(of: current, initial: true) { _, id in
                 chosen = nil
                 let chain = Outline.chain(outline, to: id).dropLast()
                 let opened = folded.subtracting(chain.map { keys[$0.id] })
                 if opened != folded { folded = opened }
                 guard let id else { return }
-                Task { proxy.scrollTo(id, anchor: .center) }
+                Task { proxy.scrollTo(id) }
             }
             .onChange(of: folded) { _, folded in
                 // The shown files' folds of headings they no longer have go; a file the main
@@ -448,15 +462,9 @@ struct OutlineList: View {
     }
 }
 
-/// A heading. A click takes the source to it even when it's the current one,
-/// which a selection that doesn't change wouldn't.
+/// A heading in the file outline.
 private struct HeadingRow: View, Equatable {
-    let project: ProjectModel
     let item: OutlineItem
-
-    static func == (a: Self, b: Self) -> Bool {
-        a.project === b.project && a.item == b.item
-    }
 
     var body: some View {
         let title = Outline.displayTitle(item)
@@ -469,7 +477,6 @@ private struct HeadingRow: View, Equatable {
         .foregroundStyle(item.isUntitled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
-        .simultaneousGesture(TapGesture().onEnded { project.reveal(item) })
         .accessibilityLabel(title)
         // Its kind ("Subsection"); the list tells its depth.
         .accessibilityValue(item.kind)

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use texlocal_core::service::{arg, Service};
+use texlocal_core::service::{arg, string_arg, Service};
 use texlocal_core::{import, zipexport, CoreError};
 use texlocal_syntax::{SourceDocument, TextRange};
 
@@ -24,44 +24,43 @@ pub struct TlHandle {
     service: Service,
 }
 
-/// Commands only an in-process host may run. They take or return absolute
-/// paths — fine for the app that owns this process, which is why they live
-/// here and not in `Service::call`, which the browser server exposes.
-fn native_call(service: &Service, command: &str, args: &Value) -> Option<Result<Value, CoreError>> {
-    let s = |key: &str| arg::<String>(args, key);
-    let path = |p: PathBuf| json!(p.to_string_lossy());
-    Some(match command {
-        "pdf_path" => (|| service.pdf_path(&s("id")?))().map(path),
-        "raw_path" => (|| service.raw_path(&s("id")?, &s("path")?))().map(path),
-        "project_root" => (|| service.project_root(&s("id")?))().map(path),
-        "export_zip" => (|| {
-            let root = service.project_root(&s("id")?)?;
-            zipexport::export_zip(&root, Path::new(&s("dest")?))?;
-            Ok(Value::Null)
-        })(),
-        // On quit, while a compile call may still be in flight — which rules
-        // out tl_close — stop the latexmk trees that would otherwise outlive
-        // the app.
-        "kill_all" => {
-            service.compile.kill_all();
-            Ok(Value::Null)
-        }
-        "import_files" => (|| {
-            let imported = import::import_files(
+impl TlHandle {
+    /// Absolute-path commands belong to the in-process host. Only the shared
+    /// commands are forwarded to `Service::call`, which the browser exposes.
+    fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
+        let service = &self.service;
+        let s = |key: &str| string_arg(args, key);
+        let path = |p: PathBuf| json!(p.to_string_lossy());
+        match command {
+            "pdf_path" => service.pdf_path(s("id")?).map(path),
+            "raw_path" => service.raw_path(s("id")?, s("path")?).map(path),
+            "project_root" => service.project_root(s("id")?).map(path),
+            "export_zip" => {
+                let root = service.project_root(s("id")?)?;
+                zipexport::export_zip(&root, Path::new(s("dest")?))?;
+                Ok(Value::Null)
+            }
+            // On quit, while a compile call may still be in flight — which rules
+            // out tl_close — stop the latexmk trees that would otherwise outlive
+            // the app.
+            "kill_all" => {
+                service.compile.kill_all();
+                Ok(Value::Null)
+            }
+            "import_files" => Ok(json!(import::import_files(
                 service,
-                &s("id")?,
+                s("id")?,
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
                 &arg::<Option<Vec<PathBuf>>>(args, "paths")?.unwrap_or_default(),
                 arg(args, "conflict")?,
-            )?;
-            Ok(json!(imported))
-        })(),
-        "import_project" => (|| {
-            let info = import::import_project(service, Path::new(&s("src")?))?;
-            Ok(json!(info))
-        })(),
-        _ => return None,
-    })
+            )?)),
+            "import_project" => Ok(json!(import::import_project(
+                service,
+                Path::new(s("src")?)
+            )?)),
+            _ => self.runtime.block_on(service.call(command, args)),
+        }
+    }
 }
 
 /// The result as a JSON envelope the host frees with `tl_free`.
@@ -135,12 +134,8 @@ pub unsafe extern "C" fn tl_call(
             None if args_json.is_null() => json!({}),
             None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
         };
-        let service = &handle.service;
-        catch_unwind(AssertUnwindSafe(|| {
-            native_call(service, command, &args)
-                .unwrap_or_else(|| handle.runtime.block_on(service.call(command, &args)))
-        }))
-        .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")))
+        catch_unwind(AssertUnwindSafe(|| handle.call(command, &args)))
+            .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")))
     })())
 }
 

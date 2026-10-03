@@ -22,27 +22,20 @@ pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
     let (temp_path, file) = create_temp(dest)?;
 
-    let result = (|| -> Result<(), CoreError> {
-        // The folder the archive is written into, resolved the way the walk
-        // resolves the project, so a destination spelled through a link (such
-        // as macOS's /var for /private/var) is still recognised there.
-        let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
-        let mut export = Export {
-            writer: ZipWriter::new(file),
-            options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
-            root_canonical: &root_canonical,
-            archive_dir: fs::canonicalize(parent.unwrap_or(Path::new(".")))?,
-            archive_names: [dest.file_name(), temp_path.file_name()],
-            visited: HashSet::from([root_canonical.clone()]),
-        };
-        export.add_dir(root, &root_canonical, "")?;
-        export.writer.finish()?.sync_all()?;
-        Ok(fs::rename(&temp_path, dest)?)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result
+    // Resolve the archive folder as the walk resolves the project, so a
+    // destination spelled through a link is still recognised there.
+    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
+    let mut export = Export {
+        writer: ZipWriter::new(file),
+        options: SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        root_canonical: &root_canonical,
+        archive_dir: fs::canonicalize(parent.unwrap_or(Path::new(".")))?,
+        archive_names: [dest.file_name(), temp_path.file_name()],
+        visited: HashSet::from([root_canonical.clone()]),
+    };
+    export.add_dir(root, &root_canonical, "")?;
+    export.writer.finish()?.sync_all()?;
+    temp_path.persist(dest).map_err(|err| err.error.into())
 }
 
 /// The parts of an export that do not change as the walk descends: where the

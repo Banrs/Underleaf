@@ -1,12 +1,9 @@
 import Foundation
 
-// The LaTeX the toolbar and the Insert and Format menus write. Titles are
-// menu items, so title case without the web's parentheticals.
+// LaTeX templates shared by the toolbar and Insert and Format menus.
 
-/// A snippet at the cursor: a block named by its id in the core's catalog
-/// (crates/texlocal-syntax/src/catalog.json `blocks`), or an inline command
-/// with "$0" where the selection goes. With a `symbol`, Customize Toolbar
-/// offers it as a button; all are in the Insert menu.
+/// A core catalog block, or an inline command with "$0" for the selection.
+/// A symbol makes it available as a Customize Toolbar button.
 struct Template {
     let title: String
     let body: String
@@ -20,7 +17,6 @@ extension ProjectModel {
     }
 }
 
-/// Blocks: web/src/sourcebar.js `INSERT_TEMPLATES`, the maths ones apart.
 let mathTemplates = [
     Template(title: "Equation", body: "equation"),
     Template(title: "Aligned Equations", body: "align"),
@@ -32,7 +28,6 @@ let insertTemplates = [
     Template(title: "Code Block", body: "code"),
 ]
 
-/// The lists: web/src/sourcebar.js `LIST_TEMPLATES`.
 let listTemplates = [
     Template(title: "Bulleted List", body: "itemize", symbol: "list.bullet"),
     Template(title: "Numbered List", body: "enumerate", symbol: "list.number"),
@@ -68,7 +63,7 @@ nonisolated struct HeadingLevel: Hashable {
         HeadingLevel(title: "Paragraph", command: "paragraph"),
     ]
 
-    static var all: [HeadingLevel] { [normalText] + sections }
+    static let all = [normalText] + sections
 
     static func atDepth(_ depth: Int) -> HeadingLevel? {
         sections.indices.contains(depth) ? sections[depth] : nil

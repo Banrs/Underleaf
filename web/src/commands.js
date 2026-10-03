@@ -4,8 +4,7 @@
 
 import { bridge as ipc, isMac } from './bridge.js';
 
-// Every command's accelerator. The Mac reads this table too; Windows' copy is
-// checked against it (test/protocol.test.js).
+// Every command's accelerator. The Mac reads this table too.
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 
 export { SHORTCUTS };
@@ -184,8 +183,7 @@ export function accelLabel(accel) {
 
 // Off the Mac, CmdOrCtrl and Ctrl are one key, so Compile (CmdOrCtrl+Return)
 // and Go to PDF Position (Ctrl+Return) would share a chord. The command
-// registered first keeps it and the other stays on the menu only, as in the
-// Windows app.
+// registered first keeps it and the other stays on the menu only.
 const chord = (accel) => accel.replace('CmdOrCtrl', 'Ctrl');
 function accelOf(id) {
   const accel = registry.get(id)?.accel;

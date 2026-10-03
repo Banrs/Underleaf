@@ -1,7 +1,6 @@
 # The web UI
 
-`web/` is the browser version, the Tauri app while it still ships, and the two
-pages the Windows app embeds (`web/embed`). The project-wide picture is in
+`web/` is the browser version and the Tauri app. The project-wide picture is in
 `HANDOFF.md`; this file keeps the web UI's own rules. Refactor where
 responsibilities are mixed, but don't add a component framework or small
 abstractions that only add lines.
@@ -55,7 +54,10 @@ WebView2 maps custom schemes onto `http://<scheme>.localhost`. Neither
 WKWebView nor WebView2 honours `-webkit-app-region`, so the title bars carry
 `data-tauri-drag-region`.
 
-## Open
+## Web backlog
+
+The native audit has not reverified these earlier web interaction reports. Code
+observations remain listed alongside them; reproduce UI issues before changing behavior.
 
 - **The owner finds the web over-spaced and has deferred web UI work.** A
   spacing pass should start from PR #15's 36 px section headers, 28 px action

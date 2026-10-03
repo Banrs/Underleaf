@@ -13,6 +13,7 @@ final class MathPopover {
     /// The maths asked for, where, and what the popover shows.
     private var wanted: (maths: MathPreview, size: CGFloat, rect: NSRect, view: NSView)?
     private var rendered: (maths: MathPreview, size: CGFloat)?
+    private var rendering = false
 
     init() {
         content = NSHostingController(rootView: MathView(page: page))
@@ -51,12 +52,17 @@ final class MathPopover {
     }
 
     private func update() {
-        guard loaded, let asked = wanted else { return }
+        guard loaded, !rendering, let asked = wanted else { return }
+        rendered = nil
+        rendering = true
         Task {
             let box = try? await page.callJavaScript("return render(tex, display, size)",
                 arguments: ["tex": asked.maths.tex, "display": asked.maths.display, "size": asked.size]) as? [Double]
-            // Superseded meanwhile, or closed.
-            guard let box, box.count == 2, let wanted, wanted.maths == asked.maths, wanted.size == asked.size else { return }
+            rendering = false
+            guard let wanted else { return }
+            // Skip intermediate requests.
+            guard wanted.maths == asked.maths, wanted.size == asked.size else { update(); return }
+            guard let box, box.count == 2 else { return }
             rendered = (asked.maths, asked.size)
             content.rootView.size = CGSize(width: box[0], height: box[1])
             popover.contentSize = content.view.fittingSize

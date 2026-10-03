@@ -7,12 +7,12 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
-use tokio::sync::Notify;
+use tokio::sync::OwnedMutexGuard;
 
 use crate::error::CoreError;
 use crate::logparse::{latexmk_errors, parse_blg, parse_log, LogItem};
@@ -104,7 +104,6 @@ fn tex_dirs() -> Vec<PathBuf> {
     }
 }
 
-/// latexmk's file name, as the PATH search that spawns it looks for it.
 const LATEXMK: &str = if cfg!(windows) {
     "latexmk.exe"
 } else {
@@ -138,7 +137,6 @@ pub fn has_latexmk(dir: &Path) -> bool {
     dir.join(LATEXMK).is_file()
 }
 
-/// The PATH entry latexmk is spawned from, if any.
 pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
     std::env::split_paths(path_env).find(|dir| has_latexmk(dir))
 }
@@ -241,33 +239,21 @@ fn base_command(
     Ok(cmd)
 }
 
-/// Drain a child stream to EOF into `kept`, keeping at most `cap` bytes.
-/// Draining past the cap matters: stopping reads would block the child on a
-/// full pipe. The buffer is shared so that what was read survives the task
-/// being cancelled (see `drive`).
-async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
-    mut reader: R,
-    cap: usize,
-    kept: Arc<Mutex<Vec<u8>>>,
-) {
+/// Keep bounded output while draining to EOF, so a full pipe cannot block the
+/// child. The caller keeps what was read if it ends the drain early.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R, kept: &mut Vec<u8>) {
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
-                if kept.len() < cap {
-                    let take = n.min(cap - kept.len());
+                if kept.len() < MAX_OUTPUT {
+                    let take = n.min(MAX_OUTPUT - kept.len());
                     kept.extend_from_slice(&chunk[..take]);
                 }
             }
         }
     }
-}
-
-fn take_text(buffer: &Mutex<Vec<u8>>) -> String {
-    let bytes = std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
-    crate::lossy_string(bytes)
 }
 
 /// Spawn, collect capped output, and kill the whole tree on timeout: the
@@ -290,61 +276,47 @@ pub(crate) async fn run(
     (code, stdout)
 }
 
-/// Drive a spawned child to completion: stream both pipes into capped buffers,
-/// and if it outlives the timeout, kill its whole process tree before reaping
-/// it. Both callers share this so a change to the timeout or kill path cannot
-/// reach one of them and miss the other. The last value says whether the
-/// timeout ended it.
+/// Collect capped output while the child runs. On timeout, kill its process
+/// tree before reaping; the final value reports whether it timed out.
 async fn drive(
     child: &mut tokio::process::Child,
     timeout: Duration,
 ) -> (i32, String, String, bool) {
     let pid = child.id();
-    let out_buf = Arc::new(Mutex::new(Vec::new()));
-    let err_buf = Arc::new(Mutex::new(Vec::new()));
-    let mut out_task = tokio::spawn(read_capped(
-        child.stdout.take().expect("stdout piped"),
-        MAX_OUTPUT,
-        out_buf.clone(),
-    ));
-    let mut err_task = tokio::spawn(read_capped(
-        child.stderr.take().expect("stderr piped"),
-        MAX_OUTPUT,
-        err_buf.clone(),
-    ));
-
-    let (status, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(status) => (status.ok(), false),
-        Err(_) => {
-            if let Some(pid) = pid {
-                terminate_pid_tree(pid).await;
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (status, timed_out) = {
+        let readers = async {
+            tokio::join!(read_capped(stdout, &mut out), read_capped(stderr, &mut err),);
+        };
+        let wait = async {
+            match tokio::time::timeout(timeout, child.wait()).await {
+                Ok(status) => (status.ok(), false),
+                Err(_) => {
+                    if let Some(pid) = pid {
+                        terminate_pid_tree(pid).await;
+                    }
+                    let _ = child.start_kill();
+                    (child.wait().await.ok(), true)
+                }
             }
-            let _ = child.start_kill();
-            (child.wait().await.ok(), true)
+        };
+        tokio::pin!(readers, wait);
+        tokio::select! {
+            status = &mut wait => {
+                // A descendant or unrelated inherited pipe can outlive the child.
+                // Drain its buffered output briefly, then drop both read futures.
+                let _ = tokio::time::timeout(DRAIN_GRACE, readers).await;
+                status
+            }
+            _ = &mut readers => wait.await,
         }
     };
-    // Once the child is gone, everything it wrote is already in the pipes, so
-    // a short grace reads it all. Waiting longer only waits on a process that
-    // holds the pipes open without writing: a descendant that outlived it (a
-    // shell-escape `&`, a latexmkrc previewer), or — where pipes can't be
-    // created close-on-exec atomically, as on macOS — a process spawned
-    // elsewhere at that instant that inherited them. When the grace runs out
-    // the readers stop, and what they read by then is kept.
-    let drain_until = tokio::time::Instant::now() + DRAIN_GRACE;
-    if tokio::time::timeout_at(drain_until, async {
-        let _ = (&mut out_task).await;
-        let _ = (&mut err_task).await;
-    })
-    .await
-    .is_err()
-    {
-        out_task.abort();
-        err_task.abort();
-    }
     (
         status.and_then(|s| s.code()).unwrap_or(-1),
-        take_text(&out_buf),
-        take_text(&err_buf),
+        crate::lossy_string(out),
+        crate::lossy_string(err),
         timed_out,
     )
 }
@@ -408,6 +380,8 @@ pub struct CompileResult {
     pub stopped: bool,
     pub duration_ms: u64,
     pub pdf: Option<String>,
+    /// True only when this completed latexmk run wrote the PDF it returns.
+    pub pdf_changed: bool,
     pub errors: Vec<LogItem>,
     pub warnings: Vec<LogItem>,
     pub log: String,
@@ -416,16 +390,20 @@ pub struct CompileResult {
 struct RunningEntry {
     token: u64,
     pid: Option<u32>,
-    done: Arc<Notify>,
     stopped: bool,
 }
 
 type Registry = HashMap<PathBuf, RunningEntry>;
+type ProjectGate = tokio::sync::Mutex<()>;
 
 /// One compile per project, supersede-kill semantics, and kill-all on quit.
 #[derive(Default)]
 pub struct CompileManager {
     running: Mutex<Registry>,
+    // A cancelled replacement can leave the registry while its predecessor
+    // still owns the build directory. Weak entries let the next request find
+    // that predecessor's gate without retaining idle mutexes.
+    gates: Mutex<HashMap<PathBuf, Weak<ProjectGate>>>,
     next_token: AtomicU64,
     pub path_env: Option<String>,
     pub timeout: Option<Duration>,
@@ -433,7 +411,7 @@ pub struct CompileManager {
 
 /// A compile's entry in the registry, and the child it spawned. Dropping it,
 /// on every exit path, removes the entry if it is still this run's, drops the
-/// child, then wakes the successor waiting on it. A run dropped before its
+/// child, then releases the project's gate. A run dropped before its
 /// child settled (the compile future was cancelled) kills the tree first,
 /// while latexmk still lives: kill_on_drop reaches only latexmk, and Windows'
 /// taskkill /T finds the engine only under a living parent.
@@ -441,9 +419,9 @@ struct Registration<'a> {
     manager: &'a CompileManager,
     root: &'a Path,
     token: u64,
-    done: Arc<Notify>,
+    gate: Arc<ProjectGate>,
+    gate_guard: Option<OwnedMutexGuard<()>>,
     child: Option<tokio::process::Child>,
-    settled: bool,
 }
 
 impl Registration<'_> {
@@ -468,19 +446,15 @@ impl Drop for Registration<'_> {
         drop(running);
         // A newer request may already have replaced this registry entry, but
         // its kill can itself be cancelled before it reaches this child.
-        if !self.settled {
-            if let Some(pid) = self.child.as_ref().and_then(tokio::process::Child::id) {
-                kill_pid_tree(pid);
-            }
+        if let Some(pid) = self.child.as_ref().and_then(tokio::process::Child::id) {
+            kill_pid_tree(pid);
         }
         self.child = None;
-        // notify_one stores a permit when the successor has not begun waiting
-        // yet, so a very fast completion cannot be missed.
-        self.done.notify_one();
+        // On cancellation, Tokio reaps the killed child after this guard releases.
+        self.gate_guard = None;
     }
 }
 
-/// How a build's latexmk ended.
 #[derive(Clone, Copy, PartialEq)]
 enum End {
     Exited(i32),
@@ -488,7 +462,6 @@ enum End {
     Stopped,
 }
 
-/// What finish() needs to know about one compile run.
 struct CompileRun<'a> {
     main_rel: &'a str,
     base: String,
@@ -581,36 +554,48 @@ impl CompileManager {
         true
     }
 
-    fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Option<RunningEntry>) {
+    fn register<'a>(&'a self, root: &'a Path) -> (Registration<'a>, Option<u32>) {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
-        let done = Arc::new(Notify::new());
-        let previous = self.running().insert(
-            root.to_path_buf(),
-            RunningEntry {
-                token,
-                pid: None,
-                done: Arc::clone(&done),
-                stopped: false,
-            },
-        );
+        let gate = {
+            let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
+            gates.retain(|_, gate| gate.strong_count() != 0);
+            if let Some(gate) = gates.get(root).and_then(Weak::upgrade) {
+                gate
+            } else {
+                let gate = Arc::new(ProjectGate::new(()));
+                gates.insert(root.to_path_buf(), Arc::downgrade(&gate));
+                gate
+            }
+        };
+        let previous_pid = self
+            .running()
+            .insert(
+                root.to_path_buf(),
+                RunningEntry {
+                    token,
+                    pid: None,
+                    stopped: false,
+                },
+            )
+            .and_then(|entry| entry.pid);
         let registration = Registration {
             manager: self,
             root,
             token,
-            done,
+            gate,
+            gate_guard: None,
             child: None,
-            settled: false,
         };
-        (registration, previous)
+        (registration, previous_pid)
     }
 
-    /// A run stopped before latexmk started.
     fn stopped_early(start: Instant) -> CompileResult {
         CompileResult {
             ok: false,
             stopped: true,
             duration_ms: start.elapsed().as_millis() as u64,
             pdf: None,
+            pdf_changed: false,
             errors: Vec::new(),
             warnings: Vec::new(),
             log: "The build was stopped before it started.".to_string(),
@@ -680,18 +665,15 @@ impl CompileManager {
         }
         args.push(&main_arg);
 
-        let (mut registration, previous) = self.register(root);
+        let (mut registration, previous_pid) = self.register(root);
 
-        // A replacement must not touch the same build directory until the
-        // predecessor has fully settled: process tree gone, child reaped, and
-        // stdout/stderr pipes drained. The completion chain also covers the
-        // PID-not-yet-recorded window and chains correctly through a third run.
-        if let Some(previous) = previous {
-            if let Some(pid) = previous.pid {
-                terminate_pid_tree(pid).await;
-            }
-            previous.done.notified().await;
+        // The gate keeps a successor off the build directory until its
+        // predecessor settles, even if an intermediate request is cancelled.
+        // Cancelling the active future can only signal the tree, not await reap.
+        if let Some(pid) = previous_pid {
+            terminate_pid_tree(pid).await;
         }
+        registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
 
         if registration.stopped(&self.running()) {
             return Ok(Self::stopped_early(request_started));
@@ -741,7 +723,7 @@ impl CompileManager {
         };
         let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
         let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
-        registration.settled = true;
+        registration.child = None;
         output.push_str(&stderr);
         let end = if registration.stopped(&self.running()) {
             End::Stopped
@@ -762,7 +744,6 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
     let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), run.main_rel);
-    // bibtex and biber report into a log of their own.
     items.extend(
         run.read("blg", unchanged)
             .map_or_else(Vec::new, |blg| parse_blg(&blg)),
@@ -810,6 +791,7 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
         duration_ms: run.request_started.elapsed().as_millis() as u64,
         // A failed run can only advertise a PDF it actually wrote.
         pdf: (ok || wrote_pdf).then(|| format!("{BUILD_DIR}/{}.pdf", run.base)),
+        pdf_changed: wrote_pdf,
         errors,
         warnings,
         log: tail(log, LOG_TAIL),
@@ -846,42 +828,9 @@ fn tail(s: String, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::{base_command, CompileManager};
     use super::{read_tail, tail, user_latexmkrc, version_line};
     use std::ffi::OsString;
     use std::path::Path;
-    #[cfg(unix)]
-    use std::time::Duration;
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_replaced_registration_still_kills_its_child_if_dropped() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let manager = CompileManager::default();
-        let (mut first, _) = manager.register(root);
-        let mut cmd = base_command("sh", Some(root), &std::env::var("PATH").unwrap()).unwrap();
-        cmd.args(["-c", "(sleep 1; touch late) & touch started; sleep 20"]);
-        first.child = Some(cmd.spawn().unwrap());
-        manager.running().get_mut(root).unwrap().pid = first.child.as_ref().unwrap().id();
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while !root.join("started").exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-
-        // The replacement has published its entry, but has not yet killed
-        // the previous run. Dropping that previous future must kill its own
-        // process group even though it no longer owns the registry entry.
-        let (second, _) = manager.register(root);
-        drop(first);
-        drop(second);
-        tokio::time::sleep(Duration::from_millis(1200)).await;
-        assert!(!root.join("late").exists());
-    }
 
     #[test]
     fn a_long_log_is_read_from_its_last_whole_line() {

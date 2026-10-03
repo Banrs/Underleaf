@@ -1,10 +1,8 @@
 import CoreServices
 import Foundation
 
-/// Reports what changes under a folder, in its subfolders too, from FSEvents,
-/// which sees other apps' changes: each changed item's path and whether it
-/// came, went or moved rather than only changed. Watching the folder, not a
-/// file's descriptor, keeps up with a save that renames a new file over the old.
+/// Recursive FSEvents watch for external changes. Watching the folder survives
+/// editors that atomically replace files on save.
 final class FolderWatcher {
     struct Change {
         /// Symlinks resolved, as FSEvents gives it.

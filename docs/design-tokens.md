@@ -1,11 +1,11 @@
 # Design tokens
 
-Every value here was read out of **Apple's macOS 27 UI Kit** (Sketch, from
-[Apple Design Resources](https://developer.apple.com/design/resources/); kept
-locally in the gitignored `design/`) rather than eyeballed. This is the spec
-`web/styles.css` implements for the browser and Tauri UI; the native apps take
-their metrics from the system instead (`BarMetrics` and `Typography` on the Mac,
-Fluent on Windows).
+Reference values come from **Apple's macOS 27 UI Kit** (Sketch, from
+[Apple Design Resources](https://developer.apple.com/design/resources/), kept
+locally in the gitignored `design/`). App-specific adjustments are marked below.
+This is the `web/styles.css` specification for browser and Tauri clients. The
+native Mac app uses AppKit controls and metrics (`BarMetrics` and `Typography`);
+its accepted design and live verification are recorded in `HANDOFF.md`.
 
 ## Typography — SF Pro
 
@@ -74,9 +74,8 @@ work on both opaque panels and vibrant materials.
 **The accent is the user's where the host reports it.** Tauri replaces
 `--accent` at startup with the one chosen in System Settings —
 `NSColor.controlAccentColor` on macOS, `UISettings`' accent on Windows (see
-`src-tauri/src/accent.rs`) — read once, so a change shows after a restart. The
-Windows app passes its accent to the editor page. A browser tab keeps the CSS
-fallback, a darker blue than the kit's (which misses 4.5:1).
+`src-tauri/src/accent.rs`) — read once, so a change shows after a restart. A
+browser tab keeps the CSS fallback, a darker blue than the kit's (which misses 4.5:1).
 
 `--on-accent` stays white, which is what every desktop draws on an accent fill,
 and flips to black only where white drops under WCAG's 3:1 floor for interface
@@ -111,9 +110,7 @@ that sets the app's overall legibility:
 | Medium | 32 | 20 | 13 Regular |
 | **Large ← used here** | **40** | **24** | **15 Regular** |
 
-**Toolbar band heights**, measured off every window style in the kit — these are
-the only correct values, so "what height should the toolbar be?" has one answer
-per style:
+**Toolbar band heights** from the kit, used as references for the web layout:
 
 | Window style | Bands |
 | --- | --- |
@@ -123,7 +120,7 @@ per style:
 | **Expanded toolbar ← in-pane bars here** | titlebar 32 + toolbar **44** |
 | Utility panel | 56 |
 
-**Standardization (this app):** two control sizes — **36 (XL)** in the 52px title
+**Web/Tauri control sizes:** **36 (XL)** in the 52px title
 bar, **28** for every interactive control below it (toolbar buttons, inputs,
 segmented controls, steppers, search). No mini/small controls anywhere.
 
@@ -154,10 +151,10 @@ nothing needs an ad-hoc radius.
 
 Syntax colours are a Settings choice: One Dark (the default; CodeMirror's
 `defaultHighlightStyle` in light) or **Xcode 27's own Default (Light) and
-Default (Dark)**, read out of the installed beta rather than sampled by eye:
+Default (Dark)**, read from Xcode's theme files:
 
 ```
-/Applications/Xcode-beta.app/Contents/SharedFrameworks/
+/Applications/Xcode.app/Contents/SharedFrameworks/
   DVTUserInterfaceKit.framework/Versions/A/Resources/FontAndColorThemes/
     Default (Light).xccolortheme      # plists; DVTSourceTextSyntaxColors
     Default (Dark).xccolortheme       # holds "r g b a" component strings
@@ -193,12 +190,11 @@ Xcode's treatment.
 `ui-monospace`, which resolves to SF Mono on macOS (what Xcode sets) and Cascadia
 Mono on Windows. JetBrains Mono stays bundled and selectable in Settings, but an
 app that should read as native shouldn't ship its own code face ahead of the
-platform's. Leading is 1.45 — code wants tighter than prose; Xcode's is about 1.3.
+platform's. Web leading is 1.45; AppKit uses the font's natural line height with
+a small paragraph spacing, and draws gutter numbers on the text's first baseline.
 
-**Xcode has no semantic colour catalogue to copy.** Its `Assets.car` holds only 27
-unnamed branding colours (`assetutil --info` will show them); the chrome is drawn
-with system `NSColor`s. So the macOS 27 UI Kit stays the authority for everything
-outside the editor, and matching "Xcode" means matching the system.
+Use semantic system colours for native chrome. The kit supplies web references;
+AppKit owns native control metrics and materials, including scroll-edge effects.
 
 ## Hosts
 

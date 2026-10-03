@@ -5,15 +5,16 @@
 
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use tempfile::TempPath;
 
-/// A new, empty temporary file beside `path`, and its name.
-pub(crate) fn create_temp(path: &Path) -> io::Result<(PathBuf, File)> {
+/// A new, empty temporary file beside `path`, removed if it is not persisted.
+pub(crate) fn create_temp(path: &Path) -> io::Result<(TempPath, File)> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let temp = tempfile::Builder::new()
         .prefix(".texlocal-")
         .tempfile_in(parent.unwrap_or(Path::new(".")))?;
-    let (file, path) = temp.keep().map_err(|err| err.error)?;
+    let (file, path) = temp.into_parts();
     Ok((path, file))
 }
 
@@ -33,22 +34,16 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
     let (temp, mut file) = create_temp(&target)?;
-    let result = (|| {
-        // Before the contents, so a private file's text is never readable
-        // under the temporary file's default mode.
-        if let Some(meta) = &old {
-            file.set_permissions(meta.permissions())?;
-        }
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        // Closed before the rename, which Windows needs.
-        drop(file);
-        fs::rename(&temp, &target)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
+    // Before the contents, so a private file's text is never readable
+    // under the temporary file's default mode.
+    if let Some(meta) = &old {
+        file.set_permissions(meta.permissions())?;
     }
-    result
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    // Closed before the rename, which Windows needs.
+    drop(file);
+    temp.persist(&target).map_err(|err| err.error)
 }
 
 #[cfg(test)]

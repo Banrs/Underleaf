@@ -1,7 +1,6 @@
 import Foundation
 
-// The core's JSON shapes (crates/texlocal-core). Field names match its
-// camelCase serialization.
+// The Rust core's JSON shapes use camelCase keys.
 
 nonisolated struct ProjectInfo: Decodable, Identifiable {
     let id: String
@@ -58,6 +57,8 @@ nonisolated struct CompileResult: Decodable {
     let ok: Bool
     let stopped: Bool
     let pdf: String?
+    /// True when this run wrote the advertised PDF, even if TeX reported errors.
+    let pdfChanged: Bool
     let durationMs: Int
     let errors: [LogItem]
     let warnings: [LogItem]
@@ -121,14 +122,14 @@ nonisolated struct Imported: Decodable {
     let existing: [Clash]
 }
 
-/// `rename_entry`'s result: both paths normalised.
+/// `rename_entry`'s normalized paths and main file.
 nonisolated struct RenameResult: Decodable {
     let from: String
     let to: String
+    let mainFile: String
 }
 
-/// Where a path is after `from` moved to `to`: the entry itself, or anything
-/// inside it when it is a folder (web/src/sidebar.js `remapPath`).
+/// Remaps an entry and its descendants when a folder moves.
 func remapPath(_ path: String, from: String, to: String) -> String {
     if path == from { return to }
     if path.hasPrefix(from + "/") { return to + path.dropFirst(from.count) }
@@ -137,9 +138,7 @@ func remapPath(_ path: String, from: String, to: String) -> String {
 
 /// A file's kind by its extension, so each list of extensions is written once.
 private nonisolated enum FileKind {
-    /// Opens in the editor (web/src/state.js `TEXT_FILE`).
     case text
-    /// Previewed in the source column (web/src/state.js `IMAGE_FILE`).
     case image
     case pdf
     case other
@@ -156,7 +155,6 @@ private nonisolated enum FileKind {
     }
 }
 
-/// The files the editor opens.
 func isTextFile(_ path: String) -> Bool {
     FileKind(path) == .text
 }
@@ -166,13 +164,11 @@ func isLaTeXFile(_ path: String) -> Bool {
     (path as NSString).pathExtension.lowercased() == "tex"
 }
 
-/// The files previewed in the source column; any other non-text file shows
-/// No Preview there.
+/// Other non-text files show No Preview in the source column.
 func isPreviewFile(_ path: String) -> Bool {
     [.image, .pdf].contains(FileKind(path))
 }
 
-/// A file's symbol in the sidebar.
 func fileSymbol(_ path: String, directory: Bool = false) -> String {
     if directory { return "folder" }
     switch (path as NSString).pathExtension.lowercased() {

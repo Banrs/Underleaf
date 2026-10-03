@@ -112,11 +112,13 @@ struct CoreTests {
 /// Projects as the app opens and edits them, in the test library. Each test
 /// puts back the defaults `AppModel` writes and removes its projects.
 @MainActor
+@Suite(.serialized)
 final class ProjectFlowTests {
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed]
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed, DefaultsKey.sidebarVisible]
     private let kept: [Any?]
     private var folders: [URL] = []
     private let files = FileManager.default
+    private var windowController: MainWindowController?
     let app = AppModel()
 
     init() throws {
@@ -127,6 +129,10 @@ final class ProjectFlowTests {
     }
 
     isolated deinit {
+        windowController?.workspace?.close()
+        windowController?.window?.close()
+        windowController?.window?.contentViewController = nil
+        app.project?.close()
         for (key, value) in zip(keys, kept) { UserDefaults.standard.set(value, forKey: key) }
         for folder in folders { try? files.removeItem(at: folder) }
     }
@@ -148,6 +154,23 @@ final class ProjectFlowTests {
         return (try #require(app.project), folder)
     }
 
+    private func openedWithTeX(_ text: String) async throws -> ProjectModel {
+        await app.refresh()
+        if app.tex?.available != true { try Test.cancel("No TeX") }
+        return try await opened(text).project
+    }
+
+    private func windowFixture() async throws -> (ProjectModel, MainWindowController) {
+        let info = try await project("\\section{Introduction}\nText Text").info
+        app.outlineCollapsed = false
+        app.sidebarVisible = true
+        let model = ProjectModel(id: info.id, app: app)
+        app.project = model
+        let controller = MainWindowController(app: app)
+        windowController = controller
+        return (model, controller)
+    }
+
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
 
     /// Two opens that overlap (the project restored at launch and an Open
@@ -167,15 +190,97 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A save writes the editor's text to the file it belongs to.
+    /// Loading readiness and real outline rows; entrance animation needs native UI verification.
+    @Test func theFirstWorkspaceIncludesTheOutline() async throws {
+        let (project, controller) = try await windowFixture()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(controller.workspace == nil)
+
+        await project.load()
+        try await waitUntil { controller.workspace != nil }
+        let workspace = try #require(controller.workspace)
+        func lists(_ view: NSView) -> [NSOutlineView] {
+            [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
+        }
+        try await waitUntil {
+            workspace.view.layoutSubtreeIfNeeded()
+            return lists(workspace.outlineItem.viewController.view).first?.numberOfRows == 1
+        }
+        #expect(!workspace.outlineItem.isCollapsed)
+        #expect(workspace.outlineItem.viewController.view.frame.height > 0)
+        let header = try #require((workspace.sidebarItem.viewController as? NSSplitViewController)?
+            .splitViewItems.first?.bottomAlignedAccessoryViewControllers.first)
+        #expect(!header.isHidden)
+    }
+
+    /// Replace uses the window's forwarding field editor, so Find menu items
+    /// remain enabled and route to the source pane.
+    @Test func replaceFieldKeepsFindCommandsAvailable() async throws {
+        let (project, controller) = try await windowFixture()
+        await project.load()
+        try await waitUntil { controller.workspace != nil }
+
+        func textFields(in view: NSView?) -> [NSTextField] {
+            guard let view else { return [] }
+            let field = (view as? NSTextField).map { [$0] } ?? []
+            return field + view.subviews.flatMap { textFields(in: $0) }
+        }
+        project.showFind(replacing: true)
+        let window = try #require(controller.window)
+        try await waitUntil {
+            window.contentView?.layoutSubtreeIfNeeded()
+            return textFields(in: window.contentView).contains { $0.placeholderString == "Replace" }
+        }
+        let field = try #require(textFields(in: window.contentView).first { $0.placeholderString == "Replace" })
+        try await waitUntil { field.currentEditor() != nil && field.currentEditor() === window.firstResponder }
+        let editor = try #require(window.firstResponder as? NSTextView)
+
+        let findItem = NSMenuItem(title: "Find…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
+        findItem.tag = NSTextFinder.Action.showFindInterface.rawValue
+        let replaceItem = NSMenuItem(title: "Find and Replace…",
+                                     action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
+        replaceItem.tag = NSTextFinder.Action.showReplaceInterface.rawValue
+        #expect(editor.validateMenuItem(findItem))
+        #expect(editor.validateMenuItem(replaceItem))
+
+        #expect(window.firstResponder?.tryToPerform(try #require(findItem.action), with: findItem) == true)
+        let find = try #require(textFields(in: window.contentView).first { $0.placeholderString == "Find" })
+        try await waitUntil { find.currentEditor() != nil && find.currentEditor() === window.firstResponder }
+        #expect(field.currentEditor() == nil)
+
+        find.stringValue = "Text"
+        #expect(find.sendAction(find.action, to: find.target))
+        try await waitUntil { project.findMatches.total == 2 }
+        let selection = project.editor.textView.selectedRange()
+        findItem.tag = NSTextFinder.Action.nextMatch.rawValue
+        #expect(editor.validateMenuItem(findItem))
+        #expect(window.firstResponder?.tryToPerform(try #require(findItem.action), with: findItem) == true)
+        #expect(project.editor.textView.selectedRange().location > selection.location)
+        findItem.tag = NSTextFinder.Action.replaceAll.rawValue
+        #expect(!editor.validateMenuItem(findItem))
+    }
+
+    /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.
     @Test(.timeLimit(.minutes(1)))
-    func anEditReachesTheDisk() async throws {
-        let (project, folder) = try await opened()
-        #expect(project.editor.perform(.bold))
-        try await waitUntil { project.hasUnsavedText }
-        #expect(await project.save())
-        let saved = try String(contentsOf: folder.appending(path: try #require(project.openPath)), encoding: .utf8)
-        #expect(saved.contains("\\textbf{}"))
+    func overlappingRenameAndSaveRequestsKeepEditsAtTheNewPath() async throws {
+        let (project, folder) = try await opened("original")
+        for to in ["chapter.tex", "references.bib", "main.tex"] {
+            let from = try #require(project.openPath)
+            let rename = Task { await project.renameEntry(from, to: to) }
+            await Task.yield()
+            #expect(project.editor.perform(.bold))
+            let expected = project.editor.textView.string
+            let save = Task { await project.save() }
+            await rename.value
+            #expect(await save.value)
+
+            #expect(project.openPath == to && project.editor.document?.path == to)
+            #expect(project.editor.document?.text == expected)
+            #expect(try String(contentsOf: folder.appending(path: to), encoding: .utf8) == expected)
+            #expect(!exists(folder.appending(path: from)))
+            #expect(project.diskConflict == nil && project.missingFile == nil)
+        }
+        #expect(app.alert == nil)
         await app.close()
     }
 
@@ -183,11 +288,7 @@ final class ProjectFlowTests {
     /// shut while typing goes on; Compile opens it on the issues. CI has no TeX.
     @Test(.timeLimit(.minutes(1)))
     func onlyCompileOpensThePanelOverAPDF() async throws {
-        await app.refresh()
-        if app.tex?.available != true { try Test.cancel("No TeX") }
-        let info = try await project("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}").info
-        await app.open(info.id)
-        let project = try #require(app.project)
+        let project = try await openedWithTeX("\\documentclass{article}\\begin{document}\\undefinedmacro x\\end{document}")
         await project.compile(auto: true)
         #expect(project.result?.failed == true && project.result?.pdf != nil && !project.showLogs)
         await project.compile()
@@ -195,21 +296,51 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A clean build with nothing to list closes the panel from the issues, not from the
-    /// log, as the web's log closes. CI has no TeX.
+    /// A clean no-op build keeps PDFKit's document and closes an empty Issues
+    /// panel, while a Log panel stays open.
     @Test(.timeLimit(.minutes(1)))
-    func aCleanBuildClosesTheIssues() async throws {
-        await app.refresh()
-        if app.tex?.available != true { try Test.cancel("No TeX") }
-        let info = try await project("\\documentclass{article}\\begin{document}x\\end{document}").info
-        await app.open(info.id)
-        let project = try #require(app.project)
+    func aNoOpBuildKeepsThePDFDocumentAndClosesEmptyIssues() async throws {
+        let project = try await openedWithTeX("\\documentclass{article}\\begin{document}x\\end{document}")
         (project.showLogs, project.panelTab) = (true, .log)
         await project.compile()
-        #expect(project.result?.ok == true && project.showLogs)
+        #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.showLogs)
+        let firstDocument = try #require(project.pdfDocument)
         project.panelTab = .issues
         await project.compile()
+        #expect(project.result?.ok == true && project.result?.pdfChanged == false)
+        #expect(project.pdfDocument === firstDocument)
         #expect(!project.showLogs)
+        await app.close()
+    }
+
+    /// Overlapping rename/settings requests leave the build and disk settings in agreement.
+    @Test(.timeLimit(.minutes(2)))
+    func aRenameAndSettingsChangesKeepTheLatestMainFile() async throws {
+        await app.refresh()
+        if app.tex?.available != true { try Test.cancel("No TeX") }
+        let source = "\\documentclass{article}\\begin{document}x\\end{document}"
+        let (info, folder) = try await project(source)
+        try await Core.shared.perform("write_file", ["id": info.id, "path": "second.tex", "text": source])
+        await app.open(info.id)
+        let project = try #require(app.project)
+        await project.compile()
+        #expect(project.result?.ok == true && project.pdfURL?.lastPathComponent == "main.pdf")
+
+        let rename = Task { await project.renameEntry("main.tex", to: "renamed.tex") }
+        let flag = Task { await project.setStopOnFirstError(true) }
+        let main = Task { await project.setMainFile("second.tex") }
+        for change in [rename, flag, main] { await change.value }
+        try await waitUntil(timeout: .seconds(30)) {
+            !project.compiling && project.result?.pdf == "build/second.pdf"
+                && project.pdfURL?.lastPathComponent == "second.pdf"
+        }
+
+        let persisted = try await Core.shared.call("get_settings", ["id": info.id], as: ProjectSettings.self)
+        #expect(project.settings?.mainFile == "second.tex" && persisted.mainFile == "second.tex")
+        #expect(project.settings?.stopOnFirstError == true && persisted.stopOnFirstError)
+        #expect(project.result?.ok == true)
+        #expect(exists(folder.appending(path: "renamed.tex")) && !exists(folder.appending(path: "main.tex")))
+        #expect(app.alert == nil)
         await app.close()
     }
 
@@ -240,7 +371,8 @@ final class ProjectFlowTests {
         try "\\section{A}\nthree".write(to: folder.appending(path: "chapters/a.tex"), atomically: false, encoding: .utf8)
         await app.open(info.id)
         let project = try #require(app.project)
-        try await waitUntil { project.outline.count == 2 }
+        #expect(project.initialLoadComplete)
+        #expect(project.outline.count == 2)
         #expect(project.outline.map(\.file) == ["main.tex", "chapters/a.tex"])
         #expect(project.counts?.words == 6)
         project.reveal(project.outline[1])
@@ -256,12 +388,13 @@ final class ProjectFlowTests {
         let text = ["A", "B", "C"].map { "\\section{\($0)}\n" + String(repeating: "x\n", count: 100) }.joined()
         let project = try await opened(text).project
         app.outlineCollapsed = false
+        app.sidebarVisible = true
         let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 900, height: 600))
         let window = NSWindow(contentViewController: workspace)
         window.isReleasedWhenClosed = false
         window.alphaValue = 0
         window.orderFront(nil)
-        defer { window.close() }
+        defer { workspace.close(); window.close() }
         func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
         try await waitUntil { lists(workspace.view).last?.selectedRow == 0 }
         let outline = try #require(lists(workspace.view).last)

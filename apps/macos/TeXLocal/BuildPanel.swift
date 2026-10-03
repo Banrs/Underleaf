@@ -83,6 +83,7 @@ struct BuildPanel: View {
 
 /// Controls in the panel's native top accessory, above its scrolling content.
 struct BuildPanelHeader: View {
+    static let height: CGFloat = 24 + 2 * BarMetrics.inset
     @Bindable var project: ProjectModel
     @Bindable var state: BuildPanelState
 
@@ -116,8 +117,7 @@ struct BuildPanelHeader: View {
                 .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: BarMetrics.fieldMaxWidth)
         }
         // One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
-        .frame(height: 24)
-        .padding(.vertical, BarMetrics.inset)
+        .frame(height: Self.height)
         .paneBarControls()
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
@@ -139,7 +139,7 @@ private struct IssueList: View {
         .contextMenu(forSelectionType: Int.self) { rows in
             if let item = rows.first.flatMap(item) {
                 if item.file != nil {
-                    Button("Go to Line") { open(item) }
+                    Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
                 }
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -212,7 +212,6 @@ private struct LogTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
-        view.backgroundColor = .textBackgroundColor
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
         // Lines the text up with the header's controls; the fragment padding

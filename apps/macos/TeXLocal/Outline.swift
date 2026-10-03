@@ -1,6 +1,5 @@
 import Foundation
 
-/// A heading and the headings under it.
 nonisolated struct OutlineNode: Identifiable {
     let item: OutlineItem
     let children: [OutlineNode]?
@@ -18,12 +17,10 @@ nonisolated struct OutlineItem: Identifiable, Hashable {
     /// An empty title; `Outline.displayTitle` names it by its kind.
     var isUntitled: Bool { title == Analysis.untitledTitle }
 
-    /// Its kind ("Subsection").
     var kind: String { HeadingLevel.atDepth(level)?.title ?? "Section" }
 }
 
-/// The core's `analyze_project`: the project's headings, each with its file, and
-/// words, and the open file's lines.
+/// `analyze_project`'s headings, word count and open-file line count.
 nonisolated struct Analysis: Decodable {
     struct Heading: Decodable {
         /// 0 for \part to 5 for \paragraph.
@@ -48,7 +45,6 @@ nonisolated struct Analysis: Decodable {
 
 /// The outline as the views read it: nesting, folds, titles and the breadcrumb.
 enum Outline {
-    /// The project's outline and words, and the open file's lines, from the core.
     static func analyze(project: String, file: String) async throws -> Analysis {
         try await Core.shared.call("analyze_project", ["id": project, "file": file], as: Analysis.self)
     }
@@ -81,7 +77,6 @@ enum Outline {
         return nested(under: -1)
     }
 
-    /// An empty heading by its kind: "Untitled Subsection".
     static func displayTitle(_ item: OutlineItem) -> String {
         item.isUntitled ? "Untitled \(item.kind)" : item.title
     }

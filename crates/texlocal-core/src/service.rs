@@ -1,11 +1,10 @@
-// The command surface every host shares. The desktop shells and the browser
-// server are thin adapters over `Service`: a command's behaviour — which path
-// check it runs, which cache it invalidates — lives here once, not per host.
+// Shared command surface: hosts forward here so path checks and cache
+// invalidation have one implementation.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
@@ -15,7 +14,7 @@ use serde_json::{json, Value};
 use crate::analyze;
 use crate::compile::{self, CompileManager, CompileOverrides, CompileResult, TexStatus};
 use crate::paths::fold_case;
-use crate::projects::{self, FileStamp, Symbols};
+use crate::projects::{self, SymbolCache, Symbols};
 use crate::settings;
 use crate::synctex;
 use crate::{atomic, paths, CoreError};
@@ -23,9 +22,8 @@ use crate::{atomic, paths, CoreError};
 pub const UPLOAD_MAX_BYTES: usize = 100 * 1024 * 1024;
 const TEX_MISSING_TTL: Duration = Duration::from_secs(5);
 const SEARCH_LIMIT: usize = 100;
-/// App-wide settings, beside the projects: every host shares the data dir, so
-/// every host sees one TeX folder. A file, not a folder, so no project list
-/// shows it.
+/// Shared TeX folder choice, stored beside projects as a file so it never
+/// appears in the project list.
 pub const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = if cfg!(windows) {
     r"That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as C:\texlive\2026\bin\windows."
@@ -33,8 +31,7 @@ const NO_LATEXMK: &str = if cfg!(windows) {
     "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin."
 };
 
-/// One folder of the TeX folder browser: its subfolders' names, never file
-/// contents.
+/// TeX folder listing: names only, never file contents.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DirListing {
@@ -52,10 +49,8 @@ pub struct UploadSpec {
     pub size: usize,
 }
 
-/// An entry an upload would land on: an incoming file's own place, or a
-/// folder on its path that is a file here. Both paths are relative to the
-/// upload's folder, as the host names the files; `keep_both` is a free name
-/// beside it.
+/// An upload's occupied path or blocking parent file, relative to its target
+/// folder. `keep_both` names a free sibling.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Clash {
@@ -102,7 +97,7 @@ pub struct Service {
     pub compile: CompileManager,
     /// The last TeX probe and when it ran.
     status: Mutex<Option<(TexStatus, Instant)>>,
-    symbols: Mutex<HashMap<PathBuf, (Vec<FileStamp>, Symbols)>>,
+    symbols: Mutex<HashMap<PathBuf, Arc<Mutex<SymbolCache>>>>,
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -168,16 +163,32 @@ impl Service {
         self.symbols.lock().unwrap().remove(root);
     }
 
-    /// Run `edit` on a project's folder, then drop its cached symbols.
+    fn with_project<T>(
+        &self,
+        id: &str,
+        use_project: impl FnOnce(&Path, &mut SymbolCache) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let root = self.project_root(id)?;
+        let state = {
+            let mut caches = self.symbols.lock().unwrap();
+            caches.entry(root.clone()).or_default().clone()
+        };
+        let mut symbols = state.lock().unwrap();
+        use_project(&root, &mut symbols)
+    }
+
+    /// Serialize a project edit with its symbol scan, then clear its cache.
     fn edit<T>(
         &self,
         id: &str,
         edit: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        let root = self.project_root(id)?;
-        let result = edit(&root)?;
-        self.forget_project(&root);
-        Ok(result)
+        self.with_project(id, |root, symbols| {
+            let result = edit(root);
+            // An edit can fail after a partial filesystem change.
+            *symbols = SymbolCache::default();
+            result
+        })
     }
 
     // ---------- status ----------
@@ -269,27 +280,12 @@ impl Service {
     // ---------- files ----------
 
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
-        let root = self.project_root(id)?;
-        let stamps = projects::symbols_fingerprint(&root)?;
-        if let Some((cached_stamps, symbols)) = self.symbols.lock().unwrap().get(&root) {
-            if *cached_stamps == stamps {
-                return Ok(symbols.clone());
-            }
-        }
-        let symbols = projects::scan_symbols(&root)?;
-        self.symbols
-            .lock()
-            .unwrap()
-            .insert(root, (stamps, symbols.clone()));
-        Ok(symbols)
+        self.with_project(id, |root, symbols| symbols.scan(root))
     }
 
-    /// Validate a complete upload before the first write, so a late unsafe path
-    /// or oversize file cannot produce a predictable half-import. Returns the
-    /// entries the upload would land on, for the host to ask about as Finder
-    /// does: Replace (upload with `replace`), Keep Both (rename the files
-    /// under each clash's `path` to its `keepBoth`, as `keep_both` does) or
-    /// Stop.
+    /// Validate the whole batch before writing, so a late unsafe or oversize
+    /// entry cannot cause a predictable partial import. Return clashes and free Keep Both
+    /// names for the host's Replace, Keep Both or Stop choice.
     pub fn validate_uploads(
         &self,
         id: &str,
@@ -350,10 +346,8 @@ impl Service {
         Ok(UploadCheck { existing })
     }
 
-    /// One file of an upload the host has already passed to
-    /// `validate_uploads`. Returns the project-relative path written. An
-    /// entry in its place is an error, unless `replace` moves it to the
-    /// Trash first.
+    /// Write one validated upload, rechecking its path and size. An occupied
+    /// path conflicts unless `replace` first moves it to Trash.
     pub fn upload_file(
         &self,
         id: &str,
@@ -407,24 +401,15 @@ impl Service {
 
     // ---------- dispatch ----------
 
-    /// Run a command by name with JSON arguments — the one table a host that
-    /// speaks JSON (the browser server, the native FFI) forwards to.
+    /// Shared JSON command table for browser and native hosts. Raw bytes and
+    /// host-chosen absolute paths stay in direct methods outside this table.
     ///
-    /// Only commands whose paths pass through the project boundary belong
-    /// here. Anything that takes a host-chosen absolute path (export
-    /// destinations) or raw bytes (uploads) is a direct method instead, so a
-    /// remote caller cannot reach it by name.
-    ///
-    /// The exception is the TeX folder: `set_tex_dir` and `list_dirs` take an
-    /// absolute path by name, because a browser page has no native folder
-    /// picker. That grants nothing new. The browser server listens on
-    /// 127.0.0.1 only, behind its token header and Host/Origin checks, and a
-    /// caller that can compile can already run code as this user, so choosing
-    /// which latexmk runs adds no power; `list_dirs` returns folder names, never
-    /// file contents.
+    /// Browser TeX-folder picking needs absolute paths in `set_tex_dir` and
+    /// `list_dirs`. Its server binds 127.0.0.1 with token and Host/Origin checks;
+    /// `list_dirs` returns names only, and compiling already permits choosing TeX.
     pub async fn call(&self, command: &str, args: &Value) -> Result<Value, CoreError> {
-        let s = |key: &str| arg::<String>(args, key);
-        let root = || self.project_root(&s("id")?);
+        let s = |key: &str| string_arg(args, key);
+        let root = || self.project_root(s("id")?);
         match command {
             "status" => out(self.status().await),
             "set_tex_dir" => out(self
@@ -434,82 +419,89 @@ impl Service {
             "list_projects" => out(projects::list_projects(&self.data_dir)?),
             "create_project" => out(projects::create_project(
                 &self.data_dir,
-                &s("name")?,
+                s("name")?,
                 arg::<Option<String>>(args, "template")?
                     .as_deref()
                     .unwrap_or("article"),
             )?),
             "rename_project" => {
                 let old = root()?;
-                let info = projects::rename_project(&self.data_dir, &s("id")?, &s("name")?)?;
+                let info = projects::rename_project(&self.data_dir, s("id")?, s("name")?)?;
                 self.forget_project(&old);
                 out(info)
             }
             "delete_project" => {
                 let old = root()?;
-                projects::delete_project(&self.data_dir, &s("id")?)?;
+                projects::delete_project(&self.data_dir, s("id")?)?;
                 self.forget_project(&old);
                 out(())
             }
             "get_settings" => out(settings::read_settings(&root()?)),
-            "set_settings" => out(settings::write_settings(&root()?, &arg(args, "patch")?)?),
+            // A rename also rewrites mainFile; serialize read/modify/write
+            // without invalidating unchanged completion symbols.
+            "set_settings" => out(self.with_project(s("id")?, |root, _| {
+                settings::write_settings(root, &arg(args, "patch")?)
+            })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
-            "scan_symbols" => out(self.scan_symbols(&s("id")?)?),
+            "scan_symbols" => out(self.scan_symbols(s("id")?)?),
             "analyze_project" => {
                 let root = root()?;
                 let main = settings::read_settings(&root).main_file;
-                out(analyze::analyze_project(&root, &main, &s("file")?))
+                out(analyze::analyze_project(&root, &main, s("file")?))
             }
             "search_project" => out(projects::search_project(
                 &root()?,
-                &s("query")?,
+                s("query")?,
                 SEARCH_LIMIT,
             )?),
             // Already a Value: out() would serialize it again, copying the
             // whole document.
             "read_file" => {
-                let bytes = fs::read(paths::safe_path(&root()?, &s("path")?)?)?;
+                let bytes = fs::read(paths::safe_path(&root()?, s("path")?)?)?;
                 Ok(json!({ "text": crate::lossy_string(bytes) }))
             }
             // `text` is required: a call that lost it must fail, not empty
             // the file.
             "write_file" => {
                 let (path, text) = (s("path")?, s("text")?);
-                out(self.edit(&s("id")?, |root| {
-                    projects::write_creating(&paths::safe_write_path(root, &path)?, text.as_bytes())
+                out(self.with_project(s("id")?, |root, symbols| {
+                    let rel = paths::rel_key(path)?;
+                    let abs = paths::safe_write_path(root, path)?;
+                    projects::write_creating(&abs, text.as_bytes())?;
+                    symbols.invalidate_file(root, &rel);
+                    Ok(())
                 })?)
             }
             "create_entry" => {
                 let (path, dir) = (s("path")?, arg::<Option<bool>>(args, "dir")?);
-                out(self.edit(&s("id")?, |root| {
-                    projects::create_file(root, &path, dir.unwrap_or(false))
+                out(self.edit(s("id")?, |root| {
+                    projects::create_file(root, path, dir.unwrap_or(false))
                 })?)
             }
             "rename_entry" => {
                 let (from, to) = (s("from")?, s("to")?);
-                out(self.edit(&s("id")?, |root| projects::rename_entry(root, &from, &to))?)
+                out(self.edit(s("id")?, |root| projects::rename_entry(root, from, to))?)
             }
             "delete_entry" => {
                 let path = s("path")?;
-                out(self.edit(&s("id")?, |root| projects::delete_entry(root, &path))?)
+                out(self.edit(s("id")?, |root| projects::delete_entry(root, path))?)
             }
             "validate_uploads" => out(self.validate_uploads(
-                &s("id")?,
+                s("id")?,
                 &arg::<Option<String>>(args, "dir")?.unwrap_or_default(),
                 &arg::<Vec<UploadSpec>>(args, "files")?,
             )?),
             "compile" => out(self
                 .compile(
-                    &s("id")?,
+                    s("id")?,
                     &arg::<Option<CompileOverrides>>(args, "options")?.unwrap_or_default(),
                 )
                 .await?),
-            // The project's own build, which reports itself stopped; true
-            // when one was running.
+            // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?).await),
             "synctex_forward" => out(synctex::synctex_forward_at(
                 &root()?,
-                &s("file")?,
+                s("file")?,
                 arg(args, "line")?,
                 arg(args, "column")?,
                 &self.tex_path(),
@@ -537,6 +529,13 @@ pub fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CoreError>
     // Straight from the borrowed Value, with no intermediate clone of it.
     T::deserialize(args.get(key).unwrap_or(&Value::Null))
         .map_err(|err| CoreError::bad_request(format!("Invalid argument `{key}`: {err}")))
+}
+
+/// Borrow a required string while keeping the typed argument errors.
+pub fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| arg::<String>(args, key).unwrap_err())
 }
 
 fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {

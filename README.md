@@ -10,14 +10,11 @@ A fully offline LaTeX editor — an Overleaf alternative that runs entirely on y
 One Rust core, several clients:
 
 - **macOS app** — AppKit and SwiftUI for macOS 27, in `apps/macos`.
-- **Windows app** — WinUI 3 in C#, in `apps/windows`.
 - **Browser version** — the `web/` UI served by `crates/texlocal-server` on
   `127.0.0.1` only; never exposed to the network.
-- **Tauri desktop app** (`src-tauri`) — still ships until the native apps reach
-  parity, then gets retired.
+- **Tauri desktop app** (`src-tauri`) — the cross-platform desktop shell.
 
-The Windows app embeds two web pages from `web/embed`: the CodeMirror editor
-and the pdf.js viewer. The macOS app's editor is native (TextKit 2 over
+The macOS app's editor is native (TextKit 2 over
 `crates/texlocal-syntax`), and it shows the PDF with PDFKit.
 [HANDOFF.md](HANDOFF.md) has the current status and architecture.
 
@@ -41,7 +38,8 @@ You also need a TeX distribution — see [Requirements](#requirements).
   taken asks Replace / Keep Both / Stop), ZIP export
 - **LaTeX editor** (CodeMirror 6; native on the Mac): highlighting, autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s
 - **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
-- **Source bar** (Overleaf-style): undo/redo, section level, bold/italic, inline and display math, a symbol palette, references, figures, tables and lists, with a location row (project › folders › file › section) under it
+- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and + for figures, tables, lists, references and links; native menus and overflow, with a wide PDF zoom control
+- **Web source bar**: undo/redo, text styles, math, symbols and insertions, with a project › file › section location row
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
 - **File outline** in the sidebar that follows the section on screen, plus word and line counts
 - **Project-wide search** with highlighted matches
@@ -68,8 +66,7 @@ TeXLocal finds TeX on your `PATH` and in the usual install locations
 `C:\texlive\<year>`, MiKTeX), or in a folder you choose in Settings.
 
 **To build from source:** Node.js ≥ 22.12 and Rust (stable). The Tauri app also
-needs the Tauri prerequisites; the macOS app needs Xcode; the Windows app needs
-.NET 10.
+needs the Tauri prerequisites; the macOS app needs Xcode.
 
 Projects are plain folders in `~/TeXLocal` — override with
 `TEXLOCAL_DATA=/path`. No databases, no lock-in.
@@ -79,13 +76,11 @@ Projects are plain folders in `~/TeXLocal` — override with
 ```
 crates/texlocal-core/    Projects, path safety, latexmk/SyncTeX, log parsing, ZIP
                          export, and the JSON command service every host shares.
-crates/texlocal-ffi/     C ABI the native apps link (header in include/).
+crates/texlocal-ffi/     C ABI the macOS app links (header in include/).
 crates/texlocal-server/  The browser version's local HTTP host.
 apps/macos/              AppKit and SwiftUI app.
-apps/windows/            WinUI 3 app.
-src-tauri/               Tauri desktop shell (being retired).
+src-tauri/               Cross-platform Tauri desktop shell.
 web/src/                 Frontend modules, bundled by esbuild into web/dist.
-web/embed/               Editor and PDF pages the Windows app embeds.
 docs/                    design-tokens.md (extracted Apple UI-kit values) ·
                          web.md
 build.mjs                esbuild bundler and shared asset copy
@@ -96,18 +91,18 @@ scripts/                 Version check
 
 ```sh
 npm run build                 # bundle the frontend
-npm test                      # frontend and protocol tests (node --test)
+npm test                      # frontend tests (node --test)
 cargo test --workspace        # Rust tests
 
 # macOS app (Xcode 27), after npm ci: the build runs cargo itself and copies from node_modules
 open apps/macos/TeXLocal.xcodeproj
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal build
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal test   # Swift Testing
-
-# Windows app (.NET 10), after npm run build and cargo build -p texlocal-ffi
-dotnet build apps/windows/TeXLocal/TeXLocal.csproj -p:Platform=x64
-dotnet test apps/windows/TeXLocal.Tests/TeXLocal.Tests.csproj
 ```
+
+These are full regression commands. For an individual change, select the affected
+test files or Xcode methods; keep cursor, menu tracking and visual-material checks
+in native UI verification. `HANDOFF.md` records the current evidence and limits.
 
 To publish a release: bump the version in `package.json`, the workspace
 `Cargo.toml`, `src-tauri/tauri.conf.json` and the macOS project

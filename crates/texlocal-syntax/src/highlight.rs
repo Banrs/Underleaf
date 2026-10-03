@@ -59,15 +59,15 @@ impl Cache {
     /// The runs in the lines from `start`'s to `end`'s.
     pub fn highlights(&mut self, text: &Text, start: u32, end: u32) -> Vec<Highlight> {
         let (first, last) = (text.line_index(start), text.line_index(end));
-        while self.states.len() <= last {
+        while self.states.len() <= first {
             let index = self.states.len() - 1;
             let mut state = self.states[index].clone();
             tokenize(text.line(index), &mut state, |_, _, _| {});
             self.states.push(state);
         }
         let mut runs = Vec::new();
+        let mut state = self.states[first].clone();
         for index in first..=last {
-            let mut state = self.states[index].clone();
             let base = text.lines[index];
             tokenize(text.line(index), &mut state, |from, to, kind| {
                 runs.push(Highlight {
@@ -76,6 +76,9 @@ impl Cache {
                     kind,
                 });
             });
+            if self.states.len() == index + 1 {
+                self.states.push(state.clone());
+            }
         }
         runs
     }

@@ -93,6 +93,8 @@
     ["  \\section*{A {b} c} % note","part","  \\part*{A {b} c} % note",16],
     ["  Plain words","section","  \\section{Plain words}",22],
     ["\\section[S]{T} x","paragraph","\\paragraph[S]{T} x",15],
+    ["🙂 \\section{A \\{set}","subsection","🙂 \\subsection{A \\{set}",22],
+    ["\\section{A \\} note}","","A \\} note",9],
     ["\\subsection{Unclosed {title","section","\\section{Unclosed {title}",24],
     ["   ","section","   \\section{}",12],
     ["\\sectionmark{x} words","chapter","\\chapter{\\sectionmark{x} words}",30]

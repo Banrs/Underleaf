@@ -175,9 +175,7 @@ export class PdfViewer {
       if (superseded()) return false;
       const prev = this.loadingTask;
       adopted = true;
-      this._findSession.cancel();
-      this._highlightGeneration++;
-      this._find = null;
+      this.cancelFind();
       this._pageText = new Array(doc.numPages);
       this.loadingTask = task;
       this.doc = doc;
@@ -186,6 +184,7 @@ export class PdfViewer {
       // never settles in a hidden window, so they can't wait for load().
       this.onDocument?.();
       await prev?.destroy().catch(() => {});
+      if (this.doc !== doc) return false;
       await this.render();
       return !superseded() && this.doc === doc;
     } finally {
@@ -781,9 +780,14 @@ export class PdfViewer {
   }
 
   clearFind() {
-    this._findSession.cancel();
-    this._find = null;
+    this.cancelFind();
     void this.#refreshHighlights();
+  }
+
+  cancelFind() {
+    this._findSession.cancel();
+    this._highlightGeneration++;
+    this._find = null;
   }
 
   #revealMatch() {
@@ -855,8 +859,8 @@ export class PdfViewer {
     if (this.scale === null && this.doc) this.fitWidth();
   }
 
-  // The same preview for a resize only the observer sees (the Windows host's
-  // window and splitter), which also holds the reading position: the point at
+  // The same preview for a resize only the observer sees, which also holds the
+  // reading position: the point at
   // the centre of the view stays put, as a pinch holds the one under the
   // fingers, and the settle render restores it as the anchor. Content
   // coordinates, as #toContent; the scroll position is left alone throughout.
@@ -955,13 +959,11 @@ export class PdfViewer {
     this._loadGeneration++;
     this.seq++;
     this._pinchGeneration++;
-    this._findSession.cancel();
-    this._highlightGeneration++;
+    this.cancelFind();
     clearTimeout(this._pinchTimer);
     clearTimeout(this._roTimer);
     clearTimeout(this._paintTimer);
     this._pinch = null;
-    this._find = null;
     this._pageText = [];
     this.#cancelPaints();
     this.ro?.disconnect();

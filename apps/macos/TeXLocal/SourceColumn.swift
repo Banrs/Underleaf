@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// The source column: the editor, or a preview or placeholder over it. It
-/// carries the workspace's sheets and alerts, being the one pane always shown.
 struct SourceColumn: View {
     let project: ProjectModel
     @AppStorage(EditorPrefs.paletteKey) private var palette: EditorPalette = EditorPrefs.palette
@@ -9,12 +7,9 @@ struct SourceColumn: View {
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
 
     var body: some View {
-        // The editor stays under a preview or the placeholder, keeping the
-        // text and its place.
+        // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
-            // On under the toolbar, find bar and status bar, where AppKit draws its
-            // edge effect over the text, and past the columns' toolbar inset
-            // to the window's edge.
+            // AppKit draws the edge effect under the bars and up to the window edge.
             EditorView(editor: project.editor, shown: project.editsText)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
             if project.openPath == nil {
@@ -35,12 +30,10 @@ struct SourceColumn: View {
     }
 }
 
-/// An image or a PDF figure in place of the editor, fitted but never enlarged;
-/// anything else is No Preview, with the way to open it in its own app.
+/// Fit image and PDF previews without enlargement; offer other files to their default app.
 private struct FilePreview: View {
     let url: URL
     @Environment(\.openURL) private var openURL
-    /// The image read for `url`, nil when it isn't one.
     @State private var loaded: (url: URL, image: NSImage?)?
 
     var body: some View {
@@ -66,7 +59,6 @@ private struct FilePreview: View {
         Image(nsImage: image)
             .resizable()
             .scaledToFit()
-            // A PDF is a page: on white paper, as in the PDF column.
             .background(url.pathExtension.lowercased() == "pdf" ? Color.white : .clear)
             .frame(maxWidth: image.size.width, maxHeight: image.size.height)
             .padding()
@@ -90,11 +82,10 @@ private struct FilePreview: View {
     }
 }
 
-/// Find and replace in the source (`SourceEditor`'s search).
 struct SourceFindBar: View {
     @Bindable var project: ProjectModel
     let field: FieldHandle
-    @FocusState private var replaceFocused: Bool
+    @State private var replaceField = FieldHandle()
 
     var body: some View {
         FindBar(query: $project.findQuery.search, prompt: "Find", field: field, options: options,
@@ -102,20 +93,13 @@ struct SourceFindBar: View {
                 step: { project.findStep($0) }, close: { project.closeFind() }) {
             if project.replaceShown {
                 GridRow {
-                    TextField("Replace", text: $project.findQuery.replace, prompt: Text("Replace"))
-                        .labelsHidden()
-                        // UI kit: a capsule, as the search field over it.
-                        .textFieldStyle(.bordered)
-                        .textInputBorderShape(.capsule)
-                        .onSubmit { project.editor.replace(all: false) }
-                        .onExitCommand { project.closeFind() }
-                        .focused($replaceFocused)
-                        // Find and Replace…, whether or not the bar already shows. After
-                        // the update that adds the row: the task starts within it, and
-                        // focus asked for there is lost (27.2).
+                    SearchField(text: $project.findQuery.replace, prompt: "Replace", handle: replaceField, replacing: true,
+                                step: { _ in project.editor.replace(all: false) }, close: { project.closeFind() })
+                        .frame(minWidth: BarMetrics.fieldMinWidth, maxWidth: .infinity)
+                        // Wait for AppKit to create the new row's field before focusing it.
                         .task(id: project.replaceFocus) {
                             await Task.yield()
-                            if project.replaceFocus > 0 { replaceFocused = true }
+                            if !Task.isCancelled, project.replaceFocus > 0 { replaceField.focus(selectAll: false) }
                         }
                     HStack {
                         Button("Replace") { project.editor.replace(all: false) }

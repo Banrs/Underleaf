@@ -115,7 +115,8 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
         return;
     };
     let key = paths::fold_case(&file);
-    if !seen.insert(key.clone()) {
+    let is_open = key == open;
+    if !seen.insert(key) {
         return;
     }
     let Some(text) = paths::safe_path(root, &file)
@@ -134,7 +135,7 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
             }
         },
     );
-    if key == open {
+    if is_open {
         into.lines = lines;
     }
 }

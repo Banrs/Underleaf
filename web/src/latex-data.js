@@ -4,9 +4,8 @@
 
 import catalog from '../../crates/texlocal-syntax/src/catalog.json' with { type: 'json' };
 
-// The blocks the source bar and the native apps' Insert and Format menus
-// write, by id; Windows reaches them through the editor page's `block`
-// command. #{…} marks a snippet field, as in COMMANDS.
+// The blocks the source bar and Mac Insert and Format menus write, by id.
+// #{…} marks a snippet field, as in COMMANDS.
 export const BLOCK_TEMPLATES = catalog.blocks;
 
 export const ENVIRONMENTS = catalog.environments;

@@ -62,6 +62,20 @@ final class WorkspaceLayoutTests {
     private func width(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { item.viewController.view.frame.height }
 
+    private func openWithSqueezedPanel() async throws -> WorkspaceController {
+        PaneSize.panel.store(250)
+        let workspace = open()
+        workspace.project.showLogs = true
+        try await waitUntil { !workspace.panelItem.isCollapsed && isClose(self.height(workspace.panelItem), 250, within: 1) }
+        let window = try #require(self.window)
+        window.setContentSize(NSSize(width: Self.size.width, height: 400))
+        window.layoutIfNeeded()
+        try await waitUntil { self.height(workspace.panelItem) < 240 } state: {
+            "window \(window.frame), workspace \(workspace.view.frame), panel \(workspace.panelItem.viewController.view.frame)"
+        }
+        return workspace
+    }
+
     @Test func thePanelSpansSourceAndPDF() async throws {
         let workspace = open(panel: true)
         try await waitUntil { self.height(workspace.panelItem) > 0 }
@@ -98,31 +112,6 @@ final class WorkspaceLayoutTests {
         } state: { "showing: " + state() }
     }
 
-    /// The PDF toggle keeps its label, as the system's toggles beside it do; its
-    /// tooltip says what it will do.
-    @Test func thePDFToggleKeepsItsLabel() throws {
-        let workspace = open()
-        let bar = workspace.toolbar!
-        for shown in [true, false] {
-            workspace.project.showPDF = shown
-            let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: .togglePDF, willBeInsertedIntoToolbar: true))
-            #expect(item.label == "PDF")
-            #expect(item.toolTip == workspace.app.title(.viewTogglePdf, on: workspace.project))
-        }
-    }
-
-    /// Zoom's and Math's menu segments open on a click: AppKit does that only in a
-    /// control without an action, so the others send theirs as control events.
-    @Test func theSegmentMenusOpenOnAClick() throws {
-        let bar = open().toolbar!
-        for id in [NSToolbarItem.Identifier.zoom, .math] {
-            let item = try #require(bar.toolbar(bar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true))
-            let control = try #require(item.view as? NSSegmentedControl)
-            #expect(control.action == nil)
-            #expect(control.menu(forSegment: 1) != nil)
-        }
-    }
-
     /// The build panel opens at the height kept for it, not at its minimum.
     @Test func thePanelOpensAtItsKeptHeight() async throws {
         PaneSize.panel.store(210)
@@ -140,9 +129,9 @@ final class WorkspaceLayoutTests {
         for item in [workspace.outlineItem!, workspace.panelItem!] { #expect(height(item) == height(item).rounded()) }
     }
 
-    /// A divider dragged is kept for the next launch.
+    /// A divider dragged is kept; a different pane squeezed by a window resize isn't.
     @Test func aDraggedDividerIsKept() async throws {
-        let workspace = open()
+        let workspace = try await openWithSqueezedPanel()
         try await waitUntil { self.width(workspace.pdfItem) > 0 }
         let split = workspace.columns.splitView, window = try #require(window)
         let start = split.convert(NSPoint(x: width(workspace.sourceItem) + 0.5, y: split.bounds.midY), to: nil)
@@ -157,19 +146,13 @@ final class WorkspaceLayoutTests {
         let share = width(workspace.pdfItem) / (width(workspace.sourceItem) + width(workspace.pdfItem))
         #expect(share < 0.45)
         #expect(isClose(PaneSize.pdfShare.value ?? 0, share, within: 0.01))
+        #expect(PaneSize.panel.value == 250)
     }
 
     /// A window resized in code squeezes a pane, and closing it then keeps the
     /// size the pane was dragged to, not the squeeze.
     @Test func aSqueezedPaneKeepsItsSize() async throws {
-        PaneSize.panel.store(250)
-        let workspace = open()
-        workspace.project.showLogs = true
-        // On 27.0 its minimum is its height until it's back.
-        try await waitUntil { workspace.panelItem.minimumThickness == ColumnMetrics.panelMinimum }
-        #expect(isClose(height(workspace.panelItem), 250, within: 1))
-        window?.setContentSize(NSSize(width: Self.size.width, height: 400))
-        try await waitUntil { self.height(workspace.panelItem) < 240 }
+        let workspace = try await openWithSqueezedPanel()
         workspace.close()
         #expect(PaneSize.panel.value == 250)
     }
@@ -262,7 +245,8 @@ final class WorkspaceLayoutTests {
         window?.layoutIfNeeded()
         #expect(isClose(workspace.view.frame.width, ColumnMetrics.contentMinimum.width))
         // Below the titlebar: the panes stop at the safe area.
-        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height))
+        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height),
+                "workspace \(workspace.view.frame), safe area \(workspace.view.safeAreaInsets), minimum \(ColumnMetrics.contentMinimum)")
     }
 }
 

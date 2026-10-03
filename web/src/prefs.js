@@ -75,10 +75,6 @@ export function migratePrefs() {
 
 // ---------- appearance ----------
 
-// A preference's allowed values; the native apps' copies are checked against
-// these (test/protocol.test.js).
-export const prefChoices = (name) => DEFS[name].values;
-
 export const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18];
 export const UI_SCALES = [80, 90, 100, 110, 120, 130];
 

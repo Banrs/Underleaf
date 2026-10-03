@@ -51,6 +51,7 @@ struct ExportFile: Transferable {
 final class AppModel {
     var projects: [ProjectInfo] = []
     var tex: TexStatus?
+    private(set) var settingTeX = false
     var project: ProjectModel?
     var alert: AppAlert?
 
@@ -130,6 +131,7 @@ final class AppModel {
     }
 
     private let core = Core.shared
+    @ObservationIgnored private var texSelectionGeneration = 0
 
     func refresh() async {
         do {
@@ -137,7 +139,7 @@ final class AppModel {
         } catch {
             alert = AppAlert("Couldn’t Load Your Projects", error)
         }
-        tex = try? await core.call("status", as: TexStatus.self)
+        await refreshTeXStatus()
     }
 
     /// Polls while TeX is missing, so installing it needs no relaunch.
@@ -145,13 +147,33 @@ final class AppModel {
         while tex?.available == false, !Task.isCancelled {
             // Each look runs `status`, which searches the disk for latexmk.
             try? await Task.sleep(for: .seconds(10))
-            tex = try? await core.call("status", as: TexStatus.self)
+            guard !Task.isCancelled else { return }
+            await refreshTeXStatus()
         }
+    }
+
+    private func refreshTeXStatus() async {
+        guard !settingTeX else { return }
+        let generation = texSelectionGeneration
+        let status = try? await core.call("status", as: TexStatus.self)
+        guard !Task.isCancelled, !settingTeX, generation == texSelectionGeneration, let status else { return }
+        tex = status
     }
 
     /// Nil finds TeX automatically. The core refuses a folder without latexmk.
     func setTeXFolder(_ path: String?) async throws {
-        tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+        guard !settingTeX else { throw CoreError(message: "TeX is already being checked. Try again when it finishes.") }
+        settingTeX = true
+        texSelectionGeneration += 1
+        defer { settingTeX = false }
+        do {
+            tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+        } catch {
+            // A status read started before this choice was discarded. Refresh
+            // after the check ends, even if the chosen folder was refused.
+            Task { await refreshTeXStatus() }
+            throw error
+        }
     }
 
     func create(name: String, template: String) async throws {
@@ -165,7 +187,9 @@ final class AppModel {
 
     static func canOpen(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
-        if url.hasDirectoryPath { return true }
+        var directory: ObjCBool = false
+        if url.hasDirectoryPath || (FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &directory)
+                                   && directory.boolValue) { return true }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
         return openableTypes.contains { type.conforms(to: $0) }
     }
@@ -271,4 +295,3 @@ final class AppModel {
         return true
     }
 }
-

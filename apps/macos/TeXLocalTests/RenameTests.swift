@@ -1,27 +1,6 @@
-import SwiftUI
+import Foundation
 import Testing
 @testable import TeXLocal
-
-@MainActor
-struct FindBarTests {
-    /// One row is a pane bar's height; the replace row adds at least a control's.
-    @Test func aFindBarIsABarsHeight() {
-        let find = FindBar(query: .constant("the"), prompt: "Find in PDF", field: FieldHandle(), matches: FindMatches(),
-                           searched: "the", step: { _ in }, close: {}) {}
-        let replace = FindBar(query: .constant("the"), prompt: "Find", field: FieldHandle(), matches: FindMatches(),
-                              searched: "the", step: { _ in }, close: {}) {
-            GridRow {
-                TextField("Replace", text: .constant("")).textFieldStyle(.bordered)
-                Button("Replace") {}
-            }
-        }
-        let control = NSHostingView(rootView: Button("Done") {}.controlSize(.regular)).fittingSize.height
-        let one = NSHostingView(rootView: find.frame(width: 400)).fittingSize.height
-        let two = NSHostingView(rootView: replace.frame(width: 400)).fittingSize.height
-        #expect(one == control + 2 * BarMetrics.inset)
-        #expect(two >= one + control)
-    }
-}
 
 /// Where a path is after its entry or a folder above it is renamed.
 @MainActor

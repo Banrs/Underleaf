@@ -73,16 +73,12 @@ pub fn completions(
             _ => return None,
         };
         let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
-        return offer(start, words(matching(names, &before[start..], |n| n)));
+        return offer(start, words(matching(names, &before[start..], |n| n), ""));
     }
     // @article and the like, in a .bib file.
     if let Some(m) = ENTRY_TYPE.find(&before) {
-        let types: Vec<String> = catalog
-            .bib_entry_types
-            .iter()
-            .map(|t| format!("@{t}"))
-            .collect();
-        return offer(m.start(), words(matching(&types, m.as_str(), |t| t)));
+        let names = matching(&catalog.bib_entry_types, &m.as_str()[1..], |t| t);
+        return offer(m.start(), words(names, "@"));
     }
     // \command, once a letter follows the backslash.
     let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
@@ -100,14 +96,17 @@ pub fn completions(
     offer(m.start(), items)
 }
 
-/// Names that go in as they are.
-fn words(names: Vec<&String>) -> Vec<Completion> {
+/// Literal names, with `@` prefixed for bibliography entry types.
+fn words(names: Vec<&String>, prefix: &str) -> Vec<Completion> {
     names
         .into_iter()
-        .map(|name| Completion {
-            label: name.clone(),
-            text: name.clone(),
-            fields: vec![],
+        .map(|name| {
+            let label = format!("{prefix}{name}");
+            Completion {
+                text: label.clone(),
+                label,
+                fields: vec![],
+            }
         })
         .collect()
 }

@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// The status bar under the source and the PDF. Its page is the PDF's own number, not
-/// LaTeX's, which front matter and roman numbering change. No save state (edits save
-/// 0.7 s after typing; a failed save is an alert), caret line (the gutter) or engine (the inspector).
+/// Status below source and PDF. Page uses PDFKit numbering, which can differ
+/// from LaTeX; save failures, caret line and engine appear elsewhere.
 struct StatusBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -39,7 +38,6 @@ struct StatusBar: View {
                     // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
                     Divider().frame(height: 12)
                 }
-                // At the far end, as a panel's toggle sits at its window's edge.
                 Toggle(isOn: $project.showLogs) {
                     Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
                 }
@@ -59,14 +57,12 @@ struct StatusBar: View {
         .frame(height: BarMetrics.secondaryBarHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.borderless)
-        // What the bar shows is chosen where it shows (and View › Show Word Count).
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
     }
 
-    /// Why the pages may not match the source, by the page they concern: edits since
-    /// the build (Compile), or the last build that worked after one that failed.
+    /// Action for unbuilt edits or a failed build with an older PDF.
     private func freshnessButton(_ freshness: PDFFreshness) -> some View {
         Button {
             if freshness == .edited { app.perform(.compileRun, on: project) } else { project.showBuildPanel() }
@@ -79,7 +75,6 @@ struct StatusBar: View {
                                    : "The latest build failed; this is the last one that succeeded. Show Issues")
     }
 
-    /// Only the symbols carry colour; the words stay secondary.
     private var buildStatus: some View {
         HStack {
             if project.compiling {
@@ -110,8 +105,6 @@ struct StatusBar: View {
         .fixedSize()
     }
 
-    /// Errors and warnings in the symbols' own colours; success in green, which
-    /// the multicolour checkmark isn't.
     private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil) -> some View {
         Label {
             Text(title)
@@ -125,7 +118,6 @@ struct StatusBar: View {
 }
 
 private extension View {
-    /// The HIG's least control size, 20 × 20 pt: a small borderless button is
-    /// otherwise only as tall as its words.
+    /// The HIG's 20 × 20 pt minimum for borderless button targets.
     func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
 }

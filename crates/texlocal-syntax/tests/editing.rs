@@ -141,7 +141,7 @@ fn comments_and_indentation_go_by_line() {
         [edit(0, 0, "  "), edit(2, 0, "  "), edit(5, 0, "  ")]
     );
     let outdented = SourceDocument::new("   a\nb").indent(&[range(0, 6)], false);
-    assert_eq!(outdented, [edit(0, 2, "")]);
+    assert_eq!(outdented, [edit(1, 2, "")]);
     // A selection that ends at a line's start leaves that line alone.
     assert_eq!(
         SourceDocument::new("a\nb").toggle_comment(&[range(0, 2)]),

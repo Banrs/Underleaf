@@ -164,17 +164,16 @@ export function mathAt(doc, pos) {
 
   // Inline $…$ on the cursor's line (unescaped, non-$$ delimiters).
   const line = doc.lineAt(pos);
-  const spans = [];
+  const col = pos - line.from;
   let start = -1;
   for (let i = 0; i < line.text.length; i++) {
     if (line.text[i] !== '$' || line.text[i - 1] === '\\' || line.text[i + 1] === '$' || line.text[i - 1] === '$') continue;
     if (start === -1) start = i;
-    else { spans.push([start, i]); start = -1; }
-  }
-  const col = pos - line.from;
-  for (const [a, b] of spans) {
-    if (col > a && col <= b) {
-      return { from: line.from + a, tex: texForPreview(null, line.text.slice(a + 1, b)), display: false };
+    else {
+      if (col > start && col <= i) {
+        return { from: line.from + start, tex: texForPreview(null, line.text.slice(start + 1, i)), display: false };
+      }
+      start = -1;
     }
   }
   return null;
@@ -451,7 +450,12 @@ export function headingLine(line, command) {
     // The title runs to the brace that closes the command's.
     let depth = 1;
     let i = m.index + m[0].length;
-    for (; i < line.length && depth; i++) depth += { '{': 1, '}': -1 }[line[i]] ?? 0;
+    for (; i < line.length && depth; i++) {
+      const char = line[i];
+      if (char === '\\') { i++; continue; }
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+    }
     title = line.slice(m.index + m[0].length, depth ? line.length : i - 1);
     rest = depth ? '' : line.slice(i);
   }

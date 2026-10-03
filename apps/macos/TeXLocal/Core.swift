@@ -1,7 +1,6 @@
 import Foundation
 import TeXLocalCore
 
-/// A command the Rust core refused.
 nonisolated struct CoreError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -60,16 +59,15 @@ final class Core {
         guard let handle else {
             throw CoreError(message: "TeXLocal can’t open its library folder.")
         }
-        let result = await withCheckedContinuation { (done: CheckedContinuation<Result<T?, Error>, Never>) in
+        return try await withCheckedThrowingContinuation { done in
             DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(returning: Result {
+                done.resume(with: Result {
                     let envelope = try JSONDecoder().decode(Envelope<T>.self, from: Core.run(handle, command, json))
                     if let error = envelope.error { throw CoreError(message: error) }
                     return envelope.ok
                 })
             }
         }
-        return try result.get()
     }
 
     func call<T: Decodable & Sendable>(_ command: String, _ args: [String: Any] = [:], as: T.Type = T.self) async throws -> T {

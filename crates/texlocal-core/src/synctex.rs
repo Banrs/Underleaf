@@ -120,8 +120,7 @@ fn parse_forward(stdout: &str) -> Result<ForwardLoc, CoreError> {
         };
         if let Some(i) = KEYS.iter().position(|k| *k == key) {
             if i == 0 {
-                finish(values, &mut matches);
-                values = [None; 7];
+                finish(std::mem::take(&mut values), &mut matches);
             }
             values[i] = value
                 .trim()
@@ -213,13 +212,13 @@ pub async fn synctex_inverse_with_context(
     // it, with symlinks resolved. A data dir reached through a link (/tmp on
     // macOS, a library moved to another disk and linked back) therefore names
     // the project by its real path, not the one `root` spells.
+    let no_source = || CoreError::not_found("No source file at this location");
     let rel = rel_to_root(root, &abs)
         .or_else(|| rel_to_root(&std::fs::canonicalize(root).ok()?, &abs))
         // A project renamed or moved since TeX ran, which latexmk doesn't run
         // again for: TeX wrote "<its old folder>/./<file>".
         .or_else(|| safe_rel_file(root, file.split_once("/./")?.1).ok())
-        .ok_or_else(|| CoreError::not_found("No source file at this location"))?;
-    let no_source = || CoreError::not_found("No source file at this location");
+        .ok_or_else(no_source)?;
     let rel = safe_rel_file(root, &rel).map_err(|_| no_source())?;
     let source = std::fs::canonicalize(root.join(&rel)).map_err(|_| no_source())?;
     let physical = rel_to_root(&std::fs::canonicalize(root)?, &source)
@@ -433,10 +432,7 @@ fn is_hyphen(c: char) -> bool {
 }
 
 fn is_discretionary_line_hyphen(raw: &[char], at: usize) -> bool {
-    let Some(previous) = at.checked_sub(1).and_then(|i| raw.get(i)) else {
-        return false;
-    };
-    if !is_hyphen(raw[at]) || !previous.is_alphabetic() {
+    if at == 0 || !is_hyphen(raw[at]) || !raw[at - 1].is_alphabetic() {
         return false;
     }
     let mut next = at + 1;
@@ -460,12 +456,9 @@ fn matching_context_chars(
     let mut source = source.peekable();
     let mut context = context.peekable();
     let mut matched = 0;
-    loop {
-        let (Some(&source_char), Some(&(context_char, optional_hyphen))) =
-            (source.peek(), context.peek())
-        else {
-            break;
-        };
+    while let (Some(&source_char), Some(&(context_char, optional_hyphen))) =
+        (source.peek(), context.peek())
+    {
         if optional_hyphen && !is_hyphen(source_char) {
             context.next();
             continue;

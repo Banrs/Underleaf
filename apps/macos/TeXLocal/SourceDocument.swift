@@ -1,9 +1,7 @@
 import Foundation
 import TeXLocalCore
 
-/// The core's mirror of the source's text (crates/texlocal-syntax, through
-/// texlocal-ffi's `tl_source_*`): the text view tells it every edit and asks
-/// it what the LaTeX is. Offsets count UTF-16 units, as NSString does.
+/// Rust's syntax mirror through `tl_source_*`; offsets count UTF-16 units.
 final class SourceDocument {
     private let raw: OpaquePointer
 
@@ -33,7 +31,6 @@ final class SourceDocument {
         Int(tl_source_line_count(raw))
     }
 
-    /// The highlighted runs of the lines a range touches.
     func highlights(in range: NSRange) -> [(range: NSRange, kind: HighlightKind)] {
         var count = 0
         guard let runs = tl_source_highlights(raw, UInt32(range.location), UInt32(range.length), &count) else { return [] }
@@ -86,7 +83,6 @@ final class SourceDocument {
         call("math_at", ["caret": caret])
     }
 
-    /// The text as the mirror has it.
     var text: String {
         call("text", [:]) ?? ""
     }
@@ -148,8 +144,7 @@ nonisolated struct MathPreview: Decodable, Equatable {
     var display: Bool
 }
 
-/// A place to type in a completion's or block's text, from its start.
-/// Fields with the same index are one field in several places.
+/// A snippet field; repeated indices link fields across an insertion.
 nonisolated struct SnippetField: Decodable {
     var start: Int
     var length: Int

@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// One pane, titled "TeXLocal Settings" by the system.
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @AppStorage(EditorPrefs.paletteKey) private var palette = EditorPrefs.palette
     @AppStorage(EditorPrefs.fontKey) private var font = EditorPrefs.font
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
+    @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
     @State private var choosingTeX = false
     @State private var alert: AppAlert?
 
@@ -21,6 +21,14 @@ struct SettingsView: View {
                     ForEach(EditorPalette.allCases) { Text($0.title).tag($0) }
                 }
             }
+            Section("PDF") {
+                Picker(selection: $pdfPaper) {
+                    ForEach(PDFPaper.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Document Paper")
+                    Text("Dark paper inverts the rendered PDF for night reading.")
+                }
+            }
             Section("Compiling") {
                 Toggle(isOn: $app.autoCompile) {
                     Text("Compile Automatically")
@@ -30,8 +38,9 @@ struct SettingsView: View {
                 LabeledContent {
                     HStack {
                         if app.tex?.available == false { GetMacTeXButton() }
-                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) } }
-                        Button("Choose…") { choosingTeX = true }
+                        if app.tex?.texDir != nil { Button("Use Automatic") { setTeXFolder(nil) }.disabled(app.settingTeX) }
+                        Button("Choose…") { choosingTeX = true }.disabled(app.settingTeX)
+                        if app.settingTeX { ProgressView().controlSize(.small).accessibilityLabel("Checking TeX") }
                     }
                 } label: {
                     Text("TeX")

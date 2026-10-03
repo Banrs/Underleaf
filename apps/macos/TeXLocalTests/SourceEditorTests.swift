@@ -1,7 +1,5 @@
 import AppKit
-import SwiftUI
 import Testing
-import WebKit
 @testable import TeXLocal
 
 /// The source editor's own editing, over the core's answers (whose LaTeX
@@ -57,6 +55,13 @@ struct SourceEditorTests {
         #expect(text.string == "")
     }
 
+    @Test func anEmojiAfterAnOpeningBracketIsOccupiedText() {
+        open("😀", caret: 0)
+        text.insertText("(", replacementRange: typed)
+        #expect(text.string == "(😀")
+        #expect(text.selectedRange() == NSRange(location: 1, length: 0))
+    }
+
     @Test func newLinesKeepTheIndentation() {
         open("  a", caret: 3)
         text.insertNewline(nil)
@@ -85,8 +90,13 @@ struct SourceEditorTests {
         // At the least indentation of the lines, as CodeMirror puts it.
         #expect(text.string == "% a\n%   b")
         #expect(text.selectedRange() == NSRange(location: 2, length: 7))
+        #expect(editor.document?.text == text.string)
         text.undoManager?.undo()
         #expect(text.string == "a\n  b")
+        #expect(editor.document?.text == text.string)
+        text.undoManager?.redo()
+        #expect(text.string == "% a\n%   b")
+        #expect(editor.document?.text == text.string)
     }
 
     @Test func wrappingKeepsTheSelection() {
@@ -147,10 +157,10 @@ struct SourceEditorTests {
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {
         open("Ünï words \\word, the word\nnext", caret: 1)
-        #expect(editor.currentWord == "Ünï")
+        #expect(editor.currentSyncWord?.text == "Ünï")
         editor.reveal(line: 1, column: 21, focus: false)
         #expect(text.selectedRange() == NSRange(location: 21, length: 4))
-        #expect(editor.currentWord == "word")
+        #expect(editor.currentSyncWord?.text == "word")
     }
 
     @Test func syncTeXRetainsTheClickedOccurrenceAndUTF16Column() throws {
@@ -205,6 +215,64 @@ struct SourceEditorTests {
         #expect(text.string == "  \\begin{itemize}\n      \n  \\end{itemize}")
         // The core's copy went through every step with it.
         #expect(text.document.text == text.string)
+    }
+
+    @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
+        open("start")
+        text.insertText("x", replacementRange: typed)
+        #expect(editor.document?.text == "startx")
+
+        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(text.hasMarkedText())
+        #expect(text.string == "startxあ" && text.document.text == text.string)
+        // ProjectModel's pending autosave reads this payload.
+        #expect(editor.document?.text == "startx")
+        text.setMarkedText("あい", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
+        #expect(text.string == "startxあい" && text.document.text == text.string)
+        #expect(editor.document?.text == "startx")
+
+        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
+        #expect(!text.hasMarkedText())
+        #expect(text.string == "startx" && text.document.text == text.string)
+        #expect(editor.document?.text == text.string)
+
+        text.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        text.insertText("亜", replacementRange: typed)
+        #expect(!text.hasMarkedText())
+        #expect(text.string == "startx亜" && text.document.text == text.string)
+        #expect(editor.document?.text == text.string)
+    }
+
+    @Test func replacingASelectionStaysProvisionalUntilUnmarked() {
+        open("before old after")
+        text.setSelectedRange(NSRange(location: 7, length: 3))
+        text.setMarkedText("候補", selectedRange: NSRange(location: 2, length: 0), replacementRange: typed)
+        #expect(text.string == "before 候補 after")
+        #expect(editor.document?.text == "before old after")
+
+        text.unmarkText()
+        #expect(!text.hasMarkedText())
+        #expect(editor.document?.text == "before 候補 after")
+        // A later composition starts from the newly committed text.
+        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == "before 候補 after")
+        text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == text.string)
+    }
+
+    @Test func switchingFilesDuringCompositionKeepsUndoWithItsOwnText() {
+        open("first", path: "a.tex")
+        text.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: typed)
+        #expect(editor.document?.text == "first")
+
+        open("second", path: "b.tex")
+        #expect(!text.hasMarkedText())
+        #expect(editor.document?.text == "second" && text.document.text == "second")
+        #expect(text.undoManager?.canUndo == false)
+        // The old undo referred to provisional text that wasn't saved to a.tex.
+        open("first", path: "a.tex")
+        text.undoManager?.undo()
+        #expect(text.string == "first" && editor.document?.text == "first")
     }
 
     /// Native result ranges are relative to the checked substring; formatted
@@ -266,16 +334,6 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
-    /// The maths preview's body has SwiftUI's margins and is never narrower
-    /// than it's tall, or a single letter reads as an egg.
-    @Test func mathsPreviewsHaveTheSystemsMargins() {
-        func body(_ width: CGFloat, _ height: CGFloat) -> NSSize {
-            NSHostingController(rootView: MathView(page: WebPage(), size: CGSize(width: width, height: height))).view.fittingSize
-        }
-        #expect(body(89, 38) == NSSize(width: 121, height: 70))
-        #expect(body(9, 20) == NSSize(width: 52, height: 52))
-    }
-
     @Test func findSelectsAsYouTypeAndReplaces() {
         var reported = FindMatches()
         editor.onFindMatches = { reported = $0 }
@@ -298,6 +356,23 @@ struct SourceEditorTests {
         #expect(text.string == "c c")
         text.undoManager?.undo()
         #expect(text.string == "a a")
+    }
+
+    @Test func regexReplacementSeesLookaheadAndFindKeepsRealAnchors() {
+        open("ab ab")
+        editor.setFind(FindQuery(search: "(a)(?=b)", replace: "$1x", regexp: true))
+        editor.replace(all: true)
+        #expect(text.string == "axb axb")
+
+        open("ba", caret: 1)
+        editor.setFind(FindQuery(search: "^a", regexp: true))
+        #expect(text.selectedRange() == NSRange(location: 1, length: 0))
+    }
+
+    @Test func wholeWordSearchTreatsAstralLettersAsLetters() {
+        let source = "𐐀a a" as NSString
+        let hits = FindQuery(search: "a", wholeWord: true).matches(in: source, limit: 10)
+        #expect(hits.ranges == [NSRange(location: 4, length: 1)])
     }
 
     /// The text's context menu starts with Go to PDF Position, as the PDF's with
