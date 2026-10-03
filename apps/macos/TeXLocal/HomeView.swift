@@ -79,17 +79,19 @@ struct HomeView: View {
 
     private var templates: some View {
         ScrollView(.horizontal) {
-            HStack(alignment: .top) {
+            HStack(alignment: .top, spacing: 0) {
                 ForEach(ProjectTemplate.all) { template in
                     Button { app.newProject(template.id) } label: {
                         TemplateCard(template: template)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TemplateButtonStyle())
                     .help("New \(template.title) Project")
                 }
             }
         }
         .scrollIndicators(.never)
+        // The pages, not the buttons' unseen edges, line up with the headers.
+        .padding(.leading, -10)
     }
 
     /// In the Recent section, not over the list, so the templates stay in view.
@@ -183,6 +185,22 @@ struct ProjectTemplate: Identifiable {
     ]
 }
 
+/// An image button (HIG, Buttons): no border at rest, 10 pt from the content to the
+/// clickable edge, and a fill under the pointer that deepens while pressed.
+private struct TemplateButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        configuration.label
+            .padding(10)
+            .background(.fill.opacity(configuration.isPressed ? 1 : hovered ? 0.5 : 0), in: shape)
+            .contentShape(shape)
+            .contentShape(.focusEffect, shape)
+            .onHover { hovered = $0 }
+    }
+}
+
 /// A template's card: a drawing of its first page, then its name.
 private struct TemplateCard: View {
     let template: ProjectTemplate
@@ -192,22 +210,17 @@ private struct TemplateCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                page
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(template.title).font(.headline)
-                    Text(template.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2, reservesSpace: true)
-                        .frame(width: Self.page.width, alignment: .leading)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            page
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.title).font(.headline)
+                Text(template.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2, reservesSpace: true)
+                    .frame(width: Self.page.width, alignment: .leading)
             }
         }
-        .contentShape(.rect)
-        // The focus ring on the group box's corners, not a square.
-        .contentShape(.focusEffect, .rect(cornerRadius: 12, style: .continuous)) // UI kit: Group Boxes
         .accessibilityElement(children: .combine)
     }
 
