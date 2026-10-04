@@ -431,7 +431,7 @@ impl CompileManager {
     /// stays, so the run and a successor waiting on it settle as usual, and
     /// the run reports itself stopped; one that hasn't started latexmk yet
     /// doesn't start it.
-    pub async fn stop(&self, root: &Path) -> bool {
+    pub fn stop(&self, root: &Path) -> bool {
         let mut running = self.running();
         let Some(entry) = running.get_mut(root).filter(|entry| entry.latest.is_some()) else {
             return false;

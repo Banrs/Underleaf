@@ -61,7 +61,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
   function report(error, request) {
     if (!current(request)) return;
     failure = error?.message ?? String(error);
-    if (error?.status === 409 || failure === 'This Live session was replaced. Start Live again.') {
+    if (error?.status === 409) {
       epoch++;
       owner = null;
       owned = enabled = false;

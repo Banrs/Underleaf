@@ -32,7 +32,7 @@ test('inspection is opt-in and does not adopt another native session', async () 
 });
 
 test('a replaced owner cannot edit, renew, clean up, or restart from a stale mutation', async () => {
-  const conflict = Object.assign(new Error('This Live session was replaced. Start Live again.'), { status: 409 });
+  const conflict = Object.assign(new Error('Another window started TeXpresso for this project. Start TeXpresso again to preview here.'), { status: 409 });
   const { session, calls } = fixture('replaced', { Update: () => { throw conflict; } });
   await session.start();
   const beforeMutation = session.state;
@@ -49,7 +49,7 @@ test('a replaced owner cannot edit, renew, clean up, or restart from a stale mut
 test('automatic restart checks ownership even before polling discovers replacement', async () => {
   const { session, calls } = fixture('conditional-restart', {
     Start: (_id, _files, expected) => {
-      if (expected) throw Object.assign(new Error('This Live session was replaced. Start Live again.'), { status: 409 });
+      if (expected) throw Object.assign(new Error('Another window started TeXpresso for this project. Start TeXpresso again to preview here.'), { status: 409 });
       return status();
     },
   });
@@ -288,7 +288,7 @@ for (const code of [400, 413]) test(`rejected snapshots (${code}) stay visible w
   const { session, calls } = fixture('invalid-buffer', {
     Update: (_id, path, text) => {
       if (path === 'a.tex' && text === 'invalid') {
-        throw Object.assign(new Error('Live buffers are limited to 8 MB per file.'), { status: code });
+        throw Object.assign(new Error('TeXpresso takes files of up to 8 MB.'), { status: code });
       }
       return status();
     },

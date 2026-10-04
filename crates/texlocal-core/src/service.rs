@@ -375,7 +375,10 @@ impl Service {
                 } else {
                     Some(s("session")?)
                 };
-                out(self.texpresso.stop_request(&root()?, token).await?)
+                out(self
+                    .texpresso
+                    .stop_request(&root()?, token, &self.tex_path())
+                    .await?)
             }
             "texpresso_rescan" => out(self
                 .texpresso
@@ -397,8 +400,8 @@ impl Service {
                 self.texpresso.stop(root)?;
                 projects::rename_project(&self.data_dir, s("id")?, s("name")?)
             })?),
-            "delete_project" => out(self.with_project(s("id")?, |_| {
-                self.texpresso.stop(&self.project_root(s("id")?)?)?;
+            "delete_project" => out(self.with_project(s("id")?, |root| {
+                self.texpresso.stop(root)?;
                 projects::delete_project(&self.data_dir, s("id")?)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
@@ -473,7 +476,7 @@ impl Service {
                 )
                 .await?),
             // Reports whether a build was running.
-            "stop_compile" => out(self.compile.stop(&root()?).await),
+            "stop_compile" => out(self.compile.stop(&root()?)),
             "synctex_forward" => out(synctex::synctex_forward_at(
                 &root()?,
                 s("file")?,

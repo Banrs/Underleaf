@@ -24,6 +24,9 @@ const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const LEASE: Duration = Duration::from_secs(120);
 const MISSING: &str = "TeXpresso was not found. Install it and put texpresso on PATH, or set TEXLOCAL_TEXPRESSO to its absolute executable path, then restart Underleaf.";
+const REPLACED: &str =
+    "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
+const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
@@ -123,20 +126,9 @@ impl Session {
         // stderr includes historical TeX diagnostics and echoed VFS commands.
         // The protocol buffers alone track the engine's current backtracking.
         if !state.protocol_seen || state.error.is_some() {
-            let stderr = state.stderr.text();
-            let mut start = stderr.len().saturating_sub(16 * 1024);
-            while !stderr.is_char_boundary(start) {
-                start += 1;
-            }
-            log.push_str(&stderr[start..]);
+            log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
-        if log.len() > MAX_OUTPUT {
-            let mut start = log.len() - MAX_OUTPUT;
-            while !log.is_char_boundary(start) {
-                start += 1;
-            }
-            log.drain(..start);
-        }
+        let log = tail(&log, MAX_OUTPUT).to_owned();
         Status {
             available: executable_file(&self.executable),
             running: state.pid.is_some(),
@@ -151,9 +143,7 @@ impl Session {
     async fn send(&self, messages: &[Value]) {
         let mut input = self.input.lock().await;
         if let Err(err) = write_messages(&mut input.stdin, messages).await {
-            self.stop(Some(format!(
-                "Couldn't send changes to TeXpresso: {err}. Start Live again."
-            )));
+            self.stop(Some(unsent(err)));
         }
     }
 }
@@ -188,23 +178,18 @@ impl Manager {
         &self,
         root: &Path,
         token: Option<&str>,
+        path_env: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
-        let session = match token {
-            Some(token) => Some(self.owned(&root, token)?),
-            None => self.sessions.lock().unwrap().get(&root).cloned(),
+        let Some(session) = self.session(&root, token)? else {
+            return Ok(self.idle(path_env));
         };
-        if let Some(session) = session {
-            session.stop(None);
-            let status = session.status();
-            // Explicit Stop ends ownership too; internal host invalidation
-            // uses stop(root), retaining identity for a conditional restart.
-            self.sessions.lock().unwrap().remove(&root);
-            Ok(status)
-        } else {
-            Ok(self.idle(Some(&crate::compile::tex_path(None))))
-        }
+        session.stop(None);
+        // Explicit Stop ends ownership too; internal host invalidation
+        // uses stop(root), retaining identity for a conditional restart.
+        self.sessions.lock().unwrap().remove(&root);
+        Ok(session.status())
     }
     fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
         self.sessions
@@ -213,20 +198,25 @@ impl Manager {
             .get(root)
             .filter(|session| session.token == token)
             .cloned()
-            .ok_or_else(|| CoreError::conflict("This Live session was replaced. Start Live again."))
+            .ok_or_else(|| CoreError::conflict(REPLACED))
     }
-    pub fn stop(&self, root: &Path) -> Result<Status, CoreError> {
+    /// The project's session; with a token, only while that client still owns it.
+    fn session(&self, root: &Path, token: Option<&str>) -> Result<Option<Arc<Session>>, CoreError> {
+        match token {
+            Some(token) => self.owned(root, token).map(Some),
+            None => Ok(self.sessions.lock().unwrap().get(root).cloned()),
+        }
+    }
+    pub fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = fs::canonicalize(root)?;
         let session = self.sessions.lock().unwrap().get(&root).cloned();
         if let Some(session) = session {
             session.stop(None);
-            Ok(session.status())
-        } else {
-            Ok(self.idle(Some(&crate::compile::tex_path(None))))
         }
+        Ok(())
     }
-    fn idle(&self, path_env: Option<&str>) -> Status {
-        let executable = discover(path_env.unwrap_or_default());
+    fn idle(&self, path_env: &str) -> Status {
+        let executable = discover(path_env);
         Status {
             available: executable.is_some(),
             running: false,
@@ -246,21 +236,16 @@ impl Manager {
         path_env: &str,
     ) -> Result<Status, CoreError> {
         let root = fs::canonicalize(root)?;
-        let session = match token {
-            Some(token) => Some(self.owned(&root, token)?),
-            None => self.sessions.lock().unwrap().get(&root).cloned(),
+        let Some(session) = self.session(&root, token)? else {
+            return Ok(self.idle(path_env));
         };
-        if let Some(session) = session {
-            if token.is_some() {
-                session.state.lock().unwrap().last_used = Instant::now();
+        if token.is_some() {
+            session.state.lock().unwrap().last_used = Instant::now();
+            if settings::read_settings(&root).main_file != session.main {
+                session.stop(Some("The main file changed. Start TeXpresso again.".into()));
             }
-            if token.is_some() && settings::read_settings(&root).main_file != session.main {
-                session.stop(Some("The main file changed. Start Live again.".into()));
-            }
-            Ok(session.status())
-        } else {
-            Ok(self.idle(Some(path_env)))
         }
+        Ok(session.status())
     }
     pub async fn start(
         &self,
@@ -286,18 +271,22 @@ impl Manager {
             let path = validate_buffer(&root, &file.path, &file.text)?;
             if buffers.insert(path, file.text.clone()).is_some() {
                 return Err(CoreError::bad_request(
-                    "Live buffers contain duplicate paths.",
+                    "Files sent to TeXpresso repeat a path.",
                 ));
             }
         }
-        validate_total(&buffers)?;
+        check_limits(
+            buffers.len(),
+            buffers.values().map(String::len).sum::<usize>(),
+        )?;
+        let failed = |error: String| {
+            Ok(Status {
+                error: Some(error),
+                ..self.idle(path_env)
+            })
+        };
         let Some(executable) = discover(path_env) else {
-            let mut status = self.status(&root, None, path_env)?;
-            status.available = false;
-            status.running = false;
-            status.session = None;
-            status.error = Some(MISSING.into());
-            return Ok(status);
+            return failed(MISSING.into());
         };
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
@@ -322,10 +311,9 @@ impl Manager {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
-                let mut status = self.status(&root, None, path_env)?;
-                status.session = None;
-                status.error = Some(format!("Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."));
-                return Ok(status);
+                return failed(format!(
+                "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
+            ))
             }
         };
         let stdout = child.stdout.take().unwrap();
@@ -376,7 +364,7 @@ impl Manager {
                         if let Some(session) = weak.upgrade() {
                             let error = match result {
                                 Ok(status) if status.success() => None,
-                                result => Some(format!("TeXpresso exited ({}). Check the live log and start Live again.",
+                                result => Some(format!("TeXpresso exited ({}). Check its log and start TeXpresso again.",
                                     result.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
                             };
                             session.stop(error);
@@ -386,7 +374,7 @@ impl Manager {
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {
                         let Some(session) = weak.upgrade() else { break; };
                         let expired = session.state.lock().unwrap().last_used.elapsed() >= LEASE;
-                        if expired { session.stop(Some("The Live session expired. Start Live again.".into())); }
+                        if expired { session.stop(Some("The TeXpresso session expired. Start TeXpresso again.".into())); }
                     }
                 }
             }
@@ -421,19 +409,11 @@ impl Manager {
             return Ok(status);
         }
         let mut input = session.input.lock().await;
-        let total = input
-            .files
-            .iter()
-            .filter(|(p, _)| *p != &path)
-            .map(|(_, t)| t.len())
-            .sum::<usize>()
-            + text.len();
-        if total > MAX_TOTAL || (!input.files.contains_key(&path) && input.files.len() >= MAX_FILES)
-        {
-            return Err(CoreError::bad_request(
-                "Too many live buffers (limit 256 files / 64 MB).",
-            ));
-        }
+        let others = input.files.iter().filter(|(p, _)| *p != &path);
+        check_limits(
+            others.clone().count() + 1,
+            others.map(|(_, t)| t.len()).sum::<usize>() + text.len(),
+        )?;
         let message = match input.files.get(&path) {
             Some(previous) if previous == text => return Ok(session.status()),
             Some(previous) => {
@@ -443,9 +423,7 @@ impl Manager {
             None => json!(["open", path, text]),
         };
         if let Err(err) = write_messages(&mut input.stdin, &[message]).await {
-            session.stop(Some(format!(
-                "Couldn't send changes to TeXpresso: {err}. Start Live again."
-            )));
+            session.stop(Some(unsent(err)));
         } else {
             input.files.insert(path, text.to_string());
             session.bump(&mut session.state.lock().unwrap());
@@ -498,55 +476,51 @@ fn canonical_file(root: &Path, path: &str) -> Result<PathBuf, CoreError> {
 fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreError> {
     if text.len() > MAX_FILE {
         return Err(CoreError::bad_request(
-            "Live buffers are limited to 8 MB per file.",
+            "TeXpresso takes files of up to 8 MB.",
         ));
     }
     if path.len() > 4096 || path.contains('\0') || text.contains('\0') {
-        return Err(CoreError::bad_request("Invalid live buffer path or text."));
+        return Err(CoreError::bad_request(
+            "A file sent to TeXpresso has an invalid path or text.",
+        ));
     }
     let path = canonical_file(root, path)?;
     if path.is_dir() {
-        return Err(CoreError::bad_request("Live buffers must name files."));
+        return Err(CoreError::bad_request(
+            "TeXpresso opens files, not folders.",
+        ));
     }
     Ok(path)
 }
-fn validate_total(files: &HashMap<PathBuf, String>) -> Result<(), CoreError> {
-    if files.len() > MAX_FILES || files.values().map(String::len).sum::<usize>() > MAX_TOTAL {
-        return Err(CoreError::bad_request(
-            "Too many live buffers (limit 256 files / 64 MB).",
-        ));
+fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
+    if files > MAX_FILES || bytes > MAX_TOTAL {
+        return Err(CoreError::bad_request(TOO_MANY));
     }
     Ok(())
+}
+fn unsent(err: std::io::Error) -> String {
+    format!("Couldn't send changes to TeXpresso: {err}. Start TeXpresso again.")
+}
+/// The end of `text`, at most `max` bytes, from a character boundary.
+fn tail(text: &str, max: usize) -> &str {
+    let mut start = text.len().saturating_sub(max);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
 }
 // Both boundaries must be UTF-8 boundaries even when differing codepoints
 // share leading or trailing bytes.
 fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
-    // Compare unchanged spans in blocks; typing usually changes a few bytes.
-    let mut start = a
-        .chunks(64)
-        .zip(b.chunks(64))
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len())
-        .sum::<usize>();
-    start += a[start..]
-        .iter()
-        .zip(&b[start..])
-        .take_while(|(a, b)| a == b)
-        .count();
+    let mut start = a.iter().zip(b).take_while(|(a, b)| a == b).count();
     while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
         start -= 1;
     }
     let mut suffix = a[start..]
-        .rchunks(64)
-        .zip(b[start..].rchunks(64))
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len())
-        .sum::<usize>();
-    suffix += a[start..a.len() - suffix]
         .iter()
         .rev()
-        .zip(b[start..b.len() - suffix].iter().rev())
+        .zip(b[start..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
     while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
@@ -614,37 +588,25 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
     }
 }
 fn apply_message(session: &Session, message: &Value) {
-    let (Some(verb), Some(name)) = (message[0].as_str(), message[1].as_str()) else {
-        return;
+    let mut guard = session.state.lock().unwrap();
+    let state = &mut *guard;
+    let output = match message[1].as_str() {
+        Some("out") => &mut state.output,
+        Some("log") => &mut state.log,
+        _ => return,
     };
-    let mut state = session.state.lock().unwrap();
-    if !matches!(name, "out" | "log") {
-        return;
+    // Upstream sends [truncate, buffer, end] and [append, buffer, byte-offset, text].
+    match (
+        message[0].as_str(),
+        message[2].as_u64(),
+        message[3].as_str(),
+    ) {
+        (Some("truncate"), Some(end), _) => output.truncate(end),
+        (Some("append"), Some(offset), Some(text)) => output.append(offset, text.as_bytes()),
+        _ => return,
     }
     state.protocol_seen = true;
-    let output = match name {
-        "out" => &mut state.output,
-        "log" => &mut state.log,
-        _ => return,
-    };
-    match verb {
-        "truncate" => {
-            if let Some(end) = message[2].as_u64() {
-                output.truncate(end);
-            } else {
-                return;
-            }
-        }
-        "append" => {
-            // Upstream sends [append, buffer, byte-offset, text].
-            let (Some(offset), Some(text)) = (message[2].as_u64(), message[3].as_str()) else {
-                return;
-            };
-            output.append(offset, text.as_bytes());
-        }
-        _ => return,
-    }
-    session.bump(&mut state);
+    session.bump(state);
 }
 
 #[cfg(test)]
@@ -793,7 +755,7 @@ mod tests {
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
         assert!(
             !manager
-                .stop_request(&root, Some(token))
+                .stop_request(&root, Some(token), &path_env)
                 .await
                 .unwrap()
                 .running
@@ -979,7 +941,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .stop_request(&root, Some(&old))
+                .stop_request(&root, Some(&old), &path_env)
                 .await
                 .unwrap_err()
                 .status,
@@ -1014,7 +976,8 @@ mod tests {
                 .status,
             409
         );
-        assert!(!manager.stop(&root).unwrap().running);
+        manager.stop(&root).unwrap();
+        assert!(!manager.status(&root, None, &path_env).unwrap().running);
         let restarted = manager
             .start(&root, &[], Some(&current), &path_env)
             .await
@@ -1022,7 +985,13 @@ mod tests {
         assert!(restarted.running);
         assert_ne!(restarted.session.as_deref(), Some(current.as_str()));
         // Deliberately selected global Stop remains available to an inspecting tab.
-        assert!(!manager.stop_request(&root, None).await.unwrap().running);
+        assert!(
+            !manager
+                .stop_request(&root, None, &path_env)
+                .await
+                .unwrap()
+                .running
+        );
         assert_eq!(
             manager
                 .start(&root, &[], restarted.session.as_deref(), &path_env)

@@ -143,7 +143,7 @@ try {
   await marker('UL_REPLACEMENT_OWNER', 'Replacement owner live buffer compiled');
   for (const command of ['texpresso_status', 'texpresso_start', 'texpresso_update', 'texpresso_rescan', 'texpresso_stop']) {
     const rejected = await api(command, { session: superseded, path: 'main.tex', text: main }, 409);
-    assert.match(rejected.error, /session was replaced/);
+    assert.match(rejected.error, /Another window started TeXpresso/);
   }
   assert((await api('texpresso_status')).running, 'Stale cleanup stopped the replacement');
   evidence.checks.push({ check: 'Real HTTP stale status, automatic restart, edits, rescan and cleanup reject the replaced owner' });
