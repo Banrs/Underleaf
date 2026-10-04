@@ -431,6 +431,48 @@ async fn set_tex_dir_accepts_only_a_folder_with_latexmk() {
     assert_eq!(status["texDir"], bin);
 }
 
+/// TeXpresso's folder must hold the program; it's kept beside the TeX folder and
+/// goes back to the TeX path when cleared.
+#[tokio::test]
+async fn set_texpresso_dir_accepts_only_a_folder_with_texpresso() {
+    let (_dir, service) = service();
+    let tex = TempDir::new().unwrap();
+    let bin = fake_tex(&tex.path().join("tex"));
+    call(&service, "set_tex_dir", json!({ "dir": bin })).await;
+
+    let empty = TempDir::new().unwrap();
+    let refused = service
+        .call("set_texpresso_dir", &json!({ "dir": empty.path() }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.status, 400);
+    assert_eq!(service.texpresso_dir(), None);
+
+    let exe = empty.path().join("texpresso");
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let status = call(
+        &service,
+        "set_texpresso_dir",
+        json!({ "dir": empty.path() }),
+    )
+    .await;
+    assert_eq!(
+        status["texpressoDir"],
+        empty.path().to_string_lossy().as_ref()
+    );
+    assert_eq!(status["texDir"], bin);
+    if std::env::var_os("TEXLOCAL_TEXPRESSO").is_none() {
+        let exe = std::fs::canonicalize(&exe).unwrap();
+        assert_eq!(status["texpresso"], exe.to_string_lossy().as_ref());
+    }
+
+    let cleared = call(&service, "set_texpresso_dir", json!({ "dir": null })).await;
+    assert!(cleared["texpressoDir"].is_null());
+    assert_eq!(service.tex_dir().unwrap().to_string_lossy(), bin);
+}
+
 #[tokio::test]
 async fn set_tex_dir_resolves_a_picked_tex_root_to_its_bin_folder() {
     let (_dir, service) = service();

@@ -226,6 +226,9 @@ pub struct TexStatus {
     pub tex_dir: Option<String>,
     /// The folder the working latexmk runs from.
     pub found: Option<String>,
+    /// The TeXpresso program live preview would run, and the folder chosen for it.
+    pub texpresso: Option<String>,
+    pub texpresso_dir: Option<String>,
 }
 
 pub async fn tex_available(path_env: &str) -> TexStatus {
@@ -239,6 +242,8 @@ pub async fn tex_available(path_env: &str) -> TexStatus {
             .then(|| latexmk_dir(path_env))
             .flatten()
             .map(|dir| dir.to_string_lossy().into_owned()),
+        texpresso: None,
+        texpresso_dir: None,
     }
 }
 

@@ -47,6 +47,9 @@ nonisolated struct TexStatus: Decodable {
     var texDir: String?
     /// The folder latexmk runs from.
     var found: String?
+    /// The TeXpresso program live preview runs, and the folder chosen for it in Settings.
+    var texpresso: String?
+    var texpressoDir: String?
 }
 
 nonisolated struct ProjectSettings: Decodable {

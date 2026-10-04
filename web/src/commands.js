@@ -82,7 +82,7 @@ const FALLBACK_TITLES = {
   'view.uiScaleDown': 'Decrease Interface Size',
   'compile.run': 'Compile',
   'compile.toggleAuto': 'Compile Automatically',
-  'compile.texpresso': 'Start TeXpresso (Native Window)',
+  'compile.texpresso': 'Start TeXpresso (Experimental)',
   'compile.texpressoRescan': 'Rescan TeXpresso Files',
   'sync.forward': 'Go to PDF Position',
   'sync.inverse': 'Go to Source Position',

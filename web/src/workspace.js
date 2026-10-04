@@ -438,7 +438,7 @@ function commandDefs() {
     { id: 'compile.run', title: 'Compile', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
     { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
     { id: 'compile.texpresso', title: () => texpresso?.state.enabled || texpresso?.state.running
-      ? 'Stop TeXpresso (Native Window)' : 'Start TeXpresso (Native Window)',
+      ? 'Stop TeXpresso (Experimental)' : 'Start TeXpresso (Experimental)',
       run: toggleTexPresso, enabled: () => hasProject() && texpresso?.state.phase !== 'stopping' },
     { id: 'compile.texpressoRescan', title: 'Rescan TeXpresso Files',
       run: () => restartTexPresso(captureTexPresso()),

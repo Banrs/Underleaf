@@ -162,14 +162,15 @@ final class AppModel {
         await check.value
     }
 
-    /// Nil finds TeX automatically. The core refuses a folder without latexmk.
-    /// Settings turns its buttons off meanwhile.
-    func setTeXFolder(_ path: String?) async throws {
+    /// Nil finds TeX, or TeXpresso, automatically. The core refuses a folder without
+    /// latexmk, or texpresso. Settings turns its buttons off meanwhile.
+    func setTeXFolder(_ path: String?, texpresso: Bool = false) async throws {
         settingTeX = true
         texCheck?.cancel()
         defer { settingTeX = false }
         do {
-            tex = try await core.call("set_tex_dir", ["dir": path ?? NSNull()], as: TexStatus.self)
+            tex = try await core.call(texpresso ? "set_texpresso_dir" : "set_tex_dir", ["dir": path ?? NSNull()],
+                                      as: TexStatus.self)
         } catch {
             // A status read started before this choice was discarded. Refresh
             // after the check ends, even if the chosen folder was refused.

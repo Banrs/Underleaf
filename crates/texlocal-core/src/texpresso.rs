@@ -23,7 +23,7 @@ const MAX_TOTAL: usize = 64 * 1024 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 const LEASE: Duration = Duration::from_secs(120);
-const MISSING: &str = "TeXpresso was not found. Install it and put texpresso on PATH, or set TEXLOCAL_TEXPRESSO to its absolute executable path, then restart Underleaf.";
+const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
@@ -448,11 +448,12 @@ impl Manager {
     }
 }
 
-fn executable_file(path: &Path) -> bool {
+pub(crate) fn executable_file(path: &Path) -> bool {
     path.is_absolute()
         && fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
-fn discover(path_env: &str) -> Option<PathBuf> {
+/// TEXLOCAL_TEXPRESSO, for development, else `texpresso` on the path.
+pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
     if let Some(override_path) = std::env::var_os("TEXLOCAL_TEXPRESSO").filter(|p| !p.is_empty()) {
         let path = PathBuf::from(override_path);
         return executable_file(&path).then_some(path);

@@ -24,6 +24,8 @@ const SEARCH_LIMIT: usize = 100;
 /// appears in the project list.
 pub const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 const NO_LATEXMK: &str = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
+const NO_TEXPRESSO: &str =
+    "That folder doesn't contain the texpresso program. Choose the folder it's in.";
 
 /// TeX folder listing: names only, never file contents.
 #[derive(Debug, Serialize)]
@@ -139,6 +141,11 @@ impl Service {
         let tex_dir = self.tex_dir();
         let mut found = compile::tex_available(&compile::tex_path(tex_dir.as_deref())).await;
         found.tex_dir = tex_dir.map(|d| d.to_string_lossy().into_owned());
+        found.texpresso = crate::texpresso::discover(&self.texpresso_path())
+            .map(|p| p.to_string_lossy().into_owned());
+        found.texpresso_dir = self
+            .texpresso_dir()
+            .map(|d| d.to_string_lossy().into_owned());
         found
     }
 
@@ -147,14 +154,58 @@ impl Service {
     /// The TeX programs folder the user chose, or None to find TeX
     /// automatically. Read per use, so a choice made in another host applies.
     pub fn tex_dir(&self) -> Option<PathBuf> {
-        let bytes = std::fs::read(self.data_dir.join(APP_SETTINGS_FILE)).ok()?;
-        let value: Value = serde_json::from_slice(&bytes).ok()?;
-        let dir = value.get("texDir")?.as_str()?;
+        self.app_folder("texDir")
+    }
+
+    /// The folder with TeXpresso the user chose, searched before the TeX path.
+    pub fn texpresso_dir(&self) -> Option<PathBuf> {
+        self.app_folder("texpressoDir")
+    }
+
+    fn app_settings(&self) -> serde_json::Map<String, Value> {
+        std::fs::read(self.data_dir.join(APP_SETTINGS_FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    fn app_folder(&self, key: &str) -> Option<PathBuf> {
+        let dir = self.app_settings().get(key)?.as_str()?.to_owned();
         (!dir.is_empty()).then(|| PathBuf::from(dir))
+    }
+
+    /// Writes one folder, keeping the other settings.
+    fn set_app_folder(&self, key: &str, dir: Option<&Path>) -> Result<(), CoreError> {
+        let mut settings = self.app_settings();
+        settings.insert(key.into(), json!(dir.map(|d| d.to_string_lossy())));
+        atomic::write(
+            &self.data_dir.join(APP_SETTINGS_FILE),
+            Value::Object(settings).to_string().as_bytes(),
+        )?;
+        Ok(())
     }
 
     fn tex_path(&self) -> String {
         compile::tex_path(self.tex_dir().as_deref())
+    }
+
+    fn texpresso_path(&self) -> String {
+        match self.texpresso_dir() {
+            Some(dir) => format!("{}:{}", dir.to_string_lossy(), self.tex_path()),
+            None => self.tex_path(),
+        }
+    }
+
+    /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
+    pub async fn set_texpresso_dir(&self, dir: Option<&str>) -> Result<TexStatus, CoreError> {
+        let chosen = dir.map(str::trim).filter(|d| !d.is_empty()).map(Path::new);
+        if let Some(dir) = chosen {
+            if !dir.is_absolute() || !crate::texpresso::executable_file(&dir.join("texpresso")) {
+                return Err(CoreError::bad_request(NO_TEXPRESSO));
+            }
+        }
+        self.set_app_folder("texpressoDir", chosen)?;
+        Ok(self.status().await)
     }
 
     /// Choose the TeX folder; None or empty goes back to automatic. A TeX Live
@@ -170,11 +221,7 @@ impl Service {
                 Some(compile::tex_bin_dir(dir).ok_or_else(|| CoreError::bad_request(NO_LATEXMK))?)
             }
         };
-        let text = json!({ "texDir": chosen.map(|d| d.to_string_lossy().into_owned()) });
-        atomic::write(
-            &self.data_dir.join(APP_SETTINGS_FILE),
-            text.to_string().as_bytes(),
-        )?;
+        self.set_app_folder("texDir", chosen.as_deref())?;
         Ok(self.status().await)
     }
 
@@ -347,7 +394,7 @@ impl Service {
             "texpresso_status" => out(self.texpresso.status(
                 &root()?,
                 arg::<Option<String>>(args, "session")?.as_deref(),
-                &self.tex_path(),
+                &self.texpresso_path(),
             )?),
             "texpresso_start" => out(self
                 .texpresso
@@ -356,7 +403,7 @@ impl Service {
                     &arg::<Option<Vec<crate::texpresso::FileBuffer>>>(args, "files")?
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
-                    &self.tex_path(),
+                    &self.texpresso_path(),
                 )
                 .await?),
             "texpresso_update" => out(self
@@ -366,7 +413,7 @@ impl Service {
                     s("path")?,
                     s("text")?,
                     s("session")?,
-                    &self.tex_path(),
+                    &self.texpresso_path(),
                 )
                 .await?),
             "texpresso_stop" => {
@@ -377,12 +424,15 @@ impl Service {
                 };
                 out(self
                     .texpresso
-                    .stop_request(&root()?, token, &self.tex_path())
+                    .stop_request(&root()?, token, &self.texpresso_path())
                     .await?)
             }
             "texpresso_rescan" => out(self
                 .texpresso
-                .rescan(&root()?, s("session")?, &self.tex_path())
+                .rescan(&root()?, s("session")?, &self.texpresso_path())
+                .await?),
+            "set_texpresso_dir" => out(self
+                .set_texpresso_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())

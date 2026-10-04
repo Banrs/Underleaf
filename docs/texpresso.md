@@ -26,13 +26,14 @@ export TEXLOCAL_DATA=/absolute/path/to/scratch-projects
 npm run serve
 ```
 
-The executable is otherwise discovered on the augmented TeX PATH. For a native
-build, pass these environment variables when launching its executable directly;
-a Finder launch does not inherit a terminal's environment.
+The executable is otherwise discovered on the augmented TeX PATH, after the
+folder chosen in the Mac app's Settings. A Finder launch does not inherit a
+terminal's environment.
 
-On Mac, turn on **TeXpresso Live Preview** in the Compile menu; its log has its
-own tab in the build panel, and files changed by other apps are rescanned on
-their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
+TeXpresso support is experimental. On Mac, choose TeXpresso's folder under
+Compiling in Settings if it isn't in /opt/homebrew/bin or /usr/local/bin, then
+turn on **TeXpresso Live Preview** in the Compile menu; its log has its own tab
+in the build panel, and files changed by other apps are rescanned on their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
 files and assets changed externally. Edits to the open source, including
 included files, reach the live preview.
 Host validation failures, such as a file exceeding 8 MB, remain visible until
