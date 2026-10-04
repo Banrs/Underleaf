@@ -131,7 +131,7 @@ final class WorkspaceController: RestoredSplitViewController {
         }
         // A drag resizes the panes live, which would show their overlay scrollers: no scrolling happens.
         for split in [self, columns, area, sidebar] as [RestoredSplitViewController] {
-            split.dragging = { [unowned self] in quiet($0) }
+            split.dragging = { [weak self] in self?.quiet($0) }
         }
         toolbar = WorkspaceToolbar(app: app, project: project, workspace: self)
         watch()
@@ -653,14 +653,42 @@ class RestoredSplitViewController: NSSplitViewController {
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
     /// As a divider's drag starts, and as it ends.
     var dragging: (Bool) -> Void = { _ in }
+    private var dragResizes: (any NSObjectProtocol)?
+    private var dragEnd: DispatchWorkItem?
 
     /// NSSplitViewController's own: side by side, with the thin divider.
-    init(splitView: DraggedSplitView = DraggedSplitView()) {
+    init(splitView: NSSplitView = NSSplitView()) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
-        splitView.dragging = { [unowned self] in dragging($0) }
         self.splitView = splitView
+        // A drag's resizes name their divider; other resizes don't. Watched rather than
+        // caught in `mouseDown`, which would turn off the split's gesture recognizers and
+        // with them Sidecar's touch (#31).
+        dragResizes = NotificationCenter.default.addObserver(forName: NSSplitView.willResizeSubviewsNotification,
+                                                             object: splitView, queue: nil) { [weak self] note in
+            guard note.userInfo?["NSSplitViewDividerIndex"] != nil else { return }
+            MainActor.assumeIsolated { self?.dividerMoved() }
+        }
+    }
+
+    isolated deinit {
+        dragResizes.map(NotificationCenter.default.removeObserver)
+        dragEnd?.cancel()
+    }
+
+    /// The drag ends once the divider rests with the button up, or, for a touch, a moment after it last moved.
+    private func dividerMoved() {
+        if dragEnd == nil { dragging(true) }
+        dragEnd?.cancel()
+        let end = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if NSEvent.pressedMouseButtons & 1 != 0 { return dividerMoved() }
+            dragEnd = nil
+            dragging(false)
+        }
+        dragEnd = end
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: end)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -684,25 +712,13 @@ class RestoredSplitViewController: NSSplitViewController {
     }
 }
 
-/// A split view that says when a divider is dragged: AppKit tracks the drag within the
-/// press on a divider, the only place the split itself is hit.
-class DraggedSplitView: NSSplitView {
-    var dragging: (Bool) -> Void = { _ in }
-
-    override func mouseDown(with event: NSEvent) {
-        dragging(true)
-        defer { dragging(false) }
-        super.mouseDown(with: event)
-    }
-}
-
 /// Files over the File Outline. The separator over the outline's header, at the foot of
 /// the files, stands for the divider: AppKit has no thin divider that draws no line, so
 /// the divider's own, under the header, isn't drawn, and it takes drags at the separator.
 private final class SidebarSplitViewController: RestoredSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: DraggedSplitView {
+    private final class SplitView: NSSplitView {
         override func drawDivider(in rect: NSRect) {}
     }
 
