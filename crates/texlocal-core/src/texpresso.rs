@@ -121,6 +121,7 @@ impl Session {
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }
+            remove_pdf_folder(self.pdf.as_deref());
             state.error = error;
             self.bump(&mut state);
             if let Ok(mut input) = self.input.try_lock() {
@@ -164,6 +165,12 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop(None);
+        remove_pdf_folder(self.pdf.as_deref());
+    }
+}
+fn remove_pdf_folder(pdf: Option<&Path>) {
+    if let Some(folder) = pdf.and_then(Path::parent) {
+        let _ = fs::remove_dir_all(folder);
     }
 }
 
@@ -308,13 +315,21 @@ impl Manager {
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
         let build = fs::canonicalize(build)?;
+        self.stop(&root)?;
+        let mut token = [0u8; 16];
+        getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
+        let token: String = token.iter().map(|byte| format!("{byte:02x}")).collect();
         // For a client that shows it, a build with Underleaf's patch writes the
         // document here instead of opening its own window; upstream opens one.
-        let pdf = pdf.then(|| build.join("texpresso-live.pdf"));
-        if let Some(pdf) = &pdf {
-            let _ = fs::remove_file(pdf);
-        }
-        self.stop(&root)?;
+        // The session's own folder: no build output or other session shares it.
+        let pdf = match pdf {
+            true => {
+                let folder = std::env::temp_dir().join(format!("texlocal-texpresso-{token}"));
+                fs::create_dir_all(&folder)?;
+                Some(fs::canonicalize(folder)?.join("live.pdf"))
+            }
+            false => None,
+        };
         let mut command = std::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
@@ -331,15 +346,13 @@ impl Manager {
         }
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
-        let mut token = [0u8; 16];
-        getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
-        let token = token.iter().map(|byte| format!("{byte:02x}")).collect();
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
+                remove_pdf_folder(pdf.as_deref());
                 return failed(format!(
                 "Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."
-            ))
+            ));
             }
         };
         let stdout = child.stdout.take().unwrap();
@@ -721,6 +734,13 @@ mod tests {
         let manager = Manager::default();
         let original = "prefix é😀 suffix";
         let updated = "prefix ê😃 suffix";
+        // A main file named texpresso-live.tex builds this; live preview leaves it.
+        fs::create_dir_all(root.join(BUILD_DIR)).unwrap();
+        fs::write(
+            root.join(BUILD_DIR).join("texpresso-live.pdf"),
+            "normal build",
+        )
+        .unwrap();
         let first = manager
             .start(
                 &root,
@@ -736,13 +756,15 @@ mod tests {
             .unwrap();
         assert!(first.running && first.available);
         let token = first.session.as_deref().unwrap();
-        // The live PDF is the build folder's, whatever path the viewer reports.
         let live = || manager.status(&root, None, &path_env).unwrap();
         until(|| live().pdf_version == 1).await;
-        let pdf = fs::canonicalize(root.join(BUILD_DIR))
-            .unwrap()
-            .join("texpresso-live.pdf");
-        assert_eq!(live().pdf.as_deref(), Some(pdf.to_str().unwrap()));
+        // The session's own, outside the project: never a build's output.
+        let pdf = PathBuf::from(live().pdf.unwrap());
+        assert!(pdf.ends_with("live.pdf") && !pdf.starts_with(fs::canonicalize(&root).unwrap()));
+        assert_eq!(
+            fs::read(root.join(BUILD_DIR).join("texpresso-live.pdf")).unwrap(),
+            b"normal build"
+        );
         until(|| commands(&tmp).len() >= 2).await;
         let sent = commands(&tmp);
         assert!(sent.iter().any(|c| c == &json!(["rerun", true])));
@@ -840,6 +862,24 @@ mod tests {
             .unwrap();
         manager.kill_all();
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
+    }
+    #[tokio::test]
+    async fn the_live_pdf_folder_goes_with_its_session() {
+        let (_tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        let live = manager
+            .start(&root, &[], None, &path_env, true)
+            .await
+            .unwrap();
+        until(|| manager.status(&root, None, &path_env).unwrap().pdf_version == 1).await;
+        let pdf = PathBuf::from(manager.status(&root, None, &path_env).unwrap().pdf.unwrap());
+        let folder = pdf.parent().unwrap().to_owned();
+        assert!(folder.is_dir());
+        manager
+            .stop_request(&root, live.session.as_deref(), &path_env)
+            .await
+            .unwrap();
+        assert!(!folder.exists());
     }
     #[tokio::test]
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
