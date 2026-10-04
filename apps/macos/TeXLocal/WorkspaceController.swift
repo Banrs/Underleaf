@@ -94,9 +94,11 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// The panel's height as it was hidden, or its first (`setPanelShown`).
     private var panelHeight: CGFloat = 0
-    /// Hide overlay scrollers until the last pane animation ends.
+    /// Pane animations running, the scroll views keeping their scrollers out of sight
+    /// until the last ends, and the frames laying out the split views (`paneAnimation`).
     private var paneAnimations = 0
     private var quietScrollViews: [NSScrollView] = []
+    private var paneFrames: CADisplayLink?
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
 
@@ -180,7 +182,6 @@ final class WorkspaceController: RestoredSplitViewController {
         let panes = room - ColumnMetrics.divider
         let pdfWidth = (panes * ColumnMetrics.pdfShare).rounded()
         panelHeight = max(ColumnMetrics.panelMinimum, (size.height * ColumnMetrics.panelShare).rounded() - ColumnMetrics.panelHeader)
-        panelState.isPresented = project.showLogs
 
         sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
         sourceItem.minimumThickness = ColumnMetrics.sourceMinimum
@@ -210,7 +211,7 @@ final class WorkspaceController: RestoredSplitViewController {
         panelHeader = accessory(BuildPanelHeader(project: project, filter: Bindable(panelState).filter,
                                                 showWarnings: Bindable(panelState).showWarnings), hidden: !project.showLogs)
         panelHeader.automaticallyAppliesContentInsets = false
-        panelHeader.preferredScrollEdgeEffectStyle = .soft
+        panelHeader.preferredScrollEdgeEffectStyle = .hard
         columnsItem.addBottomAlignedAccessoryViewController(panelHeader)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
@@ -218,19 +219,13 @@ final class WorkspaceController: RestoredSplitViewController {
             if !project.showLogs { panelItem.isCollapsed = true }
         }
 
-        // Reserve the status bar while the panel is visible; folded, the editors
-        // extend underneath its native scroll edge.
-        let areaHost = host(WorkspaceArea(controller: area, panelState: panelState))
-        areaHost.view.safeAreaLayoutGuide.heightAnchor.constraint(greaterThanOrEqualToConstant:
-            ColumnMetrics.columnsMinimum + ColumnMetrics.panelHeader + ColumnMetrics.divider + ColumnMetrics.panelMinimum).isActive = true
-        let areaItem = NSSplitViewItem(viewController: areaHost)
+        let areaItem = NSSplitViewItem(viewController: area)
         areaItem.minimumThickness = ColumnMetrics.columnsWidth
-        // A hard scroll edge draws no line over the build panel's still content.
+        // One look whether the panel shows or not: the system's hard edge under a hairline, over
+        // the editors' text and the panel's rows alike. The edge draws no line of its own here.
         areaItem.addBottomAlignedAccessoryViewController(Self.separator())
-        // Xcode's bottom bar: its height, and its items to the ends.
-        let statusBar = accessory(StatusBar(project: project, panelState: panelState))
-        statusBar.automaticallyAppliesContentInsets = false
-        statusBar.preferredScrollEdgeEffectStyle = .soft
+        let statusBar = accessory(StatusBar(project: project))
+        statusBar.preferredScrollEdgeEffectStyle = .hard
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)
     }
@@ -261,10 +256,11 @@ final class WorkspaceController: RestoredSplitViewController {
     /// The system separator, edge to edge over a bar, outside its insets.
     private static func separator() -> NSSplitViewItemAccessoryViewController {
         let separator = NSSplitViewItemAccessoryViewController()
-        let line = NSBox(frame: NSRect(x: 0, y: 0, width: 100, height: 1))
-        line.boxType = .separator
+        let line = NSHostingView(rootView: Divider())
+        line.sizingOptions = [.intrinsicContentSize]
         separator.view = line
         separator.automaticallyAppliesContentInsets = false
+        separator.preferredScrollEdgeEffectStyle = .hard
         return separator
     }
 
@@ -354,33 +350,54 @@ final class WorkspaceController: RestoredSplitViewController {
             done?()
             return
         }
+        let panel = item === panelItem
         paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
-            // One animation carries the outline's pane and its header's height.
+            // One animation carries the outline's pane and its header's height, and the
+            // build panel and its header.
             if item === outlineItem {
                 context.allowsImplicitAnimation = true
                 outlineBarHeight.animator().constant = outlineBarHeight(folded: collapsed)
+            }
+            if panel {
+                if !collapsed { panelHeader.view.isHidden = false }
+                panelHeader.animator().isHidden = collapsed
             }
             item.animator().isCollapsed = collapsed
             if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                self?.paneAnimation(false)
+                guard let self else { return done?() ?? () }
+                if panel, self.panelHeader.isHidden { self.panelHeader.view.isHidden = true }
+                self.paneAnimation(false)
                 done?()
             }
         }
     }
 
-    /// AppKit's live resize reveals overlay scrollers during split animations.
+    /// AppKit's split animation puts every pane in live resize, which shows their overlay
+    /// scrollers: they keep out of sight until the last animation running ends. And its
+    /// steps don't always reach the screen: with nothing else waking the run loop, a pane
+    /// would hold still, then jump to its end (27.2). Laid out on every frame meanwhile,
+    /// the panes keep up with it.
     private func paneAnimation(_ running: Bool) {
         paneAnimations += running ? 1 : -1
         guard paneAnimations == (running ? 1 : 0) else { return }
         if running {
             quietScrollViews = Self.scrollViews(in: view)
+            paneFrames = view.displayLink(target: self, selector: #selector(paneFrame))
+            paneFrames?.add(to: .main, forMode: .common)
+        } else {
+            paneFrames?.invalidate()
+            paneFrames = nil
         }
         for scroll in quietScrollViews { scroll.hideOverlayScrollers(running) }
         if !running { quietScrollViews = [] }
+    }
+
+    @objc private func paneFrame(_ link: CADisplayLink) {
+        for split in splitViews { split.needsLayout = true }
     }
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
@@ -411,11 +428,13 @@ final class WorkspaceController: RestoredSplitViewController {
             accessory.view.isHidden = hidden
             return
         }
+        paneAnimation(true)
         NSAnimationContext.runAnimationGroup { _ in
             accessory.animator().isHidden = hidden
-        } completionHandler: {
+        } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 if hidden, accessory.isHidden { accessory.view.isHidden = true }
+                self?.paneAnimation(false)
             }
         }
     }
@@ -427,20 +446,11 @@ final class WorkspaceController: RestoredSplitViewController {
     private func setPanelShown(_ shown: Bool) {
         guard shown == panelItem.isCollapsed else { return }
         let split = area.splitView, panel = panelItem.viewController.view
-        if shown {
-            panelState.isPresented = true
-            splitViewItems[1].viewController.view.needsLayout = true
-            view.layoutSubtreeIfNeeded()
-        }
-        setHidden(panelHeader, !shown)
-        let finished: @MainActor () -> Void = { [weak self] in
-            guard let self, panelItem.isCollapsed, split.arrangedSubviews[1].isHidden else { return }
-            panelState.isPresented = false
-        }
         // Opening, the hosted view is already at the height the pane is heading for.
         if !shown { panelHeight = panel.frame.height }
         guard animates else {
-            setCollapsed(panelItem, !shown, done: finished)
+            setHidden(panelHeader, !shown)
+            setCollapsed(panelItem, !shown)
             if shown { split.setPosition(split.bounds.height - split.dividerThickness - panelHeight, ofDividerAt: 0) }
             return
         }
@@ -450,7 +460,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 - area.splitViewItems[0].minimumThickness
             panel.frame.size.height = min(panelHeight, room)
         }
-        setCollapsed(panelItem, !shown, done: finished)
+        setCollapsed(panelItem, !shown)
     }
 
     private var animates: Bool {
@@ -479,6 +489,8 @@ final class WorkspaceController: RestoredSplitViewController {
         for split in splitViews { split.autosaveName = nil }
         quietScrollViews.forEach { $0.hideOverlayScrollers(false) }
         quietScrollViews = []
+        paneFrames?.invalidate()
+        paneFrames = nil
         watches.forEach { $0.cancel() }
         collapses = []
         toolbar.close()
@@ -560,27 +572,6 @@ final class WorkspaceController: RestoredSplitViewController {
                 Task { await project.inverseSync(page: page, x: point.x, y: point.y) }
             }
         }
-    }
-}
-
-private struct WorkspaceArea: View {
-    let controller: RestoredSplitViewController
-    let panelState: BuildPanelState
-
-    var body: some View {
-        WorkspaceSplit(controller: controller)
-            .ignoresSafeArea(.container, edges: panelState.isPresented ? .top : [.top, .bottom])
-    }
-}
-
-private struct WorkspaceSplit: NSViewControllerRepresentable {
-    let controller: RestoredSplitViewController
-
-    func makeNSViewController(context: Context) -> RestoredSplitViewController { controller }
-    func updateNSViewController(_ controller: RestoredSplitViewController, context: Context) {}
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsViewController: RestoredSplitViewController, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
     }
 }
 
@@ -684,7 +675,7 @@ enum ColumnMetrics {
     static let panelHeader = bar(BuildPanelHeader.height)
 
     /// A pane bar's content within AppKit's standard accessory insets (27.2).
-    private static func bar(_ content: CGFloat) -> CGFloat { content + 2 * 9 }
+    static func bar(_ content: CGFloat) -> CGFloat { content + 2 * 9 }
     /// Those insets at the bar's sides.
     static let barSideInset: CGFloat = 10
 }

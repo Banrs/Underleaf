@@ -371,13 +371,14 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         pageOverlayViewProvider = self
     }
 
-    /// Marks `rect` on `page` for 2.2 seconds.
+    /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes.
     func flash(_ rect: CGRect, on page: PDFPage) {
         let view = MarkView()
         marks.append((page, rect, view))
         if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2.2))
+            await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
             view.removeFromSuperview()
             self?.marks.removeAll { $0.view === view }
         }

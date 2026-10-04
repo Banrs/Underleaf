@@ -3,19 +3,11 @@ import SwiftUI
 /// Status below source and PDF. Page uses PDFKit numbering, which can differ
 /// from LaTeX; save failures and the engine appear elsewhere.
 struct StatusBar: View {
-    /// Xcode 27's bottom bar, measured; the folded File Outline's header matches it.
-    static let height: CGFloat = 36
-    /// Xcode's bottom bar, measured: its first item's ink 14 pt in, its last symbol's
-    /// 17 pt from the window's edge (clear of the corner), 9 pt either side of a hairline.
-    /// Less a point at the ends for the glyphs' own side bearing and the toggle's frame.
-    private static let leading: CGFloat = 13
-    private static let trailing: CGFloat = 16
-    private static let gap: CGFloat = 9
-    /// Between items without a hairline, as far apart as across one.
-    private static let itemSpacing = gap + 1 + gap
+    /// A bar's height: its controls' 20 pt hit targets within AppKit's accessory insets. The
+    /// folded File Outline's header matches it.
+    static let height = ColumnMetrics.bar(20)
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
-    let panelState: BuildPanelState
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -26,12 +18,6 @@ struct StatusBar: View {
         .monospacedDigit()
         .controlSize(.small)
         .lineLimit(1)
-        .padding(.leading, Self.leading)
-        .padding(.trailing, Self.trailing)
-        .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
-        .background {
-            if panelState.isPresented { Color(nsColor: .textBackgroundColor) }
-        }
         .buttonStyle(.borderless)
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
@@ -39,7 +25,7 @@ struct StatusBar: View {
     }
 
     private func content(showsCounts: Bool) -> some View {
-        HStack(spacing: Self.gap) {
+        HStack {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -52,7 +38,7 @@ struct StatusBar: View {
             let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             if project.editsText || pages {
-                HStack(spacing: Self.itemSpacing) {
+                HStack {
                     if project.editsText {
                         // Xcode's caret position; Go to Line from it.
                         Button { app.perform(.editGotoLine, on: project) } label: {
@@ -74,17 +60,12 @@ struct StatusBar: View {
                     }
                 }
                 .fixedSize()
-                // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
-                Divider().frame(height: 12)
             }
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
-            // Laid out by its symbol, as a text button is by its words, so the bar's
-            // ends and gaps reach the symbol: its 20 pt hit area reaches past.
-            .padding(.horizontal, -3)
             .help(app.title(.viewToggleLogs, on: project))
         }
     }

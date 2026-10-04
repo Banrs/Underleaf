@@ -201,6 +201,7 @@ final class WorkspaceLayoutTests {
         let panel = pane(workspace.panelItem), columns = pane(workspace.area.splitViewItems[0])
         let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
         let bar = status.convert(status.bounds, to: nil)
+        let area = pane(workspace.splitViewItems[1]), foot0 = area.convert(area.bounds, to: nil).minY
         var heights: [CGFloat] = []
         project.showLogs = true
         let start = ContinuousClock.now
@@ -211,15 +212,18 @@ final class WorkspaceLayoutTests {
                 let foot = columns.convert(columns.bounds, to: nil).minY
                 #expect(abs(foot - frame.maxY - workspace.area.splitView.dividerThickness) <= 1,
                         "columns' foot \(foot), panel's top \(frame.maxY)")
-                // No invisible travel behind the status bar before the panel appears.
-                #expect(abs(frame.minY - bar.maxY) <= 1, "panel bottom \(frame.minY), status top \(bar.maxY)")
+                // Its foot stays under the status bar, at the window's, as it rises from the bar.
+                #expect(abs(frame.minY - foot0) <= 1, "panel bottom \(frame.minY), area bottom \(foot0)")
             }
             #expect(status.convert(status.bounds, to: nil) == bar)
             #expect(sourceTop().map { abs($0 - initialTop) <= 1 } == true, "source top \(String(describing: sourceTop())), was \(initialTop)")
             try await Task.sleep(for: .milliseconds(4))
         }
         let height = try #require(heights.last)
-        #expect(heights.contains { $0 > heights[0] + 1 && $0 < height - 1 }, "heights \(heights)")
+        // Reduce Motion opens it at once (`WorkspaceController.animates`).
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            #expect(heights.contains { $0 > heights[0] + 1 && $0 < height - 1 }, "heights \(heights)")
+        }
 
         project.showLogs = false
         try await Task.sleep(for: .milliseconds(80))

@@ -8,7 +8,6 @@ enum PanelTab: String, CaseIterable {
 @Observable final class BuildPanelState {
     var filter = ""
     var showWarnings = true
-    var isPresented = false
 }
 
 /// The build panel below the editors: the build's issues, or its whole log.
@@ -110,6 +109,8 @@ struct BuildPanelHeader: View {
         .padding(.horizontal, ColumnMetrics.barSideInset)
         .padding(.vertical, 9)
         .background(.bar)
+        // Over the editors, as the status bar's; the split's divider is under it.
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
