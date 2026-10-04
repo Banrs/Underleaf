@@ -257,6 +257,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             if selection.length == 0 { DispatchQueue.main.async { self.textView.complete(nil) } }
         case .comment:
             textView.apply(document.toggleComment(textView.selectedRanges.map(\.rangeValue)), named: String(localized: "Comment"))
+        case .moveLineUp, .moveLineDown:
+            guard moveLines(up: command == .moveLineUp) else { return false }
         case .heading:
             guard insert(document.setHeading(caret: selection.location, command: argument ?? ""), String(localized: "Section Level")) else { return false }
         case .symbol:
@@ -265,6 +267,57 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             guard insert(document.insertBlock(argument ?? "", replacing: selection), String(localized: "Insert")) else { return false }
         }
         focus()
+        return true
+    }
+
+    /// The lines the selections touch, each run of them past the line above or below, in one
+    /// undo step, the selections going with them, as Xcode's Move Line Up and Down; nothing
+    /// moves when a run is already at the file's start or end.
+    private func moveLines(up: Bool) -> Bool {
+        let text = textView.string as NSString
+        let selections = textView.selectedRanges.map(\.rangeValue)
+        // Each selection's whole lines; one ending at a line's start doesn't take that line.
+        var runs: [NSRange] = []
+        for selection in selections {
+            let end = selection.length > 0 && NSMaxRange(selection) > 0 ? NSMaxRange(selection) - 1 : NSMaxRange(selection)
+            let first = text.lineRange(for: NSRange(location: selection.location, length: 0))
+            let last = text.lineRange(for: NSRange(location: max(end, selection.location), length: 0))
+            let run = NSUnionRange(first, last)
+            if let previous = runs.last, run.location <= NSMaxRange(previous) {
+                runs[runs.count - 1] = NSUnionRange(previous, run)
+            } else {
+                runs.append(run)
+            }
+        }
+        var edits: [TextEdit] = [], shifts: [(run: NSRange, by: Int)] = []
+        for run in runs.sorted(by: { $0.location < $1.location }) {
+            // The empty line after a final line break has nothing to move.
+            guard run.length > 0, up ? run.location > 0 : NSMaxRange(run) < text.length else { return false }
+            let neighbour = text.lineRange(for: NSRange(location: up ? run.location - 1 : NSMaxRange(run), length: 0))
+            let whole = NSUnionRange(run, neighbour)
+            // The lines' text trades places; the line ends stay where they were, so a last line
+            // without one keeps none.
+            var lines: [(text: String, end: String)] = []
+            var start = whole.location
+            while start < NSMaxRange(whole) {
+                var lineEnd = 0, contentsEnd = 0
+                text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: start, length: 0))
+                lines.append((text.substring(with: NSRange(location: start, length: contentsEnd - start)),
+                              text.substring(with: NSRange(location: contentsEnd, length: lineEnd - contentsEnd))))
+                start = lineEnd
+            }
+            // The neighbour is one line, first going up and last going down.
+            let moved = up ? Array(lines.dropFirst() + lines.prefix(1)) : Array(lines.suffix(1) + lines.dropLast())
+            edits.append(TextEdit(whole, zip(moved, lines).map { $0.text + $1.end }.joined()))
+            let newStart = up ? whole.location : whole.location + (moved[0].text + lines[0].end).utf16.count
+            shifts.append((run, newStart - run.location))
+        }
+        textView.apply(edits, named: up ? String(localized: "Move Line Up") : String(localized: "Move Line Down"))
+        textView.setSelectedRanges(selections.map { selection in
+            let by = shifts.first { NSLocationInRange(selection.location, $0.run) || selection.location == NSMaxRange($0.run) && selection.length == 0 && NSMaxRange($0.run) == text.length }?.by ?? 0
+            return NSValue(range: NSRange(location: selection.location + by, length: selection.length))
+        }, affinity: .downstream, stillSelecting: false)
+        textView.scrollRangeToVisible(textView.selectedRange())
         return true
     }
 
@@ -312,7 +365,7 @@ struct EditorView: NSViewRepresentable {
 }
 
 enum EditorCommand {
-    case bold, italic, underline, math, displayMath, comment, heading, symbol
+    case bold, italic, underline, math, displayMath, comment, heading, symbol, moveLineUp, moveLineDown
     /// A block from the core's catalog (crates/texlocal-syntax), by id.
     case block
     /// A template with "$0" where the selection goes.
