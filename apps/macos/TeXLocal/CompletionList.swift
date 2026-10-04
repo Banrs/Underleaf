@@ -31,7 +31,11 @@ final class CompletionList {
     var clicked: (Int) -> Void = { _ in }
     var selection: Int { rows.selection ?? 0 }
 
-    private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    private let panel = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    /// Key to what it holds, so its list draws as focused; the document's window keeps the keyboard.
+    private final class Panel: NSPanel {
+        override var isKeyWindow: Bool { true }
+    }
     private let rows = Rows()
     /// At most this many rows show; the rest scroll.
     private static let shownRows = 8
@@ -54,8 +58,11 @@ final class CompletionList {
         if self.rows.font != font { self.rows.metrics = nil }
         self.rows.items = rows.map { Item(label: $0.label, badge: $0.kind.badge(in: theme)) }
         self.rows.font = font
-        self.rows.selection = 0
-        guard let window else { return }
+        guard let window else {
+            self.rows.selection = 0
+            return
+        }
+        let opening = parent == nil
         if parent !== window {
             parent?.removeChildWindow(panel)
             // Room to lay the rows out in, before the list has measured them.
@@ -65,7 +72,33 @@ final class CompletionList {
         self.start = start
         // Shown once the list has measured its rows (`fit`).
         panel.contentView?.layoutSubtreeIfNeeded()
+        focusList()
+        self.rows.selection = 0
         fit()
+        if opening { announce() }
+    }
+
+    /// The panel never has VoiceOver's focus, which stays in the document: the row chosen is
+    /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it.
+    private func announce() {
+        guard rows.items.indices.contains(selection) else { return }
+        let item = rows.items[selection]
+        let position = String(localized: "\(selection + 1) of \(rows.items.count)")
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+            .announcement: [item.label, item.badge.name, position].formatted(.list(type: .and, width: .narrow)),
+            .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
+    /// Selected as the list that has the keyboard, though the document has it: a table
+    /// draws the focused list's selection only as its key window's first responder, which
+    /// the panel says it is while never taking the keyboard. SwiftUI's own focus (`focused`)
+    /// gives the row the focused list's fill but the unfocused one's text (27.2).
+    private func focusList() {
+        func table(in view: NSView) -> NSTableView? {
+            view as? NSTableView ?? view.subviews.lazy.compactMap(table).first
+        }
+        guard !(panel.firstResponder is NSTableView), let content = panel.contentView, let list = table(in: content) else { return }
+        panel.makeFirstResponder(list)
     }
 
     private weak var parent: NSWindow?
@@ -111,6 +144,7 @@ final class CompletionList {
     func move(_ step: Int) {
         guard !rows.items.isEmpty else { return }
         rows.selection = max(0, min(rows.items.count - 1, selection + step))
+        announce()
     }
 
     fileprivate struct Item {
@@ -163,8 +197,6 @@ final class CompletionList {
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
-                // Selected as the list that has the keyboard, though the document has it.
-                .environment(\.controlActiveState, .key)
                 .onChange(of: rows.selection) { if let row = rows.selection { proxy.scrollTo(row) } }
             }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { list = $0; measure() }
@@ -185,6 +217,10 @@ final class CompletionList {
                         .applying(NSImage.SymbolConfiguration(paletteColors: [.badgeLetter, item.badge.color]))) ?? NSImage())
             }
             .lineLimit(1)
+            // One element: the label, then its kind.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: item.label))
+            .accessibilityValue(Text(item.badge.name))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { label in
                 switch index {
                 case 0: first = (label, first?.text ?? label)

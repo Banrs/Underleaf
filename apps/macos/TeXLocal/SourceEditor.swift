@@ -21,9 +21,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     var onScroll: (Int) -> Void = { _ in }
 
     private(set) var path: String?
-    /// The files shown before, as they were left: their state comes back
-    /// only if their text is unchanged since.
-    private var kept: [String: (text: String, undo: UndoManager, selection: NSRange)] = [:]
+    /// The files shown before, as they were left: their state, and where they were scrolled to,
+    /// come back only if their text is unchanged since, as Xcode's do.
+    private var kept: [String: (text: String, undo: UndoManager, selection: NSRange, top: (offset: Int, below: CGFloat)?)] = [:]
     private var undo = UndoManager()
     private var cursorLine = 1, cursorColumn = 0, topLine = 1
 
@@ -81,9 +81,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     // ---------- files ----------
 
-    /// Show a file at its top; sidebar selection leaves keyboard focus where it is.
+    /// Show a file where it was left, or at its top; sidebar selection leaves keyboard focus where it is.
     func open(path: String, text: String, focus: Bool = true) {
-        if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange()) }
+        if let current = self.path { kept[current] = (textView.string, undo, textView.selectedRange(), textView.shownTop) }
         let prior = kept[path].flatMap { $0.text == text ? $0 : nil }
         self.path = path
         textView.load(text)
@@ -92,6 +92,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         textView.setSelectedRange(NSMaxRange(selection) <= (text as NSString).length ? selection : NSRange(location: 0, length: 0))
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        if let top = prior?.top { textView.scroll(toShownTop: top) }
         reportCursor()
         focusWhenShown = focus
         if focus { self.focus() }
