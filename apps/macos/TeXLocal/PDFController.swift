@@ -235,6 +235,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         } : nil
         let autoScales = view.autoScales
         let scale = view.scaleFactor
+        view.removeMarks()
         view.document = document
         observeMagnification()
         // A document resets the limit (27.2). Setting it turns fitting off, so before the fit below.
@@ -275,8 +276,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         // A destination lands below the toolbar, a rect under it.
         view.go(to: PDFDestination(page: page, at: CGPoint(x: rect.minX, y: rect.maxY + view.shownHeight / 3 / view.scaleFactor)))
         if let selection = match?.selection, !finding {
+            view.removeMarks()
             selection.color = .findHighlightColor
-            view.setCurrentSelection(selection, animate: true)
+            // PDFKit's bounce, which Reduce Motion leaves out.
+            view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         } else {
             view.flash(rect, on: page)
         }
@@ -290,7 +293,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     private func selectMatch(scrolling: Bool = true) {
         guard matches.indices.contains(matchIndex) else { return }
-        view.setCurrentSelection(matches[matchIndex], animate: scrolling)
+        view.setCurrentSelection(matches[matchIndex], animate: scrolling && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         if scrolling { view.scrollSelectionToVisible(nil) }
     }
 
@@ -359,7 +362,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     /// Forward search's marks, in the pages' overlays rather than on the pages: an
     /// annotation would be printed and read by VoiceOver.
-    private var marks: [(page: PDFPage, rect: CGRect, view: NSView)] = []
+    private(set) var marks: [(page: PDFPage, rect: CGRect, view: NSView)] = []
     /// The overlays PDFKit has asked for, which it keeps while their pages show.
     private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
 
@@ -373,18 +376,32 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         pageOverlayViewProvider = self
     }
 
-    /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes.
+    /// The showing mark's wait and fade.
+    private var fading: Task<Void, Never>?
+
+    /// Marks `rect` on `page` for 2.2 seconds, then fades it out, as Find's indicator goes. A fade
+    /// is what the HIG puts in motion's place, so Reduce Motion keeps it.
     func flash(_ rect: CGRect, on page: PDFPage) {
-        let view = MarkView()
+        removeMarks()
+        let view = MarkView(onDarkPaper: darkPaper)
         marks.append((page, rect, view))
         if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.2))
+        fading = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
-            view.removeFromSuperview()
-            self?.marks.removeAll { $0.view === view }
+            guard !Task.isCancelled else { return }
+            self?.removeMarks()
         }
     }
+
+    /// A new search's or document's place is elsewhere: the last mark goes at once.
+    func removeMarks() {
+        fading?.cancel()
+        fading = nil
+        for mark in marks { mark.view.removeFromSuperview() }
+        marks.removeAll()
+    }
+
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()
@@ -497,13 +514,26 @@ private final class PageOverlay: NSView {
 }
 
 /// The square annotation the mark once was, as PDFKit drew it: Find's colour as a fill
-/// and, over it, a 1 pt border at half the fill's strength.
+/// and, over it, a 1 pt border at half the fill's strength. With Increase Contrast the
+/// border stands out from the paper at WCAG's 3:1 for graphics.
 private final class MarkView: NSView {
+    private let paper: NSColor
+
+    init(onDarkPaper dark: Bool) {
+        paper = dark ? .black : .white
+        super.init(frame: .zero)
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.findHighlightColor.withAlphaComponent(0.4).cgColor
-        layer?.borderColor = NSColor.findHighlightColor.withAlphaComponent(0.2).cgColor
+        let find = NSColor.findHighlightColor
+        layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
+        layer?.borderColor = effectiveAppearance.increasesContrast
+            ? find.contrasting(with: paper, by: 3).cgColor : find.withAlphaComponent(0.2).cgColor
         layer?.borderWidth = 1
     }
 }

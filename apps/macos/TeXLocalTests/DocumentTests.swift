@@ -291,6 +291,18 @@ struct PDFFitTests {
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
     }
 
+    /// One mark at a time: a second search's replaces the first's, and a rebuilt PDF has none.
+    @Test func aForwardSearchMarkReplacesTheLast() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(2))
+        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
+        controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
+        #expect(controller.view.marks.count == 1)
+        controller.show(try pages(2))
+        #expect(controller.view.marks.isEmpty)
+    }
+
     private func pages(_ count: Int) throws -> PDFDocument {
         let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
             NSColor.white.setFill()
