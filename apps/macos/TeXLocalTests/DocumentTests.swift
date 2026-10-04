@@ -432,6 +432,17 @@ struct PDFFindTests {
         #expect(controller.matches.count == 1)
     }
 
+    /// Find ignores case and accents, as typed without them.
+    @Test func findIgnoresCaseAndAccents() async throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["Gödel and Erdős"]))
+        controller.find("godel")
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "godel" && controller.matches.count == 1 }
+        controller.find("ERDOS")
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "ERDOS" && controller.matches.count == 1 }
+    }
+
     /// Typing back to the found text while a longer one is searched ends with the field's matches.
     @Test func typingBackKeepsTheFieldsMatches() async throws {
         let controller = PDFController()

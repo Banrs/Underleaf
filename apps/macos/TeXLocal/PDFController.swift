@@ -189,7 +189,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         guard !query.isEmpty else { return found(query, [], keepingPlace: keepingPlace) }
         document.delegate = self
         search = (document, query, keepingPlace, [])
-        document.beginFindString(query, withOptions: .caseInsensitive)
+        // As Safari's and Mail's Find: "Godel" finds "Gödel", as typed without the accent.
+        document.beginFindString(query, withOptions: [.caseInsensitive, .diacriticInsensitive])
     }
 
     // PDFKit delivers document-find delegate callbacks on the main thread.
