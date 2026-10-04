@@ -221,6 +221,31 @@ struct SourceEditorTests {
         #expect(editor.scrollView.contentView.bounds.minY == -editor.scrollView.contentInsets.top)
     }
 
+    /// A command is its own named undo step between the typing before and after it.
+    @Test func aCommandIsItsOwnUndoStep() throws {
+        open("", caret: 0)
+        let undo = try #require(text.undoManager)
+        // Each step an event of its own, in its own top-level undo group, as AppKit gives it.
+        undo.groupsByEvent = false
+        func step(_ action: () -> Void) {
+            undo.beginUndoGrouping()
+            action()
+            undo.endUndoGrouping()
+        }
+        step { text.insertText("a", replacementRange: typed) }
+        step { text.insertText("b", replacementRange: typed) }
+        step { editor.perform(.bold) }
+        #expect(undo.undoActionName == "Bold")
+        step { text.insertText("c", replacementRange: typed) }
+        #expect(text.string == "ab\\textbf{c}")
+        undo.undo()
+        #expect(text.string == "ab\\textbf{}")
+        #expect(undo.undoActionName == "Bold")
+        undo.undo()
+        #expect(text.string == "ab")
+        #expect(text.document.text == text.string)
+    }
+
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {
