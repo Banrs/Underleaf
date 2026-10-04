@@ -304,15 +304,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
                        select: NSRange(location: selection.location + (prefix as NSString).length, length: selection.length))
     }
 
-    // ---------- font ----------
-
-    func setFontSize(_ size: Int) {
-        textView.fontSize = CGFloat(size)
-    }
-
-    func setSyntaxTheme(_ theme: SyntaxTheme) {
-        textView.syntaxTheme = theme
-    }
 }
 
 /// Reuse the editor's scroll view across SwiftUI updates and beneath the bars,
@@ -320,10 +311,14 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 struct EditorView: NSViewRepresentable {
     let editor: SourceEditor
     let shown: Bool
+    let fontSize: Int
+    let syntaxTheme: SyntaxTheme
 
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
+        editor.textView.fontSize = CGFloat(fontSize)
+        editor.textView.syntaxTheme = syntaxTheme
         if editor.shown != shown { editor.shown = shown }
     }
 }

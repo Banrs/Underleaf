@@ -36,6 +36,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         loading = true
         // Typing coalesced into the last file's undo would go on in its.
         breakUndoCoalescing()
+        fragments.removeAll(keepingCapacity: true)
         inputContext?.discardMarkedText()
         unmarkText()
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
@@ -68,7 +69,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
         changing = nil
         follow(changed ?? old, delta)
-        coloured = nil
         if lineCountDigits != digits(document.lineCount) {
             // After the edit: a layout change mid-edit would lay out stale text.
             DispatchQueue.main.async { self.updateGutterWidth() }
@@ -119,7 +119,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet {
             guard syntaxTheme != oldValue else { return }
-            recolour()
+            recolour(invalidatingLayout: true)
         }
     }
 
@@ -164,6 +164,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyFont()
+        recolour(invalidatingLayout: true)
     }
 
     // MARK: the gutter
@@ -246,7 +247,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
-        colourViewport()
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
         needsDisplay = true
@@ -287,26 +287,31 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // MARK: colours
 
-    /// The range last coloured, which covers the viewport and a screen either side.
-    private var coloured: Range<Int>?
-
-    private func recolour() {
-        coloured = nil
-        colourViewport()
-    }
-
-    private func colourViewport() {
-        guard let manager = textLayoutManager, let viewport = manager.textViewportLayoutController.viewportRange else { return }
-        let shown = offset(viewport.location)..<offset(viewport.endLocation)
-        if let coloured, coloured.lowerBound <= shown.lowerBound, shown.upperBound <= coloured.upperBound { return }
-        let length = (string as NSString).length
-        let start = max(0, shown.lowerBound - shown.count), end = min(length, shown.upperBound + shown.count)
-        guard let whole = textRange(NSRange(location: start, length: end - start)) else { return }
-        manager.removeRenderingAttribute(.foregroundColor, for: whole)
-        for run in document.highlights(in: NSRange(location: start, length: end - start)) {
-            if let r = textRange(run.range) { manager.addRenderingAttribute(.foregroundColor, value: run.kind.color(in: syntaxTheme), for: r) }
+    /// TextKit validates colours when it renders a fragment, without editing the
+    /// document's attributes or disturbing its estimated scroll geometry.
+    private func recolour(invalidatingLayout: Bool = false) {
+        guard let manager = textLayoutManager else { return }
+        if manager.renderingAttributesValidator == nil {
+            manager.renderingAttributesValidator = { [weak self] manager, fragment in
+                guard let self else { return }
+                let range = fragment.rangeInElement
+                let start = offset(range.location), end = offset(range.endLocation)
+                manager.setRenderingAttributes([.foregroundColor: NSColor.textColor], for: range)
+                for run in document.highlights(in: NSRange(location: start, length: end - start)) {
+                    let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
+                    if clipped.length > 0, let range = textRange(clipped) {
+                        manager.setRenderingAttributes([.foregroundColor: run.kind.color(in: syntaxTheme)], for: range)
+                    }
+                }
+            }
         }
-        coloured = start..<end
+        manager.invalidateRenderingAttributes(for: manager.documentRange)
+        if invalidatingLayout, let viewport = manager.textViewportLayoutController.viewportRange {
+            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
+            manager.invalidateLayout(for: viewport)
+            needsLayout = true
+        }
+        needsDisplay = true
     }
 
     // MARK: the selection

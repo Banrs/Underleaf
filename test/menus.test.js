@@ -51,6 +51,18 @@ beforeEach(() => {
 afterEach(() => {
   key('Escape');
   state.editor = null;
+  state.openPath = null;
+});
+
+test('uppercase TeX files retain the source toolbar', () => {
+  state.editor = {};
+  const bar = buildSourceBar({ commandButton: (id) => el('button', {}, id), openFile() {}, reveal() {}, afterHeading() {} });
+  document.body.append(bar.toolbar);
+  for (const path of ['main.tex', 'MAIN.TEX']) {
+    state.openPath = path;
+    bar.update();
+    assert.equal(bar.toolbar.querySelector('.latex-tools').hidden, false);
+  }
 });
 
 test('context menu coordinates and viewport bounds use the body zoom', () => {
@@ -144,7 +156,7 @@ test('popovers use menu bounds and can be resized, toggled, and dismissed outsid
 });
 
 test('opening a modal dismisses menu state and its resize listener', async () => {
-  menuUnder(anchor, items());
+  menuUnder(anchor, items(), { focus: true });
   const menu = document.querySelector('.menu');
   let close;
   const result = showModal((dismiss) => {
@@ -158,6 +170,19 @@ test('opening a modal dismisses menu state and its resize listener', async () =>
   assert.equal(menu.style.left, '0px');
   close(null);
   await result;
+  assert.equal(document.activeElement, anchor);
+});
+
+test('cancelling a dialog opened from a focused menu item returns to the trigger', async () => {
+  let result;
+  menuUnder(anchor, [{ label: 'Rename…', action() {
+    result = showModal(() => el('div', {}, el('h2', {}, 'Rename'), el('input')));
+  } }], { focus: true });
+  document.activeElement.click();
+  const dialog = document.querySelector('dialog');
+  assert.ok(dialog.contains(document.activeElement));
+  dialog.dispatchEvent(new window.Event('cancel', { cancelable: true }));
+  assert.equal(await result, null);
   assert.equal(document.activeElement, anchor);
 });
 

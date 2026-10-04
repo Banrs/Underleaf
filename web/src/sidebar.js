@@ -5,7 +5,7 @@
 import { api } from './api.js';
 import { el, toast, promptModal, confirmModal, contextMenu, showModal, dialogShell } from './dom.js';
 import { icon } from './icons.js';
-import { state, IMAGE_FILE, sectionIndexAt } from './state.js';
+import { state, IMAGE_FILE, TEX_FILE, sectionIndexAt } from './state.js';
 import { prefs } from './prefs.js';
 import { accelLabel } from './commands.js';
 import { trashName, deleteLabel } from './bridge.js';
@@ -183,54 +183,40 @@ export function updateTreeSelection() {
 }
 
 function renderNode(node, level, origin) {
-  if (node.type === 'dir') {
-    const isOpen = openDirs.has(node.path);
-    const row = el('button', {
-      class: 'tree-row',
-      role: 'treeitem',
-      'aria-expanded': String(isOpen),
-      'aria-level': String(level),
-      dataset: { path: node.path },
-      oncontextmenu: (e) => rowMenu(e, node, origin),
-      onclick: () => {
-        if (!active(origin)) return;
-        if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
-        persistOpenDirs();
-        // Rebuild only this folder's subtree.
-        const fresh = renderNode(node, level, origin);
-        group.replaceWith(fresh);
-        syncRovingFocus();
-        // The row was replaced, so keyboard focus needs a new home.
-        fresh.firstChild.focus();
-      },
-      onkeydown: (e) => { if (active(origin)) treeKeys(e); },
-    },
-      el('span', { class: 'twisty' }, icon('chevron')),
-      el('span', { class: 'row-icon' }, icon(isOpen ? 'folder-open' : 'folder')),
-      el('span', { class: 'row-label' }, node.name),
-    );
-    const group = el('div', { class: 'tree-group' }, row,
-      el('div', { class: 'tree-children', role: 'group' },
-        isOpen ? node.children.map((c) => renderNode(c, level + 1, origin)) : []));
-    return group;
-  }
-
-  const isMain = node.path === state.settings?.mainFile;
-  return el('button', {
+  const directory = node.type === 'dir';
+  const isOpen = directory && openDirs.has(node.path);
+  const row = el('button', {
     class: 'tree-row',
     role: 'treeitem',
+    'aria-expanded': directory ? String(isOpen) : undefined,
     'aria-level': String(level),
-    'aria-current': node.path === state.openPath ? 'true' : undefined,
+    'aria-current': !directory && node.path === state.openPath ? 'true' : undefined,
     dataset: { path: node.path },
-    onclick: () => { if (active(origin)) origin.openFile(node.path); },
+    onclick: () => {
+      if (!active(origin)) return;
+      if (!directory) return origin.openFile(node.path);
+      if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
+      persistOpenDirs();
+      // Rebuild only this folder's subtree and put keyboard focus on its new row.
+      const fresh = renderNode(node, level, origin);
+      group.replaceWith(fresh);
+      syncRovingFocus();
+      fresh.firstChild.focus();
+    },
     oncontextmenu: (e) => rowMenu(e, node, origin),
     onkeydown: (e) => { if (active(origin)) treeKeys(e); },
   },
-    el('span', { class: 'twisty' }),
-    el('span', { class: 'row-icon' }, fileIcon(node.name)),
+    el('span', { class: 'twisty' }, directory ? icon('chevron') : null),
+    el('span', { class: 'row-icon' }, directory ? icon(isOpen ? 'folder-open' : 'folder') : fileIcon(node.name)),
     el('span', { class: 'row-label' }, node.name),
-    isMain ? el('span', { class: 'row-badge', title: 'Main file', 'aria-label': 'Main file' }, icon('star')) : null,
+    !directory && node.path === state.settings?.mainFile
+      ? el('span', { class: 'row-badge', title: 'Main file', 'aria-label': 'Main file' }, icon('star')) : null,
   );
+  if (!directory) return row;
+  const group = el('div', { class: 'tree-group' }, row,
+    el('div', { class: 'tree-children', role: 'group' },
+      isOpen ? node.children.map((c) => renderNode(c, level + 1, origin)) : []));
+  return group;
 }
 
 // Roving tabindex: the tree is one tab stop and arrows move within it, which is
@@ -263,7 +249,7 @@ function rowMenu(e, node, origin) {
   if (!active(origin)) return;
   const { projectId } = origin;
   const items = [];
-  if (node.type === 'file' && node.path.endsWith('.tex') && node.path !== state.settings?.mainFile) {
+  if (node.type === 'file' && TEX_FILE.test(node.path) && node.path !== state.settings?.mainFile) {
     items.push({
       label: 'Set as Main File',
       action: async () => {

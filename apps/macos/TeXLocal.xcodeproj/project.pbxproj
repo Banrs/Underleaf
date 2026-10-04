@@ -32,17 +32,17 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TeXLocalTests;
+			sourceTree = "<group>";
+		};
 		828D4CA0BCC36654846EAE79 /* TeXLocal */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A1C0FFEE0A55E7500000D001 /* Exceptions for "TeXLocal" folder in "TeXLocal" target */,
 			);
 			path = TeXLocal;
-			sourceTree = "<group>";
-		};
-		6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = TeXLocalTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -404,7 +404,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.2.0;
-				OTHER_LDFLAGS = "$(SRCROOT)/../../target/release/libtexlocal_ffi.a -liconv";
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/release/libtexlocal_ffi.a",
+					"-liconv",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;
@@ -435,7 +438,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.2.0;
-				OTHER_LDFLAGS = "$(SRCROOT)/../../target/debug/libtexlocal_ffi.a -liconv";
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/../../target/debug/libtexlocal_ffi.a",
+					"-liconv",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;

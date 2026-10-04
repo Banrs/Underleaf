@@ -6,11 +6,11 @@ import { $, el, toast, menuUnder, promptModal } from './dom.js';
 import { icon } from './icons.js';
 import { createEditor } from './editor.js';
 import { PdfViewer } from './pdfview.js';
-import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE } from './state.js';
+import { state, resetProjectState, analyzeDoc, IMAGE_FILE, TEXT_FILE, TEX_FILE } from './state.js';
 import { prefs, UI_SCALES, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { registerCommands, refreshCommands, tooltip, runCommand, getCommand, commandTitle, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
-import { chooseTexFolder } from './texfolder.js';
+import { chooseTexFolder, texInstallHint } from './texfolder.js';
 import { createSaveQueue, flushUntilStable } from './savequeue.js';
 import {
   buildSidebar, renderTree, updateTreeSelection, renderOutline, updateOutlineSelection, focusSearch,
@@ -147,7 +147,6 @@ function buildChrome(id) {
     // A file renamed, moved or deleted may be one the document reads in.
     onFilesChanged: () => { refreshSymbols(); refreshAnalysis(); },
     onMainFileChange: () => { refreshAnalysis(); compile({ auto: true }); },
-    onOpenFileGone: () => showEditorPlaceholder('Select a file to edit'),
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
       if (!(await flushCurrent())) throw new Error('The active document changed while saving');
@@ -668,7 +667,7 @@ function scheduleDocMeta() {
 }
 
 function updateDocMeta() {
-  const show = !!(state.editor && state.openPath?.endsWith('.tex'));
+  const show = !!(state.editor && TEX_FILE.test(state.openPath));
   const { outline, lines } = show ? analyzeDoc(state.editor.scanLines) : { outline: [] };
   state.outline = outline;
   renderOutline();
@@ -685,7 +684,7 @@ function updateDocMeta() {
 async function refreshAnalysis() {
   const { projectId, openPath: path } = state;
   const generation = workspaceGeneration;
-  const analysis = path?.endsWith('.tex') ? await api.analyze(projectId, path).catch(() => null) : null;
+  const analysis = TEX_FILE.test(path) ? await api.analyze(projectId, path).catch(() => null) : null;
   if (generation !== workspaceGeneration || state.openPath !== path) return;
   state.projectOutline = analysis?.outline ?? [];
   state.words = analysis?.words ?? 0;
@@ -878,7 +877,7 @@ function showPdfEmpty() {
     el('span', { class: 'pdf-empty-icon' }, icon('doc')),
     el('p', {}, state.tex.available
       ? 'No PDF yet. Compile to preview your document.'
-      : 'Install TeX Live to enable compilation.'),
+      : texInstallHint),
     state.tex.available ? null : el('button', { class: 'btn small', onclick: chooseTex }, 'Choose TeX folder…'),
   ));
 }
@@ -917,10 +916,14 @@ async function inverseSync() {
   const generation = workspaceGeneration;
   const { projectId, pdf: viewer } = state;
   const doc = viewer?.doc;
-  const loc = await viewer?.currentLocation();
-  if (!currentPdf(generation, projectId, viewer) || viewer?.doc !== doc) return;
-  if (!loc) { toast('Compile first to produce a PDF'); return; }
-  await inverseJump(projectId, viewer, generation, doc, loc, 'No source location found for this view');
+  const current = () => currentPdf(generation, projectId, viewer) && viewer?.doc === doc;
+  const failure = 'No source location found for this view';
+  try {
+    const loc = await viewer?.currentLocation();
+    if (!current()) return;
+    if (!loc) { toast(doc ? failure : 'Compile first to produce a PDF'); return; }
+    await inverseJump(projectId, viewer, generation, doc, loc, failure);
+  } catch { if (current()) toast(failure); }
 }
 
 // ---------- panes ----------

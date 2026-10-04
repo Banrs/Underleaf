@@ -142,18 +142,12 @@
     }
   },
   {
-    "name": "a heading inside a comment later on the line still counts",
-    "text": "Words % \\section{Trailing}",
+    "name": "a heading after an inline comment is skipped",
+    "text": "Words % \\section{Trailing}\n\\input{chapter% explanation}\\section{Hidden}",
     "expected": {
-      "outline": [
-        {
-          "depth": 2,
-          "title": "Trailing",
-          "line": 1
-        }
-      ],
-      "words": 1,
-      "lines": 1
+      "outline": [],
+      "words": 2,
+      "lines": 2
     }
   },
   {
@@ -334,6 +328,31 @@
       ],
       "words": 11,
       "lines": 3
+    }
+  },
+  {
+    "name": "literal environments, inline verb and escaped commands do not add headings",
+    "text": "\\begin{verbatim}\n\\section{Hidden}\n\\end{verbatim}\\section{Visible}\n\\begin{comment}\n\\subsection{Hidden}\n\\end{comment}\n\\verb|\\section{Hidden}| \\section{After}\n\\\\section{Escaped}\n\\% \\section{Percent}\n\\begin{minted}{tex}\n\\chapter{Hidden}\n\\end{minted}",
+    "expected": {
+      "outline": [
+        {
+          "depth": 2,
+          "title": "Visible",
+          "line": 3
+        },
+        {
+          "depth": 2,
+          "title": "After",
+          "line": 7
+        },
+        {
+          "depth": 2,
+          "title": "Percent",
+          "line": 9
+        }
+      ],
+      "words": 15,
+      "lines": 12
     }
   }
 ]

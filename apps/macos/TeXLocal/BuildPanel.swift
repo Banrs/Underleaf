@@ -5,11 +5,10 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log"
 }
 
-/// Filtering is shared by the native accessory header and the scrolling content.
-@Observable
-final class BuildPanelState {
+@Observable final class BuildPanelState {
     var filter = ""
     var showWarnings = true
+    var isPresented = false
 }
 
 /// The build panel below the editors: the build's issues, or its whole log.
@@ -26,27 +25,7 @@ struct BuildPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Up under the header, which is the clear bar, but not down under the status bar:
-        // the panel rises from the bar's top edge rather than through it from the window's foot.
-        .background(Color(nsColor: .textBackgroundColor), ignoresSafeAreaEdges: .top)
-        .mask { Rectangle().ignoresSafeArea(.container, edges: .top) }
-        // The header in the panel's own content, so it rides the pane's top edge as the split
-        // animates, and the columns' foot follows it.
-        .safeAreaBar(edge: .top, spacing: 0) {
-            BuildPanelHeader(project: project, state: state)
-                .padding(.horizontal, ColumnMetrics.barSideInset)
-                .padding(.vertical, (ColumnMetrics.panelHeader - BuildPanelHeader.height) / 2)
-        }
-    }
-
-    /// The issues showing, each by its place in the build's errors then warnings, so
-    /// a row keeps its identity as the filter and Warnings change what shows (LaTeX
-    /// repeats identical warnings).
-    private var items: [(offset: Int, element: LogItem)] {
-        let errors = project.result?.errors ?? []
-        return (errors + (project.result?.warnings ?? [])).enumerated().filter { offset, item in
-            (state.showWarnings || offset < errors.count) && matches(item)
-        }
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func matches(_ item: LogItem) -> Bool {
@@ -57,6 +36,9 @@ struct BuildPanel: View {
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
+        // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
+        let all = (project.result?.errors ?? []) + (state.showWarnings ? project.result?.warnings ?? [] : [])
+        let items = all.enumerated().filter { matches($0.element) }
         if !items.isEmpty {
             IssueList(items: items, project: project)
         } else if !state.showWarnings, project.result?.warnings.contains(where: matches) == true {
@@ -75,7 +57,6 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            // Between the bars: the native scroll view's insets don't see the header.
             LogTextView(text: text)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
@@ -84,13 +65,14 @@ struct BuildPanel: View {
     }
 }
 
-/// Controls in the panel's header, a clear bar over its scrolling content (`BuildPanel`).
+/// Controls on the editors' bottom accessory, above the build panel's opaque content.
 /// The log has the text view's own find bar, so only the issues have a filter.
 struct BuildPanelHeader: View {
     /// One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
     static let height: CGFloat = 24
     @Bindable var project: ProjectModel
-    @Bindable var state: BuildPanelState
+    @Binding var filter: String
+    @Binding var showWarnings: Bool
 
     var body: some View {
         HStack {
@@ -104,13 +86,13 @@ struct BuildPanelHeader: View {
             Spacer(minLength: 0)
             if project.panelTab == .issues {
                 if project.warningCount > 0 {
-                    Toggle(isOn: $state.showWarnings) {
+                    Toggle(isOn: $showWarnings) {
                         Label("Warnings", systemImage: "exclamationmark.triangle")
                     }
                     .toggleStyle(.button)
-                    .help(state.showWarnings ? "Hide Warnings" : "Show Warnings")
+                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                SearchField(text: $state.filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(minWidth: 100, maxWidth: 180)
             } else {
                 Button("Copy Log", systemImage: "document.on.document") {
@@ -125,6 +107,9 @@ struct BuildPanelHeader: View {
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
+        .padding(.horizontal, ColumnMetrics.barSideInset)
+        .padding(.vertical, 9)
+        .background(.bar)
     }
 }
 

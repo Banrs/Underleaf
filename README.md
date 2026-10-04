@@ -34,9 +34,9 @@ You also need a TeX distribution — see [Requirements](#requirements).
   also opens a folder, a `.zip` or a `.tex` from anywhere as a new project
 - **File tree** with folders, rename/delete, drag-and-drop import (a name that's
   taken asks Replace / Keep Both / Stop), ZIP export
-- **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s. Syntax is coloured in system colours on the Mac (CodeMirror 6 in the browser). The Mac app uses the stock find bar: ⌘F to find, ⌥⌘F to find and replace
+- **LaTeX editor**: autocomplete for ~140 commands and ~40 environments, `\cite{}` completion from your `.bib` files and `\ref{}` completion from your `\label{}`s. The Mac offers System, Overleaf and TeXstudio syntax colours; the browser uses CodeMirror 6. The Mac app uses the stock find bar: ⌘F to find, ⌥⌘F to find and replace
 - **Live equation preview**: a KaTeX popup at the cursor inside `$…$`, `\[…\]`, or an equation/align/cases environment
-- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and + for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar
+- **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and an Insert menu for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar
 - **Web source bar**: undo/redo, text styles, math, symbols and insertions, with a project › file › section location row
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
 - **File outline** in the sidebar that follows the section on screen, plus word and line counts
@@ -50,7 +50,7 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **SyncTeX both ways**
 - **One command model** for menus, shortcuts and toolbar buttons (titles, accelerators, enabled state)
 - **Deletes go to the Trash** (Recycle Bin on Windows)
-- **Settings** (`⌘,`): the Mac app has editor font size, PDF paper, auto-compile and the TeX folder (word count is in View); the browser version also has theme and syntax colours. Per project, the TeX engine and Stop on first error
+- **Settings** (`⌘,`): the Mac app has editor font size and syntax colours, PDF paper, auto-compile and the TeX folder (word count is in View); the browser version also has interface appearance and scaling. Per project, the TeX engine and Stop on first error
 
 ## Requirements
 

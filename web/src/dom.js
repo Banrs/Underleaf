@@ -55,7 +55,7 @@ export function showModal(build) {
   return new Promise((resolve) => {
     // Menus share #modal-root; replacing its children without dismissing would
     // orphan the menu's window-level listeners.
-    openMenu?.dismiss({ restore: false });
+    openMenu?.dismiss();
     // So would replacing a dialog a native-menu shortcut opened this one over:
     // its caller would never resume, and focus would return to the detached
     // dialog. Dismiss it first.
@@ -180,7 +180,7 @@ export function contextMenu(x, y, items, { anchor, focus = false, onArrow } = {}
         role: checkable ? 'menuitemcheckbox' : 'menuitem',
         'aria-checked': checkable ? String(!!it.checked) : null,
         disabled: it.disabled ? '' : null,
-        onclick: () => { dismiss({ restore: false }); it.action(); },
+        onclick: () => { dismiss(); it.action(); },
       },
       el('span', { class: 'menu-check', 'aria-hidden': 'true' }, it.checked ? '✓' : ''),
       el('span', { class: 'menu-label' }, it.label),

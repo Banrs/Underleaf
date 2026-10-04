@@ -42,10 +42,13 @@ export function resetProjectState() {
 export const IMAGE_FILE = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
 // The files the editor opens as text.
 export const TEXT_FILE = /\.(tex|bib|cls|sty|bst|txt|md|csv|tsv|json|yaml|yml|lua|py|r|dat|def|clo|tikz)$/i;
+export const TEX_FILE = /\.tex$/i;
 
 // ---------- document outline ----------
 
-const SECTION_RE = /\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{/;
+// Consume every control sequence so escaped commands cannot become headings.
+// The core's scanner also follows inputs, with the same literal boundaries.
+const OUTLINE_TOKEN = /%|\\(?:(?<heading>part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{|begin\s*\{(?<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}|verb\*?(?<delimiter>[^A-Za-z])|[A-Za-z]+|.)/;
 const SECTION_DEPTH = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5 };
 
 // The brace group opened just before `rest`, up to its matching `}`, so a
@@ -85,13 +88,33 @@ function plainTitle(title) {
 // the editor so the text is never copied whole.
 export function analyzeDoc(scanLines) {
   const outline = [];
-  let lines = 0;
+  let lines = 0, literal = null;
   scanLines((text, line) => {
     lines = line;
-    if (/^\s*%/.test(text)) return;
-    const m = text.match(SECTION_RE);
-    const title = m && braceGroup(text.slice(m.index + m[0].length));
-    if (title != null) outline.push({ depth: SECTION_DEPTH[m[1]], title: plainTitle(title) || '(untitled)', line });
+    let headingOnLine = false;
+    for (;;) {
+      if (literal) {
+        const end = text.indexOf(literal);
+        if (end < 0) return;
+        text = text.slice(end + literal.length);
+        literal = null;
+      }
+      const token = text.match(OUTLINE_TOKEN);
+      if (!token || token[0] === '%') return;
+      text = text.slice(token.index + token[0].length);
+      const { heading, literal: environment, delimiter } = token.groups;
+      if (heading && !headingOnLine) {
+        headingOnLine = true;
+        const title = braceGroup(text);
+        if (title != null) outline.push({ depth: SECTION_DEPTH[heading], title: plainTitle(title) || '(untitled)', line });
+      } else if (environment) {
+        literal = `\\end{${environment}}`;
+      } else if (delimiter) {
+        const end = text.indexOf(delimiter);
+        if (end < 0) return;
+        text = text.slice(end + delimiter.length);
+      }
+    }
   });
   return { outline, lines };
 }

@@ -7,22 +7,9 @@ import { icon } from './icons.js';
 import { state } from './state.js';
 import { registerCommands, tooltip, menuBar, SHORTCUTS } from './commands.js';
 import { openSettings } from './settings.js';
-import { chooseTexFolder } from './texfolder.js';
+import { chooseTexFolder, texInstallHint } from './texfolder.js';
 
 let dispose = null;
-
-// The remediation half of the "No TeX distribution found" banner, per platform.
-function texInstallHint() {
-  if (platform === 'darwin') {
-    return ['Compilation is disabled until you install one — ',
-      el('code', {}, 'brew install --cask mactex-no-gui'), ', then restart TeXLocal.'];
-  }
-  if (platform === 'win32') {
-    return ['Compilation is disabled until you install MiKTeX (miktex.org) or TeX Live (tug.org/texlive), then restart TeXLocal.'];
-  }
-  return ['Compilation is disabled until you install TeX Live — e.g. ',
-    el('code', {}, 'sudo apt install texlive'), ' — then restart TeXLocal.'];
-}
 
 function relativeDate(ms) {
   const s = (Date.now() - ms) / 1000;
@@ -186,7 +173,7 @@ export async function renderHome() {
       el('span', { class: 'notice-icon' }, icon('warning')),
       el('span', {},
         el('strong', {}, 'No TeX distribution found. '),
-        ...texInstallHint(), ' ',
+        texInstallHint, ' ',
         el('button', {
           class: 'notice-link',
           onclick: async () => { if (await chooseTexFolder()) reload(); },

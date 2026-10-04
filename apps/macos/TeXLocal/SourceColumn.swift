@@ -10,7 +10,7 @@ struct SourceColumn: View {
         // Keep the editor under previews so it retains its text and scroll position.
         ZStack {
             // AppKit draws the edge effect under the bars and up to the window edge.
-            EditorView(editor: project.editor, shown: project.editsText)
+            EditorView(editor: project.editor, shown: project.editsText, fontSize: fontSize, syntaxTheme: syntaxTheme)
                 .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
             if project.openPath == nil {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
@@ -21,8 +21,6 @@ struct SourceColumn: View {
                 FilePreview(url: url)
             }
         }
-        .onChange(of: fontSize, initial: true) { _, size in project.editor.setFontSize(size) }
-        .onChange(of: syntaxTheme, initial: true) { _, theme in project.editor.setSyntaxTheme(theme) }
         .modifier(WorkspaceModals(project: project))
         .windowModals()
     }

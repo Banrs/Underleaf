@@ -24,23 +24,17 @@ const LEVELS: [&str; 6] = [
     "paragraph",
 ];
 
-static SECTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?[{JS_SPACE}]*(?:\[[^\]]*\])?[{JS_SPACE}]*\{{"
-    ))
-    .unwrap()
-});
 static COMMENT_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!(r"^[{JS_SPACE}]*%")).unwrap());
 // JavaScript's `.` stops at line terminators, so a `%` with U+2028 or U+2029
 // after it starts no comment.
 static COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(^|[^\\])%[^\n\r\x{2028}\x{2029}]*$").unwrap());
-// Input commands and the tokens that can make them literal text. Consume other
-// control sequences too, so the second slash of \\input cannot start an input.
-static INPUT: LazyLock<Regex> = LazyLock::new(|| {
+// Headings, inputs and their literal boundaries in reading order. Consume other
+// control sequences too, so an escaped slash cannot start a command.
+static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"%|\\(?:(?:input|include|subfile)[{JS_SPACE}]*\{{(?P<braced>[^{{}}]+)\}}|input[{JS_SPACE}]+(?P<bare>[^{{}}\\%{JS_SPACE}]+)|begin[{JS_SPACE}]*\{{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
+        r"%|\\(?:(?P<heading>part|chapter|section|subsection|subsubsection|paragraph)\*?[{JS_SPACE}]*(?:\[[^\]]*\])?[{JS_SPACE}]*\{{|(?:input|include|subfile)[{JS_SPACE}]*\{{(?P<braced>[^{{}}%]+)\}}|input[{JS_SPACE}]+(?P<bare>[^{{}}\\%{JS_SPACE}]+)|begin[{JS_SPACE}]*\{{(?P<literal>verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}}|verb\*?(?P<delimiter>[^A-Za-z])|[A-Za-z]+|.)"
     ))
     .unwrap()
 });
@@ -131,21 +125,11 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
         .flat_map(|l| l.strip_suffix('\r').unwrap_or(l).split('\r'))
     {
         lines += 1;
-        if COMMENT_LINE.is_match(line) {
-            continue;
+        if !COMMENT_LINE.is_match(line) {
+            into.words += words(line);
         }
-        if let Some(m) = SECTION.captures(line) {
-            if let Some(title) = brace_group(&line[m.get(0).unwrap().end()..]) {
-                into.outline.push(Heading {
-                    depth: LEVELS.iter().position(|l| *l == &m[1]).unwrap_or(2),
-                    title: plain_title(title),
-                    line: lines,
-                    file: Some(file.clone()),
-                });
-            }
-        }
-        into.words += words(line);
         let mut code = line;
+        let mut heading_on_line = false;
         loop {
             if let Some(end) = literal.as_ref() {
                 let Some((_, rest)) = code.split_once(end.as_str()) else {
@@ -154,7 +138,7 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
                 code = rest;
                 literal = None;
             }
-            let Some(m) = INPUT.captures(code) else {
+            let Some(m) = TOKEN.captures(code) else {
                 break;
             };
             let token = m.get(0).unwrap();
@@ -162,7 +146,22 @@ fn read(root: &Path, file: &str, open: &str, seen: &mut HashSet<String>, into: &
                 break;
             }
             code = &code[token.end()..];
-            if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
+            if let Some(heading) = m.name("heading") {
+                if !heading_on_line {
+                    heading_on_line = true;
+                    if let Some(title) = brace_group(code) {
+                        into.outline.push(Heading {
+                            depth: LEVELS
+                                .iter()
+                                .position(|l| *l == heading.as_str())
+                                .unwrap_or(2),
+                            title: plain_title(title),
+                            line: lines,
+                            file: Some(file.clone()),
+                        });
+                    }
+                }
+            } else if let Some(name) = m.name("braced").or_else(|| m.name("bare")) {
                 let name = name.as_str().trim();
                 let tex = format!("{}.tex", name.strip_suffix(".tex").unwrap_or(name));
                 // TeX tries name.tex before the name as written.

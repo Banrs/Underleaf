@@ -105,9 +105,13 @@ struct FormatPanel: View {
     }
 
     private func toggle(_ command: MenuCommand, symbol: String, on: Bool) -> some View {
-        StyleToggle(title: command.title, symbol: symbol, isOn: on) {
+        Toggle(command.title, systemImage: symbol, isOn: Binding(get: { on }, set: { _ in
             app.perform(command, on: project)
-        }
+        }))
+        .toggleStyle(.button)
+        .buttonStyle(.accessoryBar)
+        .labelStyle(.iconOnly)
+        .font(.system(size: 19))
         .frame(width: 24, height: 24)
         .help(command.title)
     }
@@ -208,47 +212,5 @@ struct FormatPanel: View {
             let font = Font(fonts[level] ?? .systemFont(ofSize: NSFont.systemFontSize))
             return shapes[level] == .smallCaps ? font.smallCaps() : font
         }
-    }
-}
-
-/// A style's toggle, as Notes' Aa has: AppKit's on/off button, filled with the accent while on,
-/// its bezel showing under the pointer.
-struct StyleToggle: NSViewRepresentable {
-    let title: String
-    let symbol: String
-    let isOn: Bool
-    let action: () -> Void
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: title) ?? NSImage(),
-                              target: context.coordinator, action: #selector(Coordinator.toggle))
-        button.setButtonType(.pushOnPushOff)
-        button.bezelStyle = .accessoryBar
-        button.showsBorderOnlyWhileMouseInside = true
-        button.bezelColor = .controlAccentColor
-        // Notes' size: a 13.5-point capital in a 24-point square.
-        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-        // At that size, not shrunk to the bezel's insets.
-        button.imageScaling = .scaleNone
-        button.setAccessibilityLabel(title)
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) {
-        context.coordinator.action = action
-        button.state = isOn ? .on : .off
-    }
-
-    /// The frame it's given: AppKit's own is wider than Notes' square.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions(by: nsView.intrinsicContentSize)
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
-
-    final class Coordinator: NSObject {
-        var action: () -> Void
-        init(action: @escaping () -> Void) { self.action = action }
-        @objc func toggle() { action() }
     }
 }

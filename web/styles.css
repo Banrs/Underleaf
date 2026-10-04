@@ -542,8 +542,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .editor-pane { flex: 1; position: relative; min-width: 180px; background: var(--bg-content); overflow: hidden; }
 .pdf-pane { flex: 1; position: relative; min-width: 220px; background: var(--bg-recessed); overflow: hidden; }
-.workspace.pdf-collapsed > .pdf-pane,
-.workspace.pdf-collapsed > .divider-sync { display: none; }
 
 /* ---------- sidebar ---------- */
 
@@ -558,9 +556,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Native vibrancy already renders behind the transparent window on macOS, so
    there the sidebar only needs to stay out of the way. */
 .mac .sidebar { background: transparent; }
-
-.sidebar.collapsed { width: 0 !important; opacity: 0; }   /* and inert (workspace-layout.js) */
-.sidebar.collapsed + .divider { display: none; }
 
 /* Section headers share the existing 4px rhythm and 28px action targets. */
 .section-header {

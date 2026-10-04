@@ -15,8 +15,30 @@ struct StatusBar: View {
     private static let itemSpacing = gap + 1 + gap
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
+    let panelState: BuildPanelState
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            content(showsCounts: true).labelStyle(.titleAndIcon)
+            content(showsCounts: false).labelStyle(.iconOnly)
+        }
+        .font(.subheadline)
+        .monospacedDigit()
+        .controlSize(.small)
+        .lineLimit(1)
+        .padding(.leading, Self.leading)
+        .padding(.trailing, Self.trailing)
+        .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
+        .background {
+            if panelState.isPresented { Color(nsColor: .textBackgroundColor) }
+        }
+        .buttonStyle(.borderless)
+        .contextMenu {
+            Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
+        }
+    }
+
+    private func content(showsCounts: Bool) -> some View {
         HStack(spacing: Self.gap) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
@@ -27,7 +49,7 @@ struct StatusBar: View {
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             Spacer(minLength: 0)
-            let counts = project.editsText && app.showWordCount ? project.counts : nil
+            let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
             if project.editsText || pages {
                 HStack(spacing: Self.itemSpacing) {
@@ -51,6 +73,7 @@ struct StatusBar: View {
                         .help("Go to Page")
                     }
                 }
+                .fixedSize()
                 // Xcode's bottom bars: a 1 × 12 pt hairline before the panel toggle.
                 Divider().frame(height: 12)
             }
@@ -64,17 +87,6 @@ struct StatusBar: View {
             .padding(.horizontal, -3)
             .help(app.title(.viewToggleLogs, on: project))
         }
-        .font(.subheadline)
-        .monospacedDigit()
-        .controlSize(.small)
-        .lineLimit(1)
-        .padding(.leading, Self.leading)
-        .padding(.trailing, Self.trailing)
-        .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .leading)
-        .buttonStyle(.borderless)
-        .contextMenu {
-            Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
-        }
     }
 
     /// The PDF shown isn't the source's: edits since its build, or a failed build after it.
@@ -83,14 +95,12 @@ struct StatusBar: View {
         if project.showsLastSuccessfulBuild {
             Button { project.showBuildPanel() } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
-                    .labelStyle(.titleAndIcon)
                     .hitTarget()
             }
             .help("The latest build failed; this is the last one that succeeded. Show Issues")
         } else if project.pdfOutdated {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("Preview Out of Date", systemImage: "arrow.clockwise")
-                    .labelStyle(.titleAndIcon)
                     .hitTarget()
             }
             .help("The preview doesn’t reflect the current source. Compile")

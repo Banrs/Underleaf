@@ -350,9 +350,9 @@ struct OutlineList: View {
         // The current heading is the selection; choosing one, by click or arrow
         // key, scrolls the source to it and leaves the keyboard where it was.
         let selection = Binding<Int?>(get: { chosen ?? current }, set: { id in
-            guard let id, id != current, let item = outline.first(where: { $0.id == id }) else { return }
+            guard let id, id != current, outline.indices.contains(id) else { return }
             chosen = id
-            project.reveal(item)
+            project.reveal(outline[id])
         })
         ScrollViewReader { proxy in
             List(selection: selection) {
@@ -378,7 +378,8 @@ struct OutlineList: View {
             }
             // Return or a double-click goes into the source there, as in the search results.
             .contextMenu(forSelectionType: Int.self) { _ in } primaryAction: { ids in
-                guard let item = outline.first(where: { $0.id == ids.first }) else { return }
+                guard let id = ids.first, outline.indices.contains(id) else { return }
+                let item = outline[id]
                 Task { await project.open(item.file, line: item.line, atTop: true, focus: true) }
             }
             .onChange(of: project.topHeading) { line = project.topLine }

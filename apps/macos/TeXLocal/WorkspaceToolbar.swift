@@ -164,17 +164,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
         // Plain buttons and their overflow copies validate through their targets.
         // Other controls take their state from the models (`configure`).
-        for item in Self.withSubitems(item)
-        where (item.target !== self && ![.undo, .redo].contains(item.itemIdentifier)) || item.view != nil {
+        if (item.target !== self && ![.undo, .redo].contains(item.itemIdentifier)) || item.view != nil {
             item.autovalidates = false
         }
-        if flag { Self.withSubitems(item).forEach { configure($0, state) } }
+        if flag { configure(item, state) }
         return item
-    }
-
-    /// An item and, for a group, its items, which the toolbar doesn't list.
-    private static func withSubitems(_ item: NSToolbarItem) -> [NSToolbarItem] {
-        [item] + ((item as? NSToolbarItemGroup)?.subitems ?? [])
     }
 
     private func symbol(_ name: String, _ description: String) -> NSImage? {
@@ -293,7 +287,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             MainActor.assumeIsolated { self?.watch() }
         }
         guard state != applied else { return }
-        for item in toolbar.items.flatMap(Self.withSubitems) { configure(item, state, from: applied) }
+        for item in toolbar.items { configure(item, state, from: applied) }
         applied = state
     }
 

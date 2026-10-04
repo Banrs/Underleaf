@@ -7,7 +7,7 @@ import { $, el, toast, showModal, nextId } from './dom.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { prefs, FONT_SIZES, UI_SCALES, applyAppearance } from './prefs.js';
-import { chooseTexFolder } from './texfolder.js';
+import { chooseTexFolder, texInstallHint } from './texfolder.js';
 import { bridge } from './bridge.js';
 
 // A labelled row: title, optional hint, trailing control. The control is given
@@ -140,7 +140,7 @@ function texGroup(options, close) {
   let hint;
   if (tex.texDir) hint = tex.available ? `Using ${tex.texDir}` : `latexmk in ${tex.texDir} didn’t run`;
   else if (tex.available) hint = tex.found ? `Found automatically in ${tex.found}` : 'Found automatically';
-  else hint = 'Install TeX Live or MiKTeX, or choose the folder it’s in';
+  else hint = texInstallHint;
 
   const changed = (status) => {
     state.tex = status;

@@ -170,13 +170,14 @@ struct SourceEditorTests {
     /// A line revealed far down is at the top exactly, and stays there as the column
     /// narrows: TextKit 2 estimates what's above it, and the width changes that. The
     /// lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
-    @Test func aRevealedLineStaysAtTheTop() {
+    @Test(arguments: [false, true]) func aRevealedLineStaysAtTheTop(syntax: Bool) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
                               backing: .buffered, defer: false)
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
-        open((1...6000).map { "Line \($0) " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
+        open((1...6000).map { (syntax ? "\\section{Line \($0)} " : "Line \($0) ")
+            + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         /// From the top of what shows to the line's paragraph.
         func top(_ line: Int) -> CGFloat? {
             let clip = editor.scrollView.contentView
@@ -185,9 +186,9 @@ struct SourceEditorTests {
                 .map { $0.layoutFragmentFrame.minY + text.textContainerOrigin.y - clip.bounds.minY - editor.scrollView.contentInsets.top }
         }
         editor.reveal(line: 5000, atTop: true, focus: false)
-        #expect(top(5000) == 0)
+        #expect(top(5000) == 0, "Actual top: \(String(describing: top(5000)))")
         editor.scrollView.setFrameSize(NSSize(width: 350, height: 400))
-        #expect(top(5000) == 0)
+        #expect(top(5000) == 0, "Actual top: \(String(describing: top(5000)))")
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
@@ -445,7 +446,10 @@ struct SourceEditorTests {
     /// The colour the editor draws `word` in, once laid out.
     private func colour(of word: String) throws -> NSColor? {
         let manager = try #require(text.textLayoutManager)
+        text.layoutSubtreeIfNeeded()
         manager.textViewportLayoutController.layoutViewport()
+        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
+        text.cacheDisplay(in: text.visibleRect, to: bitmap)
         let range = try #require(text.textRange((text.string as NSString).range(of: word)))
         var colour: NSColor?
         manager.enumerateRenderingAttributes(from: range.location, reverse: false) { _, attributes, _ in
@@ -455,29 +459,45 @@ struct SourceEditorTests {
         return colour
     }
 
+    private func renderedText() throws -> Data {
+        text.layoutSubtreeIfNeeded()
+        let bitmap = try #require(text.bitmapImageRepForCachingDisplay(in: text.visibleRect))
+        text.cacheDisplay(in: text.visibleRect, to: bitmap)
+        return try #require(bitmap.tiffRepresentation)
+    }
+
     /// A new line shows its colours once laid out, without the caret moving again.
-    @Test func newLinesAreColoured() throws {
+    @Test func newLinesAreColoured() async throws {
         // Held to the end: the text lays out in it.
         let window = inWindow()
         defer { withExtendedLifetime(window) {} }
         open("x")
         text.insertText("\n\\section", replacementRange: typed)
-        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
     /// Choosing another colour theme recolours what is open.
-    @Test func aThemeRecoloursTheText() throws {
+    @Test func aThemeRecoloursTheText() async throws {
         // Held to the end: the text lays out in it.
         let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.orderFront(nil)
+        defer { window.close() }
         open("\\section{A} % note")
-        editor.setSyntaxTheme(.texstudio)
-        #expect(try colour(of: "\\section") == SyntaxTheme.texstudio.colours.command)
+        text.syntaxTheme = .texstudio
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.texstudio.colours.command } state: {
+            "TeXstudio: \(String(describing: try? self.colour(of: "\\section")))"
+        }
         #expect(try colour(of: "% note") == SyntaxTheme.texstudio.colours.comment)
-        editor.setSyntaxTheme(.system)
-        #expect(try colour(of: "\\section") == NSColor.systemPink)
-        editor.setSyntaxTheme(.overleaf)
-        #expect(try colour(of: "\\section") == SyntaxTheme.overleaf.colours.command)
+        let before = try renderedText()
+        text.syntaxTheme = .system
+        try await waitUntil { (try? self.colour(of: "\\section")) == NSColor.systemPink } state: {
+            "System: \(String(describing: try? self.colour(of: "\\section")))"
+        }
+        #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
+        text.syntaxTheme = .overleaf
+        try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
     /// A double-click goes to the PDF from the word it selects; a single click only places the caret.

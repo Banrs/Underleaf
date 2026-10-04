@@ -8,6 +8,7 @@
 // transparent text layer is a second pass built from each page's text items.
 
 import * as pdfjs from 'pdfjs-dist';
+import { el } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
@@ -20,7 +21,7 @@ const PINCH_SETTLE_MS = 220;
 // settles into a sharp re-render. Beyond this the preview looks soft.
 const PINCH_MIN = 0.4;
 const PINCH_MAX = 2.5;
-// How long the pane's width must hold still before a resize re-renders.
+// How long the pane's fitted dimension must hold still before a resize re-renders.
 const RESIZE_SETTLE_MS = 150;
 
 // A forward search's flash: a line's height when SyncTeX gives none, in PDF
@@ -64,10 +65,9 @@ export class PdfViewer {
     this.fitMode = 'width';     // 'width' | 'height' when scale is null
     this.seq = 0;
     this._paintPass = 0;        // guards against overlapping lazy-paint passes
-    this.lastFitW = 0;
+    this.lastFitExtent = 0;
     this.rendering = false;
     this._resizing = false;       // true while a pane divider is being dragged
-    this._resizeBaseW = 0;        // scroller width at drag start (for live scale)
     this._find = null;            // { matches, byPage, index, limited }
     this._findSession = new FindSession();
     this._highlightGeneration = 0;
@@ -127,23 +127,19 @@ export class PdfViewer {
       this._pinchTimer = setTimeout(() => this.#settlePinch(g), PINCH_SETTLE_MS);
     }, { passive: false });
 
-    // Re-fit when the pane's width changes: the painted pages stretch at once
-    // (#previewResize), and one render follows once the width holds still,
+    // Re-fit when the chosen dimension changes: the painted pages stretch at once
+    // (#previewResize), and one render follows once the pane holds still,
     // superseding any pass in flight. The stable scrollbar gutter (styles.css)
     // keeps the pages from changing the scroller's width, so nothing loops.
     this.ro = new ResizeObserver(() => {
       if (this.scale !== null || !this.doc || this._resizing || this._pinch) return;
-      const w = this.scrollEl.clientWidth;
+      const extent = this.#fitExtent();
       // Zero is the pane being hidden, not narrowed: there is nothing to fit, and
-      // keeping lastFitW means showing it again at the same width costs nothing.
-      if (!w || (w === this.lastFitW && !this._resizePreview)) return;
+      // keeping the fitted extent means showing it again at the same size costs nothing.
+      if (!extent || (extent === this.lastFitExtent && !this._resizePreview)) return;
       this.#previewResize();
       clearTimeout(this._roTimer);
-      this._roTimer = setTimeout(() => {
-        this._anchor = this._resizePreview?.anchor ?? this._anchor;
-        this._resizePreview = null;
-        void this.render();
-      }, RESIZE_SETTLE_MS);
+      this._roTimer = setTimeout(() => this.#settleResize(), RESIZE_SETTLE_MS);
     });
     this.ro.observe(scrollEl);
 
@@ -234,8 +230,13 @@ export class PdfViewer {
     return clamp(avail, MIN_SCALE, MAX_SCALE);
   }
 
+  #fitExtent() {
+    return this.fitMode === 'height' ? this.scrollEl.clientHeight : this.scrollEl.clientWidth;
+  }
+
   async render(pinchGeneration = null) {
     if (!this.doc) return;
+    clearTimeout(this._roTimer);
     const seq = ++this.seq;
     this.rendering = true;
     this.#cancelPaints();
@@ -267,8 +268,7 @@ export class PdfViewer {
     const prev = this.pages;
 
     // Build the page shells (one scale for the whole pass) without awaiting.
-    const pagesEl = document.createElement('div');
-    pagesEl.className = 'pdf-pages';
+    const pagesEl = el('div', { class: 'pdf-pages' });
     const pages = [];
     let scale = null;
     for (let n = 1; n <= this.doc.numPages; n++) {
@@ -276,24 +276,12 @@ export class PdfViewer {
       scale = scale ?? (this.scale ?? this.#fitScale(page));
       const viewport = page.getViewport({ scale });
 
-      const wrap = document.createElement('div');
-      wrap.className = 'pdf-page-wrap';
-      wrap.dataset.page = n;
-
       // Laid out at full size but with no backing store yet: #paintCanvas
       // allocates the pixels only for the pages that need them.
-      const canvas = document.createElement('canvas');
-      canvas.width = 0;
-      canvas.height = 0;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      wrap.appendChild(canvas);
-
-      const textLayer = document.createElement('div');
-      textLayer.className = 'pdf-text-layer';
-      textLayer.style.width = `${viewport.width}px`;
-      textLayer.style.height = `${viewport.height}px`;
-      wrap.appendChild(textLayer);
+      const size = `width: ${viewport.width}px; height: ${viewport.height}px`;
+      const canvas = el('canvas', { width: 0, height: 0, style: size });
+      const textLayer = el('div', { class: 'pdf-text-layer', style: size });
+      const wrap = el('div', { class: 'pdf-page-wrap', dataset: { page: n } }, canvas, textLayer);
 
       wrap.addEventListener('dblclick', (e) => {
         // The rect is in on-screen units, which include the interface-scale
@@ -336,7 +324,7 @@ export class PdfViewer {
       this.scrollEl.scrollLeft = centerRatioX * this.scrollEl.scrollWidth - this.scrollEl.clientWidth / 2;
       this.scrollEl.scrollTop = ratio * this.scrollEl.scrollHeight;
     }
-    this.lastFitW = this.scrollEl.clientWidth;
+    this.lastFitExtent = this.#fitExtent();
     this.onZoomChange?.(Math.round(scale * 100), this.scale === null ? this.fitMode : null);
     this.#reportPage();
 
@@ -375,19 +363,6 @@ export class PdfViewer {
     p.held = null;
   }
 
-  // Pages within a few viewport heights of the scroll position hold a painted
-  // backing store; the rest are released (19 letter pages at 4x need about
-  // 260MB of canvas).
-  #nearPages() {
-    const top = this.scrollEl.scrollTop - this._padT;
-    const vh = this.scrollEl.clientHeight;
-    const near = [];
-    for (const [i, p] of this.pages.entries()) {
-      if (p.top + p.height >= top - vh * 1.5 && p.top <= top + vh * 2.5) near.push(i);
-    }
-    return near;
-  }
-
   // Stop every in-flight page render. Concurrent render() calls on one page proxy
   // deadlock pdf.js, so a new pass must clear the old one before re-rendering the
   // same pages at a new scale.
@@ -408,10 +383,15 @@ export class PdfViewer {
     // and without this they all keep going, each awaiting pages the reader has
     // already left behind.
     const pass = ++this._paintPass;
-    const near = new Set(this.#nearPages());
+    const top = this.scrollEl.scrollTop - this._padT;
+    const vh = this.scrollEl.clientHeight;
+    const near = [];
 
-    for (const [i, p] of this.pages.entries()) {
-      if (near.has(i)) continue;
+    for (const p of this.pages) {
+      if (p.top + p.height >= top - vh * 1.5 && p.top <= top + vh * 2.5) {
+        near.push(p);
+        continue;
+      }
       this.#dropHeld(p);
       // Stop work already in flight on a page that has gone off-screen, rather
       // than letting it finish into a buffer about to be thrown away. A page
@@ -430,9 +410,8 @@ export class PdfViewer {
     }
 
     const dpr = (window.devicePixelRatio || 1) * uiZoom();
-    for (const i of near) {
+    for (const p of near) {
       if (seq !== this.seq || pass !== this._paintPass) return;
-      const p = this.pages[i];
       // `_failed` stops a page that genuinely can't render from being retried on
       // every scroll; a re-render builds fresh page objects, so it resets there.
       if (p._painted || p._failed) continue;
@@ -827,28 +806,23 @@ export class PdfViewer {
   async #fit(mode) {
     this.scale = null;
     this.fitMode = mode;
-    this.lastFitW = this.scrollEl.clientWidth;
+    this.lastFitExtent = this.#fitExtent();
     await this.render();
   }
 
   // ---------- live pane resize ----------
-  // While a divider is dragged, CSS-scale the rendered pages to track the width
+  // While a divider is dragged, CSS-scale the rendered pages to track the fit
   // and re-render once on release; re-rendering per frame is expensive and
-  // flickers. A fixed zoom does not depend on the pane width.
+  // flickers. A fixed zoom does not depend on the pane size.
 
   beginLiveResize() {
     this._resizing = true;
-    this._resizeBaseW = this.scrollEl.clientWidth || 1;
+    clearTimeout(this._roTimer);
   }
 
   liveResize() {
-    if (!this._resizing || this.scale !== null || !this.pagesEl) return;
-    const w = this.scrollEl.clientWidth;
-    if (!w) return;
-    // Fit-width scale is linear in pane width, so scaling the current render by
-    // the width ratio is a pixel-accurate preview of the settled re-render.
-    this.pagesEl.style.transformOrigin = 'top center';
-    this.pagesEl.style.transform = `scale(${w / this._resizeBaseW})`;
+    if (!this._resizing || this.scale !== null || !this.#fitExtent()) return;
+    this.#previewResize();
   }
 
   endLiveResize() {
@@ -856,7 +830,20 @@ export class PdfViewer {
     this._resizing = false;
     // The preview transform stays until render() swaps the pages, so there is
     // no snap-back flash.
-    if (this.scale === null && this.doc) this.fitWidth();
+    if (this.scale === null && this.doc) return this.#settleResize();
+  }
+
+  #settleResize() {
+    const first = this.pages[0];
+    if (first && this.#fitScale(first.page) === this.currentScale()) {
+      this.pagesEl.style.transform = '';
+      this._resizePreview = null;
+      this.lastFitExtent = this.#fitExtent();
+      return;
+    }
+    this._anchor = this._resizePreview?.anchor ?? this._anchor;
+    this._resizePreview = null;
+    return this.render();
   }
 
   // The same preview for a resize only the observer sees, which also holds the
@@ -865,12 +852,13 @@ export class PdfViewer {
   // fingers, and the settle render restores it as the anchor. Content
   // coordinates, as #toContent; the scroll position is left alone throughout.
   #previewResize() {
+    const first = this.pages[0];
+    if (!first || !this.pagesEl) return;
     if (!this._resizePreview) {
       const anchor = this.#centerAnchor();
       if (!anchor) return;
       this._resizePreview = { anchor, y: this.scrollEl.scrollTop + anchor.viewY };
     }
-    const first = this.pages[0];
     const k = this.#fitScale(first.page) / this.currentScale();
     // The pages keep their layout size, but the pages element tracks the pane,
     // so their centring offset is read live. The page block lands centred, or
@@ -890,9 +878,7 @@ export class PdfViewer {
 
   currentPage() {
     const mid = this.#viewMark();
-    let best = 1;
-    for (const p of this.pages) if (p.top <= mid) best = p.n;
-    return best;
+    return this.pages.findLast((p) => p.top <= mid)?.n ?? 1;
   }
 
   #reportPage() {
@@ -905,14 +891,21 @@ export class PdfViewer {
   // lookup resolves only points on a glyph box, so this takes the first
   // text-layer span at or below the viewport top.
   async currentLocation() {
+    const seq = this.seq;
     const p = this.pages[this.currentPage() - 1];
     if (!p) return null;
     // Text layers are built with the canvas, so a page the reader has only just
     // scrolled to may not have one yet. Build it on demand rather than dropping to
     // the geometric fallback below, which usually lands on whitespace and 404s.
-    if (!p.textLayer.childElementCount) await this.#buildTextLayer(p, this.seq);
+    if (!p.textLayer.childElementCount) {
+      if (!await this.#paintCanvas(p, (window.devicePixelRatio || 1) * uiZoom())) return null;
+      if (seq !== this.seq || !this.pages.includes(p)) return null;
+      if (!await this.#buildTextLayer(p, seq)) return null;
+    }
+    if (seq !== this.seq || !this.pages.includes(p)) return null;
     const scRect = this.scrollEl.getBoundingClientRect();
     const canvasRect = p.canvas.getBoundingClientRect();
+    if (!canvasRect.width || !canvasRect.height) return null;
     const viewTopY = scRect.top + scRect.height * 0.2;
     let target = null;
     for (const span of p.textLayer.children) {
@@ -921,8 +914,8 @@ export class PdfViewer {
       if (r.bottom >= viewTopY) { target = r; break; }
     }
     if (target) {
-      const x = (target.left + target.width / 2 - canvasRect.left) / p.scale;
-      const y = (target.bottom - canvasRect.top) / p.scale;   // baseline
+      const x = (target.left + target.width / 2 - canvasRect.left) / canvasRect.width * p.viewport.width / p.scale;
+      const y = (target.bottom - canvasRect.top) / canvasRect.height * p.viewport.height / p.scale;   // baseline
       return { page: p.n, x: Math.round(x), y: Math.round(y) };
     }
     // No text on this page (e.g. a figure-only page): fall back to a point in

@@ -1,140 +1,115 @@
-# Underleaf: current state
+# Underleaf review handoff — 4 October 2026
 
-One Rust core, two clients. The Mac app (`apps/macos`, shown as TeXLocal) is the
-focus; the browser version (`web/`, served by `crates/texlocal-server`) shares the core.
+## Working branch
 
-## Build, test, install (Mac)
+Work is consolidated on `main`. All 13 other local branches were verified as
+ancestors and pruned; stale remote tracking branches were pruned. Existing detached
+Claude worktrees were left alone. No remote branches were deleted and nothing was
+force-pushed. This handoff accompanies the implementation commit on local `main`.
 
-Needs Xcode 27 (Swift 6, macOS 27 target), Rust stable, and `npm ci` once (the build
-copies KaTeX from `node_modules`).
+## Changes to review
+
+- Native theme changes reach the open editor through its SwiftUI representable.
+  TextKit rendering attributes now supply fragment colours without editing text
+  storage or forcing viewport restoration for colour-only updates. Visible fragments
+  are refreshed when the theme or appearance changes.
+- The build header is a bottom accessory of the source/PDF columns. It uses
+  SwiftUI's system toolbar material across its full width. An accessory effect
+  preference alone did not diffuse the source text behind this nested header.
+- With the panel closed, source/PDF extend under the clear bottom status bar and
+  its native soft scroll edge. With the panel open, its contents stop above the
+  solid status strip. Status reservation lasts until collapse completes.
+- The workspace representable returns its proposed size. This fixes a reproducible
+  compact-window layout recursion crash. Pane minima are independent of window
+  minima; the supported window content minimum is now 960 × 600 points.
+- Pane collapse prefers resizing siblings within the window. The File Outline
+  regression now checks the window frame on its first expansion at the minimum.
+- Removed per-frame forced split layout. Format style buttons use SwiftUI Toggle
+  instead of an NSButton coordinator. Compact status layout uses ViewThatFits.
+- Web fixes retain fit-height during resize, avoid no-op PDF redraws, cancel stale
+  rendering, preserve inverse-search coordinates under display scaling, restore
+  menu focus, and accept uppercase TeX extensions. Shared DOM and tree-row code
+  replaces duplicate construction and traversal.
+- Rust/web outline scanning skips comments and literal environments; the shared
+  fixtures cover escaped commands and percent signs inside braced input commands.
+
+No Objective-C source files were added or found. Swift AppKit selectors remain
+where Apple APIs require them. Existing project-file serialization changes were
+preserved.
+
+## Validation and installed build
+
+- **115 native tests in 15 suites passed**, including live theme bitmap repaint,
+  stable source position during panel animation, and first-open File Outline frame
+  checks at normal and minimum sizes. Log: `/private/tmp/underleaf-handoff-native-tests.log`.
+- Shipping Release build passed: `/private/tmp/underleaf-handoff-release-build.log`.
+- Installed app: `/Applications/TeXLocal.app`. Signature verification passed; its
+  binary matches the built product. SHA-256:
+  `d66547cf88dc1a2e84fe976555d30dc0fa0f722f4323a10bd7664acd80f80cd6`.
+- Final light-mode visual check: minimum 960 × 600 window, both build tabs, readable
+  translucent header, clear folded status and solid expanded status. File Outline
+  collapse/expansion kept the window at 1920 × 1200 screenshot pixels. A 580 × 250
+  source crop was byte-identical before/after a panel toggle (435,000 RGB bytes).
+- Cropped evidence: `/private/tmp/underleaf-verified-header-20261004.png` and
+  `/private/tmp/underleaf-verified-status-20261004.png`.
+- The generated project was moved to Trash. Its original source remains at
+  `/private/tmp/Underleaf-Visual-Verification/main.tex` for reproduction. Test apps
+  are closed, original window/divider frames restored, and personal theme, font,
+  paper, auto-compile and pane preferences verified unchanged.
+- Caffeine remains active under `com.underleaf.codex-awake-01a10252` until approximately
+  14:18 AEDT on 4 October. The requested 12-hour interval is preserved.
+
+Against the previous tip `c28e122`, production code is **34 lines smaller**
+(+332/−366); tests and shared fixtures are +284 (+337/−53). Project serialization
+is +6. Documentation is accounted for separately; total diff size is not a
+production-code growth measurement.
+
+Previously completed, unchanged web/Rust checks:
+
+- 123 web tests: `/private/tmp/underleaf-deflation-web-tests.log`.
+- Web production build: `/private/tmp/underleaf-deflation-web-build.log`.
+- 187 Rust tests plus doc tests: `/private/tmp/underleaf-core-full.log`.
+
+The native test suite shares application defaults. Quit the installed app before
+running it; restore only test-modified settings afterward. Earlier runs had
+intermittent divider-restoration failures. Do not treat zero selected tests as a pass.
+
+## Build and install
+
+Requires Xcode 27, Rust stable and installed npm dependencies. Only root used
+accessibility and computer access. Read-only Codex workers used GPT-6.1 Sol and
+were instructed not to delegate, launch apps, build or inspect the screen.
 
 ```sh
-# Debug build and the full test suite
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug \
-  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-native-build \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
+  -configuration Release -destination 'platform=macOS' \
+  -derivedDataPath /private/tmp/underleaf-native-build \
+  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES test
 
-# Release build, for installing
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-native-build \
-  CODE_SIGNING_ALLOWED=NO build
+# Rebuild without testability before installing the shipping app.
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
+  -configuration Release -destination 'platform=macOS' \
+  -derivedDataPath /private/tmp/underleaf-native-build CODE_SIGNING_ALLOWED=NO build
 ```
 
-To install: ad-hoc sign the Release product (`codesign --force --deep -s -`), verify it
-with `codesign --verify --strict`, quit TeXLocal, and replace `/Applications/TeXLocal.app`.
-Run one test with `-only-testing:TeXLocalTests/Suite/method()`; zero tests executed
-proves nothing. The layout tests need an awake, unlocked display.
-`project.yml` generates the committed `TeXLocal.xcodeproj` (xcodegen).
+Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`,
+verify its signature, and compare installed/product binary hashes before visual QA.
+The layout tests require an awake, unlocked display.
 
-## Architecture
+## Focus for Claude review and refinement
 
-The Rust core (`crates/texlocal-core`) owns projects, path safety, latexmk and SyncTeX,
-log parsing and ZIP export, behind a JSON command service. The Mac app reaches it through
-the C ABI in `crates/texlocal-ffi`, wrapped by `Core.swift`; calls run on a GCD thread
-because a compile blocks. `AppModel` holds app-wide state and preferences,
-`ProjectModel` one open project (files, saves, builds, PDF, SyncTeX), and
-`WorkspaceController` the window: an AppKit split view of sidebar, source, PDF and
-inspector with an NSToolbar, hosting SwiftUI for the sidebar, bars and Home. Commands
-(`Commands.swift`) are the one definition of menus, shortcuts and toolbar items. The
-editor is an NSTextView (TextKit 2) mirrored by Rust's syntax crate through
-`SourceDocument`, styled after Xcode's editor; it uses the stock find bar, so Find and
-Replace are the system's. The
-PDF is one persistent PDFKit view owned by `PDFController`.
+- Validate the final header/status appearance in dark mode and Reduce Transparency;
+  live light-mode source/preview and pane geometry have been the primary focus.
+- Broader typing/scroll performance is not proven fixed. Read-only investigation
+  identified repeated math-context scans on unchanged caret notifications, spelling
+  prefix scans, serialized completion-symbol work, and dark-PDF drawing as candidates
+  for profiling. Do not rewrite these on suspicion alone. The idle sample was mostly
+  waiting and does not establish interactive performance.
+- Preserve SyncTeX UTF-16 occurrence context, PDFKit shownDestination/margins, no-op
+  compile PDFDocument identity, IME committed-text handling, and ordered persistence.
+- Physical trackpad gestures and interactive IME remain manual-validation limits.
+  ZIP import still has per-entry limits without a total extraction budget.
 
-## Details worth preserving
-
-- SyncTeX: keep the occurrence and UTF-16 context through repeats, wrapping, ligatures
-  and hyphenation; when the evidence is ambiguous, fall back to SyncTeX's own box.
-- PDFKit: use `shownDestination`, not `currentDestination`; keep the margin handling,
-  the unchanged-frame guards during zoom and the glyph-selection click offsets. Saved
-  state uses `restorePage ?? page`, so a hidden zero-size view cannot overwrite the page.
-- A no-op compile keeps the same PDFDocument.
-- IME: autosave reads only committed text during composition, and composition ends
-  before the per-file undo managers switch.
-- One ordered lane serialises saves, settings, renames and deletes.
-- Toolbar: Aa, Math and Insert (Notes' ellipsis) are separate items side by side, which AppKit
-  joins in one capsule at its own spacing, as Xcode's (Daniel chose joined over a group, which
-  spaces its items 8 pt further apart); they show no chevrons, with which each draws its own
-  capsule. Aa opens a popover, as Notes' Aa (Bold, Italic and Underline, lit where the selection
-  is in their command, then the levels the main file's class has, with its numbering, weights
-  and shapes, and its sizes scaled into Notes' range: \Huge at Notes' 22 pt Title); the overflow
-  and menu bar keep plain menus. The PDF toggle and the system's Inspector toggle are items of
-  their own (Daniel asked for them apart again). Compile is its word alone on the prominent
-  glass, and Stop a spinner and its word on clear glass at Compile's width, as at 6342673
-  (Daniel judged the word-and-symbol button a regression). Zoom is the stock minus, percentage
-  menu and plus, its own item. Items overflow from the least used in TeX editors: Zoom, then
-  Insert, Math and Aa, then Back; Compile and the toggles last. The toolbar is "Workspace 3",
-  so layouts saved with Share or the toggles' former group don't come back. The 0.5 pt
-  trailing safe-area adjustment.
-- Build panel: it rises from the status bar's top edge and sinks back through AppKit's split
-  animation; the status bar stays at the window's foot, clear over the text, with its hairline
-  over the panel. The panel's header is a SwiftUI `safeAreaBar` in its own content, the clear
-  bar over its list, so it rides the pane's top edge and the columns' foot follows it; as a
-  split-item accessory AppKit held it at its height and the text clipped behind it. The panel's
-  content and background stop at the status bar. AppKit starts the rise about 100 ms after the
-  toggle, still (the main thread is idle then; not explained). The Filter field has Xcode's
-  filter symbol.
-- Security: loopback only, startup token, Host/Origin checks, CSP, path boundaries,
-  output limits, shell escape off unless a project turns it on.
-
-## Design direction (as of 3 October 2026)
-
-Starting points, not fixed constraints. Explore first: look at how Apple's own apps, the HIG,
-the design resources, WWDC sessions and the SDK handle a problem, and at what TeX editors do,
-before settling on an answer. Any Apple app or guideline may turn out to be the better
-reference for a given part; say which you used and why.
-
-- The aim is a native macOS 27 app that feels like Apple built it: system controls and
-  behaviour, nothing that reads as legacy AppKit even if it is stock.
-- References that have worked so far: Xcode for the text editor (font, line height, gutter,
-  rounded current line, completion list) and for the bottom bar's and sidebar's metrics;
-  Preview for the PDF side; Mail for split-view logic; Overleaf, Texifier and TeXstudio for
-  what a TeX editor does and where it puts it, more than for how it looks. Xcode's chrome as a
-  whole is busier than this app should be.
-- Daniel liked the File Outline's and status bar's look and animation as they were at commit
-  6342673. When rebuilding something from system parts, capture how it looks and moves first;
-  he reads unplanned visible drift as a regression.
-- The editor is on TextKit 2 and stays there.
-- Working agreements: propose visible UI changes before making them; commit and push to this
-  branch, no PR; the Rust core waits for its own session, except bugs that show in the Mac app.
-
-## State at 87574f9
-
-Done this session: Tauri and Windows removed; core, syntax, server and FFI crates simplified;
-stock find bar with Replace; Home as a template chooser over Recent; status bar with Line/Col; outline header that
-rides the fold; divider detents with a haptic; a glass completion list; the maths preview over
-the caret; double-click SyncTeX both ways; Colour Theme in Settings (Overleaf, TeXstudio, System).
-
-Not verified by hand:
-- The PDF's scrollers staying hidden during a divider drag (77aa8ad relies on live resize).
-- The detent haptic, the bracket flash, the completion list's click and dark mode for the bars.
-- Xcode's focused-window editor state (caret width, highlight during a selection) and its
-  completion popup's metrics were not measured; those parts are from the theme file or memory.
-- `/Applications/TeXLocal.app` was replaced with a Release build of a9df40f on 4 October.
-- Layout and outline tests failed intermittently in some runs, a different one each time.
-
-Open questions for Daniel:
-- Which highlight colour looked wrong (current line and selection match Xcode's Default theme).
-- Whether unmatched braces get a mark again beyond the theme's invalid colour.
-- Compact rows for the File Outline (13 pt text kept, about Xcode's 17 pt row pitch).
-- A Texifier theme needs its colour values; none are published.
-
-Proposed, not built:
-- Editor: wrapped-line continuation indent, scroll past the end, a tint on lines with an issue.
-- Status bar: the engine's name; hairlines between every trailing item.
-- Toolbar: Compile at the far trailing edge (HIG's place for the prominent action).
-- Tokenizer (Rust): keyword commands, control symbols, commands in maths, environment names
-  and `&` as their own kinds, so the themes can colour them as Overleaf and TeXstudio do;
-  bold and italic styles.
-
-## Issues (Daniel)
-
-<!-- Add issues here for the next session: what you did, what you saw, what you expected. -->
-
--
-
-## Known limits
-
-- Physical trackpad pinch and interactive IME sessions are only tested through code paths.
-- ZIP imports have per-entry limits but no total budget; a late failure can leave a
-  partial import.
+Official API references used: [AppKit scroll effects and split accessories](https://developer.apple.com/videos/play/wwdc2025/310/),
+[SwiftUI toolbar material](https://developer.apple.com/documentation/swiftui/material/bar),
+[TextKit rendering attributes](https://developer.apple.com/documentation/appkit/nstextlayoutmanager/renderingattributesvalidator).

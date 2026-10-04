@@ -118,7 +118,6 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
     sidebarDivider.hidden = mode !== 'wide' || !sideVisible();
     if (sidebarDivider.hidden && document.activeElement === sidebarDivider) sidebarToggle.focus();
     setSideWidth(clampPaneWidth(dragging === 'sidebar' ? sideWidth : prefs.sidebarWidth, ...sideBounds(), 256));
-    workspace.classList.toggle('pdf-collapsed', !pdfVisible());
     workspace.classList.toggle('preview-active', mode === 'compact' && surface === 'preview');
     switcher.hidden = mode !== 'compact';
     editorButton.setAttribute('aria-pressed', String(surface === 'editor'));

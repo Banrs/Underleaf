@@ -6,7 +6,7 @@
 
 import { el, menuUnder, popoverUnder } from './dom.js';
 import { icon } from './icons.js';
-import { state, outlineChain, TEXT_FILE } from './state.js';
+import { state, outlineChain, TEXT_FILE, TEX_FILE } from './state.js';
 import { getCommand, runCommand, commandTitle, accelLabel } from './commands.js';
 
 // The section levels, as the line's style: plain text, then the sectioning
@@ -192,7 +192,7 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
   // Refresh from state: the tools show for LaTeX only, the level follows the
   // caret, and the location row the open file and the caret's section.
   function update() {
-    const isTex = !!(state.editor && state.openPath?.endsWith('.tex'));
+    const isTex = !!(state.editor && TEX_FILE.test(state.openPath));
     const wasHidden = latexTools.hidden;
     latexTools.hidden = !isTex;
     if (wasHidden && isTex) fold();

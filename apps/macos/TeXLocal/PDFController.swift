@@ -543,15 +543,15 @@ extension PDFDocument {
     /// SyncTeX boxes delimit the fallback when commands prevent an exact text alignment.
     func match(for word: SyncTeXWord, near locations: [ForwardLoc]) -> SyncMatch? {
         guard !locations.isEmpty, pageCount > 0 else { return nil }
-        let first = max(0, Int(locations.map(\.page).min()!) - 2)
-        let last = min(pageCount - 1, Int(locations.map(\.page).max()!))
+        let first = max(0, Int(locations.lazy.map(\.page).min()!) - 2)
+        let last = min(pageCount - 1, Int(locations.lazy.map(\.page).max()!))
         guard first <= last else { return nil }
         var letters: [Character] = [], positions: [(page: PDFPage, range: NSRange)] = []
         for index in first...last {
             guard let page = page(at: index), let text = page.string else { continue }
             let normalized = SyncText(text)
             letters += normalized.letters
-            positions += normalized.ranges.map { (page, $0) }
+            positions.append(contentsOf: normalized.ranges.lazy.map { (page, $0) })
         }
         let source = SyncText(word.context, source: true), target = SyncText(word.text).letters
         guard !target.isEmpty else { return nil }
@@ -567,7 +567,7 @@ extension PDFDocument {
         }
         func distance(_ hit: SyncMatch) -> CGFloat {
             let index = index(for: hit.page) + 1
-            return locations.map { loc in
+            return locations.lazy.map { loc in
                 let box = SyncTeXGeometry.highlightRect(loc, pageBounds: hit.page.bounds(for: .cropBox))
                 let x = max(0, box.minX - hit.rect.maxX, hit.rect.minX - box.maxX)
                 let y = max(0, box.minY - hit.rect.maxY, hit.rect.minY - box.maxY)
@@ -583,16 +583,16 @@ extension PDFDocument {
                 return (target, distance(target), distance(anchor) + distance(end))
             }
             if let best = exact.min(by: { a, b in a.distance == b.distance ? a.anchor < b.anchor : a.distance < b.distance }) {
-                let tied = exact.filter { abs($0.distance - best.distance) < 0.001 && abs($0.anchor - best.anchor) < 0.001 }
+                let tied = exact.lazy.filter { abs($0.distance - best.distance) < 0.001 && abs($0.anchor - best.anchor) < 0.001 }.prefix(2)
                 return tied.count == 1 ? best.target : nil
             }
         }
-        let before = Array(source.letters.prefix(at)), after = Array(source.letters.dropFirst(min(at + target.count, source.letters.count)))
+        let before = source.letters.prefix(at), after = source.letters.dropFirst(min(at + target.count, source.letters.count))
         let candidates = SyncText.matches(target, in: letters).compactMap { start -> (hit: SyncMatch, context: Int, distance: CGFloat)? in
             guard let hit = rect(at: start, length: target.count) else { return nil }
             let page = Double(index(for: hit.page) + 1)
             let boxes = locations.filter { $0.page == page }.map { SyncTeXGeometry.highlightRect($0, pageBounds: hit.page.bounds(for: .cropBox)) }
-            guard let top = boxes.map(\.maxY).max(), let bottom = boxes.map(\.minY).min(),
+            guard let top = boxes.lazy.map(\.maxY).max(), let bottom = boxes.lazy.map(\.minY).min(),
                   hit.rect.maxY >= bottom - hit.rect.height, hit.rect.minY <= top + hit.rect.height else { return nil }
             let prefix = zip(before.reversed(), letters[..<start].reversed()).prefix { $0 == $1 }.count
             let suffix = zip(after, letters[(start + target.count)...]).prefix { $0 == $1 }.count
@@ -600,7 +600,7 @@ extension PDFDocument {
         }
         guard let best = candidates.max(by: { a, b in a.context == b.context ? a.distance > b.distance : a.context < b.context }) else { return nil }
         // Equal evidence cannot identify which duplicate was clicked; keep SyncTeX's box.
-        let tied = candidates.filter { $0.context == best.context && abs($0.distance - best.distance) < 0.001 }
+        let tied = candidates.lazy.filter { $0.context == best.context && abs($0.distance - best.distance) < 0.001 }.prefix(2)
         return tied.count == 1 ? best.hit : nil
     }
 }

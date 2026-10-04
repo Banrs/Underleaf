@@ -6,6 +6,8 @@ import { api } from './api.js';
 import { el, showModal } from './dom.js';
 import { icon } from './icons.js';
 
+export const texInstallHint = 'Install a TeX distribution, or choose an existing installation to enable compilation.';
+
 // A subfolder's path, joined with the separator the listed path already uses.
 export function childPath(base, name) {
   const sep = base.includes('\\') ? '\\' : '/';

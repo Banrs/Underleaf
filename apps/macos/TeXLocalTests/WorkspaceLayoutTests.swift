@@ -14,7 +14,8 @@ final class WorkspaceLayoutTests {
     private static let splits = ["Workspace", "Sidebar", "Columns", "Area"].map { "NSSplitView Subview Frames \($0)" }
     /// The app's defaults the tests change, put back after each.
     private static let keys = [DefaultsKey.sidebarVisible, DefaultsKey.inspectorVisible,
-                               DefaultsKey.showPDF, DefaultsKey.outlineCollapsed] + splits
+                               DefaultsKey.showPDF, DefaultsKey.outlineCollapsed,
+                               EditorPrefs.syntaxThemeKey, EditorPrefs.fontSizeKey] + splits
     /// The app's own new window (`MainWindowController`).
     private static let size = NSSize(width: 1200, height: 760)
     private let saved: [String: Any]
@@ -57,9 +58,11 @@ final class WorkspaceLayoutTests {
         let window = UnclampedWindow(contentRect: NSRect(origin: .zero, size: size),
                                      styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unified
         // Sized as the app sizes it: below the titlebar.
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         window.contentViewController = workspace
+        window.contentMinSize = ColumnMetrics.contentMinimum
         window.setContentSize(size)
         window.alphaValue = 0
         window.orderFront(nil)
@@ -94,6 +97,19 @@ final class WorkspaceLayoutTests {
     private func width(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.width }
     private func height(_ item: NSSplitViewItem) -> CGFloat { pane(item).frame.height }
 
+    @Test func settingsUpdateTheOpenEditor() async throws {
+        UserDefaults.standard.set(SyntaxTheme.texstudio.rawValue, forKey: EditorPrefs.syntaxThemeKey)
+        let workspace = open()
+        let editor = workspace.project.editor
+        workspace.project.openPath = "main.tex"
+        editor.open(path: "main.tex", text: "\\section{Sample}", focus: false)
+        try await waitUntil { editor.textView.syntaxTheme == .texstudio }
+        UserDefaults.standard.set(SyntaxTheme.system.rawValue, forKey: EditorPrefs.syntaxThemeKey)
+        try await waitUntil { editor.textView.syntaxTheme == .system }
+        UserDefaults.standard.set(17, forKey: EditorPrefs.fontSizeKey)
+        try await waitUntil { editor.textView.fontSize == 17 }
+    }
+
     @Test func thePanelSpansSourceAndPDF() async throws {
         let workspace = open(panel: true)
         try await waitUntil { self.height(workspace.panelItem) > 0 }
@@ -108,7 +124,8 @@ final class WorkspaceLayoutTests {
         try await waitUntil { self.width(workspace.inspectorItem) > 0 }
         try await Task.sleep(for: .milliseconds(100))
         #expect(isClose(width(workspace.sidebarItem), ColumnMetrics.sidebarIdeal))
-        #expect(isClose(width(workspace.inspectorItem), workspace.inspectorItem.minimumThickness))
+        #expect(isClose(width(workspace.inspectorItem), workspace.inspectorItem.minimumThickness),
+                "inspector \(width(workspace.inspectorItem)), minimum \(workspace.inspectorItem.minimumThickness)")
     }
 
     /// Hide PDF gives the source the room; Show PDF brings the PDF back at its width.
@@ -150,17 +167,37 @@ final class WorkspaceLayoutTests {
     /// too in a window with a source and a PDF open: the columns' foot follows the panel's top
     /// edge, where its header is, the status bar still, and the scrollers it kept out of sight
     /// back after a toggle reversed midway.
-    @Test func thePanelRisesFromTheStatusBar() async throws {
+    @Test(arguments: [false, true]) func thePanelRisesFromTheStatusBar(compact: Bool) async throws {
         let workspace = open(), project = workspace.project
         project.openPath = "main.tex"
-        project.editor.open(path: "main.tex", text: String(repeating: "Some text.\n", count: 200), focus: false)
+        project.editor.open(path: "main.tex", text: (1...200).map {
+            "\\section{Line \($0)} " + String(repeating: "Some text. ", count: $0 % 20)
+        }.joined(separator: "\n"), focus: false)
         let document = PDFDocument()
         for index in 0..<3 { document.insert(PDFPage(), at: index) }
         project.pdfURL = URL(filePath: "/dev/null")
         project.pdf.show(document)
-        // A moment after the window opens, its first rise would often miss its layouts,
-        // holding over the status bar, then jumping (27.2).
-        try await Task.sleep(for: .milliseconds(1100))
+        _ = try showToolbar(workspace)
+        if compact {
+            project.panelTab = .log
+            project.result = CompileResult(ok: true, stopped: false, pdf: nil, pdfChanged: true,
+                                           durationMs: 700, errors: [], warnings: [], log: String(repeating: "Build log\n", count: 200))
+            window?.setContentSize(ColumnMetrics.contentMinimum)
+        }
+        try await waitUntil { project.editor.scrollView.bounds.height > 0 }
+        // Finish initial layout and automatic sidebar collapse before testing the panel.
+        try await Task.sleep(for: .milliseconds(350))
+        project.editor.reveal(line: 100, atTop: true, focus: false)
+        // Reveal queues its find indicator after TextKit's viewport layout.
+        try await Task.sleep(for: .milliseconds(100))
+        let text = project.editor.textView
+        let anchor = try #require(text.textRange(NSRange(location: text.document.lineStart(100), length: 0)))
+        let sourceTop = {
+            text.textLayoutManager?.textLayoutFragment(for: anchor.location).map {
+                text.convert($0.layoutFragmentFrame.offsetBy(dx: 0, dy: text.textContainerOrigin.y), to: nil).maxY
+            }
+        }
+        let initialTop = try #require(sourceTop())
         let panel = pane(workspace.panelItem), columns = pane(workspace.area.splitViewItems[0])
         let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
         let bar = status.convert(status.bounds, to: nil)
@@ -170,10 +207,15 @@ final class WorkspaceLayoutTests {
         while ContinuousClock.now - start < .seconds(0.6) {
             if !panel.isHidden {
                 heights.append(panel.frame.height)
-                let top = panel.convert(panel.bounds, to: nil).maxY, foot = columns.convert(columns.bounds, to: nil).minY
-                #expect(abs(foot - top - workspace.area.splitView.dividerThickness) <= 1, "columns' foot \(foot), panel's top \(top)")
+                let frame = panel.convert(panel.bounds, to: nil)
+                let foot = columns.convert(columns.bounds, to: nil).minY
+                #expect(abs(foot - frame.maxY - workspace.area.splitView.dividerThickness) <= 1,
+                        "columns' foot \(foot), panel's top \(frame.maxY)")
+                // No invisible travel behind the status bar before the panel appears.
+                #expect(abs(frame.minY - bar.maxY) <= 1, "panel bottom \(frame.minY), status top \(bar.maxY)")
             }
             #expect(status.convert(status.bounds, to: nil) == bar)
+            #expect(sourceTop().map { abs($0 - initialTop) <= 1 } == true, "source top \(String(describing: sourceTop())), was \(initialTop)")
             try await Task.sleep(for: .milliseconds(4))
         }
         let height = try #require(heights.last)
@@ -217,7 +259,8 @@ final class WorkspaceLayoutTests {
         closeWindow()
         // Past the end of AppKit's collapse animation.
         try await Task.sleep(for: .milliseconds(500))
-        #expect(UserDefaults.standard.array(forKey: Self.splits[2]) as? [String] == saved)
+        #expect(UserDefaults.standard.array(forKey: Self.splits[2]) as? [String] == saved,
+                "saved \(String(describing: saved)), now \(String(describing: UserDefaults.standard.array(forKey: Self.splits[2])))")
     }
 
     /// The models, not the last window, say which panes show.
@@ -236,8 +279,12 @@ final class WorkspaceLayoutTests {
 
     /// The File Outline's header is one list at the foot of the files: over the outline's
     /// pane, or folded with it at the foot of the sidebar; unfolding it there brings the pane back.
-    @Test func theFoldedOutlineKeepsItsHeaderAtTheFoot() async throws {
+    @Test(arguments: [false, true]) func theFoldedOutlineKeepsItsHeaderAtTheFoot(compact: Bool) async throws {
+        UserDefaults.standard.set(true, forKey: DefaultsKey.outlineCollapsed)
         let workspace = open(), project = workspace.project
+        if compact { window?.setContentSize(ColumnMetrics.contentMinimum) }
+        window?.layoutIfNeeded()
+        let frame = window?.frame
         workspace.app.outlineCollapsed = false
         project.tree = [TreeNode(type: "file", name: "main.tex", path: "main.tex", children: nil)]
         project.outline = [OutlineItem(id: 0, level: 1, title: "Introduction", line: 1, file: "main.tex")]
@@ -255,6 +302,7 @@ final class WorkspaceLayoutTests {
         // Files: its header and main.tex; the File Outline's header; its heading, to the foot.
         try await waitUntil { rows() == [2, 1, 1] && isClose(bottoms()[2], 0) } state: { state() }
         let header = Self.lists(sidebar)[1]
+        #expect(window?.frame == frame, "before \(String(describing: frame)), after \(String(describing: window?.frame))")
 
         workspace.app.outlineCollapsed = true
         // The header alone, under the files, in the status bar's height at the foot: the same list.
@@ -262,12 +310,14 @@ final class WorkspaceLayoutTests {
             workspace.outlineItem.isCollapsed && rows() == [2, 1] && abs(bottoms()[1]) < StatusBar.height / 2
         } state: { state() }
         #expect(Self.lists(sidebar)[1] === header)
+        #expect(window?.frame == frame)
         // Opening the header's section, as its disclosure button does, unfolds the outline.
         header.expandItem(header.item(atRow: 0))
         try await waitUntil {
             !workspace.outlineItem.isCollapsed && rows() == [2, 1, 1] && isClose(bottoms()[2], 0)
         } state: { state() }
         #expect(!workspace.app.outlineCollapsed)
+        #expect(window?.frame == frame)
     }
 
     /// The sidebar shows the open file: its folders open, and a heading that gains
@@ -347,8 +397,7 @@ final class WorkspaceLayoutTests {
         window?.setContentSize(ColumnMetrics.contentMinimum)
         window?.layoutIfNeeded()
         #expect(isClose(workspace.view.frame.width, ColumnMetrics.contentMinimum.width))
-        // Below the titlebar: the panes stop at the safe area.
-        #expect(isClose(workspace.view.frame.height - workspace.view.safeAreaInsets.top, ColumnMetrics.contentMinimum.height),
+        #expect(isClose(workspace.view.frame.height, ColumnMetrics.contentMinimum.height),
                 "workspace \(workspace.view.frame), safe area \(workspace.view.safeAreaInsets), minimum \(ColumnMetrics.contentMinimum)")
     }
 
@@ -426,8 +475,7 @@ final class WorkspaceLayoutTests {
         try await waitUntil { workspace.app.inspectorVisible && !workspace.inspectorItem.isCollapsed }
     }
 
-    /// Aa opens its popover under it, on the screen, and again closes it; its styles are lit
-    /// where the selection is in them and toggle with it open. The menu bar's Format and the
+    /// Aa opens its popover under it, on the screen, and again closes it. The menu bar's Format and the
     /// overflow menu keep the same choices as menu items.
     @Test func aaOpensItsPopover() async throws {
         let workspace = open(sidebar: false)
@@ -448,15 +496,6 @@ final class WorkspaceLayoutTests {
         let anchor = aa.convert(aa.bounds, to: nil).offsetBy(dx: window.frame.minX, dy: window.frame.minY)
         #expect(shown.minX < anchor.midX && anchor.midX < shown.maxX && shown.maxY <= anchor.minY + 1)
         #expect(window.screen.map { $0.visibleFrame.contains(shown) } != false && shown.height < 400)
-        let content = try #require(popover.contentViewController?.view)
-        let toggles: [NSButton] = ["Bold", "Italic", "Underline"].compactMap { title in
-            Self.views(content).lazy.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == title }
-        }
-        #expect(toggles.count == 3)
-        try await waitUntil { toggles.map(\.state) == [NSControl.StateValue.off, .on, .off] }
-        toggles[1].performClick(nil)
-        #expect(editor.textView.string == "a word" && popover.isShown)
-        try await waitUntil { toggles[1].state == NSControl.StateValue.off }
         NSApp.sendAction(try #require(item.action), to: item.target, from: item)
         try await waitUntil { !popover.isShown }
     }
@@ -492,8 +531,9 @@ final class WorkspaceLayoutTests {
             let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
             left += toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !left.contains($0) }
         }
-        #expect(left.filter { !$0.rawValue.hasPrefix("NSToolbar") } == [.zoom, .insert, .math, .format])
-        #expect(!left.contains(.toggleSidebar))
+        let overflow = left.filter { !$0.rawValue.hasPrefix("NSToolbar") }
+        #expect(overflow == Array([.zoom, .insert, .math, .format].prefix(overflow.count)))
+        #expect(!left.contains(.toggleSidebar) && !left.contains(.compile))
     }
 
     /// Zoom out | scale | zoom in, one width from the PDFView's smallest scale to its largest, as

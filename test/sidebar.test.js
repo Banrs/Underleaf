@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Window } from 'happy-dom';
 
-const { collectDroppedFiles, clashQuestion, buildSidebar, renderOutline, destroySidebar } = await import('../web/src/sidebar.js');
+const { collectDroppedFiles, clashQuestion, buildSidebar, renderTree, renderOutline, destroySidebar } = await import('../web/src/sidebar.js');
 const { state, resetProjectState } = await import('../web/src/state.js');
 
 // A dropped item as webkitGetAsEntry gives it.
@@ -37,6 +37,36 @@ test('a clash question names one item, or a few of many', () => {
   const many = clashQuestion(['a', 'b', 'c', 'd', 'e'].map((p) => ({ path: p, keepBoth: `${p} 2` })));
   assert.equal(many.title, '5 items with these names already exist in this location.');
   assert.match(many.body, /^“a”, “b”, “c”, and 2 more\. Do you want to replace them/);
+});
+
+test('folder expansion keeps focus and file rows retain their open action and main-file badge', (t) => {
+  const window = new Window();
+  globalThis.document = window.document;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: window.localStorage });
+  t.after(() => { destroySidebar(); resetProjectState(); delete globalThis.document; delete globalThis.localStorage; });
+  const opened = [];
+  state.projectId = 'tree-review';
+  state.openPath = 'chapters/main.tex';
+  state.settings = { mainFile: state.openPath };
+  state.tree = [{ type: 'dir', name: 'chapters', path: 'chapters', children: [
+    { type: 'file', name: 'main.tex', path: state.openPath },
+  ] }];
+  document.body.append(buildSidebar({ openFile: (path) => opened.push(path) }));
+  renderTree();
+  const folder = () => document.querySelector('[data-path="chapters"]');
+  assert.equal(folder().getAttribute('aria-expanded'), 'false');
+  folder().click();
+  assert.equal(document.activeElement, folder());
+  assert.equal(folder().getAttribute('aria-expanded'), 'true');
+  const file = document.querySelector('[data-path="chapters/main.tex"]');
+  assert.equal(file.getAttribute('aria-current'), 'true');
+  assert.equal(file.hasAttribute('aria-expanded'), false);
+  assert.ok(file.querySelector('[aria-label="Main file"]'));
+  file.click();
+  assert.deepEqual(opened, [state.openPath]);
+  folder().click();
+  assert.equal(document.activeElement, folder());
+  assert.equal(document.querySelector('[data-path="chapters/main.tex"]'), null);
 });
 
 test('a slower outline click cannot override a later heading in the same file', async (t) => {
