@@ -62,6 +62,7 @@ final class CompletionList {
             self.rows.selection = 0
             return
         }
+        let opening = parent == nil
         if parent !== window {
             parent?.removeChildWindow(panel)
             // Room to lay the rows out in, before the list has measured them.
@@ -74,6 +75,18 @@ final class CompletionList {
         focusList()
         self.rows.selection = 0
         fit()
+        if opening { announce() }
+    }
+
+    /// The panel never has VoiceOver's focus, which stays in the document: the row chosen is
+    /// spoken as the list opens and as the arrows move through it, as Xcode's list speaks it.
+    private func announce() {
+        guard rows.items.indices.contains(selection) else { return }
+        let item = rows.items[selection]
+        let position = String(localized: "\(selection + 1) of \(rows.items.count)")
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+            .announcement: [item.label, item.badge.name, position].formatted(.list(type: .and, width: .narrow)),
+            .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     /// Selected as the list that has the keyboard, though the document has it: a table
@@ -131,6 +144,7 @@ final class CompletionList {
     func move(_ step: Int) {
         guard !rows.items.isEmpty else { return }
         rows.selection = max(0, min(rows.items.count - 1, selection + step))
+        announce()
     }
 
     fileprivate struct Item {
@@ -203,6 +217,10 @@ final class CompletionList {
                         .applying(NSImage.SymbolConfiguration(paletteColors: [.badgeLetter, item.badge.color]))) ?? NSImage())
             }
             .lineLimit(1)
+            // One element: the label, then its kind.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: item.label))
+            .accessibilityValue(Text(item.badge.name))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { label in
                 switch index {
                 case 0: first = (label, first?.text ?? label)
