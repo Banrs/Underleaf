@@ -471,7 +471,8 @@ private struct CompileButton: View {
                 }
                 .opacity(compiling ? 1 : 0)
             }
-            // The item's glass: 36 points high, its title 12 points in from each end.
+            // The item's glass as AppKit draws a titled item's: 36 points high (the UI kit's
+            // toolbar controls), the title 12 points in from each end, 74 points for Compile (27.2).
             .padding(.horizontal, 12)
             .frame(height: 36)
             .contentShape(.capsule)
