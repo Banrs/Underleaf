@@ -121,7 +121,7 @@ enum MenuCommand: String, CaseIterable {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoPage
+    case gotoLine, gotoPage
 
     var id: Self { self }
 }
@@ -208,7 +208,7 @@ extension AppModel {
         case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
-        case .editGotoLine: project?.editor.goToLine()
+        case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
         case .viewToggleSidebar: sidebarVisible.toggle()

@@ -40,7 +40,7 @@ struct StatusBar: View {
             if project.editsText || pages {
                 HStack {
                     if project.editsText {
-                        // Xcode's caret position; Go to Line from it.
+                        // The caret's place; Go to Line from it.
                         Button { app.perform(.editGotoLine, on: project) } label: {
                             Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)").hitTarget()
                         }

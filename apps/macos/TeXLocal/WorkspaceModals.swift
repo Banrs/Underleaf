@@ -38,6 +38,10 @@ struct WorkspaceModals: ViewModifier {
                     GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
                         app.requestPDF(.goToPage($0))
                     }
+                case .gotoLine:
+                    GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) {
+                        project.editor.reveal(line: $0)
+                    }
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
@@ -65,9 +69,9 @@ struct WorkspaceModals: ViewModifier {
     }
 }
 
-/// Edit › Go to Page…, also from the status bar: a sheet, as Preview's. (Go to Line… is
-/// Xcode's floating field, `GoToLinePanel`.) `limit` is read as the sheet draws, so a
-/// build finishing meanwhile counts.
+/// Go to Line… and Go to Page…, also from the status bar: a sheet, as Preview's Go to
+/// Page. A number past the end goes to the last. `limit` is read as the sheet draws, so
+/// a build finishing meanwhile counts.
 private struct GoToSheet: View {
     let noun: String
     let limit: () -> Int?
