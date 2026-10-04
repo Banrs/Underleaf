@@ -698,19 +698,35 @@ final class ProjectModel {
         if mainChanged, !closed { await mainFileChanged() }
     }
 
+    /// Move to Trash, which Edit › Undo takes back.
     func deleteEntry(_ path: String) async {
-        let deleted = await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
+        guard let original = url(path) else { return }
+        let item = UndoableTrash(
+            original: original, name: path.fileName, undoManager: app?.undoManager,
+            trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
+            changed: { [weak self] in await self?.reloadTree() },
+            failed: { [weak self] title, error in self?.report(error, title) })
+        await item.moveToTrash()
+        if !closed { await reloadTree() }
+    }
+
+    /// In the lane, so it follows the saves and renames asked for before it.
+    private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
+        await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
+            // The core's rule for delete_entry, which this replaces to learn where the Trash put it.
+            if let main = model.settings?.mainFile, main == path || main.hasPrefix(path + "/") {
+                throw CoreError(message: "Choose a different main file before moving this to the Trash.", status: 409)
+            }
             // Saved first, so an autosave cannot recreate the deleted file.
             repeat {
                 guard await model.write() else { return false }
             } while model.hasUnsavedText
-            try await model.core.perform("delete_entry", ["id": model.id, "path": path])
+            try item.recycle()
             guard !model.closed else { return false }
             model.editor.forget(path: path)
             if let open = model.openPath, open == path || open.hasPrefix(path + "/") { model.clearOpenFile() }
             return true
         }
-        if deleted, !closed { await reloadTree() }
     }
 
     /// No file editing: the editor may still hold the old text, but nothing saves or analyses it.
