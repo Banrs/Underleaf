@@ -581,14 +581,11 @@ final class WorkspaceController: RestoredSplitViewController {
         case .showFindInterface:
             return { [weak self] in self?.showPDFFind() }
         case .nextMatch, .previousMatch:
-            guard !pdf.matches.isEmpty else { return nil }
-            return { [pdf] in pdf.step(action == .nextMatch ? 1 : -1) }
+            guard pdf.canFindNext else { return nil }
+            return { [pdf] in pdf.findNext(action == .nextMatch ? 1 : -1) }
         case .setSearchString:
-            guard let text = pdf.view.currentSelection?.string, !text.isEmpty else { return nil }
-            return { [weak self] in
-                self?.pdf.findText = text
-                self?.showPDFFind()
-            }
+            guard pdf.canUseSelectionForFind else { return nil }
+            return { [pdf] in pdf.useSelectionForFind() }
         default:
             return nil
         }

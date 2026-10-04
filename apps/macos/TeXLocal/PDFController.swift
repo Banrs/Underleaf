@@ -28,8 +28,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// A forward search's spot, until the view has a size to show it in.
     @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
     private(set) var pageCount = 0
-    /// The find bar shows.
-    var finding = false
+    /// The find bar shows. Opened empty, it takes the system's find text, as a text view's find bar does.
+    var finding = false {
+        didSet { if finding, !oldValue, findText.isEmpty { findText = PDFFind.shared ?? "" } }
+    }
     /// Can be ahead of the query the matches are for.
     var findText = ""
     @ObservationIgnored let findField = FieldHandle()
@@ -190,7 +192,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     /// Once typing pauses: the field's text, unless it is what's being searched or was found.
     func findTyped() {
-        if PDFFind.normalize(findText) != search?.query ?? query { find(findText) }
+        guard PDFFind.normalize(findText) != search?.query ?? query else { return }
+        // What's typed is the find text everywhere, as in a text view's find bar.
+        PDFFind.shared = PDFFind.normalize(findText)
+        find(findText)
     }
 
     /// During rebuild, keep the selected match and page where possible.
@@ -230,10 +235,76 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         matches = Array(all.prefix(PDFFind.maxMatches))
         limited = all.count > matches.count
         if !keepingPlace || matchIndex >= matches.count { matchIndex = 0 }
+        let start = startFrom
+        startFrom = nil
+        if let start, !matches.isEmpty { matchIndex = index(from: start.anchor, step: start.step) }
         matches.forEach { $0.color = .findHighlightColor }
         view.highlightedSelections = matches.isEmpty ? nil : matches
         if matches.isEmpty { view.clearSelection() }
-        selectMatch(scrolling: !keepingPlace)
+        // Use Selection for Find stays at the selection, which is its match.
+        selectMatch(scrolling: start.map { $0.step != 0 } ?? !keepingPlace)
+    }
+
+    /// Where Find Next or Use Selection for Find starts once its search ends: the match at the
+    /// anchor (step 0), or the next or previous one from it, as a text view's find goes on from its selection.
+    @ObservationIgnored private var startFrom: (anchor: Position, step: Int)?
+
+    /// A place in reading order: the page, then down it, then across.
+    private struct Position: Comparable {
+        var page: Int, down: CGFloat, across: CGFloat
+
+        static func < (a: Self, b: Self) -> Bool {
+            (a.page, a.down, a.across) < (b.page, b.down, b.across)
+        }
+    }
+
+    private func position(_ selection: PDFSelection) -> Position? {
+        guard let document = view.document, let page = selection.pages.first else { return nil }
+        let box = selection.bounds(for: page)
+        return Position(page: document.index(for: page), down: -box.maxY, across: box.minX)
+    }
+
+    /// The selection, or the top of what shows.
+    private var anchor: Position? {
+        if let selection = view.currentSelection, let place = position(selection) { return place }
+        guard let document = view.document, let place = view.shownDestination, let page = place.page else { return nil }
+        return Position(page: document.index(for: page), down: -place.point.y, across: place.point.x)
+    }
+
+    private func index(from anchor: Position, step: Int) -> Int {
+        let places = matches.map { position($0) }
+        switch step {
+        case 0: return places.firstIndex { $0.map { $0 >= anchor } ?? false } ?? 0
+        case 1...: return places.firstIndex { $0.map { $0 > anchor } ?? false } ?? 0
+        default: return places.lastIndex { $0.map { $0 < anchor } ?? false } ?? matches.count - 1
+        }
+    }
+
+    /// Edit › Find › Find Next and Find Previous: through the matches, or, with none, a search for
+    /// the system's find text going on from the selection, as TextEdit's does after Use Selection for Find.
+    var canFindNext: Bool { view.document != nil && (!matches.isEmpty || !(PDFFind.shared ?? "").isEmpty) }
+
+    func findNext(_ step: Int) {
+        if !matches.isEmpty, PDFFind.normalize(findText) == query { return self.step(step) }
+        let text = findText.isEmpty ? PDFFind.shared ?? "" : findText
+        guard !text.isEmpty else { return }
+        finding = true
+        findText = text
+        startFrom = anchor.map { ($0, step) }
+        find(text)
+    }
+
+    /// Edit › Find › Use Selection for Find: the selection becomes the system's find text and is
+    /// searched for, its matches marked from it on, without moving away.
+    var canUseSelectionForFind: Bool { !(view.currentSelection?.string ?? "").isEmpty }
+
+    func useSelectionForFind() {
+        guard let selection = view.currentSelection, let text = selection.string, !text.isEmpty else { return }
+        PDFFind.shared = text
+        finding = true
+        findText = text
+        startFrom = position(selection).map { ($0, 0) }
+        find(text)
     }
 
     /// Clear highlights; return focus to the PDF only when the bar had it.
@@ -511,6 +582,25 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         if event.clickCount == 2 { goToSource(at: convert(event.locationInWindow, from: nil)) }
+    }
+
+    /// Edit › Find › Jump to Selection, which PDFKit leaves to text views: the selection in the
+    /// middle of what shows, as a text view centres its own.
+    override func centerSelectionInVisibleArea(_ sender: Any?) {
+        guard let selection = currentSelection, let page = selection.pages.first else { return }
+        let box = selection.bounds(for: page)
+        let shown = bounds.height - safeAreaInsets.top - safeAreaInsets.bottom
+        go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shown / 2 / scaleFactor)))
+    }
+
+    /// Jump to Selection only with one; PDFKit's own items as PDFKit has them (its
+    /// `validateMenuItem:` isn't in its interface).
+    @objc(validateMenuItem:) func validate(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(centerSelectionInVisibleArea(_:)) { return currentSelection?.pages.isEmpty == false }
+        let selector = #selector(NSMenuItemValidation.validateMenuItem(_:))
+        guard let inherited = class_getMethodImplementation(PDFView.self, selector) else { return true }
+        typealias Validate = @convention(c) (AnyObject, Selector, NSMenuItem) -> Bool
+        return unsafeBitCast(inherited, to: Validate.self)(self, selector, item)
     }
 
     /// Go to Source Position for the clicked point, above PDFKit's own items.

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Native PDFKit pages, with controls in the toolbar, find accessory and status bar.
@@ -98,6 +99,20 @@ enum PDFFind {
 
     static func normalize(_ query: String) -> String {
         String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxQuery))
+    }
+
+    /// The find text every app shares (the find pasteboard), which Use Selection for Find sets and
+    /// a text view's find bar reads, so ⌘E in one pane and ⌘G in the other find the same.
+    /// The tests' own, so they leave the user's alone.
+    static var board = NSPasteboard(name: .find)
+
+    static var shared: String? {
+        get { board.string(forType: .string) }
+        set {
+            guard let newValue, !newValue.isEmpty, newValue != shared else { return }
+            board.clearContents()
+            board.setString(newValue, forType: .string)
+        }
     }
 }
 
