@@ -354,7 +354,7 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// A clean no-op build keeps PDFKit's document and closes an empty Issues
+    /// A clean no-op build keeps the PDF's pages and closes an empty Issues
     /// panel, while a Log panel stays open.
     @Test(.timeLimit(.minutes(1)))
     func aNoOpBuildKeepsThePDFDocumentAndClosesEmptyIssues() async throws {
@@ -362,11 +362,11 @@ final class ProjectFlowTests {
         (project.showLogs, project.panelTab) = (true, .log)
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == true && project.showLogs)
-        let firstDocument = try #require(project.pdf.view.document)
+        let shown = project.pdf.shownVersion
         project.panelTab = .issues
         await project.compile()
         #expect(project.result?.ok == true && project.result?.pdfChanged == false)
-        #expect(project.pdf.view.document === firstDocument)
+        #expect(project.pdf.shownVersion == shown)
         #expect(!project.showLogs)
         await app.close()
     }

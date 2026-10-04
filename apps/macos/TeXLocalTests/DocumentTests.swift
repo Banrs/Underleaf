@@ -526,14 +526,14 @@ struct PDFFindTests {
         controller.findText = "old"
         controller.find("old")
         try await waitUntil(timeout: .seconds(5)) {
-            controller.query == "old" && controller.matches.first?.pages.first?.document === first
+            controller.query == "old" && controller.matches.first?.pages.first?.string?.contains("old") == true
         }
 
         // The field changed, but its debounce has not started a new search yet.
         controller.findText = "new"
         controller.show(second)
         try await waitUntil(timeout: .seconds(5)) {
-            controller.query == "new" && controller.matches.first?.pages.first?.document === second
+            controller.query == "new" && controller.matches.first?.pages.first?.string?.contains("new") == true
         } state: {
             "query \(controller.query), matches \(controller.matches.count)"
         }
@@ -643,10 +643,16 @@ struct PDFFindTests {
         #expect(pdf.match(for: word, near: [loc]) == nil)
     }
 
+    /// The page is one of those showing: a rebuild's pages replace the last's.
+    private func shows(_ page: PDFPage?, in controller: PDFController) -> Bool {
+        guard let page, let document = controller.view.document else { return false }
+        return (0..<document.pageCount).contains { document.page(at: $0) === page }
+    }
+
     /// PDFKit searches off the main thread and posts what it finds to the main queue.
-    private func found(_ controller: PDFController, in document: PDFDocument) async throws {
+    private func found(_ controller: PDFController) async throws {
         try await waitUntil(timeout: .seconds(5)) {
-            controller.matches.first?.pages.first?.document === document
+            !controller.matches.isEmpty && controller.matches.allSatisfy { shows($0.pages.first, in: controller) }
         }
     }
 
@@ -664,10 +670,11 @@ struct PDFFindTests {
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
-        try await found(controller, in: first)
+        try await found(controller)
         controller.step(1)
         view.layoutDocumentView()
-        let page = first.index(for: try #require(view.currentPage))
+        let shown = try #require(view.document)
+        let page = shown.index(for: try #require(view.currentPage))
         try #require(page > 0)
         let place = try #require(view.documentView).visibleRect
 
@@ -675,14 +682,14 @@ struct PDFFindTests {
             let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
             controller.show(rebuilt)
             view.layoutDocumentView()
-            try await found(controller, in: rebuilt)
+            try await found(controller)
 
             #expect(controller.finding)
             #expect(controller.matches.count == 4)
-            #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
             #expect(controller.matchIndex == 1)
             #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
-            #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
+            #expect(view.document === shown)
+            #expect(shown.index(for: try #require(view.currentPage)) == page)
             let current = try #require(view.documentView).visibleRect
             #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
                     "viewport before rebuild \(place), after \(current)")

@@ -722,10 +722,10 @@ final class ProjectModel {
         let task = Task {
             guard await saveEdits(), !Task.isCancelled, !closed, openPath == path else { return }
             // Only on the pages it was found in: a rebuild may have moved it.
-            let document = pdf.view.document
+            let shown = pdf.shownVersion
             do {
                 let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
-                guard !Task.isCancelled, !closed, openPath == path, pdf.view.document === document else { return }
+                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
                 if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }

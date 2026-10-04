@@ -321,8 +321,15 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if fromBar { view.window?.makeFirstResponder(view) }
     }
 
-    /// A rebuilt PDF at the same place and zoom.
+    /// Counts the documents shown, rebuilds included: a rebuild's pages go into the
+    /// document already showing.
+    @ObservationIgnored private(set) var shownVersion = 0
+
+    /// A rebuilt PDF at the same place and zoom. Its pages replace those showing, in the same
+    /// document: a new document shows only PDFKit's background until its pages draw, a few
+    /// frames later (27.2), and each build would flash the pane.
     func show(_ document: PDFDocument) {
+        shownVersion += 1
         // Read before the swap: a page keeps its document only weakly.
         let place = restorePage == nil ? view.shownDestination.flatMap { destination in
             destination.page.flatMap { view.document?.index(for: $0) }.map { (index: $0, point: destination.point) }
@@ -330,7 +337,19 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let autoScales = view.autoScales
         let scale = view.scaleFactor
         view.removeMarks()
-        view.document = document
+        if let shown = view.document {
+            // The matches and the selection are on the pages going.
+            if search?.document === shown {
+                search = nil
+                shown.cancelFindString()
+            }
+            view.clearSelection()
+            view.highlightedSelections = nil
+            shown.replacePages(with: document)
+        } else {
+            view.document = document
+        }
+        let document = view.document ?? document
         observeMagnification()
         // A document resets the limit (27.2). Setting it turns fitting off, so before the fit below.
         view.maxScaleFactor = Self.maxScale
@@ -699,6 +718,36 @@ extension PDFPage {
             selection(for: NSRange(location: range.location + i, length: 1)).map { $0.bounds(for: self).maxX > point.x } ?? false
         }
         return SyncTeXWord(text: text, offset: offset ?? 0, context: context, contextOffset: range.location)
+    }
+}
+
+extension PDFDocument {
+    /// Another document's pages in place of these, each put in before the one it replaces is
+    /// taken out, so the document is never shorter than the place being read. Links within it
+    /// lead to the pages here.
+    func replacePages(with other: PDFDocument) {
+        let pages = (0..<other.pageCount).compactMap { other.page(at: $0)?.copy() as? PDFPage }
+        let old = pageCount
+        for (index, page) in pages.enumerated() {
+            insert(page, at: index)
+            if index < old { removePage(at: index + 1) }
+        }
+        while pageCount > pages.count { removePage(at: pageCount - 1) }
+        func here(_ destination: PDFDestination?) -> PDFDestination? {
+            guard let destination, let target = destination.page, target.document === other,
+                  let page = page(at: other.index(for: target)) else { return nil }
+            let local = PDFDestination(page: page, at: destination.point)
+            local.zoom = destination.zoom
+            return local
+        }
+        for page in pages {
+            for link in page.annotations where link.type == "Link" {
+                if let destination = here(link.destination) { link.destination = destination }
+                if let goTo = link.action as? PDFActionGoTo, let destination = here(goTo.destination) {
+                    link.action = PDFActionGoTo(destination: destination)
+                }
+            }
+        }
     }
 }
 
