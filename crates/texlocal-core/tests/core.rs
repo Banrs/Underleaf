@@ -260,7 +260,10 @@ fn links_to_reserved_paths_are_held_to_their_rules() {
     symlink("main.tex", root.join("link.tex")).unwrap();
     fails_with(safe_write_path(&root, "alias.json"), "Reserved file");
     fails_with(safe_path(&root, "alias.json"), "Reserved file");
-    fails_with(safe_write_path(&root, "here/.texlocal.json"), "Reserved file");
+    fails_with(
+        safe_write_path(&root, "here/.texlocal.json"),
+        "Reserved file",
+    );
     fails_with(safe_write_path(&root, "output/main.pdf"), "compiled PDF");
     fails_with(safe_write_path(&root, "here/build/x.tex"), "compiled PDF");
     // Reading the output through a link, and ordinary links, stay as they were.
