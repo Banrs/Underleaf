@@ -34,6 +34,14 @@ pub struct TextEdit {
     pub text: String,
 }
 
+fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
+    TextEdit {
+        start,
+        length,
+        text: text.into(),
+    }
+}
+
 /// An edit and where the caret goes after it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Insertion {
@@ -229,11 +237,7 @@ impl SourceDocument {
         };
         let caret = selection.start + utf16(&text) as u32;
         Insertion {
-            edit: TextEdit {
-                start: selection.start,
-                length: selection.length,
-                text,
-            },
+            edit: edit(selection.start, selection.length, text),
             caret,
             fields: vec![],
         }
