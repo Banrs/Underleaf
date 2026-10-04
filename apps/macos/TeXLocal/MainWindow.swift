@@ -101,12 +101,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.home = home
     }
 
-    /// Keeps the window's frame and minimum, which a new content view controller resets.
+    /// Keeps the window's frame, which a new content view controller resets. Its minimum
+    /// is the content's: the panes showing, as a split view controller's constraints have
+    /// it, or the projects' own.
     private func setContent(_ controller: NSViewController) {
         guard let window else { return }
         controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
-        window.contentMinSize = ColumnMetrics.contentMinimum
     }
 
     // ---------- window ----------
@@ -169,12 +170,13 @@ private nonisolated struct OpenFile: Equatable {
 }
 
 struct HomeRoot: View {
+    static let minimum = CGSize(width: 960, height: 600)
     let app: AppModel
 
     var body: some View {
         HomeView()
-            // SwiftUI sets the window's minimum from its content's: the app's own.
-            .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
+            // SwiftUI sets the window's minimum from its content's.
+            .frame(minWidth: Self.minimum.width, minHeight: Self.minimum.height)
             .windowModals()
             .environment(app)
     }

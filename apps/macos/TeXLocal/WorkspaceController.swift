@@ -220,7 +220,6 @@ final class WorkspaceController: RestoredSplitViewController {
         }
 
         let areaItem = NSSplitViewItem(viewController: area)
-        areaItem.minimumThickness = ColumnMetrics.columnsWidth
         // One look whether the panel shows or not: the system's hard edge under a hairline, over
         // the editors' text and the panel's rows alike. The edge draws no line of its own here.
         areaItem.addBottomAlignedAccessoryViewController(Self.separator())
@@ -641,8 +640,8 @@ private final class SidebarSplitViewController: RestoredSplitViewController {
     }
 }
 
-/// Content sets pane minimums; AppKit moves toolbar items across dividers or
-/// into overflow near the window minimum.
+/// The panes' minimums, which make the window's as they show; AppKit moves toolbar
+/// items across dividers or into overflow near it.
 enum ColumnMetrics {
     /// Xcode's navigator: its default width, and its narrowest.
     static let sidebarIdeal: CGFloat = 256
@@ -669,8 +668,6 @@ enum ColumnMetrics {
     /// (`buildArea`). That column's minimum counts it.
     static let toolbarInset: CGFloat = 0.5
     static let columnsWidth = sourceMinimum + divider + pdfMinimum + toolbarInset
-    /// Keep the editor, preview, outline and build controls usable at the window minimum.
-    static let contentMinimum = CGSize(width: 960, height: 600)
     /// The build panel's header, its content within a bar's standard insets.
     static let panelHeader = bar(BuildPanelHeader.height)
 

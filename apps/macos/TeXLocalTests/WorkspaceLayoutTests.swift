@@ -18,6 +18,8 @@ final class WorkspaceLayoutTests {
                                EditorPrefs.syntaxThemeKey, EditorPrefs.fontSizeKey] + splits
     /// The app's own new window (`MainWindowController`).
     private static let size = NSSize(width: 1200, height: 760)
+    /// A small window: the projects' minimum, which the workspace can go under.
+    private static let compact = HomeRoot.minimum
     private let saved: [String: Any]
     private var window: NSWindow?
     private var workspace: WorkspaceController?
@@ -62,7 +64,6 @@ final class WorkspaceLayoutTests {
         // Sized as the app sizes it: below the titlebar.
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         window.contentViewController = workspace
-        window.contentMinSize = ColumnMetrics.contentMinimum
         window.setContentSize(size)
         window.alphaValue = 0
         window.orderFront(nil)
@@ -182,7 +183,7 @@ final class WorkspaceLayoutTests {
             project.panelTab = .log
             project.result = CompileResult(ok: true, stopped: false, pdf: nil, pdfChanged: true,
                                            durationMs: 700, errors: [], warnings: [], log: String(repeating: "Build log\n", count: 200))
-            window?.setContentSize(ColumnMetrics.contentMinimum)
+            window?.setContentSize(Self.compact)
         }
         try await waitUntil { project.editor.scrollView.bounds.height > 0 }
         // Finish initial layout and automatic sidebar collapse before testing the panel.
@@ -286,7 +287,7 @@ final class WorkspaceLayoutTests {
     @Test(arguments: [false, true]) func theFoldedOutlineKeepsItsHeaderAtTheFoot(compact: Bool) async throws {
         UserDefaults.standard.set(true, forKey: DefaultsKey.outlineCollapsed)
         let workspace = open(), project = workspace.project
-        if compact { window?.setContentSize(ColumnMetrics.contentMinimum) }
+        if compact { window?.setContentSize(Self.compact) }
         window?.layoutIfNeeded()
         let frame = window?.frame
         workspace.app.outlineCollapsed = false
@@ -394,15 +395,40 @@ final class WorkspaceLayoutTests {
         #expect(try contextMenu(at: below(outline), in: outline) == nil)
     }
 
-    /// No pane's content raises the window's minimum: it goes down to the app's own,
-    /// the sidebar folded (a user's narrowing folds it; setting the size doesn't).
-    @Test func theWindowReachesItsMinimum() {
-        let workspace = open(panel: true, sidebar: false)
-        window?.setContentSize(ColumnMetrics.contentMinimum)
-        window?.layoutIfNeeded()
-        #expect(isClose(workspace.view.frame.width, ColumnMetrics.contentMinimum.width))
-        #expect(isClose(workspace.view.frame.height, ColumnMetrics.contentMinimum.height),
-                "workspace \(workspace.view.frame), safe area \(workspace.view.safeAreaInsets), minimum \(ColumnMetrics.contentMinimum)")
+    /// The window's minimum is its panes', as they show: it narrows as the sidebar
+    /// folds, and again without the PDF, and no pane's content raises it.
+    @Test func theWindowsMinimumFollowsItsPanes() async throws {
+        let workspace = open(panel: true)
+        let window = try #require(window)
+        func minimum() -> NSSize {
+            window.setContentSize(NSSize(width: 100, height: 100))
+            window.layoutIfNeeded()
+            return workspace.view.frame.size
+        }
+        let full = minimum()
+        #expect(isClose(full.width, ColumnMetrics.sidebarMinimum + ColumnMetrics.divider + ColumnMetrics.columnsWidth, within: 1),
+                "minimum \(full)")
+        window.setContentSize(Self.size)
+        workspace.app.sidebarVisible = false
+        try await waitUntil { workspace.sidebarItem.isCollapsed }
+        // Past AppKit's collapse animation, which holds the panes' sizes.
+        try await Task.sleep(for: .milliseconds(500))
+        let narrower = minimum()
+        #expect(isClose(narrower.width, ColumnMetrics.columnsWidth, within: 1), "minimum \(narrower)")
+        window.setContentSize(Self.size)
+        workspace.app.showPDF = false
+        try await waitUntil { workspace.pdfItem.isCollapsed }
+        // Past AppKit's collapse animation, which holds the panes' sizes.
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(isClose(minimum().width, ColumnMetrics.sourceMinimum, within: 1))
+        #expect(full.height < Self.compact.height)
+        // The sidebar shown again at the minimum widens the window for it.
+        workspace.app.sidebarVisible = true
+        try await waitUntil { !workspace.sidebarItem.isCollapsed }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(width(workspace.sidebarItem) >= ColumnMetrics.sidebarMinimum)
+        #expect(width(workspace.sourceItem) >= ColumnMetrics.sourceMinimum - 0.5,
+                "sidebar \(width(workspace.sidebarItem)), source \(width(workspace.sourceItem)), window \(workspace.view.frame)")
     }
 
     /// Compile is off without TeX, in the toolbar and its overflow menu as in the
@@ -529,7 +555,7 @@ final class WorkspaceLayoutTests {
         let workspace = open(sidebar: false)
         let window = try #require(window), toolbar = try showToolbar(workspace)
         var left: [NSToolbarItem.Identifier] = []
-        for width in stride(from: Self.size.width, through: ColumnMetrics.contentMinimum.width, by: -5) {
+        for width in stride(from: Self.size.width, through: Self.compact.width, by: -5) {
             window.setContentSize(NSSize(width: width, height: Self.size.height))
             window.layoutIfNeeded()
             let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
