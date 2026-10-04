@@ -318,6 +318,22 @@ struct SourceEditorTests {
         #expect(window.childWindows?.isEmpty != false)
     }
 
+    /// The selected row is drawn as the focused list's, the accent's, from the first show,
+    /// though the document keeps the keyboard.
+    @Test func theCompletionListSelectsAsTheFocusedList() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        let list = CompletionList()
+        list.show((0..<3).map { (label: "\\item\($0)", kind: CompletionKind.command) }, font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+                  theme: .overleaf, under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
+        let panel = try #require(window.childWindows?.first)
+        panel.layoutIfNeeded()
+        let table = try #require(panel.firstResponder as? NSTableView)
+        #expect(table.rowView(atRow: 0, makeIfNecessary: false)?.isEmphasized == true)
+        #expect(NSApp.keyWindow !== panel && !panel.canBecomeKey)
+        list.close()
+    }
+
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
         open("start")
         text.insertText("x", replacementRange: typed)

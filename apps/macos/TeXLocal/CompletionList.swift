@@ -31,7 +31,11 @@ final class CompletionList {
     var clicked: (Int) -> Void = { _ in }
     var selection: Int { rows.selection ?? 0 }
 
-    private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    private let panel = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    /// Key to what it holds, so its list draws as focused; the document's window keeps the keyboard.
+    private final class Panel: NSPanel {
+        override var isKeyWindow: Bool { true }
+    }
     private let rows = Rows()
     /// At most this many rows show; the rest scroll.
     private static let shownRows = 8
@@ -54,8 +58,10 @@ final class CompletionList {
         if self.rows.font != font { self.rows.metrics = nil }
         self.rows.items = rows.map { Item(label: $0.label, badge: $0.kind.badge(in: theme)) }
         self.rows.font = font
-        self.rows.selection = 0
-        guard let window else { return }
+        guard let window else {
+            self.rows.selection = 0
+            return
+        }
         if parent !== window {
             parent?.removeChildWindow(panel)
             // Room to lay the rows out in, before the list has measured them.
@@ -65,7 +71,21 @@ final class CompletionList {
         self.start = start
         // Shown once the list has measured its rows (`fit`).
         panel.contentView?.layoutSubtreeIfNeeded()
+        focusList()
+        self.rows.selection = 0
         fit()
+    }
+
+    /// Selected as the list that has the keyboard, though the document has it: a table
+    /// draws the focused list's selection only as its key window's first responder, which
+    /// the panel says it is while never taking the keyboard. SwiftUI's own focus (`focused`)
+    /// gives the row the focused list's fill but the unfocused one's text (27.2).
+    private func focusList() {
+        func table(in view: NSView) -> NSTableView? {
+            view as? NSTableView ?? view.subviews.lazy.compactMap(table).first
+        }
+        guard !(panel.firstResponder is NSTableView), let content = panel.contentView, let list = table(in: content) else { return }
+        panel.makeFirstResponder(list)
     }
 
     private weak var parent: NSWindow?
@@ -163,8 +183,6 @@ final class CompletionList {
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
-                // Selected as the list that has the keyboard, though the document has it.
-                .environment(\.controlActiveState, .key)
                 .onChange(of: rows.selection) { if let row = rows.selection { proxy.scrollTo(row) } }
             }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { list = $0; measure() }
