@@ -178,6 +178,21 @@ final class ProjectFlowTests {
     /// Two opens that overlap (the project restored at launch and an Open
     /// With import, or quick successive opens) leave the editor on the one
     /// opened last, never on the other's text.
+    /// The main file is read from disk before a Move to Trash: another editor may have
+    /// changed it since the project opened (#37).
+    @Test(.timeLimit(.minutes(1)))
+    func theMainFileOnDiskStaysOutOfTheTrash() async throws {
+        let (project, folder) = try await opened()
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
+        let settings = folder.appending(path: ".texlocal.json")
+        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+        json["mainFile"] = "second.tex"
+        try JSONSerialization.data(withJSONObject: json).write(to: settings)
+        await project.deleteEntry("second.tex")
+        #expect(files.fileExists(atPath: folder.appending(path: "second.tex").path))
+        #expect(project.settings?.mainFile == "second.tex")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info

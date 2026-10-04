@@ -739,14 +739,17 @@ final class ProjectModel {
     /// In the lane, so it follows the saves and renames asked for before it.
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
-            // The core's rule for delete_entry, which this replaces to learn where the Trash put it.
-            if let main = model.settings?.mainFile, main == path || main.hasPrefix(path + "/") {
-                throw CoreError(message: "Choose a different main file before moving this to the Trash.", status: 409)
-            }
             // Saved first, so an autosave cannot recreate the deleted file.
             repeat {
                 guard await model.write() else { return false }
             } while model.hasUnsavedText
+            // The core's rule for delete_entry, which this replaces to learn where the Trash put
+            // it, on the settings as they are on disk now: another editor may have changed them (#37).
+            let settings = try await model.core.call("get_settings", ["id": model.id], as: ProjectSettings.self)
+            model.settings = settings
+            if settings.mainFile == path || settings.mainFile.hasPrefix(path + "/") {
+                throw CoreError(message: "Choose a different main file before moving this to the Trash.", status: 409)
+            }
             try item.recycle()
             guard !model.closed else { return false }
             model.editor.forget(path: path)
