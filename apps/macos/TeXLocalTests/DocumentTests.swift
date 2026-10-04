@@ -171,9 +171,10 @@ struct PDFFitTests {
     }
 
     /// Fit Page shows the whole page, its page-break margins too, and keeps it whole as
-    /// the view resizes: by its height in a wide view, by its width in a narrow one.
-    @Test(arguments: [0.0, 37.0])
-    func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat) throws {
+    /// the view resizes: by its height in a wide view, by its width in a narrow one; a page
+    /// turned a quarter by its shape as shown (#25).
+    @Test(arguments: [0.0, 37.0], [0, 90])
+    func fitPageKeepsTheWholePageInView(_ bottomInset: CGFloat, _ rotation: Int) throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
@@ -181,9 +182,11 @@ struct PDFFitTests {
         // The pane's mode is PDFView's default.
         #expect(view.displayMode == .singlePageContinuous)
         view.displaysPageBreaks = true
-        controller.show(try pages(1))
+        let document = try pages(1)
+        document.page(at: 0)?.rotation = rotation
+        controller.show(document)
         controller.fitPage()
-        for (width, height) in [(600.0, 500.0), (600, 380), (300, 500), (420, 500)] {
+        for (width, height) in [(600.0, 500.0), (600, 380), (300, 500), (420, 500), (1000, 300)] {
             view.setFrameSize(NSSize(width: width, height: height))
             view.layoutDocumentView()
             // In page space, magnified by the scale.

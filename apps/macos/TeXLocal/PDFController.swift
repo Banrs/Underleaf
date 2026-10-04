@@ -105,8 +105,10 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// with it, in the height it shows in.
     private var pageScale: CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
-        let margins = view.pageBreakMargins
-        let height = view.shownHeight / (page.bounds(for: view.displayBox).height + margins.top + margins.bottom)
+        let margins = view.pageBreakMargins, box = page.bounds(for: view.displayBox)
+        // The box is in page space; a page turned a quarter shows its width upright.
+        let pageHeight = page.rotation.isMultiple(of: 180) ? box.height : box.width
+        let height = view.shownHeight / (pageHeight + margins.top + margins.bottom)
         return min(height, view.scaleFactorForSizeToFit)
     }
 
