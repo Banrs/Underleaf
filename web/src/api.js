@@ -1,11 +1,9 @@
-// The API client. One table for both hosts: the bridge turns a command into a
-// Tauri invoke on the desktop or a POST to texlocal-server in a browser, and
-// fileUrl() points at the texlocal:// scheme or the same-origin routes.
+// Commands and downloads through the browser host.
 import { bridge as ipc } from './bridge.js';
 
 // Upload metadata travels in headers, which carry bytes rather than text, so a
-// UTF-8 filename has to be escaped into ASCII to survive the trip. Each host's
-// `upload_file` percent-decodes it back.
+// UTF-8 filename has to be escaped into ASCII to survive the trip. The server
+// percent-decodes it back.
 const enc = encodeURIComponent;
 
 export const api = ipc && {
@@ -80,10 +78,8 @@ export const api = ipc && {
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
   // pdf.js fetches the PDF itself, a range at a time; each request sends these.
   fileHeaders: ipc.fileHeaders,
-  // The desktop asks for a destination with a native save dialog; a browser
-  // downloads the attachment instead.
-  downloadPdf: (id) => saveAs(id, 'pdf', 'save_pdf_as'),
-  exportProject: (id) => saveAs(id, 'zip', 'export_project'),
+  downloadPdf: (id) => ipc.download(`/__download/pdf/${enc(id)}`),
+  exportProject: (id) => ipc.download(`/__download/zip/${enc(id)}`),
 
   syncForward: (id, file, line) => ipc.invoke('synctex_forward', { id, file, line }),
   syncInverse: (id, page, x, y) => ipc.invoke('synctex_inverse', { id, page, x, y }),
@@ -93,7 +89,3 @@ export const api = ipc && {
 // exists here as a file (texlocal_core::service::keep_both).
 const underClash = (path, clash) => path === clash.path || path.startsWith(`${clash.path}/`);
 export const keepBoth = (path, clash) => clash.keepBoth + path.slice(clash.path.length);
-
-function saveAs(id, kind, command) {
-  return ipc.download ? ipc.download(`/__download/${kind}/${enc(id)}`) : ipc.invoke(command, { id });
-}

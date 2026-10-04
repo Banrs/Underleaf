@@ -1,26 +1,22 @@
 // Bootstrap: platform detection, appearance, routing. Everything else lives in
 // the view modules.
 
-import { bridge, platform } from './bridge.js';
-import { prefs, migratePrefs, applyAppearance, applyAccent, setAppearanceHandler } from './prefs.js';
+import { prefs, migratePrefs, applyAppearance, setAppearanceHandler } from './prefs.js';
 import { onCommandsChanged, installMenuBridge } from './commands.js';
 import { state } from './state.js';
 import { renderHome, destroyHome } from './home.js';
 
 // ---------- platform ----------
 
-// html.mac: the Tauri Mac window's chrome; html.browser: a browser tab (docs/web.md).
 const root = document.documentElement;
-const desktop = bridge?.kind === 'tauri';
-root.classList.toggle('mac', desktop && platform === 'darwin');
-root.classList.toggle('browser', !desktop);
+root.classList.remove('mac');
+root.classList.add('browser');
 
-// A file dropped outside the drop zones must never navigate the page — on the
-// desktop that would load file:// on an origin holding the command bridge.
+// A file dropped outside the drop zones must never navigate the page.
 addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => e.preventDefault());
 
-// The webview's own menu (Reload, Inspect…) is not the app's. Text keeps it for
+// The browser's own menu (Reload, Inspect…) is not the app's. Text keeps it for
 // Copy/Paste and spelling; everything else either has its own menu or none.
 addEventListener('contextmenu', (e) => {
   if (!e.target.closest?.('input, textarea, [contenteditable="true"], .pdf-text-layer, .logs-raw')) e.preventDefault();
@@ -31,8 +27,6 @@ addEventListener('contextmenu', (e) => {
 migratePrefs();
 setAppearanceHandler((theme) => state.editor?.setTheme(theme === 'dark'));
 applyAppearance();
-
-bridge?.accent().then((hex) => { if (hex) applyAccent(hex); });
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (prefs.themeMode === 'system') applyAppearance();
@@ -100,12 +94,6 @@ addEventListener('beforeunload', (e) => {
   e.preventDefault();
   e.returnValue = '';
 });
-// No workspace loaded means no project was ever opened, so nothing to flush.
-bridge?.onBeforeQuit?.(async () => {
-  if (workspace && !(await workspace.flushCurrent())) throw new Error('The active document changed while saving');
-  await workspace?.stopTexPresso();
-});
-
 // pagehide only fires when the page actually leaves (unlike a cancelled unload).
 addEventListener('pagehide', ({ persisted }) => workspace?.leaveTexPressoPage({ persisted }));
 

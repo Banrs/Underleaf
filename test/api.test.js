@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// api.js only builds its backend when a Tauri bridge exists, so the window
-// global has to be in place before the module is imported.
+// Build the API against the browser's real HTTP bridge.
 const calls = [];
 let existing = [];
-globalThis.window = {
-  __TAURI__: {
-    core: {
-      invoke: async (command, args, options) => {
-        calls.push({ command, args, options });
-        if (command === 'upload_file') return { saved: [decodeURIComponent(options.headers['x-path'])] };
-        return args?.command === 'validate_uploads' ? { existing } : null;
-      },
-    },
-    event: { listen: () => {} },
-  },
+globalThis.window = {};
+globalThis.document = {};
+globalThis.location = { href: 'http://127.0.0.1:7878/' };
+globalThis.history = {};
+globalThis.sessionStorage = { getItem: () => 'secret' };
+globalThis.fetch = async (url, options) => {
+  const command = url.slice('/api/'.length);
+  const args = options.body instanceof ArrayBuffer ? options.body : JSON.parse(options.body);
+  calls.push({ command, args, options });
+  const result = command === 'upload_file'
+    ? { saved: [decodeURIComponent(options.headers['x-path'])] }
+    : command === 'validate_uploads' ? { existing } : null;
+  return Response.json(result);
 };
 const { api, keepBoth } = await import('../web/src/api.js');
 
@@ -35,7 +36,7 @@ test('TeXpresso commands distinguish inspection, owned requests, and deliberate 
   await api.texpressoRescan('p', 'owner');
   await api.texpressoStop('p', 'owner');
   await api.texpressoStopGlobal('p');
-  assert.deepEqual(calls.map(({ command, args }) => ({ command, ...args })), [
+  assert.deepEqual(calls.map(({ command, args }) => ({ command, args })), [
     { command: 'texpresso_status', args: { id: 'p' } },
     { command: 'texpresso_status', args: { id: 'p', session: 'owner' } },
     { command: 'texpresso_start', args: { id: 'p', files: [{ path: 'main.tex', text: 'unsaved $' }] } },
@@ -58,16 +59,15 @@ test('upload percent-encodes its header metadata', async () => {
     'x-project': 'proj%20id',
     'x-dir': 'sub%20dir',
     'x-path': 'notes%20%C3%BC.tex',
+    'x-texlocal-token': 'secret',
   });
 });
 
 test('upload validates the whole set before sending any file', async () => {
   calls.length = 0;
   await api.upload('p', [fileLike('a.tex'), fileLike('b.tex')]);
-  // A core command reaches the desktop shell through its one `call`.
-  assert.equal(calls[0].command, 'call');
-  assert.equal(calls[0].args.command, 'validate_uploads');
-  assert.deepEqual(calls[0].args.args.files, [
+  assert.equal(calls[0].command, 'validate_uploads');
+  assert.deepEqual(calls[0].args.files, [
     { path: 'a.tex', size: 3 },
     { path: 'b.tex', size: 3 },
   ]);
