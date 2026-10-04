@@ -258,6 +258,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
+        // Invalidated, the fragments laid out before keep no colours until validated again.
+        if needsColours, let manager = textLayoutManager {
+            needsColours = false
+            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
+        }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
         needsDisplay = true
@@ -300,6 +305,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // MARK: colours
 
+    /// The shown fragments' colours were invalidated (`recolour`).
+    private var needsColours = false
+
     /// TextKit validates colours when it renders a fragment, without editing the
     /// document's attributes or disturbing its estimated scroll geometry.
     private func recolour(invalidatingLayout: Bool = false) {
@@ -319,6 +327,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             }
         }
         manager.invalidateRenderingAttributes(for: manager.documentRange)
+        // TextKit validates only the fragments it lays out anew; the rest, after the next layout.
+        needsColours = true
+        needsLayout = true
         if invalidatingLayout, let viewport = manager.textViewportLayoutController.viewportRange {
             for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
             manager.invalidateLayout(for: viewport)
