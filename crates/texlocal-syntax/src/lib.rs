@@ -34,6 +34,14 @@ pub struct TextEdit {
     pub text: String,
 }
 
+fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
+    TextEdit {
+        start,
+        length,
+        text: text.into(),
+    }
+}
+
 /// An edit and where the caret goes after it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Insertion {
@@ -229,11 +237,7 @@ impl SourceDocument {
         };
         let caret = selection.start + utf16(&text) as u32;
         Insertion {
-            edit: TextEdit {
-                start: selection.start,
-                length: selection.length,
-                text,
-            },
+            edit: edit(selection.start, selection.length, text),
             caret,
             fields: vec![],
         }
@@ -251,6 +255,11 @@ fn letter(u: u16) -> bool {
 /// JavaScript's \s and the no-break space.
 fn space(u: u16) -> bool {
     matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+}
+
+/// A line of nothing but spaces, or of nothing.
+fn blank(line: &[u16]) -> bool {
+    line.iter().all(|&u| space(u))
 }
 
 fn utf16(s: &str) -> usize {

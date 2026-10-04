@@ -2,7 +2,7 @@
 //! Name arguments include cases that the highlighter leaves uncoloured when
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::{catalog::CATALOG, maths, merge_range, space, Text, TextRange};
+use crate::{blank, catalog::CATALOG, maths, merge_range, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments from commands in the paragraph.
@@ -10,7 +10,7 @@ use crate::{catalog::CATALOG, maths, merge_range, space, Text, TextRange};
 /// a blank line.
 pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
     let mut line = text.line_index(start);
-    while line > 0 && !blank(text, line - 1) {
+    while line > 0 && !blank(text.line(line - 1)) {
         line -= 1;
     }
     let units = &text.units;
@@ -71,7 +71,7 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
 fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
     let at = |i| char::from_u32(text.units[i] as u32).unwrap_or_default();
     let paragraph_end =
-        |i| at(i) == '\n' && i + 1 < end && blank(text, text.line_index(i as u32 + 1));
+        |i| at(i) == '\n' && i + 1 < end && blank(text.line(text.line_index(i as u32 + 1)));
     let mut push = |from: usize, to: usize| {
         ranges.push(TextRange {
             start: from as u32,
@@ -130,10 +130,6 @@ fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextR
         push(from, i);
     }
     i
-}
-
-fn blank(text: &Text, line: usize) -> bool {
-    text.line(line).iter().all(|&u| space(u))
 }
 
 #[cfg(test)]
