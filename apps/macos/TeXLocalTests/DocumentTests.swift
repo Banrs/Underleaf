@@ -465,6 +465,35 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 2)
     }
 
+    /// Find Next and Previous search for the system's find text when another pane's Use
+    /// Selection for Find has changed it since this pane's search, with or without matches (#38).
+    @Test(arguments: [("target", 1), ("target", -1), ("nothing", 1)])
+    func findNextFollowsANewerSharedText(earlier: String, step: Int) async throws {
+        let controller = try targets()
+        controller.finding = true
+        controller.findText = earlier
+        controller.findTyped()
+        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier }
+        PDFFind.shared = "beta"
+        controller.findNext(step)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "beta" && controller.matches.count == 1 }
+        #expect(controller.findText == "beta")
+        #expect(controller.matches.first?.string == "beta")
+    }
+
+    /// Typing the field's delay hasn't searched yet is what Find Next finds.
+    @Test func findNextFindsWhatIsTyped() async throws {
+        let controller = try targets()
+        controller.finding = true
+        controller.findText = "target"
+        controller.findTyped()
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
+        controller.findText = "gamma"
+        controller.findNext(1)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "gamma" && controller.matches.count == 1 }
+        #expect(PDFFind.shared == "gamma")
+    }
+
     /// Jump to Selection brings the PDF's selection into view, and is there only with one.
     @Test func jumpToSelectionShowsIt() throws {
         let controller = try targets()

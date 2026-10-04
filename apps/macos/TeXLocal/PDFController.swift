@@ -284,10 +284,15 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// the system's find text going on from the selection, as TextEdit's does after Use Selection for Find.
     var canFindNext: Bool { view.document != nil && (!matches.isEmpty || !(PDFFind.shared ?? "").isEmpty) }
 
+    /// Typing the field's delay hasn't searched yet wins; else the system's find text, which
+    /// another pane's Use Selection for Find may have changed since this pane searched.
     func findNext(_ step: Int) {
-        if !matches.isEmpty, PDFFind.normalize(findText) == query { return self.step(step) }
-        let text = findText.isEmpty ? PDFFind.shared ?? "" : findText
+        let typed = PDFFind.normalize(findText)
+        let pending = !typed.isEmpty && typed != (search?.query ?? query)
+        let text = pending ? typed : PDFFind.shared.map(PDFFind.normalize) ?? typed
+        if !matches.isEmpty, text == query { return self.step(step) }
         guard !text.isEmpty else { return }
+        if pending { PDFFind.shared = text }
         finding = true
         findText = text
         startFrom = anchor.map { ($0, step) }
