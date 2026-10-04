@@ -561,6 +561,33 @@ final class WorkspaceLayoutTests {
         }
     }
 
+    /// A side column shown in a window too narrow for it widens the window by only what's
+    /// missing, leaves the other column as it was, and gives the width back as it hides.
+    @Test(arguments: [(sidebar: false, inspector: false), (true, false), (false, true)], [900.0, 1300])
+    func aSideColumnWidensTheWindowOnlyAsItMust(shown: (sidebar: Bool, inspector: Bool), width: CGFloat) async throws {
+        let workspace = open(sidebar: shown.sidebar, inspector: shown.inspector, size: NSSize(width: width, height: 700))
+        let window = try #require(window), app = workspace.app
+        let before = window.frame
+        let showing: NSSplitViewItem = try #require(shown.inspector ? workspace.sidebarItem : workspace.inspectorItem)
+        let other: NSSplitViewItem = try #require(shown.inspector ? workspace.inspectorItem : workspace.sidebarItem)
+        let otherCollapsed = other.isCollapsed
+        if shown.inspector { app.sidebarVisible = true } else { app.inspectorVisible = true }
+        let sidebar = shown.sidebar || shown.inspector
+        let fit = (sidebar ? ColumnMetrics.sidebarMinimum + ColumnMetrics.divider : 0)
+            + ColumnMetrics.columnsWidth(sidebarHidden: !sidebar, inspectorShown: true) + ColumnMetrics.divider + ColumnMetrics.inspector
+        let widened = before.width + max(0, (fit - before.width).rounded(.up))
+        try await waitUntil { !showing.isCollapsed && abs(window.frame.width - widened) < 1 && !workspace.splitView.inLiveResize } state: {
+            "window \(window.frame), expected width \(widened)"
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(abs(window.frame.width - widened) < 1 && other.isCollapsed == otherCollapsed, "\(window.frame)")
+        // From the shown column's own edge, unless the screen's edge stops it.
+        if !shown.inspector { #expect(window.frame.minX == before.minX) }
+        if shown.inspector { app.sidebarVisible = false } else { app.inspectorVisible = false }
+        try await waitUntil { showing.isCollapsed && window.frame == before } state: { "window \(window.frame), was \(before)" }
+        #expect(other.isCollapsed == otherCollapsed)
+    }
+
     /// A hidden sidebar's window controls and toggle join the source's toolbar section, which
     /// widens by as much; it narrows again as the sidebar shows.
     @Test func theSourceTakesOnTheSidebarsToolbarSection() async throws {

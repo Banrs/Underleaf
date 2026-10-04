@@ -401,7 +401,7 @@ final class WorkspaceController: RestoredSplitViewController {
             done?()
             return
         }
-        let panel = item === panelItem
+        let panel = item === panelItem, hidden = collapsed ? ObjectIdentifier(item) : nil
         paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
@@ -415,6 +415,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 if !collapsed { panelHeader.view.isHidden = false }
                 panelHeader.animator().isHidden = collapsed
             }
+            if !collapsed, let frame = widenedFrame(showing: item) { view.window?.animator().setFrame(frame, display: true) }
             item.animator().isCollapsed = collapsed
             if item === outlineItem { sidebar.view.layoutSubtreeIfNeeded() }
         } completionHandler: { [weak self] in
@@ -422,8 +423,48 @@ final class WorkspaceController: RestoredSplitViewController {
                 guard let self else { return done?() ?? () }
                 if panel, self.panelHeader.isHidden { self.panelHeader.view.isHidden = true }
                 self.paneAnimation(false)
+                if let hidden { self.giveBackWidth(hiding: hidden) }
                 done?()
             }
+        }
+    }
+
+    /// The window a side column widened, from and to (`widenedFrame`).
+    private var widened: (item: NSSplitViewItem, from: NSRect, to: NSRect)?
+
+    /// A side column shown in a window too narrow for it beside the panes' minimums widens the
+    /// window by only the width missing, from the column's own edge and within the screen, as
+    /// Pages does for its inspector. Left to AppKit, the window would take the column's whole
+    /// width, and the room over would bring back a sidebar the window folded. Nil leaves the window.
+    private func widenedFrame(showing item: NSSplitViewItem) -> NSRect? {
+        guard item === sidebarItem || item === inspectorItem, let window = view.window,
+              !window.styleMask.contains(.fullScreen) else { return nil }
+        let sidebar = item === sidebarItem || !sidebarItem.isCollapsed
+        let inspector = item === inspectorItem || !inspectorItem.isCollapsed
+        let needed = (sidebar ? ColumnMetrics.sidebarMinimum + ColumnMetrics.divider : 0)
+            + ColumnMetrics.columnsWidth(sidebarHidden: !sidebar, inspectorShown: inspector)
+            + (inspector ? ColumnMetrics.divider + ColumnMetrics.inspector : 0)
+        let missing = (needed - splitView.bounds.width).rounded(.up)
+        guard missing > 0 else { return nil }
+        var frame = window.frame
+        frame.size.width += missing
+        if item === sidebarItem { frame.origin.x -= missing }
+        if let screen = window.screen?.visibleFrame {
+            frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - frame.width))
+        }
+        widened = (item, window.frame, frame)
+        return frame
+    }
+
+    /// Hidden again, the column gives that width back, unless the window has changed since; once
+    /// it's shut, or the narrowing window would fold the sidebar on the way.
+    private func giveBackWidth(hiding item: ObjectIdentifier) {
+        guard let widened, ObjectIdentifier(widened.item) == item else { return }
+        self.widened = nil
+        guard let window = view.window, window.frame == widened.to else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            if !animates { context.duration = 0 }
+            window.animator().setFrame(widened.from, display: true)
         }
     }
 
