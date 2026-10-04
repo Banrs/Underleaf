@@ -6,11 +6,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::{catalog, complete, is, space, utf16, Insertion, Text, TextEdit, TextRange};
-
-fn blank(line: &[u16]) -> bool {
-    line.iter().all(|&u| space(u))
-}
+use crate::{blank, catalog, complete, is, space, utf16, Insertion, Text, TextEdit, TextRange};
 
 /// The lines the selections touch, in order. A selection ending at a
 /// line's start leaves that line alone.
