@@ -414,12 +414,17 @@ struct PDFFindTests {
         PDFFind.board = NSPasteboard.withUniqueName()
     }
 
-    /// Three pages, each with "target" once.
-    private func targets() throws -> PDFController {
+    /// Off screen at a fixed size, showing `document`.
+    private func shown(_ document: PDFDocument) -> PDFController {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["alpha target", "beta target", "gamma target"]))
+        controller.show(document)
         return controller
+    }
+
+    /// Three pages, each with "target" once.
+    private func targets() throws -> PDFController {
+        shown(try document(["alpha target", "beta target", "gamma target"]))
     }
 
     private func select(_ word: String, onPage index: Int, in controller: PDFController) throws {
@@ -514,11 +519,9 @@ struct PDFFindTests {
     }
 
     @Test func rebuildSearchesCurrentFindText() async throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
         let first = try document(["old result"])
         let second = try document(["new result"])
-        controller.show(first)
+        let controller = shown(first)
         controller.finding = true
         controller.findText = "old"
         controller.find("old")
@@ -539,9 +542,7 @@ struct PDFFindTests {
 
     /// Find ignores case and accents, as typed without them.
     @Test func findIgnoresCaseAndAccents() async throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["Gödel and Erdős"]))
+        let controller = shown(try document(["Gödel and Erdős"]))
         controller.find("godel")
         try await waitUntil(timeout: .seconds(5)) { controller.query == "godel" && controller.matches.count == 1 }
         controller.find("ERDOS")
@@ -550,9 +551,7 @@ struct PDFFindTests {
 
     /// Typing back to the found text while a longer one is searched ends with the field's matches.
     @Test func typingBackKeepsTheFieldsMatches() async throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try document(["a ab a"]))
+        let controller = shown(try document(["a ab a"]))
         controller.finding = true
         controller.findText = "a"
         controller.findTyped()
