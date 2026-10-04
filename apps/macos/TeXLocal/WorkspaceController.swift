@@ -401,7 +401,7 @@ final class WorkspaceController: RestoredSplitViewController {
             done?()
             return
         }
-        let panel = item === panelItem, hidden = collapsed ? ObjectIdentifier(item) : nil
+        let panel = item === panelItem, id = ObjectIdentifier(item)
         paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
@@ -423,7 +423,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 guard let self else { return done?() ?? () }
                 if panel, self.panelHeader.isHidden { self.panelHeader.view.isHidden = true }
                 self.paneAnimation(false)
-                if let hidden { self.giveBackWidth(hiding: hidden) }
+                if collapsed { self.giveBackWidth(hiding: id) } else { self.widenedSettled(showing: id) }
                 done?()
             }
         }
@@ -456,12 +456,21 @@ final class WorkspaceController: RestoredSplitViewController {
         return frame
     }
 
+    /// The window as AppKit settled it around the shown column, which can differ from the frame
+    /// asked for by a point.
+    private func widenedSettled(showing item: ObjectIdentifier) {
+        guard let window = view.window, let widened, ObjectIdentifier(widened.item) == item else { return }
+        self.widened?.to = window.frame
+    }
+
     /// Hidden again, the column gives that width back, unless the window has changed since; once
     /// it's shut, or the narrowing window would fold the sidebar on the way.
     private func giveBackWidth(hiding item: ObjectIdentifier) {
         guard let widened, ObjectIdentifier(widened.item) == item else { return }
         self.widened = nil
-        guard let window = view.window, window.frame == widened.to else { return }
+        // Within the point AppKit's split rounding can move it.
+        guard let window = view.window, abs(window.frame.minX - widened.to.minX) <= 1,
+              abs(window.frame.width - widened.to.width) <= 1 else { return }
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
             window.animator().setFrame(widened.from, display: true)

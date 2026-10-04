@@ -576,11 +576,11 @@ final class WorkspaceLayoutTests {
         let fit = (sidebar ? ColumnMetrics.sidebarMinimum + ColumnMetrics.divider : 0)
             + ColumnMetrics.columnsWidth(sidebarHidden: !sidebar, inspectorShown: true) + ColumnMetrics.divider + ColumnMetrics.inspector
         let widened = before.width + max(0, (fit - before.width).rounded(.up))
-        try await waitUntil { !showing.isCollapsed && abs(window.frame.width - widened) < 1 && !workspace.splitView.inLiveResize } state: {
+        try await waitUntil { !showing.isCollapsed && abs(window.frame.width - widened) <= 1 && !workspace.splitView.inLiveResize } state: {
             "window \(window.frame), expected width \(widened)"
         }
         try await Task.sleep(for: .milliseconds(300))
-        #expect(abs(window.frame.width - widened) < 1 && other.isCollapsed == otherCollapsed, "\(window.frame)")
+        #expect(abs(window.frame.width - widened) <= 1 && other.isCollapsed == otherCollapsed, "\(window.frame)")
         // From the shown column's own edge, unless the screen's edge stops it.
         if !shown.inspector { #expect(window.frame.minX == before.minX) }
         if shown.inspector { app.sidebarVisible = false } else { app.inspectorVisible = false }
