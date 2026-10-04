@@ -176,7 +176,7 @@ struct DialogSheet<Fields: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .font(.headline)
                     .accessibilityAddTraits(.isHeader)
                 if let message {
                     Text(message)
@@ -282,6 +282,9 @@ private struct ActionsOffer<ID: Hashable>: ViewModifier {
 struct RenameField: View {
     @Binding var text: String
     var isFile = false
+    /// A character a name can't hold: refused as it's typed or pasted, with the alert sound,
+    /// rather than after the name is committed.
+    var forbidden: Character?
     /// Return or Escape ended it: the list takes the keyboard back, as Finder's does.
     let ended: () -> Void
     let commit: () -> Void
@@ -295,6 +298,12 @@ struct RenameField: View {
             .focused($focused)
             .onSubmit { commit(); ended() }
             .onExitCommand { cancel(); ended() }
+            .onChange(of: text) { _, new in
+                if let forbidden, new.contains(forbidden) {
+                    text = new.filter { $0 != forbidden }
+                    NSSound.beep()
+                }
+            }
             .onChange(of: focused) { was, now in
                 if now, isFile { selection = .baseName(of: text) }
                 if was, !now { commit() }
