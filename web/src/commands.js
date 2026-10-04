@@ -2,7 +2,7 @@
 // buttons: a command is declared once, so a disabled command is disabled
 // everywhere and a shortcut can't drift from its menu item.
 
-import { bridge as ipc, isMac } from './bridge.js';
+import { isMac } from './bridge.js';
 
 // Every command's accelerator. The Mac reads this table too.
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
@@ -11,8 +11,7 @@ export { SHORTCUTS };
 
 const registry = new Map();
 
-// The menu bar's shape. `id` entries resolve against the registry; `role`
-// entries are handled natively by the shell (standard editing and window items).
+// The menu bar's shape. Entries resolve against the command registry.
 const MENU = [
   {
     label: 'File',
@@ -28,7 +27,6 @@ const MENU = [
     label: 'Edit',
     items: [
       { id: 'edit.undo' }, { id: 'edit.redo' }, '-',
-      { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, '-',
       { id: 'edit.find' }, { id: 'edit.findNext' }, { id: 'edit.findPrevious' }, { id: 'project.search' }, { id: 'pdf.find' }, { id: 'edit.gotoLine' }, '-',
       { id: 'edit.bold' }, { id: 'edit.italic' }, { id: 'edit.math' }, { id: 'edit.comment' },
     ],
@@ -123,7 +121,7 @@ export function runCommand(id) {
   if (!commandEnabled(id)) return false;
   try {
     const result = registry.get(id).run();
-    // Native menu and keyboard dispatch are fire-and-forget. Consume a rejected
+    // Menu and keyboard dispatch are fire-and-forget. Consume a rejected
     // async command so a handled save/upload failure does not also become an
     // unhandled-rejection crash report.
     result?.catch?.((err) => console.error(`Command ${id} failed:`, err));
@@ -133,33 +131,7 @@ export function runCommand(id) {
   return true;
 }
 
-// Push the menu spec to the shell, which owns the native menu, whenever state
-// changes; an unchanged spec skips the IPC round trip.
-let lastSpec = '';
-export function refreshCommands() {
-  const spec = MENU.map((m) => ({
-    label: m.label,
-    items: m.items.map((it) => {
-      if (it === '-') return '-';
-      if (it.role) return { role: it.role };
-      const c = registry.get(it.id);
-      return {
-        id: it.id,
-        label: menuLabel(it.id),
-        accelerator: accelOf(it.id),
-        enabled: commandEnabled(it.id),
-        checked: c?.checked?.(),
-        type: c?.checked ? 'checkbox' : undefined,
-      };
-    }),
-  }));
-  const json = JSON.stringify(spec);
-  if (json !== lastSpec) {
-    lastSpec = json;
-    ipc?.setMenu?.(spec);
-  }
-  notifyHost();
-}
+export function refreshCommands() { notifyHost(); }
 
 export function onCommandsChanged(fn) { notifyHost = fn; }
 
@@ -203,7 +175,7 @@ function accelOf(id) {
 const BROWSER_OWNED = ['CmdOrCtrl+N', 'CmdOrCtrl+Shift+N', 'CmdOrCtrl+T', 'CmdOrCtrl+W'];
 function shownAccel(id) {
   const accel = accelOf(id);
-  return nativeMenu() || !BROWSER_OWNED.includes(accel) ? accel : undefined;
+  return !BROWSER_OWNED.includes(accel) ? accel : undefined;
 }
 
 // A title with its shortcut appended, for `title=` tooltips on toolbar buttons.
@@ -217,24 +189,12 @@ export function tooltip(id) {
 
 // ---------- menu events ----------
 
-// Whether the shell draws a native menu. In a browser nothing does, so the
-// menu bar and its shortcuts are drawn and dispatched here instead.
-const nativeMenu = () => ipc?.kind !== 'browser';
-
-// Without a native menu this is a browser, which zooms the page itself; an
-// interface size of our own would only stack on top of it.
+// Browsers own page zoom, so a separate interface size would stack on it.
 const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
 
-// A native menu owns its accelerators; listening here too would run each
-// command twice. In a browser this capture-phase listener runs ahead of the
-// editor's keymap, as a menu's key equivalents would. `nativeOnly` commands are
-// the editor keymap's: caught here, Ctrl+Z in a search field would undo the
-// editor.
+// Capture ahead of the editor keymap. `nativeOnly` commands belong to that
+// keymap: catching Ctrl+Z here in a search field would undo the source editor.
 export function installMenuBridge() {
-  if (nativeMenu()) {
-    ipc?.onCommand?.((id) => runCommand(id));
-    return;
-  }
   addEventListener('keydown', (e) => {
     for (const [id, c] of registry) {
       const accel = !c.nativeOnly && !BROWSER_OWNS.has(id) && accelOf(id);
@@ -282,16 +242,12 @@ export function matchesAccel(accel, e, mac) {
     && codesFor(key).includes(e.code);
 }
 
-// The browser's menu bar, drawn from the same MENU the native one is. Returns
-// null wherever the shell draws a native menu. Roles (Cut/Copy/Paste) belong to
-// the browser there, so they are left out along with separators they strand.
 // `openMenu` is dom.js's menuUnder, which also closes a trigger's open menu.
 export function menuBar(openMenu) {
-  if (nativeMenu()) return null;
   const itemsOf = (group) => {
     const items = [];
     for (const it of group.items) {
-      if (it.role || BROWSER_OWNS.has(it.id)) continue;
+      if (BROWSER_OWNS.has(it.id)) continue;
       if (it === '-') {
         if (items.length && items.at(-1) !== '-') items.push('-');
         continue;

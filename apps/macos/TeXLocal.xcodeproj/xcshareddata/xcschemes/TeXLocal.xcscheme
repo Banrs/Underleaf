@@ -35,6 +35,20 @@
                ReferencedContainer = "container:TeXLocal.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A29D00000000000000000001"
+               BuildableName = "TeXLocalUITests.xctest"
+               BlueprintName = "TeXLocalUITests"
+               ReferencedContainer = "container:TeXLocal.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -64,6 +78,17 @@
                ReferencedContainer = "container:TeXLocal.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A29D00000000000000000001"
+               BuildableName = "TeXLocalUITests.xctest"
+               BlueprintName = "TeXLocalUITests"
+               ReferencedContainer = "container:TeXLocal.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
@@ -71,6 +96,11 @@
          <EnvironmentVariable
             key = "TEXLOCAL_DATA"
             value = "/tmp/texlocal-xctest"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "UNDERLEAF_UI_TESTS"
+            value = "$(UNDERLEAF_UI_TESTS)"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

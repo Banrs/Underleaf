@@ -53,7 +53,11 @@ jobs:
       - run: npm ci
       - name: Build
         working-directory: apps/macos
-        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' build-for-testing
+        # A separate defaults domain as well as the tests' scratch project library.
+        run: >-
+          xcodebuild -scheme TeXLocal -destination 'platform=macOS'
+          UNDERLEAF_UI_TESTS=1 TEXLOCAL_APP_IDENTIFIER="com.texlocal.mac.ci${GITHUB_RUN_ID}"
+          build-for-testing
       # The core must be linked in, not loaded: a dylib from target/ would be
       # loaded from its build path, which exists only on the machine that
       # built the app.
@@ -68,4 +72,30 @@ jobs:
           fi
       - name: Test
         working-directory: apps/macos
-        run: xcodebuild -scheme TeXLocal -destination 'platform=macOS' test-without-building
+        run: >-
+          xcodebuild -scheme TeXLocal -destination 'platform=macOS' -parallel-testing-enabled NO
+          -resultBundlePath "$RUNNER_TEMP/TeXLocal-tests.xcresult"
+          UNDERLEAF_UI_TESTS=1 TEXLOCAL_APP_IDENTIFIER="com.texlocal.mac.ci${GITHUB_RUN_ID}"
+          test-without-building
+      - name: Verify Aa UI coverage ran
+        run: |
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/TeXLocal-tests.xcresult" --compact > "$RUNNER_TEMP/TeXLocal-tests.json"
+          node --input-type=module - "$RUNNER_TEMP/TeXLocal-tests.json" <<'JS'
+          import { readFileSync } from 'node:fs';
+          const nodes = JSON.parse(readFileSync(process.argv[2], 'utf8')).testNodes, matches = [];
+          while (nodes.length) {
+            const node = nodes.pop();
+            if (node.nodeType === 'Test Case' && node.name.startsWith('testFormattingControlsKeepTheirStateAndEditorSelection')) matches.push(node);
+            nodes.push(...node.children ?? []);
+          }
+          if (matches.length !== 1 || matches[0].result !== 'Passed') throw new Error(`Aa UI test did not execute successfully: ${JSON.stringify(matches)}`);
+          console.log(`Aa UI test executed: ${matches[0].result} (${matches[0].duration})`);
+          JS
+      - name: Upload failed macOS test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-results
+          path: ${{ runner.temp }}/TeXLocal-tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

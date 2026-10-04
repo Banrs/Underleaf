@@ -14,11 +14,19 @@
 			remoteGlobalIDString = 6C934F26C451BB83C7839F4E;
 			remoteInfo = TeXLocal;
 		};
+		A29D00000000000000000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AB534688020F730799B070D9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6C934F26C451BB83C7839F4E;
+			remoteInfo = TeXLocal;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeXLocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeXLocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A29D00000000000000000002 /* TeXLocalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeXLocalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -45,6 +53,11 @@
 			path = TeXLocal;
 			sourceTree = "<group>";
 		};
+		A29D00000000000000000003 /* TeXLocalUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TeXLocalUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXGroup section */
@@ -53,6 +66,7 @@
 			children = (
 				828D4CA0BCC36654846EAE79 /* TeXLocal */,
 				6A5A1704B44A8FC9D516F2CB /* TeXLocalTests */,
+				A29D00000000000000000003 /* TeXLocalUITests */,
 				4AACD0AA9786B91F34A573C0 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -62,6 +76,7 @@
 			children = (
 				6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */,
 				639ED37BF6DFB1E4249CD73C /* TeXLocalTests.xctest */,
+				A29D00000000000000000002 /* TeXLocalUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -113,6 +128,25 @@
 			productReference = 6C55DDF8BF36D28E1D735BBC /* TeXLocal.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A29D00000000000000000001 /* TeXLocalUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A29D00000000000000000009 /* Build configuration list for PBXNativeTarget "TeXLocalUITests" */;
+			buildPhases = (
+				A29D00000000000000000004 /* Sources */,
+			);
+			buildRules = ();
+			dependencies = (
+				A29D00000000000000000005 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A29D00000000000000000003 /* TeXLocalUITests */,
+			);
+			name = TeXLocalUITests;
+			packageProductDependencies = ();
+			productName = TeXLocalUITests;
+			productReference = A29D00000000000000000002 /* TeXLocalUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -122,6 +156,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					A29D00000000000000000001 = {
+						ProvisioningStyle = Manual;
+						TestTargetID = 6C934F26C451BB83C7839F4E;
+					};
 					6C934F26C451BB83C7839F4E = {
 						ProvisioningStyle = Manual;
 					};
@@ -143,6 +181,7 @@
 			targets = (
 				6C934F26C451BB83C7839F4E /* TeXLocal */,
 				58BBAFD9B174BFE49BC1CB1F /* TeXLocalTests */,
+				A29D00000000000000000001 /* TeXLocalUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -213,6 +252,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A29D00000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -220,6 +265,11 @@
 			isa = PBXTargetDependency;
 			target = 6C934F26C451BB83C7839F4E /* TeXLocal */;
 			targetProxy = 6CCDE3FAE10639D9F1004137 /* PBXContainerItemProxy */;
+		};
+		A29D00000000000000000005 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6C934F26C451BB83C7839F4E /* TeXLocal */;
+			targetProxy = A29D00000000000000000006 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -315,6 +365,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -373,6 +424,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -408,7 +460,7 @@
 					"$(SRCROOT)/../../target/release/libtexlocal_ffi.a",
 					"-liconv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -442,7 +494,7 @@
 					"$(SRCROOT)/../../target/debug/libtexlocal_ffi.a",
 					"-liconv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -450,6 +502,38 @@
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 			};
 			name = Debug;
+		};
+		A29D00000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalUITests;
+				TEST_TARGET_NAME = TeXLocal;
+			};
+			name = Debug;
+		};
+		A29D00000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalUITests;
+				TEST_TARGET_NAME = TeXLocal;
+			};
+			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
@@ -477,6 +561,15 @@
 			buildConfigurations = (
 				CAF446C16588ABB65A8BB35A /* Debug */,
 				422C06F0060F946E0EDE7265 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A29D00000000000000000009 /* Build configuration list for PBXNativeTarget "TeXLocalUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A29D00000000000000000007 /* Debug */,
+				A29D00000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
