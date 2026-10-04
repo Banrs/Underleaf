@@ -201,6 +201,26 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
+    /// A file shown again comes back scrolled where it was left, as its caret does, while its
+    /// text is as it was; changed since, it opens at its top.
+    @Test func aFileShownAgainIsWhereItWasLeft() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        let long = (1...2000).map { "Line \($0)" }.joined(separator: "\n")
+        open(long, caret: 0, path: "a.tex")
+        editor.reveal(line: 1200, atTop: true, focus: false)
+        let left = try #require(text.shownTop)
+        open("short", path: "b.tex")
+        open(long, path: "a.tex")
+        #expect(text.shownTop?.offset == left.offset && text.shownTop?.below == left.below)
+        open("short", path: "b.tex")
+        open(long + "\nmore", path: "a.tex")
+        #expect(editor.scrollView.contentView.bounds.minY == -editor.scrollView.contentInsets.top)
+    }
+
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {

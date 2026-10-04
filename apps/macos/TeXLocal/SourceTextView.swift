@@ -209,13 +209,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     private func keepingTopLine(_ change: () -> Void) {
-        // From the fragments last laid out: asked by point, TextKit answers from its new estimates.
+        guard let top = shownTop, let location = textRange(NSRange(location: top.offset, length: 0))?.location else { return change() }
+        change()
+        scroll(location) { $0.minY - top.below }
+    }
+
+    /// The first paragraph showing below the bars, and how far its top is below the clip's.
+    /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
+    var shownTop: (offset: Int, below: CGFloat)? {
         guard let clip = enclosingScrollView?.contentView,
               let top = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > clip.bounds.minY + clip.contentInsets.top })?.fragment
-        else { return change() }
-        let offset = top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY
-        change()
-        scroll(top.rangeInElement.location) { $0.minY - offset }
+        else { return nil }
+        return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY)
+    }
+
+    /// Back to a `shownTop`.
+    func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
+        guard let location = textRange(NSRange(location: min(top.offset, (string as NSString).length), length: 0))?.location else { return }
+        scroll(location) { $0.minY - top.below }
     }
 
     /// Scrolls to where `y` puts the clip for the location's paragraph (its frame in the view),
