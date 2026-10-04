@@ -523,21 +523,50 @@ final class WorkspaceLayoutTests {
         try await waitUntil { fitWidth() == true }
     }
 
-    /// A narrowing window overflows the least-used items first: Zoom, then Insert, Math and
-    /// Format; Back, Compile and the toggles stay down to the window's minimum.
-    @Test func theToolbarOverflowsTheLeastUsedFirst() async throws {
-        let workspace = open(sidebar: false)
+    /// Down to the window's minimum, with the sidebar shown or hidden, every default item shows,
+    /// and the PDF's tools stay over the PDF: the tracking separator keeps to the divider (a source
+    /// too narrow for its section pushes it off). Back, Compile and the toggles never overflow;
+    /// the least used leave first, should added items crowd them.
+    @Test(arguments: [false, true]) func theToolbarFitsDownToTheMinimum(sidebar: Bool) async throws {
+        let workspace = open(sidebar: sidebar)
         let window = try #require(window), toolbar = try showToolbar(workspace)
-        var left: [NSToolbarItem.Identifier] = []
-        for width in stride(from: Self.size.width, through: ColumnMetrics.contentMinimum.width, by: -5) {
+        window.title = "introduction.tex"
+        window.subtitle = "Thesis Draft"
+        let narrowest = sidebar ? ColumnMetrics.inlineSidebar(inspectorShown: false).rounded(.up) : ColumnMetrics.contentMinimum.width
+        let zoom = try #require(toolbar.items.first { $0.itemIdentifier == .zoom }?.view)
+        let spacers: Set<NSToolbarItem.Identifier> = [.flexibleSpace, .sidebarTrackingSeparator, .inspectorTrackingSeparator]
+        for width in Array(stride(from: Self.size.width, through: narrowest, by: -10)) + [narrowest] {
             window.setContentSize(NSSize(width: width, height: Self.size.height))
             window.layoutIfNeeded()
             let shown = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier))
-            left += toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !left.contains($0) }
+            let left = toolbar.items.map(\.itemIdentifier).filter { !shown.contains($0) && !spacers.contains($0) }
+            #expect(left.isEmpty, "\(width): \(left)")
+            let source = workspace.columns.splitView.arrangedSubviews[0]
+            let divider = source.convert(source.bounds, to: nil).maxX
+            let offset = zoom.convert(zoom.bounds, to: nil).minX - divider
+            #expect((0...16).contains(offset), "\(width): Zoom \(offset) pt from the divider")
         }
-        let overflow = left.filter { !$0.rawValue.hasPrefix("NSToolbar") }
-        #expect(overflow == Array([.zoom, .insert, .math, .format].prefix(overflow.count)))
-        #expect(!left.contains(.toggleSidebar) && !left.contains(.compile))
+        for id in [NSToolbarItem.Identifier.back, .compile, .togglePDF, .toggleSidebar, .toggleInspector] {
+            #expect(toolbar.items.first { $0.itemIdentifier == id }?.visibilityPriority == .high, "\(id.rawValue)")
+        }
+        for id in [NSToolbarItem.Identifier.zoom, .format, .math, .insert] {
+            #expect(toolbar.items.first { $0.itemIdentifier == id }?.visibilityPriority == .low, "\(id.rawValue)")
+        }
+    }
+
+    /// A hidden sidebar's window controls and toggle join the source's toolbar section, which
+    /// widens by as much; it narrows again as the sidebar shows.
+    @Test func theSourceTakesOnTheSidebarsToolbarSection() async throws {
+        let workspace = open()
+        #expect(workspace.sourceItem.minimumThickness == ColumnMetrics.sourceMinimum)
+        workspace.app.sidebarVisible = false
+        try await waitUntil { workspace.sourceItem.minimumThickness == ColumnMetrics.sourceMinimum(sidebarHidden: true) } state: {
+            "source minimum \(workspace.sourceItem.minimumThickness)"
+        }
+        workspace.app.sidebarVisible = true
+        try await waitUntil { workspace.sourceItem.minimumThickness == ColumnMetrics.sourceMinimum } state: {
+            "source minimum \(workspace.sourceItem.minimumThickness)"
+        }
     }
 
     /// Zoom out | scale | zoom in, one width from the PDFView's smallest scale to its largest, as
