@@ -509,6 +509,30 @@ struct SourceEditorTests {
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
     }
 
+    /// With Increase Contrast every theme colour reaches 7:1 on the text's background, as little
+    /// changed as that takes: one that has it already stays as it is.
+    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
+    func increasedContrastRaisesTheThemes(appearance: NSAppearance.Name) throws {
+        func resolved(_ color: NSColor) -> NSColor {
+            var out = color
+            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
+            return out
+        }
+        let background = resolved(.textBackgroundColor)
+        for theme in [SyntaxTheme.overleaf, .texstudio] {
+            let c = theme.colours
+            for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map(resolved) {
+                let raised = color.contrasting(in: appearance, by: 7)
+                #expect(raised.contrast(with: background) >= 7, "\(theme) \(color)")
+                if color.contrast(with: background) >= 7 { #expect(raised == color) }
+            }
+        }
+        // Overleaf's Light comments, at 4.2:1, are raised; its commands, at 8.6:1, are not.
+        if appearance == .aqua {
+            #expect(resolved(SyntaxTheme.overleaf.colours.comment).contrast(with: background) < 4.5)
+        }
+    }
+
     /// A double-click goes to the PDF from the word it selects; a single click only places the caret.
     @Test func aDoubleClickGoesToThePDF() throws {
         let window = inWindow()
