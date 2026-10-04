@@ -7,7 +7,8 @@ use std::ptr;
 use serde_json::{json, Value};
 use texlocal_ffi::{
     tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_free,
-    tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_new, TlHandle,
+    tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_line_count,
+    tl_source_new, TlHandle, TlSource,
 };
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
@@ -286,14 +287,21 @@ fn a_dropped_link_imports_what_it_points_at_but_links_inside_a_folder_do_not() {
 fn the_source_mirror_round_trips_through_the_c_abi() {
     let c = |s: &str| CString::new(s).unwrap();
     unsafe {
-        let source = tl_source_new(c("é \\emph{x}").as_ptr());
+        let text = "é \\emph{x}";
+        let source = tl_source_new(text.as_ptr(), text.len());
         // Offsets count UTF-16 units: "é " is two.
-        tl_source_edit(source, 2, 0, c("\n").as_ptr());
+        tl_source_edit(source, 2, 0, "\n".as_ptr(), 1);
         assert_eq!(tl_source_line_at(source, 3), 2);
         let mut count = 0;
         let runs = tl_source_highlights(source, 0, 20, &mut count);
         assert_eq!(std::slice::from_raw_parts(runs, count), [3, 5, 0]);
         tl_source_free_runs(runs, count);
+        let call_on = |source: *mut TlSource, command: &str| {
+            let out = tl_source_call(source, c(command).as_ptr(), c("{}").as_ptr());
+            let value: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+            tl_free(out);
+            Some(value)
+        };
         let call = |command: &str, args: Value| {
             let out = tl_source_call(source, c(command).as_ptr(), c(&args.to_string()).as_ptr());
             if out.is_null() {
@@ -317,6 +325,14 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         let maths = call("math_at", json!({ "caret": 1 }));
         assert_eq!(maths, Some(Value::Null), "é isn't maths");
         assert_eq!(call("unknown", json!({})), None);
+        tl_source_free(source);
+
+        // A U+0000 is text like any other: it doesn't end the mirror's copy.
+        let text = "a\0\nb";
+        let source = tl_source_new(text.as_ptr(), text.len());
+        assert_eq!(tl_source_line_count(source), 2);
+        tl_source_edit(source, 4, 0, "\0c".as_ptr(), 2);
+        assert_eq!(call_on(source, "text"), Some(json!("a\u{0}\nb\u{0}c")));
         tl_source_free(source);
     }
 }

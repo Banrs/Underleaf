@@ -5,8 +5,10 @@ import TeXLocalCore
 final class SourceDocument {
     private let raw: OpaquePointer
 
+    /// Text goes by its UTF-8 byte count: a C string would end at a U+0000 the editor keeps.
     init(text: String) {
-        raw = tl_source_new(text)
+        var text = text
+        raw = text.withUTF8 { tl_source_new($0.baseAddress, $0.count) }
     }
 
     isolated deinit {
@@ -14,7 +16,8 @@ final class SourceDocument {
     }
 
     func edit(_ range: NSRange, with text: String) {
-        tl_source_edit(raw, UInt32(range.location), UInt32(range.length), text)
+        var text = text
+        text.withUTF8 { tl_source_edit(raw, UInt32(range.location), UInt32(range.length), $0.baseAddress, $0.count) }
     }
 
     /// The line an offset is on, from 1.

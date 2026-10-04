@@ -47,6 +47,15 @@ struct SourceEditorTests {
         #expect(text.undoManager === a)
     }
 
+    /// The mirror keeps a U+0000 the editor keeps, and the offsets after it (#24).
+    @Test func aNulCharacterKeepsTheMirrorInStep() {
+        let document = SourceDocument(text: "a\u{0}\nb")
+        #expect(document.lineCount == 2)
+        document.edit(NSRange(location: 4, length: 0), with: "\u{0}\nc")
+        #expect(document.lineCount == 3)
+        #expect(document.lineStart(3) == 6)
+    }
+
     @Test func bracketsCloseAndAreSteppedOver() {
         open("")
         text.insertText("{", replacementRange: typed)

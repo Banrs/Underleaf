@@ -31,10 +31,11 @@ void tl_close(TlHandle *handle);
  * from 1. */
 typedef struct TlSource TlSource;
 
-TlSource *tl_source_new(const char *text);
+/* Text is len bytes of UTF-8, so it may hold U+0000. */
+TlSource *tl_source_new(const uint8_t *text, size_t len);
 
 /* The editor replaced length units at start with text. */
-void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const char *text);
+void tl_source_edit(TlSource *source, uint32_t start, uint32_t length, const uint8_t *text, size_t len);
 
 uint32_t tl_source_line_at(const TlSource *source, uint32_t offset);
 uint32_t tl_source_line_start(const TlSource *source, uint32_t line);

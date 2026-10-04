@@ -162,29 +162,35 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
 /// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
 pub struct TlSource(SourceDocument);
 
+/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches the mirror.
+unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> &'a str {
+    if ptr.is_null() {
+        return "";
+    }
+    std::str::from_utf8(std::slice::from_raw_parts(ptr, len)).unwrap_or_default()
+}
+
 /// # Safety
-/// `text` is null (empty) or a NUL-terminated UTF-8 string.
+/// `text` is null (empty) or `len` bytes of UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn tl_source_new(text: *const c_char) -> *mut TlSource {
-    let text = str_arg(text).unwrap_or_default();
-    Box::into_raw(Box::new(TlSource(SourceDocument::new(text))))
+pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
+    Box::into_raw(Box::new(TlSource(SourceDocument::new(text_arg(text, len)))))
 }
 
 /// The editor replaced `length` units at `start` with `text`.
 ///
 /// # Safety
 /// `source` came from `tl_source_new` and is not freed; `text` is null
-/// (nothing) or a NUL-terminated UTF-8 string.
+/// (nothing) or `len` bytes of UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_edit(
     source: *mut TlSource,
     start: u32,
     length: u32,
-    text: *const c_char,
+    text: *const u8,
+    len: usize,
 ) {
-    (*source)
-        .0
-        .edit(start, length, str_arg(text).unwrap_or_default());
+    (*source).0.edit(start, length, text_arg(text, len));
 }
 
 /// # Safety
