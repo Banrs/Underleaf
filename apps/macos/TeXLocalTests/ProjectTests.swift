@@ -282,6 +282,26 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Export Project as ZIP archives the open file as it is on screen, before its autosave (#27).
+    @Test(.timeLimit(.minutes(1)))
+    func theExportedZipHasTheUnsavedEdits() async throws {
+        let (project, _) = try await opened("original")
+        #expect(project.editor.perform(.bold))
+        let expected = project.editor.textView.string
+        let zip = try await project.exportZip()
+        defer { try? files.removeItem(at: zip.deletingLastPathComponent()) }
+        let unzip = Process()
+        unzip.executableURL = URL(filePath: "/usr/bin/unzip")
+        unzip.arguments = ["-p", zip.path(percentEncoded: false), try #require(project.openPath)]
+        let pipe = Pipe()
+        unzip.standardOutput = pipe
+        try unzip.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        unzip.waitUntilExit()
+        #expect(String(decoding: data, as: UTF8.self) == expected)
+        await app.close()
+    }
+
     /// A failed automatic build that still wrote a PDF leaves the build panel
     /// shut while typing goes on; Compile opens it on the issues. CI has no TeX.
     @Test(.timeLimit(.minutes(1)))

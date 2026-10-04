@@ -763,8 +763,16 @@ final class ProjectModel {
 
     // ---------- export ----------
 
-    /// In a temporary folder; the save panel copies it where it goes.
+    /// In a temporary folder; the save panel copies it where it goes. The core archives the
+    /// files on disk, so the open file's edits are saved first: an archive without them would
+    /// be a stale copy reported as a good one.
     func exportZip() async throws -> URL {
+        guard await saveEdits() else {
+            let name = openPath?.fileName ?? id
+            throw CocoaError(.fileWriteUnknown, userInfo: [
+                NSLocalizedFailureReasonErrorKey: String(localized: "“\(name)” couldn’t be saved, so the archive would be missing its changes."),
+            ])
+        }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("\(id).zip")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
