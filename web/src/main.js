@@ -107,7 +107,7 @@ bridge?.onBeforeQuit?.(async () => {
 });
 
 // pagehide only fires when the page actually leaves (unlike a cancelled unload).
-addEventListener('pagehide', () => workspace?.leaveTexPressoPage());
+addEventListener('pagehide', ({ persisted }) => workspace?.leaveTexPressoPage({ persisted }));
 
 addEventListener('hashchange', navigate);
 navigate();

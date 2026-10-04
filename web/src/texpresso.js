@@ -22,15 +22,24 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
   let enabled = false;
   let disposed = false;
   let owned = false;
+  let owner = null;
   let epoch = 0;
   let phase = 'idle';
   let failure = null;
   let debounce = null;
   let poll = null;
   let queuedFlush = null;
+  let queuedStart = null;
+  let lastNotified = null;
   const pending = new Map();
   const snapshot = () => ({ ...status, enabled, phase, epoch, error: failure ?? status.error });
-  const notify = () => { if (!disposed) onChange(snapshot()); };
+  const notify = () => {
+    if (disposed) return;
+    const next = snapshot();
+    if (lastNotified && Object.keys(next).every((key) => next[key] === lastNotified[key])) return;
+    lastNotified = next;
+    onChange(next);
+  };
   const cancelTimers = () => { clearTimeout(debounce); clearTimeout(poll); debounce = poll = null; };
   const current = (request) => !disposed && request === epoch;
 
@@ -49,6 +58,15 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
   function report(error, request) {
     if (!current(request)) return;
     failure = error?.message ?? String(error);
+    if (error?.status === 409 || failure === 'This Live session was replaced. Start Live again.') {
+      epoch++;
+      owner = null;
+      owned = enabled = false;
+      pending.clear();
+      cancelTimers();
+      phase = 'idle';
+      status = { ...status, running: false, session: null };
+    }
     notify();
   }
 
@@ -64,16 +82,16 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     return inProjectOrder(projectId, async () => {
       if (!current(request)) return snapshot();
       try {
-        const value = await api.texpressoStatus(projectId);
-        if (current(request)) failure = null;
+        const value = await api.texpressoStatus(projectId, owner ?? undefined);
+        if (current(request) && !pending.size) failure = null;
         accept(value, request);
       }
       catch (error) { report(error, request); throw error; }
       return snapshot();
-    });
+    }).then((value) => current(request) && enabled && failure && pending.size ? flush() : value);
   }
 
-  function start(files = []) {
+  function start(files = [], replacing = false) {
     if (disposed) return Promise.resolve(snapshot());
     const request = ++epoch;
     cancelTimers();
@@ -82,26 +100,43 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     owned = true;
     phase = 'starting';
     failure = null;
-    const initial = files.map(({ path, text }) => ({ path, text }));
-    notify();
-    return inProjectOrder(projectId, async () => {
-      if (!current(request) || !enabled) return snapshot();
+    const initial = { epoch: request, files: files.map(({ path, text }) => ({ path, text })), dispatched: false };
+    queuedStart = initial;
+    const promise = inProjectOrder(projectId, async () => {
       try {
-        const value = await api.texpressoStart(projectId, initial);
+        if (!current(request) || !enabled) return snapshot();
+        if (replacing && !owner) {
+          enabled = owned = false;
+          phase = 'idle';
+          notify();
+          return snapshot();
+        }
+        initial.dispatched = true;
+        const value = await api.texpressoStart(projectId, initial.files, replacing ? owner : undefined);
+        // Even a superseded Start owns its returned process until the queued
+        // Stop runs. A read-only inspection never acquires this capability.
+        owner = value.session;
         if (current(request)) phase = 'idle';
         accept(value, request);
       } catch (error) {
         if (current(request)) { enabled = false; phase = 'idle'; pending.clear(); }
         report(error, request);
         throw error;
-      } finally { if (current(request)) schedulePoll(); }
+      } finally {
+        if (queuedStart === initial) queuedStart = null;
+        if (current(request)) schedulePoll();
+      }
       return snapshot();
     });
+    initial.promise = promise;
+    notify();
+    return promise;
   }
 
   function update(path, text) {
     if (disposed || !enabled || !path) return;
-    // Capture the text with its path now, never after switching editor files.
+    // Keep strings or immutable editor documents with their original path.
+    // Flatten only the snapshot that actually reaches the transport.
     pending.set(path, text);
     clearTimeout(debounce);
     debounce = setTimeout(() => { flush().catch(() => {}); }, debounceMs);
@@ -111,7 +146,13 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     // A filesystem request captures the user's intent before awaiting I/O.
     // A later explicit Stop/Start supersedes it; host invalidation does not.
     if (disposed || !previous.enabled || previous.epoch !== epoch) return Promise.resolve(snapshot());
-    return start(files);
+    if (queuedStart?.epoch === epoch && !queuedStart.dispatched) {
+      queuedStart.files = files.map(({ path, text }) => ({ path, text }));
+      pending.clear();
+      clearTimeout(debounce);
+      return queuedStart.promise;
+    }
+    return start(files, true);
   }
 
   function flush() {
@@ -127,7 +168,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
           const [path, text] = pending.entries().next().value;
           pending.delete(path);
           try {
-            const value = await api.texpressoUpdate(projectId, path, text);
+            const value = await api.texpressoUpdate(projectId, path, String(text), owner);
             if (current(request)) failure = null;
             accept(value, request);
           } catch (error) {
@@ -151,7 +192,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     return flush().then(() => inProjectOrder(projectId, async () => {
       if (!current(request) || !enabled) return snapshot();
       try {
-        const value = await api.texpressoRescan(projectId);
+        const value = await api.texpressoRescan(projectId, owner);
         if (current(request)) failure = null;
         accept(value, request);
       } catch (error) { report(error, request); throw error; }
@@ -167,8 +208,11 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     phase = 'stopping';
     notify();
     return inProjectOrder(projectId, async () => {
+      const token = owner;
       try {
-        const value = await api.texpressoStop(projectId, options);
+        const value = options?.global ? await api.texpressoStopGlobal(projectId)
+          : token ? await api.texpressoStop(projectId, token, options) : { running: false, session: null };
+        if (owner === token) owner = null;
         if (request === epoch) owned = false;
         if (current(request)) { phase = 'idle'; failure = null; }
         accept(value, request);
@@ -192,9 +236,11 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
   // Keep the stop behind a pending start, or that start could resurrect the
   // window after dismissal. keepalive lets a dispatched stop finish on exit;
   // the host lease covers a browser that terminates before it is dispatched.
-  function leavePage() {
+  function leavePage({ persisted = false } = {}) {
     if (!owned) return;
-    disposed = true;
+    // A cached page keeps this controller. Its ordered Stop must finish before
+    // a Start made after Back/Forward restores the page.
+    disposed = !persisted;
     return stop({ keepalive: true }).catch(() => {});
   }
 

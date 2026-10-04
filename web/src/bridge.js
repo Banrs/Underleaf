@@ -58,7 +58,7 @@ function tauriBridge() {
       ? invoke(command, args, options)
       : invoke('call', { command, args: args ?? {} })
     ).catch((err) => {
-      throw new Error(errorMessage(err));
+      throw Object.assign(new Error(errorMessage(err)), { status: err?.status });
     }),
     accent: () => invoke('system_accent').catch(() => null),
     fileUrl: (segments) => `${origin}/${segments.map(encodeURIComponent).join('/')}`,
@@ -114,7 +114,7 @@ export function attachmentName(header) {
 
 async function failure(res) {
   const body = await res.json().catch(() => null);
-  return new Error(body?.error ?? `${res.status} ${res.statusText}`);
+  return Object.assign(new Error(body?.error ?? `${res.status} ${res.statusText}`), { status: res.status });
 }
 
 // The browser host: texlocal-server on this machine, same origin. Commands

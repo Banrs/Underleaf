@@ -35,6 +35,10 @@ Edits to the open source, including included files, reach the live preview.
 Use **Stop TeXpresso** to end the session. The TeXpresso log is separate from
 the normal build log. Rescan refreshes saved files and assets changed externally.
 
+The Mac controls use the existing native toolbar, menus and system materials.
+Live log updates preserve selection, Find and reading position; the PDF status
+explicitly distinguishes the last normal build from the separate live preview.
+
 ## Verify without touching the desktop
 
 ```sh
@@ -58,8 +62,9 @@ and `bootstrap-isolated.sh` record the pinned source/dependencies and rebuild
 commands. It reuses existing TeX Live/Homebrew libraries without installing or
 changing system packages. This temporary runtime is not bundled with the app.
 
-Verification on 4 October 2026 passed all 18 real API checks, including clearing
-old errors after recovery. A separate direct-engine test held seven malformed
+Verification on 4 October 2026 passed all 20 real API checks, including clearing
+old errors after recovery and rejecting stale-owner edits, automatic restarts,
+rescans, status polls and cleanup after a replacement. A separate direct-engine test held seven malformed
 buffers for two seconds each; the same viewer survived, and every corresponding
 correction produced a new page. A test-only SDL framebuffer capture confirmed
 the corrected text, math and lists rendered. The product executable was unchanged
@@ -78,6 +83,14 @@ foreground window behavior was not exercised while another agent used the Mac.
 - Sessions are temporary. Closing the project stops them; an abandoned client
   expires after two minutes without polling or updates. A suspended browser
   tab may therefore need Start again.
+- Starting Live in another client replaces the previous session. Its old
+  editor and cleanup requests cannot modify or stop the replacement; that
+  client must explicitly Start again to take over.
 - Full snapshots cross the client/core boundary; the core sends only the
-  changed UTF-8 range to TeXpresso. This favors a small, reliable integration
-  over an additional editor-specific delta protocol.
+  changed UTF-8 range to TeXpresso. Pending edits coalesce while a request is
+  running, and the browser flattens its editor snapshot only when dispatching.
+  This keeps the integration small without repeatedly copying each keystroke.
+- Underleaf retains native macOS window chrome and system styling, including
+  Liquid Glass where the OS provides it. TeXpresso's separate SDL window does
+  not expose equivalent native controls; restyling it requires upstream changes
+  or replacing its viewer.

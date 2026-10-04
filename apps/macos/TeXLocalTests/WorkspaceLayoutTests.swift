@@ -204,6 +204,11 @@ final class WorkspaceLayoutTests {
         let area = pane(workspace.splitViewItems[1]), foot0 = area.convert(area.bounds, to: nil).minY
         var heights: [CGFloat] = []
         project.showLogs = true
+        // Observation reaches AppKit asynchronously. Start sampling when opening
+        // begins, so a busy runner doesn't spend the whole interval waiting for it.
+        try await waitUntil { !panel.isHidden } state: {
+            "collapsed \(workspace.panelItem.isCollapsed), hidden \(panel.isHidden), height \(panel.frame.height)"
+        }
         let start = ContinuousClock.now
         while ContinuousClock.now - start < .seconds(0.6) {
             if !panel.isHidden {
@@ -220,6 +225,8 @@ final class WorkspaceLayoutTests {
             try await Task.sleep(for: .milliseconds(4))
         }
         let height = try #require(heights.last)
+        #expect(!workspace.panelItem.isCollapsed && !panel.isHidden)
+        #expect(height >= workspace.panelItem.minimumThickness && isClose(panel.frame.height, height))
         // Reduce Motion opens it at once (`WorkspaceController.animates`).
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             #expect(heights.contains { $0 > heights[0] + 1 && $0 < height - 1 }, "heights \(heights)")

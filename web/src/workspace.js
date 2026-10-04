@@ -607,7 +607,7 @@ async function openFile(path) {
     getSymbols: () => state.symbols,
     onChange: () => {
       state.dirty = true;
-      texpresso?.update(state.openPath, state.editor.getContent());
+      texpresso?.update(state.openPath, state.editor.getState().doc);
       setSaveState('Unsaved');
       if (state.pdf?.doc) setPdfFreshness('Preview out of date');
       clearTimeout(state.saveTimer);
@@ -634,7 +634,7 @@ async function openFile(path) {
   });
   if (restore) state.editor.setScrollTop(restore.scrollTop);
   state.editor.focus();
-  texpresso?.update(path, state.editor.getContent());
+  texpresso?.update(path, state.editor.getState().doc);
   state.dirty = false;
   setSaveState('Saved');
   updateDocMeta();
@@ -769,7 +769,7 @@ async function toggleTexPresso() {
     const session = texpresso;
     const generation = workspaceGeneration;
     try {
-      await session.stop();
+      await session.stop({ global: !session.state.enabled });
       if (generation === workspaceGeneration && session === texpresso && prefs.autoCompile) compile({ auto: true });
     } catch (error) { toast(error.message, 'error'); }
     return;
@@ -781,23 +781,26 @@ export async function stopTexPresso() {
   if (texpresso?.state.enabled || texpresso?.state.running) await texpresso.stop();
 }
 
-export function leaveTexPressoPage() { return texpresso?.leavePage(); }
+export function leaveTexPressoPage(options) { return texpresso?.leavePage(options); }
 
 function renderTexPresso() {
   const live = texpresso?.state;
   if (!live || !ui.texpressoLabel) return;
   const action = live.enabled || live.running ? 'Stop TeXpresso' : 'Start TeXpresso';
-  ui.texpressoButton.textContent = live.phase === 'stopping' ? 'Stopping…' : action;
+  const buttonText = live.phase === 'stopping' ? 'Stopping…' : action;
+  if (ui.texpressoButton.textContent !== buttonText) ui.texpressoButton.textContent = buttonText;
   const label = live.phase === 'starting' ? 'Starting…'
     : live.phase === 'stopping' ? 'Stopping…'
       : live.error ? 'Needs attention'
         : live.enabled && live.running ? 'Live in native window'
           : live.available === false ? 'Not installed' : 'Stopped · separate native window';
-  ui.texpressoLabel.textContent = `TeXpresso: ${label}`;
+  const labelText = `TeXpresso: ${label}`;
+  if (ui.texpressoLabel.textContent !== labelText) ui.texpressoLabel.textContent = labelText;
   const help = live.available === false
     ? 'Set TEXLOCAL_TEXPRESSO to the TeXpresso executable before starting Underleaf, or put texpresso on PATH.' : '';
-  ui.texpressoLog.textContent = [live.error, help, live.log, live.output].filter(Boolean).join('\n\n')
+  const log = [live.error, help, live.log, live.output].filter(Boolean).join('\n\n')
     || 'Start TeXpresso to preview edits as you type. Session logs appear here.';
+  if (ui.texpressoLog.textContent !== log) ui.texpressoLog.textContent = log;
   if (live.error) ui.texpressoDetails.open = true;
 }
 

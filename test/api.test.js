@@ -25,19 +25,25 @@ const fileLike = (name) => ({
   arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
 });
 
-test('TeXpresso commands forward unsaved source buffers to the core bridge', async () => {
+test('TeXpresso commands distinguish inspection, owned requests, and deliberate global Stop', async () => {
   calls.length = 0;
   await api.texpressoStatus('p');
+  await api.texpressoStatus('p', 'owner');
   await api.texpressoStart('p', [{ path: 'main.tex', text: 'unsaved $' }]);
-  await api.texpressoUpdate('p', 'chapter.tex', 'ü\\');
-  await api.texpressoRescan('p');
-  await api.texpressoStop('p');
+  await api.texpressoStart('p', [], 'owner');
+  await api.texpressoUpdate('p', 'chapter.tex', 'ü\\', 'owner');
+  await api.texpressoRescan('p', 'owner');
+  await api.texpressoStop('p', 'owner');
+  await api.texpressoStopGlobal('p');
   assert.deepEqual(calls.map(({ command, args }) => ({ command, ...args })), [
     { command: 'texpresso_status', args: { id: 'p' } },
+    { command: 'texpresso_status', args: { id: 'p', session: 'owner' } },
     { command: 'texpresso_start', args: { id: 'p', files: [{ path: 'main.tex', text: 'unsaved $' }] } },
-    { command: 'texpresso_update', args: { id: 'p', path: 'chapter.tex', text: 'ü\\' } },
-    { command: 'texpresso_rescan', args: { id: 'p' } },
-    { command: 'texpresso_stop', args: { id: 'p' } },
+    { command: 'texpresso_start', args: { id: 'p', files: [], session: 'owner' } },
+    { command: 'texpresso_update', args: { id: 'p', path: 'chapter.tex', text: 'ü\\', session: 'owner' } },
+    { command: 'texpresso_rescan', args: { id: 'p', session: 'owner' } },
+    { command: 'texpresso_stop', args: { id: 'p', session: 'owner' } },
+    { command: 'texpresso_stop', args: { id: 'p', global: true } },
   ]);
 });
 

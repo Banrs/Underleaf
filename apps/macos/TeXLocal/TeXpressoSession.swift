@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-nonisolated struct TeXpressoStatus: Decodable, Sendable {
+nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
     let available: Bool
     let running: Bool
     let executable: String?
@@ -9,6 +9,7 @@ nonisolated struct TeXpressoStatus: Decodable, Sendable {
     let output: String
     let error: String?
     let revision: Int
+    let session: String?
 }
 
 nonisolated struct TeXpressoFile: Sendable {
@@ -30,16 +31,20 @@ final class TeXpressoSession {
     private(set) var failure: String?
     var onFailure: () -> Void = {}
     var onEnded: () -> Void = {}
+    var onOwnershipLost: () -> Void = {}
 
     @ObservationIgnored private let id: String
     @ObservationIgnored private let call: Call
     @ObservationIgnored private var lane: Task<Void, Never>?
     @ObservationIgnored private var debounce: Task<Void, Never>?
     @ObservationIgnored private var polling: Task<Void, Never>?
+    @ObservationIgnored private var flushing: Int?
     @ObservationIgnored private var pending: [String: String] = [:]
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var lastReportedError: String?
+    @ObservationIgnored private var owner: String?
+    @ObservationIgnored private var queuedFiles: [TeXpressoFile]?
 
     init(id: String, call: @escaping Call) {
         self.id = id
@@ -69,23 +74,50 @@ final class TeXpressoSession {
 
     func start(files: [TeXpressoFile]) {
         guard canStart else { return }
+        beginStart(files: files, replacing: false)
+    }
+
+    func restart(files: [TeXpressoFile]) {
+        guard !closed, phase != .stopping, owner != nil || phase == .starting else { return }
+        if phase == .starting, queuedFiles != nil {
+            queuedFiles = files
+            pending.removeAll()
+            debounce?.cancel()
+            return
+        }
+        beginStart(files: files, replacing: true)
+    }
+
+    private func beginStart(files: [TeXpressoFile], replacing: Bool) {
         generation += 1
         phase = .starting
         failure = nil
         lastReportedError = nil
+        debounce?.cancel()
+        polling?.cancel()
         pending.removeAll()
+        queuedFiles = files
         let current = generation
         enqueue { session in
             guard session.generation == current, !session.closed else { return }
+            guard let files = session.queuedFiles else { return }
+            session.queuedFiles = nil
             do {
-                let status = try await session.call("texpresso_start", ["id": session.id, "files": files.map(\.arguments)])
+                var arguments: [String: Any] = ["id": session.id, "files": files.map(\.arguments)]
+                if replacing {
+                    guard let owner = session.owner else { session.ended(); return }
+                    arguments["session"] = owner
+                }
+                let status = try await session.call("texpresso_start", arguments)
+                // Stop/close may have superseded Start while it was in flight.
+                session.owner = status.session
                 guard session.generation == current, !session.closed else { return }
                 session.receive(status)
                 if session.active { session.poll(current) }
             } catch {
                 guard session.generation == current, !session.closed else { return }
                 session.fail(error)
-                session.ended()
+                if session.phase != .stopped { session.ended() }
             }
         }
     }
@@ -106,52 +138,60 @@ final class TeXpressoSession {
     func flushEdits() {
         debounce?.cancel()
         debounce = nil
-        guard active, !closed, !pending.isEmpty else { return }
-        let files = pending.sorted { $0.key < $1.key }.map { TeXpressoFile(path: $0.key, text: $0.value) }
-        pending.removeAll()
+        guard active, !closed, !pending.isEmpty, flushing != generation else { return }
         let current = generation
+        flushing = current
         enqueue { session in
-            guard session.generation == current, session.active, !session.closed else { return }
-            for file in files {
-                guard session.generation == current, session.active, !session.closed else { return }
-                await session.request("texpresso_update", file.arguments, generation: current)
+            defer { if session.flushing == current { session.flushing = nil } }
+            // Drain the latest snapshots, including edits received during a
+            // slow call, without queuing obsolete copies behind that call.
+            while session.generation == current, session.active, !session.closed,
+                  let path = session.pending.keys.min(), let text = session.pending.removeValue(forKey: path) {
+                let file = TeXpressoFile(path: path, text: text)
+                if !(await session.request("texpresso_update", file.arguments, generation: current)) {
+                    if session.generation == current, session.active, !session.closed, session.pending[path] == nil {
+                        session.pending[path] = text
+                    }
+                    break
+                }
             }
         }
     }
 
-    /// Refresh includes, images, renames and external edits, then reapply the
-    /// editor snapshot so an unsaved buffer remains the preview's authority.
+    /// Rescan preserves virtual files. Send the latest editor snapshot first;
+    /// replaying an older snapshot afterward could overwrite intervening edits.
     func rescan(files: [TeXpressoFile]) {
         guard active, !closed else { return }
+        for file in files { pending[file.path] = file.text }
         flushEdits()
         let current = generation
         enqueue { session in
             guard session.generation == current, session.active, !session.closed else { return }
             await session.request("texpresso_rescan", [:], generation: current)
-            for file in files {
-                guard session.generation == current, session.active, !session.closed else { return }
-                await session.request("texpresso_update", file.arguments, generation: current)
-            }
         }
     }
 
     func stop() {
-        guard phase != .stopped else { return }
+        guard phase != .stopped else { owner = nil; return }
         generation += 1
         let current = generation
         phase = .stopping
         debounce?.cancel()
         polling?.cancel()
         pending.removeAll()
+        queuedFiles = nil
         enqueue { session in
             do {
-                let status = try await session.call("texpresso_stop", ["id": session.id])
-                if session.generation == current { session.status = status }
+                if let owner = session.owner {
+                    let status = try await session.call("texpresso_stop", ["id": session.id, "session": owner])
+                    if session.owner == owner { session.owner = nil }
+                    if session.generation == current { session.status = status }
+                }
             } catch {
                 if !session.closed { session.fail(error) }
             }
             guard session.generation == current else { return }
-            session.ended()
+            if session.phase != .stopped { session.ended() }
         }
     }
 
@@ -162,7 +202,7 @@ final class TeXpressoSession {
         polling?.cancel()
     }
 
-    /// Used before restarting after a main-file change, and by isolated tests.
+    /// Waits for the currently queued work without starting or stopping a process.
     func waitForPendingCalls() async { await lane?.value }
 
     private func enqueue(_ action: @escaping @MainActor (TeXpressoSession) async -> Void) {
@@ -173,22 +213,27 @@ final class TeXpressoSession {
         }
     }
 
-    private func request(_ command: String, _ args: [String: String], generation current: Int) async {
+    @discardableResult
+    private func request(_ command: String, _ args: [String: String], generation current: Int) async -> Bool {
+        guard let owner else { return false }
         do {
             var arguments: [String: Any] = args
             arguments["id"] = id
+            arguments["session"] = owner
             let status = try await call(command, arguments)
-            guard generation == current, !closed else { return }
-            if command != "texpresso_status" { failure = nil }
+            guard generation == current, !closed else { return false }
+            if pending.isEmpty { failure = nil }
             receive(status)
+            return true
         } catch {
-            guard generation == current, !closed else { return }
+            guard generation == current, !closed else { return false }
             fail(error)
+            return false
         }
     }
 
     private func receive(_ status: TeXpressoStatus) {
-        self.status = status
+        if self.status != status { self.status = status }
         if let error = status.error, error != lastReportedError {
             lastReportedError = error
             onFailure()
@@ -208,6 +253,12 @@ final class TeXpressoSession {
 
     private func fail(_ error: Error) {
         failure = error.localizedDescription
+        if (error as? CoreError)?.status == 409 || failure == "This Live session was replaced. Start Live again." {
+            generation += 1
+            owner = nil
+            onOwnershipLost()
+            ended()
+        }
         if failure != lastReportedError {
             lastReportedError = failure
             onFailure()
@@ -219,6 +270,7 @@ final class TeXpressoSession {
         debounce?.cancel()
         polling?.cancel()
         pending.removeAll()
+        queuedFiles = nil
         if !closed { onEnded() }
     }
 
@@ -230,7 +282,9 @@ final class TeXpressoSession {
                 guard !Task.isCancelled, let self, active, !closed, generation == current else { return }
                 enqueue { session in
                     guard session.generation == current, session.active, !session.closed else { return }
-                    await session.request("texpresso_status", [:], generation: current)
+                    if await session.request("texpresso_status", [:], generation: current), !session.pending.isEmpty {
+                        session.flushEdits()
+                    }
                 }
                 await lane?.value
             }

@@ -344,22 +344,43 @@ impl Service {
         let root = || self.project_root(s("id")?);
         match command {
             "status" => out(self.status().await),
-            "texpresso_status" => out(self.texpresso.status(&root()?, &self.tex_path())?),
+            "texpresso_status" => out(self.texpresso.status(
+                &root()?,
+                arg::<Option<String>>(args, "session")?.as_deref(),
+                &self.tex_path(),
+            )?),
             "texpresso_start" => out(self
                 .texpresso
                 .start(
                     &root()?,
                     &arg::<Option<Vec<crate::texpresso::FileBuffer>>>(args, "files")?
                         .unwrap_or_default(),
+                    arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.tex_path(),
                 )
                 .await?),
             "texpresso_update" => out(self
                 .texpresso
-                .update(&root()?, s("path")?, s("text")?, &self.tex_path())
+                .update(
+                    &root()?,
+                    s("path")?,
+                    s("text")?,
+                    s("session")?,
+                    &self.tex_path(),
+                )
                 .await?),
-            "texpresso_stop" => out(self.texpresso.stop_request(&root()?).await?),
-            "texpresso_rescan" => out(self.texpresso.rescan(&root()?, &self.tex_path()).await?),
+            "texpresso_stop" => {
+                let token = if arg::<Option<bool>>(args, "global")?.unwrap_or(false) {
+                    None
+                } else {
+                    Some(s("session")?)
+                };
+                out(self.texpresso.stop_request(&root()?, token).await?)
+            }
+            "texpresso_rescan" => out(self
+                .texpresso
+                .rescan(&root()?, s("session")?, &self.tex_path())
+                .await?),
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),

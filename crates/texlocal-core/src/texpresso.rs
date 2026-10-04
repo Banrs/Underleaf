@@ -40,6 +40,7 @@ pub struct Status {
     pub output: String,
     pub error: Option<String>,
     pub revision: u64,
+    pub session: Option<String>,
 }
 
 // Retain a bounded tail while preserving absolute byte offsets for backtracking.
@@ -91,6 +92,7 @@ struct Input {
     files: HashMap<PathBuf, String>,
 }
 struct Session {
+    token: String,
     executable: PathBuf,
     main: String,
     state: Mutex<State>,
@@ -116,8 +118,7 @@ impl Session {
         }
     }
     fn status(&self) -> Status {
-        let mut state = self.state.lock().unwrap();
-        state.last_used = Instant::now();
+        let state = self.state.lock().unwrap();
         let mut log = state.log.text();
         // stderr includes historical TeX diagnostics and echoed VFS commands.
         // The protocol buffers alone track the engine's current backtracking.
@@ -144,6 +145,7 @@ impl Session {
             log,
             error: state.error.clone(),
             revision: state.revision,
+            session: Some(self.token.clone()),
         }
     }
     async fn send(&self, messages: &[Value]) {
@@ -180,9 +182,38 @@ impl Manager {
             session.stop(None);
         }
     }
-    pub async fn stop_request(&self, root: &Path) -> Result<Status, CoreError> {
+    /// None is reserved for an explicitly requested global Stop. Automatic
+    /// cleanup always supplies the owner's token.
+    pub async fn stop_request(
+        &self,
+        root: &Path,
+        token: Option<&str>,
+    ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
-        self.stop(root)
+        let root = fs::canonicalize(root)?;
+        let session = match token {
+            Some(token) => Some(self.owned(&root, token)?),
+            None => self.sessions.lock().unwrap().get(&root).cloned(),
+        };
+        if let Some(session) = session {
+            session.stop(None);
+            let status = session.status();
+            // Explicit Stop ends ownership too; internal host invalidation
+            // uses stop(root), retaining identity for a conditional restart.
+            self.sessions.lock().unwrap().remove(&root);
+            Ok(status)
+        } else {
+            Ok(self.idle(Some(&crate::compile::tex_path(None))))
+        }
+    }
+    fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(root)
+            .filter(|session| session.token == token)
+            .cloned()
+            .ok_or_else(|| CoreError::conflict("This Live session was replaced. Start Live again."))
     }
     pub fn stop(&self, root: &Path) -> Result<Status, CoreError> {
         let root = fs::canonicalize(root)?;
@@ -204,13 +235,26 @@ impl Manager {
             output: String::new(),
             error: None,
             revision: self.revision.load(Ordering::Relaxed),
+            session: None,
         }
     }
-    pub fn status(&self, root: &Path, path_env: &str) -> Result<Status, CoreError> {
+    /// Inspection does not acquire ownership or renew the viewer's lease.
+    pub fn status(
+        &self,
+        root: &Path,
+        token: Option<&str>,
+        path_env: &str,
+    ) -> Result<Status, CoreError> {
         let root = fs::canonicalize(root)?;
-        let session = self.sessions.lock().unwrap().get(&root).cloned();
+        let session = match token {
+            Some(token) => Some(self.owned(&root, token)?),
+            None => self.sessions.lock().unwrap().get(&root).cloned(),
+        };
         if let Some(session) = session {
-            if settings::read_settings(&root).main_file != session.main {
+            if token.is_some() {
+                session.state.lock().unwrap().last_used = Instant::now();
+            }
+            if token.is_some() && settings::read_settings(&root).main_file != session.main {
                 session.stop(Some("The main file changed. Start Live again.".into()));
             }
             Ok(session.status())
@@ -222,10 +266,16 @@ impl Manager {
         &self,
         root: &Path,
         files: &[FileBuffer],
+        expected: Option<&str>,
         path_env: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
+        // Automatic restart may only replace the same owner; an explicit user
+        // Start omits the expectation to deliberately take over the project.
+        if let Some(token) = expected {
+            self.owned(&root, token)?;
+        }
         let main = settings::read_settings(&root).main_file;
         let main_path = validate_buffer(&root, &main, "")?;
         if !main_path.is_file() {
@@ -242,8 +292,10 @@ impl Manager {
         }
         validate_total(&buffers)?;
         let Some(executable) = discover(path_env) else {
-            let mut status = self.status(&root, path_env)?;
+            let mut status = self.status(&root, None, path_env)?;
             status.available = false;
+            status.running = false;
+            status.session = None;
             status.error = Some(MISSING.into());
             return Ok(status);
         };
@@ -264,10 +316,14 @@ impl Manager {
             .stderr(Stdio::piped());
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
+        let mut token = [0u8; 16];
+        getrandom::fill(&mut token).map_err(|err| CoreError::internal(err.to_string()))?;
+        let token = token.iter().map(|byte| format!("{byte:02x}")).collect();
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
-                let mut status = self.status(&root, path_env)?;
+                let mut status = self.status(&root, None, path_env)?;
+                status.session = None;
                 status.error = Some(format!("Couldn't start TeXpresso: {err}. Check TEXLOCAL_TEXPRESSO and its dependencies."));
                 return Ok(status);
             }
@@ -275,6 +331,7 @@ impl Manager {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let session = Arc::new(Session {
+            token,
             executable,
             main,
             input: tokio::sync::Mutex::new(Input {
@@ -352,16 +409,17 @@ impl Manager {
         root: &Path,
         path: &str,
         text: &str,
+        token: &str,
         path_env: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
+        let session = self.owned(&root, token)?;
         let path = validate_buffer(&root, path, text)?;
-        let status = self.status(&root, path_env)?;
+        let status = self.status(&root, Some(token), path_env)?;
         if !status.running {
             return Ok(status);
         }
-        let session = self.sessions.lock().unwrap().get(&root).cloned().unwrap();
         let mut input = session.input.lock().await;
         let total = input
             .files
@@ -394,12 +452,17 @@ impl Manager {
         }
         Ok(session.status())
     }
-    pub async fn rescan(&self, root: &Path, path_env: &str) -> Result<Status, CoreError> {
+    pub async fn rescan(
+        &self,
+        root: &Path,
+        token: &str,
+        path_env: &str,
+    ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
-        let status = self.status(&root, path_env)?;
+        let session = self.owned(&root, token)?;
+        let status = self.status(&root, Some(token), path_env)?;
         if status.running {
-            let session = self.sessions.lock().unwrap().get(&root).cloned().unwrap();
             session.send(&[json!(["rescan"])]).await;
             return Ok(session.status());
         }
@@ -458,18 +521,32 @@ fn validate_total(files: &HashMap<PathBuf, String>) -> Result<(), CoreError> {
 // Both boundaries must be UTF-8 boundaries even when differing codepoints
 // share leading or trailing bytes.
 fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
-    let mut start = old
-        .bytes()
-        .zip(new.bytes())
+    let (a, b) = (old.as_bytes(), new.as_bytes());
+    // Compare unchanged spans in blocks; typing usually changes a few bytes.
+    let mut start = a
+        .chunks(64)
+        .zip(b.chunks(64))
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len())
+        .sum::<usize>();
+    start += a[start..]
+        .iter()
+        .zip(&b[start..])
         .take_while(|(a, b)| a == b)
         .count();
     while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
         start -= 1;
     }
-    let mut suffix = old.as_bytes()[start..]
+    let mut suffix = a[start..]
+        .rchunks(64)
+        .zip(b[start..].rchunks(64))
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len())
+        .sum::<usize>();
+    suffix += a[start..a.len() - suffix]
         .iter()
         .rev()
-        .zip(new.as_bytes()[start..].iter().rev())
+        .zip(b[start..b.len() - suffix].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
     while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
@@ -575,18 +652,23 @@ mod tests {
     use super::*;
     #[test]
     fn unicode_deltas_reconstruct_text() {
-        for (old, new) in [
+        let pairs = [
             ("é😀tail", "ê😃tail"),
             ("é", ""),
             ("", "你好"),
             ("αtestβ", "αβ"),
             ("abc", "abc"),
-        ] {
-            let (start, remove, inserted) = delta(old, new);
-            assert_eq!(
-                format!("{}{inserted}{}", &old[..start], &old[start + remove..]),
-                new
-            );
+        ];
+        for padding in [0, 1, 63, 64, 65, 127, 128] {
+            for (old, new) in pairs {
+                let old = format!("{}{old}{}", "é".repeat(padding), "😀".repeat(padding));
+                let new = format!("{}{new}{}", "é".repeat(padding), "😀".repeat(padding));
+                let (start, remove, inserted) = delta(&old, &new);
+                assert_eq!(
+                    format!("{}{inserted}{}", &old[..start], &old[start + remove..]),
+                    new
+                );
+            }
         }
     }
     #[test]
@@ -647,11 +729,13 @@ mod tests {
                     path: "main.tex".into(),
                     text: original.into(),
                 }],
+                None,
                 &path_env,
             )
             .await
             .unwrap();
         assert!(first.running && first.available);
+        let token = first.session.as_deref().unwrap();
         until(|| commands(&tmp).len() >= 2).await;
         let sent = commands(&tmp);
         assert!(sent.iter().any(|c| c == &json!(["rerun", true])));
@@ -665,7 +749,7 @@ mod tests {
         );
         assert_eq!(opened[2], original);
         let second = manager
-            .update(&root, "main.tex", updated, &path_env)
+            .update(&root, "main.tex", updated, token, &path_env)
             .await
             .unwrap();
         assert!(second.running && second.revision > first.revision);
@@ -688,40 +772,70 @@ mod tests {
             "disk text"
         );
         assert!(manager
-            .update(&root, "../escape.tex", "bad", &path_env)
+            .update(&root, "../escape.tex", "bad", token, &path_env)
             .await
             .is_err());
         assert!(manager
-            .update(&root, "build/out.tex", "bad", &path_env)
+            .update(&root, "build/out.tex", "bad", token, &path_env)
             .await
             .is_err());
         assert!(manager
-            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), &path_env)
+            .update(
+                &root,
+                "main.tex",
+                &"x".repeat(MAX_FILE + 1),
+                token,
+                &path_env
+            )
             .await
             .is_err());
-        manager.rescan(&root, &path_env).await.unwrap();
+        manager.rescan(&root, token, &path_env).await.unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
-        assert!(!manager.stop_request(&root).await.unwrap().running);
-        let restarted = manager.start(&root, &[], &path_env).await.unwrap();
+        assert!(
+            !manager
+                .stop_request(&root, Some(token))
+                .await
+                .unwrap()
+                .running
+        );
+        assert_eq!(
+            manager
+                .start(&root, &[], Some(token), &path_env)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        let restarted = manager.start(&root, &[], None, &path_env).await.unwrap();
         assert!(restarted.running && restarted.revision > second.revision);
         manager
-            .update(&root, "main.tex", "EXIT_CLEAN", &path_env)
+            .update(
+                &root,
+                "main.tex",
+                "EXIT_CLEAN",
+                restarted.session.as_deref().unwrap(),
+                &path_env,
+            )
             .await
             .unwrap();
-        until(|| !manager.status(&root, &path_env).unwrap().running).await;
-        assert!(manager.status(&root, &path_env).unwrap().error.is_none());
-        manager.start(&root, &[], &path_env).await.unwrap();
+        until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
+        assert!(manager
+            .status(&root, None, &path_env)
+            .unwrap()
+            .error
+            .is_none());
+        manager.start(&root, &[], None, &path_env).await.unwrap();
         manager.kill_all();
-        assert!(!manager.status(&root, &path_env).unwrap().running);
+        assert!(!manager.status(&root, None, &path_env).unwrap().running);
     }
     #[tokio::test]
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager.start(&root, &[], &path_env).await.unwrap();
+        let owner = manager.start(&root, &[], None, &path_env).await.unwrap();
         until(|| {
             fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
-                && manager.status(&root, &path_env).unwrap().output == "ready"
+                && manager.status(&root, None, &path_env).unwrap().output == "ready"
         })
         .await;
         let child_pid: i32 = fs::read_to_string(tmp.path().join("engine.pid"))
@@ -730,11 +844,17 @@ mod tests {
             .parse()
             .unwrap();
         manager
-            .update(&root, "main.tex", "EXIT_STUB", &path_env)
+            .update(
+                &root,
+                "main.tex",
+                "EXIT_STUB",
+                owner.session.as_deref().unwrap(),
+                &path_env,
+            )
             .await
             .unwrap();
-        until(|| !manager.status(&root, &path_env).unwrap().running).await;
-        let status = manager.status(&root, &path_env).unwrap();
+        until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
+        let status = manager.status(&root, None, &path_env).unwrap();
         assert_eq!(status.output, "ready");
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
@@ -749,7 +869,7 @@ mod tests {
     async fn abandoned_session_lease_expires_without_polling() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager.start(&root, &[], &path_env).await.unwrap();
+        manager.start(&root, &[], None, &path_env).await.unwrap();
         let session = manager
             .sessions
             .lock()
@@ -759,7 +879,7 @@ mod tests {
             .unwrap();
         session.state.lock().unwrap().last_used = Instant::now() - LEASE;
         tokio::time::sleep(Duration::from_millis(5100)).await;
-        let status = manager.status(&root, &path_env).unwrap();
+        let status = manager.status(&root, None, &path_env).unwrap();
         assert!(!status.running);
         assert!(status.error.unwrap().contains("expired"));
     }
@@ -767,7 +887,7 @@ mod tests {
     async fn backtracked_tex_log_excludes_historical_process_stderr() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager.start(&root, &[], &path_env).await.unwrap();
+        manager.start(&root, &[], None, &path_env).await.unwrap();
         let session = manager
             .sessions
             .lock()
@@ -788,5 +908,128 @@ mod tests {
         assert!(!session.status().log.contains(diagnostic));
         session.stop(Some("TeXpresso exited".into()));
         assert!(session.status().log.contains(diagnostic));
+    }
+    #[tokio::test]
+    async fn replacement_rejects_queued_stale_edits_cleanup_and_lease_renewal() {
+        let (_tmp, root, path_env) = setup();
+        let manager = Arc::new(Manager::default());
+        assert!(!manager.status(&root, None, &path_env).unwrap().running);
+        let old = manager
+            .start(&root, &[], None, &path_env)
+            .await
+            .unwrap()
+            .session
+            .unwrap();
+        // B's Start reaches the queue before A's delayed edit.
+        let blocked = manager.requests.lock().await;
+        let replacement = tokio::spawn({
+            let (manager, root, path_env) = (Arc::clone(&manager), root.clone(), path_env.clone());
+            async move {
+                manager
+                    .start(
+                        &root,
+                        &[FileBuffer {
+                            path: "main.tex".into(),
+                            text: "owner B".into(),
+                        }],
+                        None,
+                        &path_env,
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::task::yield_now().await;
+        let stale_edit = tokio::spawn({
+            let (manager, root, path_env, old) = (
+                Arc::clone(&manager),
+                root.clone(),
+                path_env.clone(),
+                old.clone(),
+            );
+            async move {
+                manager
+                    .update(&root, "main.tex", "stale A", &old, &path_env)
+                    .await
+            }
+        });
+        drop(blocked);
+        let current = replacement.await.unwrap().session.unwrap();
+        assert_ne!(old, current);
+        assert_eq!(stale_edit.await.unwrap().unwrap_err().status, 409);
+        let session = manager
+            .owned(&fs::canonicalize(&root).unwrap(), &current)
+            .unwrap();
+        let before = Instant::now() - Duration::from_secs(60);
+        session.state.lock().unwrap().last_used = before;
+        assert_eq!(
+            manager
+                .status(&root, Some(&old), &path_env)
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert_eq!(
+            manager
+                .rescan(&root, &old, &path_env)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert_eq!(
+            manager
+                .stop_request(&root, Some(&old))
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        // An idle tab can inspect B, but neither inspection nor A extends its lease.
+        assert_eq!(
+            manager
+                .status(&root, None, &path_env)
+                .unwrap()
+                .session
+                .as_deref(),
+            Some(current.as_str())
+        );
+        assert_eq!(session.state.lock().unwrap().last_used, before);
+        assert!(
+            manager
+                .status(&root, Some(&current), &path_env)
+                .unwrap()
+                .running
+        );
+        assert!(session.state.lock().unwrap().last_used > before);
+        assert_eq!(
+            session.input.lock().await.files[&fs::canonicalize(root.join("main.tex")).unwrap()],
+            "owner B"
+        );
+        assert_eq!(
+            manager
+                .start(&root, &[], Some(&old), &path_env)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        assert!(!manager.stop(&root).unwrap().running);
+        let restarted = manager
+            .start(&root, &[], Some(&current), &path_env)
+            .await
+            .unwrap();
+        assert!(restarted.running);
+        assert_ne!(restarted.session.as_deref(), Some(current.as_str()));
+        // Deliberately selected global Stop remains available to an inspecting tab.
+        assert!(!manager.stop_request(&root, None).await.unwrap().running);
+        assert_eq!(
+            manager
+                .start(&root, &[], restarted.session.as_deref(), &path_env)
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
     }
 }

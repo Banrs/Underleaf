@@ -105,6 +105,7 @@ final class ProjectModel {
             try await Core.shared.call(command, arguments, as: TeXpressoStatus.self)
         }
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
+        texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
         texpresso.onEnded = { [weak self] in
             guard let self, !closed, liveRestartTask == nil, autoCompile else { return }
             Task { await self.compile(auto: true) }
@@ -645,12 +646,16 @@ final class ProjectModel {
     }
 
     func stopTeXpresso() {
+        cancelTeXpressoWork()
+        texpresso.stop()
+    }
+
+    private func cancelTeXpressoWork() {
         liveIntent += 1
         liveRestartTask?.cancel()
         liveRestartTask = nil
         liveDiskTask?.cancel()
         liveDiskPaths.removeAll()
-        texpresso.stop()
     }
 
     func showTeXpressoLog() {
@@ -666,10 +671,7 @@ final class ProjectModel {
             // Coalesce a rename's tree and main-file notifications.
             try? await Task.sleep(for: .milliseconds(180))
             guard let self, !closed, !Task.isCancelled else { return }
-            texpresso.stop()
-            await texpresso.waitForPendingCalls()
-            guard !closed, !Task.isCancelled else { return }
-            texpresso.start(files: liveFiles)
+            texpresso.restart(files: liveFiles)
             liveRestartTask = nil
         }
     }

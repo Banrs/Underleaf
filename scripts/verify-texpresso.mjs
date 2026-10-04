@@ -38,6 +38,7 @@ const evidence = { runtime, server: serverPath, scratch, checks: [] };
 let endpoint;
 let project;
 let latest;
+let session;
 async function until(check, timeout = 90_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -49,15 +50,17 @@ async function until(check, timeout = 90_000) {
   }
   throw new Error(`Timed out. Preview running: ${latest?.running}; error: ${latest?.error}; output: ${latest?.output?.slice(-2000)}`);
 }
-async function api(command, args = {}) {
+async function api(command, args = {}, expectedStatus = 200) {
   const response = await fetch(new URL(`/api/${command}`, endpoint), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-TeXLocal-Token': endpoint.searchParams.get('token') },
-    body: JSON.stringify({ ...(project ? { id: project.id } : {}), ...args }),
+    body: JSON.stringify({ ...(project ? { id: project.id } : {}),
+      ...(session && command.startsWith('texpresso_') && command !== 'texpresso_start' ? { session } : {}), ...args }),
     signal: AbortSignal.timeout(190_000),
   });
   const body = await response.json();
-  assert(response.ok, `${command}: ${response.status} ${JSON.stringify(body)}`);
+  assert.equal(response.status, expectedStatus, `${command}: ${response.status} ${JSON.stringify(body)}`);
+  if (command === 'texpresso_start' && response.ok) session = body.session;
   return body;
 }
 async function marker(text, label) {
@@ -133,6 +136,17 @@ try {
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   assert((await api('texpresso_status')).running, 'Normal compile stopped live preview');
   evidence.checks.push({ check: 'Normal XeLaTeX PDF build remains available during preview', bytes: pdf.length });
+
+  const superseded = session;
+  await api('texpresso_start', { files: [{ path: 'main.tex', text: recovered.replace('UL_MAIN_RECOVERED', 'UL_REPLACEMENT_OWNER') }] });
+  assert.notEqual(session, superseded, 'Replacement reused the old ownership token');
+  await marker('UL_REPLACEMENT_OWNER', 'Replacement owner live buffer compiled');
+  for (const command of ['texpresso_status', 'texpresso_start', 'texpresso_update', 'texpresso_rescan', 'texpresso_stop']) {
+    const rejected = await api(command, { session: superseded, path: 'main.tex', text: main }, 409);
+    assert.match(rejected.error, /session was replaced/);
+  }
+  assert((await api('texpresso_status')).running, 'Stale cleanup stopped the replacement');
+  evidence.checks.push({ check: 'Real HTTP stale status, automatic restart, edits, rescan and cleanup reject the replaced owner' });
 
   assert.equal((await api('texpresso_stop')).running, false);
   await api('write_file', { path: 'nested/main.tex', text: main.replace('UL_MAIN_INITIAL', 'UL_NESTED_MAIN') });

@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import os
 import Testing
 @testable import TeXLocal
 
@@ -6,7 +8,7 @@ import Testing
 struct TeXpressoSessionTests {
     private func status(running: Bool = true, error: String? = nil) -> TeXpressoStatus {
         TeXpressoStatus(available: true, running: running, executable: "/tmp/texpresso",
-                       log: "", output: "", error: error, revision: 0)
+                       log: "", output: "", error: error, revision: 0, session: running ? "owner" : nil)
     }
 
     private func until(_ ready: () -> Bool) async throws {
@@ -24,6 +26,7 @@ struct TeXpressoSessionTests {
         let session = TeXpressoSession(id: "project") { command, arguments in
             commands.append(command)
             #expect(arguments["id"] as? String == "project")
+            #expect(command == "texpresso_start" || arguments["session"] as? String == "owner")
             if command == "texpresso_start" {
                 return await withCheckedContinuation { start = $0 }
             }
@@ -39,10 +42,11 @@ struct TeXpressoSessionTests {
         session.update(TeXpressoFile(path: "parts/a.tex", text: "include"))
         session.rescan(files: [TeXpressoFile(path: "parts/a.tex", text: "current")])
         #expect(commands == ["texpresso_start"])
+        session.update(TeXpressoFile(path: "parts/a.tex", text: "typed after rescan"))
         start?.resume(returning: status())
         await session.waitForPendingCalls()
-        #expect(commands == ["texpresso_start", "texpresso_update", "texpresso_update", "texpresso_rescan", "texpresso_update"])
-        #expect(updates == ["main.tex": "é🦆", "parts/a.tex": "current"])
+        #expect(commands == ["texpresso_start", "texpresso_update", "texpresso_update", "texpresso_rescan"])
+        #expect(updates == ["main.tex": "é🦆", "parts/a.tex": "typed after rescan"])
         session.stop()
         await session.waitForPendingCalls()
     }
@@ -51,11 +55,12 @@ struct TeXpressoSessionTests {
         var commands: [String] = []
         var start: CheckedContinuation<TeXpressoStatus, Never>?
         var ended = 0
-        let session = TeXpressoSession(id: "project") { command, _ in
+        let session = TeXpressoSession(id: "project") { command, arguments in
             commands.append(command)
             if command == "texpresso_start" {
                 return await withCheckedContinuation { start = $0 }
             }
+            #expect(arguments["session"] as? String == "owner")
             return status(running: false)
         }
         session.onEnded = { ended += 1 }
@@ -103,6 +108,155 @@ struct TeXpressoSessionTests {
         try await Task.sleep(for: .milliseconds(180))
         await session.waitForPendingCalls()
         #expect(texts == ["abc"])
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test(arguments: [false, true])
+    func slowUpdatesCoalesceAndFailedWritesKeepTheNewestSnapshot(fail: Bool) async throws {
+        var texts: [String] = []
+        var first: CheckedContinuation<TeXpressoStatus, Error>?
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            if command == "texpresso_update", let text = arguments["text"] as? String {
+                texts.append(text)
+                if texts.count == 1 { return try await withCheckedThrowingContinuation { first = $0 } }
+            }
+            return status(running: command != "texpresso_stop")
+        }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        session.update(TeXpressoFile(path: "main.tex", text: "first"))
+        session.flushEdits()
+        try await until { first != nil }
+        for index in 0..<100 {
+            session.update(TeXpressoFile(path: "main.tex", text: "edit \(index)"))
+            session.flushEdits()
+        }
+        session.update(TeXpressoFile(path: "part.tex", text: "included $"))
+        session.flushEdits()
+        if fail {
+            first?.resume(throwing: NSError(domain: "transport", code: 1))
+            await session.waitForPendingCalls()
+            #expect(texts == ["first"] && session.failure != nil && session.active)
+            session.flushEdits()
+        } else {
+            first?.resume(returning: status())
+        }
+        await session.waitForPendingCalls()
+        #expect(texts == ["first", "edit 99", "included $"] && session.failure == nil)
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test func unchangedStatusDoesNotInvalidateTheLogView() async {
+        let error = OSAllocatedUnfairLock(initialState: Optional<String>.none)
+        let session = TeXpressoSession(id: "project") { command, _ in
+            status(running: command != "texpresso_stop", error: error.withLock { $0 })
+        }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        let changed = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking { _ = session.status } onChange: { changed.withLock { $0 = true } }
+        session.rescan(files: [])
+        await session.waitForPendingCalls()
+        #expect(!changed.withLock { $0 })
+        error.withLock { $0 = "Missing $" }
+        session.rescan(files: [])
+        await session.waitForPendingCalls()
+        #expect(changed.withLock { $0 } && session.log == "Missing $")
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test func pollingRecoversAnUnsentEditWithoutMoreTyping() async throws {
+        var attempts = 0
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            if command == "texpresso_update" {
+                #expect(arguments["text"] as? String == "unsent $")
+                attempts += 1
+                if attempts == 1 { throw NSError(domain: "transport", code: 1) }
+            }
+            return status(running: command != "texpresso_stop")
+        }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        session.update(TeXpressoFile(path: "main.tex", text: "unsent $"))
+        session.flushEdits()
+        await session.waitForPendingCalls()
+        #expect(attempts == 1 && session.failure != nil)
+        try await Task.sleep(for: .milliseconds(850))
+        await session.waitForPendingCalls()
+        #expect(attempts == 2 && session.failure == nil && session.active)
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test(arguments: ["texpresso_update", "texpresso_start"])
+    func replacedOwnershipStopsLocalWorkWithoutStoppingTheReplacement(command failedCommand: String) async {
+        var commands: [String] = []
+        var ownershipLosses = 0, ended = 0
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            commands.append(command)
+            if commands.count > 1 {
+                #expect(arguments["session"] as? String == "owner")
+                throw CoreError(message: "This Live session was replaced. Start Live again.", status: 409)
+            }
+            return status()
+        }
+        session.onOwnershipLost = { ownershipLosses += 1 }
+        session.onEnded = { ended += 1 }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        if failedCommand == "texpresso_start" {
+            session.restart(files: [])
+        } else {
+            session.update(TeXpressoFile(path: "main.tex", text: "old owner"))
+            session.flushEdits()
+        }
+        await session.waitForPendingCalls()
+        #expect(!session.active && session.failure != nil && ownershipLosses == 1 && ended == 1)
+        session.restart(files: [])
+        session.close()
+        await session.waitForPendingCalls()
+        #expect(commands == ["texpresso_start", failedCommand])
+    }
+
+    @Test(arguments: [true, false])
+    func restartDuringStartOnlyUsesAcquiredOwnership(started: Bool) async throws {
+        var owners: [String?] = []
+        var first: CheckedContinuation<TeXpressoStatus, Never>?
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            if command == "texpresso_start" {
+                owners.append(arguments["session"] as? String)
+                if owners.count == 1 { return await withCheckedContinuation { first = $0 } }
+            }
+            return status(running: command != "texpresso_stop")
+        }
+        session.start(files: [])
+        try await until { first != nil }
+        session.restart(files: [TeXpressoFile(path: "main.tex", text: "changed main")])
+        first?.resume(returning: status(running: started))
+        await session.waitForPendingCalls()
+        #expect(owners == (started ? [nil, "owner"] : [nil]))
+        #expect(session.active == started)
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test func restartCoalescesIntoAnUndispatchedExplicitStart() async {
+        var starts = 0
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            if command == "texpresso_start" {
+                starts += 1
+                #expect(arguments["session"] == nil)
+                #expect(arguments["files"] as? [[String: String]] == [["path": "main.tex", "text": "latest"]])
+            }
+            return status(running: command != "texpresso_stop")
+        }
+        session.start(files: [TeXpressoFile(path: "old.tex", text: "old")])
+        session.restart(files: [TeXpressoFile(path: "main.tex", text: "latest")])
+        await session.waitForPendingCalls()
+        #expect(starts == 1 && session.active)
         session.stop()
         await session.waitForPendingCalls()
     }
