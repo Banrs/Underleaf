@@ -111,7 +111,9 @@ fn is_settings_file(segments: &[&str]) -> bool {
 }
 
 fn is_in_build_dir(segments: &[&str]) -> bool {
-    segments.first().is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
+    segments
+        .first()
+        .is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
 }
 
 /// Segments of a path relative to the project root, as `ensure_existing_ancestor_within` gives it.
