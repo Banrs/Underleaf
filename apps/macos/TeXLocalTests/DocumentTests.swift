@@ -467,11 +467,13 @@ struct PDFFindTests {
     }
 
     /// A new shared find term replaces an earlier PDF search; a just-typed PDF term wins over the older pasteboard.
-    @Test(arguments: [1, -1]) func findNextUsesTheLatestSharedOrTypedText(_ step: Int) async throws {
+    @Test(arguments: ["alpha", "nothing"], [1, -1])
+    func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
-        controller.findText = "alpha"
+        controller.findText = earlier
         controller.findTyped()
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && controller.matches.count == 1 }
+        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier }
+        #expect(controller.matches.count == (earlier == "alpha" ? 1 : 0))
         PDFFind.shared = "target"
         controller.findNext(step)
         try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
