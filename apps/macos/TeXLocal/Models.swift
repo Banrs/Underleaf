@@ -222,25 +222,39 @@ final class UndoableTrash {
         undoManager?.setActionName(String(localized: "Move to Trash"))
     }
 
-    private func putBack() {
-        guard let trashed else { return }
-        do {
-            try FileManager.default.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.moveItem(at: trashed, to: original)
-        } catch {
-            failed("Couldn’t Put “\(name)” Back", error)
-            return
+    /// Undo and Redo, in the order asked: one asked while the last is still moving the item
+    /// waits for it, so an Undo can't find the item not yet back in the Trash (#36).
+    private var work: Task<Void, Never>?
+
+    /// Each registers the other as its handler starts, as an undo manager expects, and takes
+    /// both away if the move then fails.
+    private func then(_ step: @escaping () async -> Bool) {
+        let last = work
+        work = Task {
+            await last?.value
+            if await step() { await changed() } else { undoManager?.removeAllActions(withTarget: self) }
         }
-        self.trashed = nil
+    }
+
+    private func putBack() {
         registerTrashAgain()
-        Task { await changed() }
+        then { [self] in
+            guard let trashed else { return false }
+            do {
+                try FileManager.default.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: trashed, to: original)
+            } catch {
+                failed("Couldn’t Put “\(name)” Back", error)
+                return false
+            }
+            self.trashed = nil
+            return true
+        }
     }
 
     private func trashAgain() {
         registerPutBack()
-        Task {
-            if await trash(self) { await changed() } else { undoManager?.removeAllActions(withTarget: self) }
-        }
+        then { [self] in await trash(self) }
     }
 }
 

@@ -855,13 +855,17 @@ final class ProjectModel {
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
         let live = texpresso.active ? liveIntent : nil
         let deleted = await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
-            // The core's rule for delete_entry, which this replaces to learn where the Trash put it.
-            if let main = model.settings?.mainFile, main == path || main.hasPrefix(path + "/") {
-                throw CoreError(message: "Choose a different main file before moving this to the Trash.", status: 409)
-            }
             // Saved first, so an autosave cannot recreate the deleted file.
             repeat {
                 guard await model.write() else { return false }
+                // Recheck after saving: another editor may have changed the main file (#37).
+                let settings = try await model.core.call("get_settings", ["id": model.id], as: ProjectSettings.self)
+                guard !model.closed else { return false }
+                model.settings = settings
+                if settings.mainFile == path || settings.mainFile.hasPrefix(path + "/") {
+                    throw CoreError(message: "Choose a different main file before moving this to the Trash.", status: 409)
+                }
+                // Typing during the settings read must reach disk before the editor is cleared.
             } while model.hasUnsavedText
             try item.recycle()
             guard !model.closed else { return false }

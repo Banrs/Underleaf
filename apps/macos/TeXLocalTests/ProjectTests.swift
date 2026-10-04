@@ -178,6 +178,21 @@ final class ProjectFlowTests {
     /// Two opens that overlap (the project restored at launch and an Open
     /// With import, or quick successive opens) leave the editor on the one
     /// opened last, never on the other's text.
+    /// The main file is read from disk before a Move to Trash: another editor may have
+    /// changed it since the project opened (#37).
+    @Test(.timeLimit(.minutes(1)))
+    func theMainFileOnDiskStaysOutOfTheTrash() async throws {
+        let (project, folder) = try await opened()
+        try await Core.shared.perform("write_file", ["id": project.id, "path": "second.tex", "text": "x"])
+        let settings = folder.appending(path: ".texlocal.json")
+        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any])
+        json["mainFile"] = "second.tex"
+        try JSONSerialization.data(withJSONObject: json).write(to: settings)
+        await project.deleteEntry("second.tex")
+        #expect(files.fileExists(atPath: folder.appending(path: "second.tex").path))
+        #expect(project.settings?.mainFile == "second.tex")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func theLastOpenHasTheEditor() async throws {
         let first = try await project("first").info, second = try await project("second").info
@@ -750,6 +765,33 @@ struct UndoableTrashTests {
         // Leave the Trash as it was.
         undo.undo()
         try await waitUntil { files.fileExists(atPath: url.path) }
+        try files.removeItem(at: url)
+    }
+
+    /// An Undo asked while a Redo is still on its way to the Trash waits for it, then puts
+    /// the item back, rather than finding nothing to put back (#36).
+    @Test(.timeLimit(.minutes(1)))
+    func anUndoDuringARedoWaitsForIt() async throws {
+        let files = FileManager.default
+        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
+        try "text".write(to: url, atomically: false, encoding: .utf8)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        var listed = 0
+        // Slow, as the project's lane can be behind a save.
+        let item = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
+                                 trash: { item in try? await Task.sleep(for: .milliseconds(200)); return (try? item.recycle()) != nil },
+                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
+        undo.beginUndoGrouping()
+        await item.moveToTrash()
+        undo.endUndoGrouping()
+        undo.undo()
+        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
+
+        undo.redo()
+        undo.undo()
+        try await waitUntil { listed == 3 }
+        #expect(files.fileExists(atPath: url.path) && undo.canRedo && !undo.canUndo)
         try files.removeItem(at: url)
     }
 }

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::json;
 use tempfile::TempDir;
-use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file};
+use texlocal_core::paths::{project_root, rel_to_root, safe_path, safe_rel_file, safe_write_path};
 use texlocal_core::projects::{
     create_file, create_project, file_tree, list_projects, rename_entry, rename_project,
     scan_symbols, search_project,
@@ -242,6 +242,31 @@ fn the_settings_file_and_its_case_aliases_are_not_reachable_through_the_file_api
         fails_with(safe_path(&root, name), "Reserved file");
     }
     assert!(safe_path(&root, "sub/.texlocal.json").is_ok());
+}
+
+// A link inside the project is held to its target's rules (#26).
+#[cfg(unix)]
+#[test]
+fn links_to_reserved_paths_are_held_to_their_rules() {
+    use std::os::unix::fs::symlink;
+    let data = data_dir();
+    let root = project(data.path(), "reserved-links");
+    fs::write(root.join(".texlocal.json"), "{}").unwrap();
+    fs::write(root.join("main.tex"), "x").unwrap();
+    fs::create_dir_all(root.join("build")).unwrap();
+    symlink(".texlocal.json", root.join("alias.json")).unwrap();
+    symlink(".", root.join("here")).unwrap();
+    symlink("build", root.join("output")).unwrap();
+    symlink("main.tex", root.join("link.tex")).unwrap();
+    fails_with(safe_write_path(&root, "alias.json"), "Reserved file");
+    fails_with(safe_path(&root, "alias.json"), "Reserved file");
+    fails_with(safe_write_path(&root, "here/.texlocal.json"), "Reserved file");
+    fails_with(safe_write_path(&root, "output/main.pdf"), "compiled PDF");
+    fails_with(safe_write_path(&root, "here/build/x.tex"), "compiled PDF");
+    // Reading the output through a link, and ordinary links, stay as they were.
+    assert!(safe_path(&root, "output/main.pdf").is_ok());
+    assert!(safe_write_path(&root, "link.tex").is_ok());
+    assert!(safe_write_path(&root, "here/notes.tex").is_ok());
 }
 
 #[test]

@@ -47,8 +47,19 @@ final class CompletionList {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.isReleasedWhenClosed = false
-        rows.measured = { [unowned self] in fit() }
+        // After the layout pass that measured them: resizing the panel inside it would lay
+        // the same hosting view out again, which AppKit skips (#30).
+        rows.measured = { [weak self] in
+            guard let self, !fitPending else { return }
+            fitPending = true
+            DispatchQueue.main.async { [weak self] in
+                self?.fitPending = false
+                self?.fit()
+            }
+        }
     }
+
+    private var fitPending = false
 
     /// Shows `rows` in `font` with the first selected, the labels' text under
     /// the typed text's start, `start`: a screen rect of `window`'s. Without a
@@ -113,7 +124,7 @@ final class CompletionList {
         let screen = (parent.screen ?? NSScreen.main)?.visibleFrame ?? .infinite
         let size = NSSize(width: min(metrics.textStart + widest.rounded(.up) + metrics.textEnd, screen.width / 2),
                           height: metrics.height(rows: min(rows.items.count, Self.shownRows)))
-        panel.setContentSize(size)
+        if panel.contentView?.frame.size != size { panel.setContentSize(size) }
         place(under: start)
         if panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
     }
