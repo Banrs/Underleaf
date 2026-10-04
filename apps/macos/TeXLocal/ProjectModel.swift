@@ -304,7 +304,7 @@ final class ProjectModel {
     private func edited() {
         dirty = true
         edits += 1
-        if let document = editor.document {
+        if texpresso.active, let document = editor.document {
             texpresso.update(TeXpressoFile(path: document.path, text: document.text))
         }
         if hasPDF, !pdfOutdated { pdfOutdated = true }

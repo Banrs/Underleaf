@@ -24,7 +24,9 @@ struct BuildPanel: View {
             case .texpresso:
                 if project.texpresso.log.isEmpty {
                     ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                           description: Text("Start TeXpresso from the Compile menu to open its live preview window."))
+                                           description: Text(project.texpresso.active
+                                               ? "The live preview opens in a separate window. Compile to update the PDF pane."
+                                               : "Start TeXpresso from the Compile menu to open its live preview window."))
                 } else {
                     LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                 }
@@ -197,7 +199,7 @@ private struct IssueRow: View {
 
 /// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
 /// It opens at its end, where the error usually is.
-private struct LogTextView: NSViewRepresentable {
+struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
 
@@ -222,9 +224,37 @@ private struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        updateText(in: scroll)
+    }
+
+    func updateText(in scroll: NSScrollView) {
+        let view = scroll.documentView as! NSTextView
         guard view.string != text else { return }
-        view.string = text
-        view.scrollToEndOfDocument(nil)
+        let selections = view.selectedRanges.map(\.rangeValue)
+        let origin = scroll.contentView.bounds.origin
+        let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
+            && (view.string.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
+        // Append without invalidating the entire log's layout. A new build or
+        // bounded log rollover can replace it; keep reading position in either case.
+        let previousLength = (view.string as NSString).length
+        if previousLength > 0, text.utf16.starts(with: view.string.utf16) {
+            view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),
+                                                with: (text as NSString).substring(from: previousLength))
+        } else {
+            view.string = text
+        }
+        view.didChangeText()
+        let length = (text as NSString).length
+        view.selectedRanges = selections.map { range in
+            let location = min(range.location, length)
+            return NSValue(range: NSRange(location: location, length: min(range.length, length - location)))
+        }
+        if followsTail {
+            view.scrollToEndOfDocument(nil)
+        } else {
+            scroll.contentView.scroll(to: origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
 }
 

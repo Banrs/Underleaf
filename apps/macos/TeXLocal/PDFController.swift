@@ -244,6 +244,14 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: place.point))
+            // PDFKit rounds destinations with legacy scrollbars; repeated builds must not drift.
+            if let scroll = view.documentView?.enclosingScrollView {
+                let clip = scroll.contentView
+                let target = clip.convert(view.convert(place.point, from: page), from: view)
+                let top = clip.convert(CGPoint(x: view.bounds.minX, y: view.bounds.maxY - view.safeAreaInsets.top), from: view)
+                clip.scroll(to: CGPoint(x: clip.bounds.minX + target.x - top.x, y: clip.bounds.minY + target.y - top.y))
+                scroll.reflectScrolledClipView(clip)
+            }
         } else {
             restorePageIfReady()
         }

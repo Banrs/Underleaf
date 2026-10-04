@@ -525,12 +525,15 @@ struct PDFFindTests {
 
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
-    @Test func aRebuildFindsAgainInPlace() async throws {
+    @Test(arguments: [NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75])
+    func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
+        try #require(view.subviews.compactMap { $0 as? NSScrollView }.first).scrollerStyle = scrollerStyle
         let first = try document(["needle", "filler", "needle", "needle"])
         controller.show(first)
+        if let scale { controller.setScale(scale) }
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
@@ -541,19 +544,21 @@ struct PDFFindTests {
         try #require(page > 0)
         let place = try #require(view.documentView).visibleRect
 
-        let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
-        controller.show(rebuilt)
-        view.layoutDocumentView()
-        try await found(controller, in: rebuilt)
+        for _ in 0..<4 {
+            let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
+            controller.show(rebuilt)
+            view.layoutDocumentView()
+            try await found(controller, in: rebuilt)
 
-        #expect(controller.finding)
-        #expect(controller.matches.count == 4)
-        #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
-        #expect(controller.matchIndex == 1)
-        #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
-        #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
-        let current = try #require(view.documentView).visibleRect
-        #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
-                "viewport before rebuild \(place), after \(current)")
+            #expect(controller.finding)
+            #expect(controller.matches.count == 4)
+            #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
+            #expect(controller.matchIndex == 1)
+            #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
+            #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
+            let current = try #require(view.documentView).visibleRect
+            #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
+                    "viewport before rebuild \(place), after \(current)")
+        }
     }
 }
