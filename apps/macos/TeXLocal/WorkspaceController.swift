@@ -463,17 +463,21 @@ final class WorkspaceController: RestoredSplitViewController {
         self.widened?.to = window.frame
     }
 
-    /// Hidden again, the column gives that width back, unless the window has changed since; once
-    /// it's shut, or the narrowing window would fold the sidebar on the way.
+    /// Hidden again, the column gives that width back, unless the window's width or place across
+    /// has changed since; once it's shut, or the narrowing window would fold the sidebar on the
+    /// way. A height or place up and down set meanwhile stays.
     private func giveBackWidth(hiding item: ObjectIdentifier) {
         guard let widened, ObjectIdentifier(widened.item) == item else { return }
         self.widened = nil
         // Within the point AppKit's split rounding can move it.
         guard let window = view.window, abs(window.frame.minX - widened.to.minX) <= 1,
               abs(window.frame.width - widened.to.width) <= 1 else { return }
+        var frame = window.frame
+        frame.origin.x = widened.from.minX
+        frame.size.width = widened.from.width
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
-            window.animator().setFrame(widened.from, display: true)
+            window.animator().setFrame(frame, display: true)
         }
     }
 

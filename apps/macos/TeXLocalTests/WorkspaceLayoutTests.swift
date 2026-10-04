@@ -588,6 +588,28 @@ final class WorkspaceLayoutTests {
         #expect(other.isCollapsed == otherCollapsed)
     }
 
+    /// A window resized or moved up and down while a side column widened it keeps that height and
+    /// place as the column gives the width back.
+    @Test func givingBackWidthKeepsAVerticalChange() async throws {
+        let workspace = open(sidebar: false, inspector: false, size: NSSize(width: 900, height: 700))
+        let window = try #require(window), app = workspace.app
+        let before = window.frame
+        app.inspectorVisible = true
+        try await waitUntil { !workspace.inspectorItem.isCollapsed && window.frame.width > before.width + 1
+            && !workspace.splitView.inLiveResize } state: { "window \(window.frame)" }
+        try await Task.sleep(for: .milliseconds(300))
+        var changed = window.frame
+        changed.size.height -= 60
+        changed.origin.y += 30
+        window.setFrame(changed, display: true)
+        app.inspectorVisible = false
+        try await waitUntil { workspace.inspectorItem.isCollapsed && abs(window.frame.width - before.width) <= 1 } state: {
+            "window \(window.frame), was \(before)"
+        }
+        #expect(window.frame.minX == before.minX)
+        #expect(window.frame.minY == changed.minY && window.frame.height == changed.height, "\(window.frame), set \(changed)")
+    }
+
     /// A hidden sidebar's window controls and toggle join the source's toolbar section, which
     /// widens by as much; it narrows again as the sidebar shows.
     @Test func theSourceTakesOnTheSidebarsToolbarSection() async throws {
