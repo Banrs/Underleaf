@@ -112,8 +112,8 @@ struct TeXpressoSessionTests {
         await session.waitForPendingCalls()
     }
 
-    @Test(arguments: [false, true])
-    func slowUpdatesCoalesceAndFailedWritesKeepTheNewestSnapshot(fail: Bool) async throws {
+    @Test(arguments: [0, 400, 500])
+    func slowUpdatesCoalesceAndFailedWritesKeepTheNewestSnapshot(failureStatus: Int) async throws {
         var texts: [String] = []
         var first: CheckedContinuation<TeXpressoStatus, Error>?
         let session = TeXpressoSession(id: "project") { command, arguments in
@@ -134,11 +134,13 @@ struct TeXpressoSessionTests {
         }
         session.update(TeXpressoFile(path: "part.tex", text: "included $"))
         session.flushEdits()
-        if fail {
-            first?.resume(throwing: NSError(domain: "transport", code: 1))
-            await session.waitForPendingCalls()
-            #expect(texts == ["first"] && session.failure != nil && session.active)
-            session.flushEdits()
+        if failureStatus != 0 {
+            first?.resume(throwing: CoreError(message: "Update failed", status: failureStatus))
+            if failureStatus != 400 {
+                await session.waitForPendingCalls()
+                #expect(texts == ["first"] && session.failure != nil && session.active)
+                session.flushEdits()
+            }
         } else {
             first?.resume(returning: status())
         }
@@ -187,6 +189,50 @@ struct TeXpressoSessionTests {
         try await Task.sleep(for: .milliseconds(850))
         await session.waitForPendingCalls()
         #expect(attempts == 2 && session.failure == nil && session.active)
+        session.stop()
+        await session.waitForPendingCalls()
+    }
+
+    @Test func rejectedBufferDoesNotRetryOnPollOrBlockOtherFiles() async throws {
+        var updates: [String] = [], failures = 0
+        let session = TeXpressoSession(id: "project") { command, arguments in
+            if command == "texpresso_update", let path = arguments["path"] as? String {
+                updates.append(path)
+                if path != "z.tex", arguments["text"] as? String != "fixed" {
+                    throw CoreError(message: "Live buffer exceeds 8 MB.", status: 400)
+                }
+            }
+            return status(running: command != "texpresso_stop")
+        }
+        session.onFailure = { failures += 1 }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        let invalid = TeXpressoFile(path: "a.tex", text: "rejected")
+        session.update(invalid)
+        session.update(TeXpressoFile(path: "z.tex", text: "valid"))
+        session.flushEdits()
+        await session.waitForPendingCalls()
+        #expect(updates == ["a.tex", "z.tex"])
+        #expect(failures == 1)
+        try await Task.sleep(for: .milliseconds(850))
+        await session.waitForPendingCalls()
+        #expect(updates == ["a.tex", "z.tex"])
+        #expect(failures == 1 && session.failure != nil)
+        session.rescan(files: [invalid])
+        await session.waitForPendingCalls()
+        #expect(updates == ["a.tex", "z.tex", "a.tex"] && failures == 1 && session.failure != nil)
+        session.update(TeXpressoFile(path: "b.tex", text: "rejected too"))
+        session.flushEdits()
+        await session.waitForPendingCalls()
+        #expect(failures == 2)
+        session.update(TeXpressoFile(path: "a.tex", text: "fixed"))
+        session.flushEdits()
+        await session.waitForPendingCalls()
+        #expect(session.failure == "b.tex: Live buffer exceeds 8 MB." && failures == 2)
+        session.update(TeXpressoFile(path: "b.tex", text: "fixed"))
+        session.flushEdits()
+        await session.waitForPendingCalls()
+        #expect(session.failure == nil && session.active && failures == 2)
         session.stop()
         await session.waitForPendingCalls()
     }

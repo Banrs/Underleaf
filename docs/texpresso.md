@@ -34,6 +34,8 @@ Use **Start TeXpresso** in the Compile menu on Mac or the browser workspace.
 Edits to the open source, including included files, reach the live preview.
 Use **Stop TeXpresso** to end the session. The TeXpresso log is separate from
 the normal build log. Rescan refreshes saved files and assets changed externally.
+Host validation failures, such as a file exceeding 8 MB, remain visible until
+that file is accepted. They do not block other files or retry on every poll.
 
 The Mac controls use the existing native toolbar, menus and system materials.
 Live log updates preserve selection, Find and reading position; the PDF status

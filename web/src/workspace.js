@@ -801,7 +801,9 @@ function renderTexPresso() {
   const log = [live.error, help, live.log, live.output].filter(Boolean).join('\n\n')
     || 'Start TeXpresso to preview edits as you type. Session logs appear here.';
   if (ui.texpressoLog.textContent !== log) ui.texpressoLog.textContent = log;
-  if (live.error) ui.texpressoDetails.open = true;
+  const errors = new Set(live.error ? live.error.split('\n') : []);
+  if ([...errors].some((error) => !ui.texpressoErrors?.has(error))) ui.texpressoDetails.open = true;
+  ui.texpressoErrors = errors;
 }
 
 // ---------- compile ----------

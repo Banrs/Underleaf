@@ -283,6 +283,41 @@ test('successful status recovery retries the newest unsent buffer', async () => 
   await session.destroy();
 });
 
+for (const code of [400, 413]) test(`rejected snapshots (${code}) stay visible without polling retries or blocking other files`, async () => {
+  const changes = [];
+  const { session, calls } = fixture('invalid-buffer', {
+    Update: (_id, path, text) => {
+      if (path === 'a.tex' && text === 'invalid') {
+        throw Object.assign(new Error('Live buffers are limited to 8 MB per file.'), { status: code });
+      }
+      return status();
+    },
+  }, { onChange: (value) => changes.push(value) });
+  await session.start();
+  session.update('a.tex', 'invalid');
+  session.update('z.tex', 'valid include');
+  await session.flush();
+  assert.deepEqual(calls.filter(([name]) => name === 'Update').map((call) => call[2]), ['a.tex', 'z.tex']);
+  assert.match(session.state.error, /a.tex.*8 MB/);
+  const notified = changes.length;
+  await session.inspect();
+  await session.inspect();
+  await session.rescan();
+  assert.equal(calls.filter(([name]) => name === 'Update').length, 2);
+  assert.equal(changes.length, notified, 'status and rescan cannot acknowledge a rejected edit');
+
+  // An explicit retry can succeed if another file has freed the total buffer
+  // budget. The same rejection must not repeatedly reopen the error panel.
+  session.update('a.tex', 'invalid');
+  await session.flush();
+  assert.equal(changes.length, notified);
+  session.update('a.tex', 'corrected');
+  await session.flush();
+  assert.equal(session.state.error, null);
+  assert.equal(session.state.enabled, true);
+  await session.destroy();
+});
+
 test('main-file mutation restarts after host invalidation but respects a later Stop', async () => {
   let running = false;
   const { session, calls } = fixture('mutation', { Status: () => status(running) });

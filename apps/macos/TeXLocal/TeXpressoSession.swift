@@ -28,7 +28,8 @@ final class TeXpressoSession {
 
     private(set) var phase: Phase = .stopped
     private(set) var status: TeXpressoStatus?
-    private(set) var failure: String?
+    private var requestFailure: String?
+    private var rejected: [String: String] = [:]
     var onFailure: () -> Void = {}
     var onEnded: () -> Void = {}
     var onOwnershipLost: () -> Void = {}
@@ -42,7 +43,7 @@ final class TeXpressoSession {
     @ObservationIgnored private var pending: [String: String] = [:]
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var closed = false
-    @ObservationIgnored private var lastReportedError: String?
+    @ObservationIgnored private var lastReportedErrors: Set<String> = []
     @ObservationIgnored private var owner: String?
     @ObservationIgnored private var queuedFiles: [TeXpressoFile]?
 
@@ -53,6 +54,13 @@ final class TeXpressoSession {
 
     var active: Bool { phase == .starting || phase == .running }
     var canStart: Bool { !closed && phase == .stopped }
+    private var requestErrors: [String] {
+        [requestFailure].compactMap { $0 } + rejected.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
+    }
+    var failure: String? {
+        let messages = requestErrors
+        return messages.isEmpty ? nil : messages.joined(separator: "\n\n")
+    }
     var title: String {
         if failure != nil || status?.error != nil { return "TeXpresso Needs Attention" }
         switch phase {
@@ -91,8 +99,9 @@ final class TeXpressoSession {
     private func beginStart(files: [TeXpressoFile], replacing: Bool) {
         generation += 1
         phase = .starting
-        failure = nil
-        lastReportedError = nil
+        requestFailure = nil
+        rejected.removeAll()
+        lastReportedErrors.removeAll()
         debounce?.cancel()
         polling?.cancel()
         pending.removeAll()
@@ -222,11 +231,20 @@ final class TeXpressoSession {
             arguments["session"] = owner
             let status = try await call(command, arguments)
             guard generation == current, !closed else { return false }
-            if pending.isEmpty { failure = nil }
+            if command == "texpresso_update", let path = args["path"] { rejected.removeValue(forKey: path) }
+            if pending.isEmpty { requestFailure = nil }
             receive(status)
             return true
         } catch {
             guard generation == current, !closed else { return false }
+            if command == "texpresso_update", (error as? CoreError)?.status == 400, let path = args["path"] {
+                // This snapshot cannot succeed on a timer. Keep its error,
+                // allow other files through, and retry only on an edit/rescan.
+                rejected[path] = error.localizedDescription
+                requestFailure = nil
+                reportFailure()
+                return true
+            }
             fail(error)
             return false
         }
@@ -234,35 +252,34 @@ final class TeXpressoSession {
 
     private func receive(_ status: TeXpressoStatus) {
         if self.status != status { self.status = status }
-        if let error = status.error, error != lastReportedError {
-            lastReportedError = error
-            onFailure()
-        } else if status.error == nil {
-            lastReportedError = nil
-        }
+        reportFailure()
         if status.running {
             phase = .running
         } else {
             if status.error == nil, phase == .starting {
-                failure = "TeXpresso did not start. Check the executable and the session log."
-                onFailure()
+                requestFailure = "TeXpresso did not start. Check the executable and the session log."
+                reportFailure()
             }
             ended()
         }
     }
 
     private func fail(_ error: Error) {
-        failure = error.localizedDescription
-        if (error as? CoreError)?.status == 409 || failure == "This Live session was replaced. Start Live again." {
+        requestFailure = error.localizedDescription
+        if (error as? CoreError)?.status == 409 || requestFailure == "This Live session was replaced. Start Live again." {
             generation += 1
             owner = nil
             onOwnershipLost()
             ended()
         }
-        if failure != lastReportedError {
-            lastReportedError = failure
-            onFailure()
-        }
+        reportFailure()
+    }
+
+    private func reportFailure() {
+        let errors = Set(requestErrors + [status?.error].compactMap { $0 })
+        let changed = !errors.isSubset(of: lastReportedErrors)
+        lastReportedErrors = errors
+        if changed { onFailure() }
     }
 
     private func ended() {
@@ -270,6 +287,7 @@ final class TeXpressoSession {
         debounce?.cancel()
         polling?.cancel()
         pending.removeAll()
+        rejected.removeAll()
         queuedFiles = nil
         if !closed { onEnded() }
     }

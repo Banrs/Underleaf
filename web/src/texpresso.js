@@ -32,7 +32,9 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
   let queuedStart = null;
   let lastNotified = null;
   const pending = new Map();
-  const snapshot = () => ({ ...status, enabled, phase, epoch, error: failure ?? status.error });
+  const rejected = new Map();
+  const snapshot = () => ({ ...status, enabled, phase, epoch,
+    error: [failure, ...rejected.values(), status.error].filter(Boolean).join('\n') || null });
   const notify = () => {
     if (disposed) return;
     const next = snapshot();
@@ -49,6 +51,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     if (enabled && !status.running) {
       enabled = false;
       pending.clear();
+      rejected.clear();
       clearTimeout(debounce);
       phase = 'idle';
     }
@@ -63,6 +66,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
       owner = null;
       owned = enabled = false;
       pending.clear();
+      rejected.clear();
       cancelTimers();
       phase = 'idle';
       status = { ...status, running: false, session: null };
@@ -96,6 +100,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     const request = ++epoch;
     cancelTimers();
     pending.clear();
+    rejected.clear();
     enabled = true;
     owned = true;
     phase = 'starting';
@@ -169,9 +174,20 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
           pending.delete(path);
           try {
             const value = await api.texpressoUpdate(projectId, path, String(text), owner);
-            if (current(request)) failure = null;
+            if (current(request)) {
+              rejected.delete(path);
+              if (!pending.size) failure = null;
+            }
             accept(value, request);
           } catch (error) {
+            if (current(request) && enabled && [400, 413].includes(error?.status)) {
+              // Validation won't recover by polling. Keep its error until this
+              // file succeeds, but let other files and newer edits drain.
+              rejected.set(path, `${path}: ${error.message}`);
+              failure = null;
+              notify();
+              continue;
+            }
             // Retain the newest snapshot for a later edit/explicit retry.
             if (current(request) && enabled && !pending.has(path)) pending.set(path, text);
             report(error, request);
@@ -204,6 +220,7 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     const request = ++epoch;
     enabled = false;
     pending.clear();
+    rejected.clear();
     cancelTimers();
     phase = 'stopping';
     notify();
