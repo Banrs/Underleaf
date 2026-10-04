@@ -110,7 +110,9 @@ struct MenuStructureTests {
     /// Format holds the text's attributes; what inserts text is Insert's.
     @Test func formatStylesAndInsertInserts() throws {
         let format = try menu("Format"), insert = try menu("Insert")
-        #expect(titles(format) == ["Bold", "Italic", "Underline", "Section Level", "Comment Selection"])
+        #expect(titles(format) == ["Bold", "Italic", "Underline", "Section Level", "Comment Selection", "Move Line Up", "Move Line Down"])
+        #expect(try item("Move Line Up", in: format).keyEquivalent == "[")
+        #expect(try item("Move Line Down", in: format).keyEquivalentModifierMask == [.command, .option])
         #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
         #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
     }

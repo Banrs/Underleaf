@@ -20,6 +20,8 @@ enum MenuCommand: String, CaseIterable {
     case editUnderline = "edit.underline"
     case editMath = "edit.math"
     case editComment = "edit.comment"
+    case editMoveLineUp = "edit.moveLineUp"
+    case editMoveLineDown = "edit.moveLineDown"
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
     case pdfGotoPage = "pdf.gotoPage"
@@ -59,6 +61,8 @@ enum MenuCommand: String, CaseIterable {
         case .editUnderline: "Underline"
         case .editMath: "Inline Math"
         case .editComment: "Comment Selection"
+        case .editMoveLineUp: "Move Line Up"
+        case .editMoveLineDown: "Move Line Down"
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
         case .pdfGotoPage: "Go to Page…"
@@ -113,6 +117,9 @@ enum MenuCommand: String, CaseIterable {
         // Pages' Insert › Equation.
         case .editMath: KeyboardShortcut("e", modifiers: [.command, .option])
         case .editComment: KeyboardShortcut("/")
+        // Xcode's Editor › Structure.
+        case .editMoveLineUp: KeyboardShortcut("[", modifiers: [.command, .option])
+        case .editMoveLineDown: KeyboardShortcut("]", modifiers: [.command, .option])
         case .editGotoLine: KeyboardShortcut("l")
         case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
         case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
@@ -157,7 +164,7 @@ extension AppModel {
     func isEnabled(_ command: MenuCommand, on project: ProjectModel?) -> Bool {
         switch command {
         case .projectNew, .projectOpen, .filePageSetup: true
-        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editGotoLine:
+        case .fileSave, .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editMoveLineUp, .editMoveLineDown, .editGotoLine:
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
@@ -221,6 +228,8 @@ extension AppModel {
         case .editUnderline: project?.editor.perform(.underline)
         case .editMath: project?.editor.perform(.math)
         case .editComment: project?.editor.perform(.comment)
+        case .editMoveLineUp: project?.editor.perform(.moveLineUp)
+        case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
         case .pdfFind: requestPDF(.find)
@@ -331,7 +340,8 @@ struct AppCommands: Commands {
             Menu("Section Level") { SectionLevelItems(project: project) }
                 .disabled(project?.isLaTeX != true)
             Divider()
-            item(.editComment)
+            // As Xcode's Editor › Structure has them.
+            items([.editComment, .editMoveLineUp, .editMoveLineDown])
         }
         CommandGroup(before: .toolbar) {
             item(.viewToggleSidebar)

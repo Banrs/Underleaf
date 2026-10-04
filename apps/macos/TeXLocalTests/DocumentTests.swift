@@ -269,6 +269,25 @@ struct PDFFitTests {
         #expect(project.saved.pdfPage == 2)
     }
 
+    /// A reopened project's PDF opens at the fit or scale it was left at, once it has a size,
+    /// and a workspace saved before zooms were kept still opens.
+    @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
+    func theSavedZoomComesBack(zoom: PDFController.Zoom) throws {
+        let project = ProjectModel(id: "PDFFitTests", app: AppModel())
+        project.pdfURL = URL(filePath: "/dev/null")
+        project.pdf.restoreZoom = zoom
+        project.pdf.show(try pages(3))
+        // Kept until the view has a size to fit in.
+        #expect(project.saved.pdfZoom == zoom)
+        project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
+        project.pdf.view.layoutDocumentView()
+        #expect(project.pdf.restoreZoom == nil)
+        #expect(project.saved.pdfZoom == zoom)
+        if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
+        let old = Data(#"{"project":"p","line":1,"buildPanel":false,"pdfPage":2}"#.utf8)
+        #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
+    }
+
     /// The context menu: Go to Source Position and the zooms, without PDFKit's page
     /// layouts and page turns.
     @Test func theContextMenuGoesToTheSourceAndZooms() throws {
@@ -396,6 +415,71 @@ struct PDFFitTests {
 /// Find in PDF across a rebuild, off screen.
 @MainActor
 struct PDFFindTests {
+    init() {
+        // The system's find text is the user's: the tests keep their own.
+        PDFFind.board = NSPasteboard.withUniqueName()
+    }
+
+    /// Three pages, each with "target" once.
+    private func targets() throws -> PDFController {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["alpha target", "beta target", "gamma target"]))
+        return controller
+    }
+
+    private func select(_ word: String, onPage index: Int, in controller: PDFController) throws {
+        let page = try #require(controller.view.document?.page(at: index))
+        let range = ((page.string ?? "") as NSString).range(of: word)
+        controller.view.setCurrentSelection(try #require(page.selection(for: range)), animate: false)
+    }
+
+    /// Use Selection for Find makes the selection the system's find text and marks its
+    /// matches, the selection's own the current one, without moving.
+    @Test func useSelectionForFindStaysAtTheSelection() async throws {
+        let controller = try targets()
+        try select("target", onPage: 1, in: controller)
+        #expect(controller.canUseSelectionForFind)
+        controller.useSelectionForFind()
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
+        #expect(controller.matchIndex == 1 && controller.finding && PDFFind.shared == "target")
+    }
+
+    /// Find Next with nothing searched yet searches for the system's find text, going on from
+    /// the selection; with matches it steps through them.
+    @Test func findNextGoesOnFromTheSelection() async throws {
+        let controller = try targets()
+        PDFFind.shared = "target"
+        #expect(controller.canFindNext)
+        try select("beta", onPage: 1, in: controller)
+        controller.findNext(1)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
+        #expect(controller.matchIndex == 1)
+        controller.findNext(1)
+        #expect(controller.matchIndex == 2)
+        controller.closeFind()
+        try select("alpha", onPage: 0, in: controller)
+        controller.findNext(-1)
+        try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 3 }
+        // Nothing before the first page's: round to the last.
+        #expect(controller.matchIndex == 2)
+    }
+
+    /// Jump to Selection brings the PDF's selection into view, and is there only with one.
+    @Test func jumpToSelectionShowsIt() throws {
+        let controller = try targets()
+        let view = controller.view
+        let item = NSMenuItem(title: "Jump to Selection", action: #selector(NSResponder.centerSelectionInVisibleArea(_:)), keyEquivalent: "j")
+        #expect(!view.validate(item))
+        try select("gamma", onPage: 2, in: controller)
+        controller.go(toPage: 1)
+        #expect(view.validate(item))
+        view.centerSelectionInVisibleArea(nil)
+        #expect(view.currentPage === view.document?.page(at: 2))
+        // PDFKit's own items keep PDFKit's answer.
+        #expect(view.validate(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")))
+    }
+
     /// Each page's text drawn as text, so PDFKit finds it.
     private func document(_ pages: [String], width: CGFloat = 612) throws -> PDFDocument {
         let document = PDFDocument()
