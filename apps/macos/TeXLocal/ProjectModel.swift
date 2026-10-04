@@ -665,13 +665,34 @@ final class ProjectModel {
         return made
     }
 
-    func renameEntry(_ from: String, to: String) async {
-        guard to != from, await saveEdits() else { return }
+    /// `action` names it in Edit › Undo: a drop in the tree is a Move.
+    func renameEntry(_ from: String, to: String, action: String = String(localized: "Rename")) async {
+        if let result = await performRename(from, to: to) { registerRenameUndo(result, action: action) }
+    }
+
+    /// Undo renames it back, by the core's normalised paths; the main file follows it both
+    /// ways. The Redo is registered as the Undo starts, as `UndoableTrash`'s are, and one
+    /// that fails takes it away. The closures hold the model: the manager doesn't.
+    private func registerRenameUndo(_ result: RenameResult, action: String) {
+        guard let undo = app?.undoManager else { return }
+        undo.registerUndo(withTarget: self) { _ in
+            self.registerRenameUndo(RenameResult(from: result.to, to: result.from, mainFile: result.mainFile), action: action)
+            Task {
+                if await self.performRename(result.to, to: result.from) == nil { self.app?.undoManager?.removeAllActions(withTarget: self) }
+            }
+        }
+        undo.setActionName(action)
+    }
+
+    private func performRename(_ from: String, to: String) async -> RenameResult? {
+        guard to != from, await saveEdits() else { return nil }
         var reopen: String?
         var mainChanged = false
+        var renamed: RenameResult?
         _ = await mutate("Couldn’t Rename “\(from.fileName)”") { model in
             let result = try await model.core.call("rename_entry", ["id": model.id, "from": from, "to": to], as: RenameResult.self)
             guard !model.closed else { return false }
+            renamed = result
             model.editor.rename(from: result.from, to: result.to)
             // The open file may move with its folder. The editor keeps its
             // text; only the save path changes, so the old path can't return.
@@ -689,13 +710,14 @@ final class ProjectModel {
             return true
         }
         // Opening flushes edits, so it must run after this mutation releases the queue.
-        guard !closed else { return }
+        guard !closed else { return nil }
         if let reopen, openPath == reopen, await flush(), !closed, openPath == reopen {
             clearOpenFile()
             await open(reopen, focus: false)
         }
         await reloadTree()
         if mainChanged, !closed { await mainFileChanged() }
+        return renamed
     }
 
     /// Move to Trash, which Edit › Undo takes back.
@@ -757,7 +779,8 @@ final class ProjectModel {
             guard let path = projectPath(url) else { outside.append(url); continue }
             // Not into the folder it's in, nor a folder into itself.
             guard path.parentFolder != dir, dir != path, !dir.hasPrefix(path + "/") else { continue }
-            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)")
+            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)",
+                               action: String(localized: "Move"))
         }
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }

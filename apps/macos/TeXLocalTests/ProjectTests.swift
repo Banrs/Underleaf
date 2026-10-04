@@ -282,6 +282,31 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Edit › Undo takes a file's rename back, and the main file with it; Redo renames it again.
+    @Test(.timeLimit(.minutes(1)))
+    func aFileRenameCanBeUndoneAndRedone() async throws {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        app.undoSource = { undo }
+        let (project, folder) = try await opened()
+        #expect(project.settings?.mainFile == "main.tex")
+
+        undo.beginUndoGrouping()
+        await project.renameEntry("main.tex", to: "thesis.tex")
+        undo.endUndoGrouping()
+        #expect(exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex")
+        #expect(undo.undoActionName == "Rename")
+
+        undo.undo()
+        try await waitUntil { self.exists(folder.appending(path: "main.tex")) && project.settings?.mainFile == "main.tex" }
+        #expect(!exists(folder.appending(path: "thesis.tex")) && undo.canRedo)
+
+        undo.redo()
+        try await waitUntil { self.exists(folder.appending(path: "thesis.tex")) && project.settings?.mainFile == "thesis.tex" }
+        #expect(app.alert == nil)
+        await app.close()
+    }
+
     /// Export Project as ZIP archives the open file as it is on screen, before its autosave (#27).
     @Test(.timeLimit(.minutes(1)))
     func theExportedZipHasTheUnsavedEdits() async throws {

@@ -210,17 +210,45 @@ final class AppModel {
     }
 
     func rename(_ project: ProjectInfo, to name: String) async {
-        do {
-            let renamed = try await core.call("rename_project", ["id": project.id, "name": name], as: ProjectInfo.self)
-            recentProjects = recentProjects.map { $0 == project.id ? renamed.id : $0 }
-        } catch {
-            alert = AppAlert("Couldn’t Rename “\(project.name)”", error)
+        if let renamed = await renameProject(project.id, shown: project.name, to: name) {
+            registerRenameUndo(current: (renamed.id, renamed.name), previous: (project.id, project.name))
         }
         await refresh()
     }
 
+    /// The project as renamed, or nil once an alert has said why not. Its id is its folder's
+    /// name, so the recents follow it.
+    private func renameProject(_ id: String, shown: String, to name: String) async -> ProjectInfo? {
+        do {
+            let renamed = try await core.call("rename_project", ["id": id, "name": name], as: ProjectInfo.self)
+            recentProjects = recentProjects.map { $0 == id ? renamed.id : $0 }
+            return renamed
+        } catch {
+            alert = AppAlert("Couldn’t Rename “\(shown)”", error)
+            return nil
+        }
+    }
+
+    /// Undo renames `current` back to `previous`'s name, and the Redo is registered as the
+    /// Undo starts, as `UndoableTrash`'s are (a project's id is its name's folder, so it is
+    /// known); one that fails takes it away. The closures hold the model, as the manager doesn't.
+    private func registerRenameUndo(current: (id: String, name: String), previous: (id: String, name: String)) {
+        guard let undo = undoManager else { return }
+        undo.registerUndo(withTarget: self) { _ in
+            self.registerRenameUndo(current: previous, previous: current)
+            Task {
+                if await self.renameProject(current.id, shown: current.name, to: previous.name) == nil {
+                    self.undoManager?.removeAllActions(withTarget: self)
+                }
+                await self.refresh()
+            }
+        }
+        undo.setActionName(String(localized: "Rename"))
+    }
+
     /// The main window's, which Edit › Undo reaches while the list has the keyboard.
-    var undoManager: UndoManager? { NSApp.mainWindow?.undoManager }
+    var undoManager: UndoManager? { undoSource() }
+    @ObservationIgnored var undoSource: () -> UndoManager? = { NSApp.mainWindow?.undoManager }
 
     /// Without asking, as in Finder: Edit › Undo and the Trash give the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
