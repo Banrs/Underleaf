@@ -78,6 +78,7 @@ export function createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarT
   const setHidden = (pane, hidden, fallback) => {
     if (hidden && pane.contains(document.activeElement)) fallback?.focus();
     pane.inert = hidden;
+    pane.hidden = hidden;
     pane.setAttribute('aria-hidden', String(hidden));
   };
   const setSideWidth = (width) => { sideWidth = width; sidebar.style.width = `${width}px`; };

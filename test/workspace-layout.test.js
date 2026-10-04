@@ -149,6 +149,8 @@ test('repeated desktop toggles update hidden state and preserve persisted widths
     const collapsed = i % 2 === 0;
     assert.equal(f.prefs.sidebarCollapsed, collapsed); assert.equal(f.prefs.pdfCollapsed, collapsed);
     assert.equal(f.sidebar.inert, collapsed); assert.equal(f.pdfPane.inert, collapsed);
+    // Out of sight and out of the layout too, not only out of reach (#28).
+    assert.equal(f.sidebar.hidden, collapsed); assert.equal(f.pdfPane.hidden, collapsed);
     assert.equal(f.sidebarDivider.hidden, collapsed); assert.equal(f.paneDivider.hidden, collapsed);
     assert.equal(f.sidebarToggle.getAttribute('aria-expanded'), String(!collapsed));
   }
