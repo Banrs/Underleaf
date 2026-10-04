@@ -34,6 +34,15 @@ test('browser invoke sends an upload body raw with its headers', async () => {
   assert.deepEqual(requests[0].headers, { 'x-path': 'a.png', 'x-texlocal-token': TOKEN });
 });
 
+test('TeXpresso page-exit stop keeps its authenticated request alive', async () => {
+  const { impl, requests } = fakeFetch(200, { running: false });
+  await bridgeOn(impl).invoke('texpresso_stop', { id: 'paper' }, { keepalive: true });
+  assert.equal(requests[0].url, '/api/texpresso_stop');
+  assert.equal(requests[0].keepalive, true);
+  assert.equal(requests[0].headers['x-texlocal-token'], TOKEN);
+  assert.deepEqual(JSON.parse(requests[0].body), { id: 'paper' });
+});
+
 test('browser invoke rejects with the server error message', async () => {
   const { impl } = fakeFetch(400, { error: 'Path escapes the project' });
   await assert.rejects(

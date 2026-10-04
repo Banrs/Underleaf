@@ -39,6 +39,9 @@ You also need a TeX distribution — see [Requirements](#requirements).
 - **Mac toolbar**: Aa for text styles, Math for formulas and symbols, and an Insert menu for figures, tables, lists, references and links, plus a PDF zoom control; the same commands are in the menu bar
 - **Web source bar**: undo/redo, text styles, math, symbols and insertions, with a project › file › section location row
 - **Auto-compile**: save-on-pause triggers a recompile; superseded runs are cancelled
+- **TeXpresso live preview** (optional): sends unsaved edits to a persistent,
+  separate preview window. Normal PDF builds stay available. See
+  [local setup and verification](docs/texpresso.md).
 - **File outline** in the sidebar that follows the section on screen, plus word and line counts
 - **Project-wide search** with highlighted matches
 - **Compile** with latexmk — pdfLaTeX / XeLaTeX / LuaLaTeX, automatic BibTeX/biber reruns.

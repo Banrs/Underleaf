@@ -71,6 +71,11 @@ export const api = ipc && {
   compile: (id, opts = {}) => ipc.invoke('compile', { id, options: opts }),
   // Stops this project's build, which then reports itself stopped.
   stopCompile: (id) => ipc.invoke('stop_compile', { id }),
+  texpressoStatus: (id) => ipc.invoke('texpresso_status', { id }),
+  texpressoStart: (id, files = []) => ipc.invoke('texpresso_start', { id, files }),
+  texpressoUpdate: (id, path, text) => ipc.invoke('texpresso_update', { id, path, text }),
+  texpressoRescan: (id) => ipc.invoke('texpresso_rescan', { id }),
+  texpressoStop: (id, options) => ipc.invoke('texpresso_stop', { id }, options),
   pdfUrl: (id) => `${ipc.fileUrl(['__pdf', id])}?t=${Date.now()}`,
   // pdf.js fetches the PDF itself, a range at a time; each request sends these.
   fileHeaders: ipc.fileHeaders,

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The build panel's tabs, by title.
 enum PanelTab: String, CaseIterable {
-    case issues = "Issues", log = "Build Log"
+    case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
 @Observable final class BuildPanelState {
@@ -21,6 +21,13 @@ struct BuildPanel: View {
             switch project.panelTab {
             case .issues: issues
             case .log: log
+            case .texpresso:
+                if project.texpresso.log.isEmpty {
+                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                           description: Text("Start TeXpresso from the Compile menu to open its live preview window."))
+                } else {
+                    LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,12 +101,13 @@ struct BuildPanelHeader: View {
                 SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(minWidth: 100, maxWidth: 180)
             } else {
+                let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+                    NSPasteboard.general.setString(text, forType: .string)
                 }
                 .help("Copy Log")
-                .disabled(project.result?.log.isEmpty ?? true)
+                .disabled(text.isEmpty)
             }
         }
         .frame(height: Self.height)
@@ -191,6 +199,7 @@ private struct IssueRow: View {
 /// It opens at its end, where the error usually is.
 private struct LogTextView: NSViewRepresentable {
     let text: String
+    var title = "Build Log"
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -206,12 +215,13 @@ private struct LogTextView: NSViewRepresentable {
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
         // A text view has no title of its own for VoiceOver.
-        view.setAccessibilityLabel("Build Log")
+        view.setAccessibilityLabel(title)
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
+        view.setAccessibilityLabel(title)
         guard view.string != text else { return }
         view.string = text
         view.scrollToEndOfDocument(nil)

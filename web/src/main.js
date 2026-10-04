@@ -103,7 +103,11 @@ addEventListener('beforeunload', (e) => {
 // No workspace loaded means no project was ever opened, so nothing to flush.
 bridge?.onBeforeQuit?.(async () => {
   if (workspace && !(await workspace.flushCurrent())) throw new Error('The active document changed while saving');
+  await workspace?.stopTexPresso();
 });
+
+// pagehide only fires when the page actually leaves (unlike a cancelled unload).
+addEventListener('pagehide', () => workspace?.leaveTexPressoPage());
 
 addEventListener('hashchange', navigate);
 navigate();

@@ -34,6 +34,15 @@ struct StatusBar: View {
                 buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
+            if project.texpresso.phase != .stopped || project.texpresso.status != nil || project.texpresso.failure != nil {
+                Button { project.showTeXpressoLog() } label: {
+                    Label(project.texpresso.title,
+                          systemImage: project.texpresso.failure != nil || project.texpresso.status?.error != nil
+                            ? "exclamationmark.triangle" : "bolt")
+                        .hitTarget()
+                }
+                .help("Show TeXpresso Log")
+            }
             Spacer(minLength: 0)
             let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0

@@ -35,6 +35,10 @@ enum MenuCommand: String, CaseIterable {
     case viewFitPage = "view.fitPage"
     case compileRun = "compile.run"
     case compileStop = "compile.stop"
+    case texpressoStart = "texpresso.start"
+    case texpressoStop = "texpresso.stop"
+    case texpressoRescan = "texpresso.rescan"
+    case texpressoLog = "texpresso.log"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
 
@@ -74,6 +78,10 @@ enum MenuCommand: String, CaseIterable {
         case .viewFitPage: "Fit Page"
         case .compileRun: "Compile"
         case .compileStop: "Stop"
+        case .texpressoStart: "Start TeXpresso Live Preview"
+        case .texpressoStop: "Stop TeXpresso"
+        case .texpressoRescan: "Rescan TeXpresso Files"
+        case .texpressoLog: "Show TeXpresso Log"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
         }
@@ -84,6 +92,7 @@ enum MenuCommand: String, CaseIterable {
     /// while it has the keyboard.
     var shortcut: KeyboardShortcut? {
         switch self {
+        case .texpressoStart, .texpressoStop, .texpressoRescan, .texpressoLog: nil
         case .projectNew: KeyboardShortcut("n", modifiers: [.command, .shift])
         case .projectOpen: KeyboardShortcut("o")
         case .projectClose: KeyboardShortcut("w", modifiers: [.command, .shift])
@@ -148,6 +157,8 @@ extension AppModel {
             project?.editsText == true
         case .compileRun: project.map { !$0.compiling && $0.texAvailable } ?? false
         case .compileStop: project?.compiling == true
+        case .texpressoStart: project.map { $0.initialLoadComplete && $0.texpresso.canStart } ?? false
+        case .texpressoStop, .texpressoRescan: project?.texpresso.active == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
         case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
@@ -223,6 +234,10 @@ extension AppModel {
         case .viewFitPage: requestPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
+        case .texpressoStart: project?.startTeXpresso()
+        case .texpressoStop: project?.stopTeXpresso()
+        case .texpressoRescan: project?.rescanTeXpresso()
+        case .texpressoLog: project?.showTeXpressoLog()
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
         }
@@ -339,6 +354,9 @@ struct AppCommands: Commands {
         CommandMenu("Compile") {
             items([.compileRun, .compileStop])
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
+            Divider()
+            items([.texpressoStart, .texpressoStop, .texpressoRescan, .texpressoLog])
+            Divider()
             // Only with a project's settings, and their engine always a choice: a
             // selection no tag matches, nil included, is a SwiftUI fault.
             if let project, let engine = project.settings?.engine {

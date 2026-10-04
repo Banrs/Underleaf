@@ -77,11 +77,13 @@ pub async fn serve(
         let app = Arc::clone(&app);
         Arc::new(move |req: &Request| app.guard(req))
     };
+    let service = Arc::clone(&app.service);
     let handler = Arc::new(move |req| {
         let app = Arc::clone(&app);
         async move { app.handle(req).await }
     });
-    http::serve(listener, handler, guard, max_body, shutdown).await
+    http::serve(listener, handler, guard, max_body, shutdown).await;
+    service.texpresso.kill_all();
 }
 
 impl App {

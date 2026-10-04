@@ -88,6 +88,7 @@ fn clash(base: &Path, rel: &str) -> Option<String> {
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
+    pub texpresso: crate::texpresso::Manager,
     /// Serialize edits with symbol scans and settings read/modify/write.
     edits: Mutex<()>,
 }
@@ -112,6 +113,7 @@ impl Service {
         Self {
             data_dir,
             compile: CompileManager::default(),
+            texpresso: crate::texpresso::Manager::default(),
             edits: Mutex::new(()),
         }
     }
@@ -342,6 +344,22 @@ impl Service {
         let root = || self.project_root(s("id")?);
         match command {
             "status" => out(self.status().await),
+            "texpresso_status" => out(self.texpresso.status(&root()?, &self.tex_path())?),
+            "texpresso_start" => out(self
+                .texpresso
+                .start(
+                    &root()?,
+                    &arg::<Option<Vec<crate::texpresso::FileBuffer>>>(args, "files")?
+                        .unwrap_or_default(),
+                    &self.tex_path(),
+                )
+                .await?),
+            "texpresso_update" => out(self
+                .texpresso
+                .update(&root()?, s("path")?, s("text")?, &self.tex_path())
+                .await?),
+            "texpresso_stop" => out(self.texpresso.stop_request(&root()?).await?),
+            "texpresso_rescan" => out(self.texpresso.rescan(&root()?, &self.tex_path()).await?),
             "set_tex_dir" => out(self
                 .set_tex_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
@@ -358,12 +376,19 @@ impl Service {
                 projects::rename_project(&self.data_dir, s("id")?, s("name")?)
             })?),
             "delete_project" => out(self.with_project(s("id")?, |_| {
+                self.texpresso.stop(&self.project_root(s("id")?)?)?;
                 projects::delete_project(&self.data_dir, s("id")?)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
             // A rename also rewrites mainFile; serialize read/modify/write.
             "set_settings" => out(self.with_project(s("id")?, |root| {
-                settings::write_settings(root, &arg(args, "patch")?)
+                let patch: Value = arg(args, "patch")?;
+                let previous = settings::read_settings(root).main_file;
+                let updated = settings::write_settings(root, &patch)?;
+                if updated.main_file != previous {
+                    self.texpresso.stop(root)?;
+                }
+                Ok(updated)
             })?),
             "file_tree" => out(projects::file_tree(&root()?)?),
             "scan_symbols" => out(self.scan_symbols(s("id")?)?),
@@ -400,11 +425,19 @@ impl Service {
             }
             "rename_entry" => {
                 let (from, to) = (s("from")?, s("to")?);
-                out(self.with_project(s("id")?, |root| projects::rename_entry(root, from, to))?)
+                out(self.with_project(s("id")?, |root| {
+                    let result = projects::rename_entry(root, from, to)?;
+                    self.texpresso.stop(root)?;
+                    Ok(result)
+                })?)
             }
             "delete_entry" => {
                 let path = s("path")?;
-                out(self.with_project(s("id")?, |root| projects::delete_entry(root, path))?)
+                out(self.with_project(s("id")?, |root| {
+                    let result = projects::delete_entry(root, path)?;
+                    self.texpresso.stop(root)?;
+                    Ok(result)
+                })?)
             }
             "validate_uploads" => out(self.validate_uploads(
                 s("id")?,

@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node --test",
     "build": "node build.mjs",
-    "serve": "npm run build && cargo run --release -p texlocal-server --"
+    "serve": "npm run build && cargo run --release -p texlocal-server --",
+    "verify:texpresso": "npm run build && cargo build -p texlocal-server && node scripts/verify-texpresso.mjs"
   },
   "keywords": [
     "latex",

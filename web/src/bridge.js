@@ -137,6 +137,7 @@ export function httpBridge(fetchImpl = (...a) => fetch(...a), token = takeToken(
         method: 'POST',
         headers: { ...(raw ? options?.headers : { 'content-type': 'application/json' }), ...auth },
         body: raw ? args : JSON.stringify(args ?? {}),
+        ...(options?.keepalive ? { keepalive: true } : {}),
       });
       if (!res.ok) throw await failure(res);
       return res.json().catch(() => null);
