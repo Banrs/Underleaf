@@ -45,6 +45,7 @@ impl TlHandle {
             // the app.
             "kill_all" => {
                 service.compile.kill_all();
+                service.texpresso.kill_all();
                 Ok(Value::Null)
             }
             "import_files" => Ok(json!(import::import_files(
@@ -157,6 +158,7 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     let handle = Box::from_raw(handle);
     // Compiles run in their own process groups, so nothing else stops them.
     handle.service.compile.kill_all();
+    handle.service.texpresso.kill_all();
 }
 
 /// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).

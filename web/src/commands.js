@@ -45,6 +45,7 @@ const MENU = [
     label: 'Compile',
     items: [
       { id: 'compile.run' }, { id: 'compile.toggleAuto' }, '-',
+      { id: 'compile.texpresso' }, { id: 'compile.texpressoRescan' }, '-',
       { id: 'sync.forward' }, { id: 'sync.inverse' },
     ],
   },
@@ -83,6 +84,8 @@ const FALLBACK_TITLES = {
   'view.uiScaleDown': 'Decrease Interface Size',
   'compile.run': 'Compile',
   'compile.toggleAuto': 'Compile Automatically',
+  'compile.texpresso': 'Start TeXpresso (Native Window)',
+  'compile.texpressoRescan': 'Rescan TeXpresso Files',
   'sync.forward': 'Go to PDF Position',
   'sync.inverse': 'Go to Source Position',
 };

@@ -93,7 +93,7 @@ final class AppModel {
     /// is key, not behind Settings or a sheet.
     var mainWindowIsKey = false
     /// The project the menus act on.
-    var commandProject: ProjectModel? { mainWindowIsKey ? project : nil }
+    var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
     /// Offered by the list with the keyboard (`offersActions`).
     var chosenItem: ItemActions?
     /// Newest first, by id.
@@ -304,7 +304,7 @@ final class AppModel {
     func open(_ id: String, restoring saved: SavedWorkspace? = nil) async {
         openGeneration += 1
         let generation = openGeneration
-        guard project?.id != id else { return }
+        guard project?.id != id || project?.closed == true else { return }
         opensUnderWay += 1
         defer { opensUnderWay -= 1 }
         guard await leave(generation) else { return }
@@ -341,8 +341,13 @@ final class AppModel {
     /// Unless a later open or close took over while this saved; that one leaves it.
     private func leave(_ generation: Int) async -> Bool {
         guard let project else { return true }
-        guard await project.flush(), generation == openGeneration else { return false }
-        project.close()
-        return true
+        if !project.closed {
+            guard await project.flush(), generation == openGeneration else { return false }
+            project.close()
+        }
+        // Finish a late live start's Stop before another model can start the
+        // same project's session through the core's concurrent call queue.
+        await project.texpresso.waitForPendingCalls()
+        return generation == openGeneration
     }
 }

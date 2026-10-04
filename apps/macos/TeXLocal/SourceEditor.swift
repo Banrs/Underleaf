@@ -235,7 +235,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     /// False when there's no text to run it on, or no block of that id.
     @discardableResult
     func perform(_ command: EditorCommand, _ argument: String? = nil) -> Bool {
-        guard path != nil else { return false }
+        guard path != nil, textView.isEditable else { return false }
         let document = textView.document, selection = textView.selectedRange()
         let insert = { (insertion: Insertion?, name: String) in
             guard let insertion else { return false }

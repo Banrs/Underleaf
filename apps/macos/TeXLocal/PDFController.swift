@@ -290,8 +290,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         let typed = PDFFind.normalize(findText)
         let pending = !typed.isEmpty && typed != (search?.query ?? query)
         let text = pending ? typed : PDFFind.shared.map(PDFFind.normalize) ?? typed
-        if !matches.isEmpty, text == query { return self.step(step) }
         guard !text.isEmpty else { return }
+        if !matches.isEmpty, text == query, search == nil { return self.step(step) }
         if pending { PDFFind.shared = text }
         finding = true
         findText = text
@@ -340,6 +340,14 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         restoreZoomIfReady()
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: place.point))
+            // PDFKit rounds destinations with legacy scrollbars; repeated builds must not drift.
+            if let scroll = view.documentView?.enclosingScrollView {
+                let clip = scroll.contentView
+                let target = clip.convert(view.convert(place.point, from: page), from: view)
+                let top = clip.convert(CGPoint(x: view.bounds.minX, y: view.bounds.maxY - view.safeAreaInsets.top), from: view)
+                clip.scroll(to: CGPoint(x: clip.bounds.minX + target.x - top.x, y: clip.bounds.minY + target.y - top.y))
+                scroll.reflectScrolledClipView(clip)
+            }
         } else {
             restorePageIfReady()
         }

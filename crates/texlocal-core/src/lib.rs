@@ -18,6 +18,7 @@ pub mod service;
 pub mod settings;
 pub mod synctex;
 pub mod templates;
+pub mod texpresso;
 pub mod zipexport;
 
 pub use error::CoreError;

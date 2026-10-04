@@ -1314,3 +1314,11 @@ html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-r
 .pane-resize-handle { position: absolute; inset: 0 -4px; cursor: col-resize; }
 .divider-sync::before { content: none; }
 .divider:has(.pane-resize-handle.dragging) { background: var(--accent); }
+
+
+/* The live renderer lives in a separate native window; this strip keeps its
+   state and diagnostic output available beside the ordinary PDF preview. */
+.texpresso-panel { flex: none; border-bottom: 1px solid var(--separator); background: var(--bg-content); padding: var(--sp-2) var(--sp-3); font-size: 12px; }
+.texpresso-panel summary { cursor: pointer; color: var(--label-2); }
+.texpresso-panel p { margin: var(--sp-2) 0; color: var(--label-2); line-height: 1.5; }
+.texpresso-log { max-height: 180px; overflow: auto; margin: var(--sp-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 var(--mono); user-select: text; }

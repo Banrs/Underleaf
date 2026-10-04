@@ -407,6 +407,7 @@ struct PDFFitTests {
 
 /// Find in PDF across a rebuild, off screen.
 @MainActor
+@Suite(.serialized)
 struct PDFFindTests {
     init() {
         // The system's find text is the user's: the tests keep their own.
@@ -458,33 +459,31 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 2)
     }
 
-    /// Find Next and Previous search for the system's find text when another pane's Use
-    /// Selection for Find has changed it since this pane's search, with or without matches (#38).
-    @Test(arguments: [("target", 1), ("target", -1), ("nothing", 1)])
-    func findNextFollowsANewerSharedText(earlier: String, step: Int) async throws {
+    /// Shared text replaces an earlier search, including an in-flight one; pending local typing wins.
+    @Test(arguments: ["alpha", "nothing"], [1, -1])
+    func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
-        controller.finding = true
         controller.findText = earlier
         controller.findTyped()
-        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier }
-        PDFFind.shared = "beta"
+        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier && controller.matches.count == (earlier == "alpha" ? 1 : 0) }
+        PDFFind.shared = "target"
         controller.findNext(step)
-        try await waitUntil(timeout: .seconds(5)) { controller.query == "beta" && controller.matches.count == 1 }
-        #expect(controller.findText == "beta")
-        #expect(controller.matches.first?.string == "beta")
-    }
-
-    /// Typing the field's delay hasn't searched yet is what Find Next finds.
-    @Test func findNextFindsWhatIsTyped() async throws {
-        let controller = try targets()
-        controller.finding = true
-        controller.findText = "target"
-        controller.findTyped()
         try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
+        #expect(controller.findText == "target")
+
         controller.findText = "gamma"
-        controller.findNext(1)
+        controller.findTyped()
+        try #require(controller.view.document?.isFinding == true)
+        PDFFind.shared = "target" // Another pane changes it while gamma is still being searched.
+        controller.findNext(step)
+        #expect(controller.findText == "target")
+        try await waitUntil(timeout: .seconds(5)) { controller.view.document?.isFinding == false }
+        #expect(controller.query == "target" && controller.matches.count == 3)
+
+        controller.findText = "gamma" // Its typing debounce has not fired yet.
+        controller.findNext(step)
         try await waitUntil(timeout: .seconds(5)) { controller.query == "gamma" && controller.matches.count == 1 }
-        #expect(PDFFind.shared == "gamma")
+        #expect(controller.findText == "gamma" && PDFFind.shared == "gamma")
     }
 
     /// Jump to Selection brings the PDF's selection into view, and is there only with one.
@@ -654,12 +653,15 @@ struct PDFFindTests {
 
     /// The bar stays: its matches are the new PDF's, the current one is kept,
     /// and the pages don't move.
-    @Test func aRebuildFindsAgainInPlace() async throws {
+    @Test(arguments: [NSScroller.Style.overlay, .legacy], [CGFloat?.none, 1.75])
+    func aRebuildFindsAgainInPlace(_ scrollerStyle: NSScroller.Style, _ scale: CGFloat?) async throws {
         let controller = PDFController()
         let view = controller.view
         view.setFrameSize(NSSize(width: 600, height: 500))
+        try #require(view.subviews.compactMap { $0 as? NSScrollView }.first).scrollerStyle = scrollerStyle
         let first = try document(["needle", "filler", "needle", "needle"])
         controller.show(first)
+        if let scale { controller.setScale(scale) }
         controller.finding = true
         controller.findText = "needle"
         controller.find(controller.findText)
@@ -670,19 +672,21 @@ struct PDFFindTests {
         try #require(page > 0)
         let place = try #require(view.documentView).visibleRect
 
-        let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
-        controller.show(rebuilt)
-        view.layoutDocumentView()
-        try await found(controller, in: rebuilt)
+        for _ in 0..<4 {
+            let rebuilt = try document(["needle", "needle", "filler", "needle", "needle"])
+            controller.show(rebuilt)
+            view.layoutDocumentView()
+            try await found(controller, in: rebuilt)
 
-        #expect(controller.finding)
-        #expect(controller.matches.count == 4)
-        #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
-        #expect(controller.matchIndex == 1)
-        #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
-        #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
-        let current = try #require(view.documentView).visibleRect
-        #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
-                "viewport before rebuild \(place), after \(current)")
+            #expect(controller.finding)
+            #expect(controller.matches.count == 4)
+            #expect(controller.matches.allSatisfy { $0.pages.first?.document === rebuilt })
+            #expect(controller.matchIndex == 1)
+            #expect(view.currentSelection?.pages.first === controller.matches[1].pages.first)
+            #expect(rebuilt.index(for: try #require(view.currentPage)) == page)
+            let current = try #require(view.documentView).visibleRect
+            #expect(isClose(current.minX, place.minX) && isClose(current.minY, place.minY),
+                    "viewport before rebuild \(place), after \(current)")
+        }
     }
 }

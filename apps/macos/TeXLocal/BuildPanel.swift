@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The build panel's tabs, by title.
 enum PanelTab: String, CaseIterable {
-    case issues = "Issues", log = "Build Log"
+    case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
 @Observable final class BuildPanelState {
@@ -21,6 +21,15 @@ struct BuildPanel: View {
             switch project.panelTab {
             case .issues: issues
             case .log: log
+            case .texpresso:
+                if project.texpresso.log.isEmpty {
+                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                           description: Text(project.texpresso.active
+                                               ? "The live preview opens in a separate window. Compile to update the PDF pane."
+                                               : "Start TeXpresso from the Compile menu to open its live preview window."))
+                } else {
+                    LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,12 +103,13 @@ struct BuildPanelHeader: View {
                 SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(minWidth: 100, maxWidth: 180)
             } else {
+                let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(project.result?.log ?? "", forType: .string)
+                    NSPasteboard.general.setString(text, forType: .string)
                 }
                 .help("Copy Log")
-                .disabled(project.result?.log.isEmpty ?? true)
+                .disabled(text.isEmpty)
             }
         }
         .frame(height: Self.height)
@@ -189,8 +199,9 @@ private struct IssueRow: View {
 
 /// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
 /// It opens at its end, where the error usually is.
-private struct LogTextView: NSViewRepresentable {
+struct LogTextView: NSViewRepresentable {
     let text: String
+    var title = "Build Log"
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -206,15 +217,44 @@ private struct LogTextView: NSViewRepresentable {
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
         // A text view has no title of its own for VoiceOver.
-        view.setAccessibilityLabel("Build Log")
+        view.setAccessibilityLabel(title)
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
+        view.setAccessibilityLabel(title)
+        updateText(in: scroll)
+    }
+
+    func updateText(in scroll: NSScrollView) {
+        let view = scroll.documentView as! NSTextView
         guard view.string != text else { return }
-        view.string = text
-        view.scrollToEndOfDocument(nil)
+        let selections = view.selectedRanges.map(\.rangeValue)
+        let origin = scroll.contentView.bounds.origin
+        let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
+            && (view.string.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
+        // Append without invalidating the entire log's layout. A new build or
+        // bounded log rollover can replace it; keep reading position in either case.
+        let previousLength = (view.string as NSString).length
+        if previousLength > 0, text.utf16.starts(with: view.string.utf16) {
+            view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),
+                                                with: (text as NSString).substring(from: previousLength))
+        } else {
+            view.string = text
+        }
+        view.didChangeText()
+        let length = (text as NSString).length
+        view.selectedRanges = selections.map { range in
+            let location = min(range.location, length)
+            return NSValue(range: NSRange(location: location, length: min(range.length, length - location)))
+        }
+        if followsTail {
+            view.scrollToEndOfDocument(nil)
+        } else {
+            scroll.contentView.scroll(to: origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
 }
 

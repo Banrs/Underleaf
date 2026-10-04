@@ -19,12 +19,14 @@ import {
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
 import { buildSourceBar } from './sourcebar.js';
 import { createWorkspaceLayout } from './workspace-layout.js';
+import { createTexPressoSession, unsavedTexPressoFiles } from './texpresso.js';
 
 let ui = {};              // mounted elements
 let disposeCommands = null;
 let restoreAppearanceHandler = null;
 let texWatcher = null;
 let pendingCompile = false;
+let texpresso = null;
 // Stop was pressed before the build it stops had started (while saving).
 let stopRequested = false;
 let workspaceGeneration = 0;
@@ -58,6 +60,8 @@ function stashEditorState(path) {
 // ---------- mount / unmount ----------
 
 export function destroyWorkspace() {
+  texpresso?.destroy().catch((error) => console.error('TeXpresso cleanup failed:', error));
+  texpresso = null;
   workspaceGeneration++;
   openGeneration++;
   pdfFindGeneration++;
@@ -105,7 +109,13 @@ export async function renderWorkspace(id) {
   Object.assign(state, { settings, tree, symbols, tex: status });
 
   buildChrome(id);
+  texpresso = createTexPressoSession({ projectId: id, api, onChange: () => {
+    if (generation !== workspaceGeneration) return;
+    renderTexPresso();
+    refreshCommands();
+  } });
   disposeCommands = registerCommands(commandDefs());
+  texpresso.inspect().catch(() => {});
   // No ResizeObserver reports the body's `zoom` (an element's CSS box is
   // unchanged by it), so a scale change re-renders the PDF, or it stays soft.
   let lastScale = prefs.uiScale;
@@ -145,11 +155,24 @@ function buildChrome(id) {
     revealSection: (line, focus) => { if (focus) ui.layout?.revealEditor(); state.editor?.gotoLine(line, true, focus); },
     openSettings: openProjectSettings,
     // A file renamed, moved or deleted may be one the document reads in.
-    onFilesChanged: () => { refreshSymbols(); refreshAnalysis(); },
-    onMainFileChange: () => { refreshAnalysis(); compile({ auto: true }); },
+    onFilesChanged: (liveBeforeMutation) => {
+      refreshSymbols();
+      refreshAnalysis();
+      if (liveBeforeMutation) restartTexPresso(liveBeforeMutation);
+      else texpresso?.rescan().catch((error) => toast(error.message, 'error'));
+    },
+    beforeMainFileChange: captureTexPresso,
+    beforeFilesReload: captureTexPresso,
+    onMainFileChange: (liveBeforeMutation) => {
+      refreshAnalysis();
+      restartTexPresso(liveBeforeMutation);
+      compile({ auto: true });
+    },
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
       if (!(await flushCurrent())) throw new Error('The active document changed while saving');
+      await texpresso?.flush();
+      return captureTexPresso();
     },
     closeOpenFile: () => {
       openGeneration++;
@@ -258,9 +281,24 @@ function buildChrome(id) {
     stepFind(e.shiftKey ? -1 : 1);
   });
 
+  const texpressoButton = el('button', {
+    class: 'btn small', dataset: { command: 'compile.texpresso' },
+    onclick: () => runCommand('compile.texpresso'),
+  }, 'Start TeXpresso');
+  const texpressoLabel = el('span', { role: 'status' }, 'TeXpresso · separate native window');
+  const texpressoLog = el('pre', { class: 'texpresso-log', tabindex: '0' });
+  const texpressoDetails = el('details', { class: 'texpresso-panel' },
+    el('summary', {}, texpressoLabel),
+    el('p', {}, 'Live preview opens a separate native window on the computer running Underleaf and uses TeXpresso’s engine. Automatic PDF builds pause while it runs; Compile still updates this PDF.'),
+    el('button', { class: 'btn small', dataset: { command: 'compile.texpressoRescan' },
+      onclick: () => runCommand('compile.texpressoRescan') }, 'Rescan files'),
+    texpressoLog,
+  );
+
   const pdfPane = el('div', { class: 'pane pdf-pane', id: 'workspace-preview' },
     el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Document' },
       compileButton,
+      texpressoButton,
       logsButton,
       iconButton('pdf.save', 'download', 'small'),
       el('span', { class: 'spacer' }),
@@ -271,6 +309,7 @@ function buildChrome(id) {
       pdfFreshness,
       pageIndicator,
     ),
+    texpressoDetails,
     findBar,
     logsView,
     pdfScroll,
@@ -298,6 +337,7 @@ function buildChrome(id) {
   ui = {
     sidebar, sourceBar, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
     compileButton, workspace, findBar, findInput, stepFind, pdfFreshness,
+    texpressoButton, texpressoDetails, texpressoLabel, texpressoLog,
   };
 
   ui.layout = createWorkspaceLayout({ shell, sidebar, sidebarDivider, sidebarToggle: sidebarToggleFallback,
@@ -397,6 +437,12 @@ function commandDefs() {
 
     { id: 'compile.run', title: 'Compile', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
     { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
+    { id: 'compile.texpresso', title: () => texpresso?.state.enabled || texpresso?.state.running
+      ? 'Stop TeXpresso (Native Window)' : 'Start TeXpresso (Native Window)',
+      run: toggleTexPresso, enabled: () => hasProject() && texpresso?.state.phase !== 'stopping' },
+    { id: 'compile.texpressoRescan', title: 'Rescan TeXpresso Files',
+      run: () => restartTexPresso(captureTexPresso()),
+      enabled: () => !!texpresso?.state.enabled && texpresso?.state.phase === 'idle' },
     { id: 'sync.forward', title: 'Go to PDF Position', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
     { id: 'sync.inverse', title: 'Go to Source Position', run: inverseSync, enabled: hasPdf },
 
@@ -561,6 +607,7 @@ async function openFile(path) {
     getSymbols: () => state.symbols,
     onChange: () => {
       state.dirty = true;
+      texpresso?.update(state.openPath, state.editor.getState().doc);
       setSaveState('Unsaved');
       if (state.pdf?.doc) setPdfFreshness('Preview out of date');
       clearTimeout(state.saveTimer);
@@ -587,6 +634,7 @@ async function openFile(path) {
   });
   if (restore) state.editor.setScrollTop(restore.scrollTop);
   state.editor.focus();
+  texpresso?.update(path, state.editor.getState().doc);
   state.dirty = false;
   setSaveState('Saved');
   updateDocMeta();
@@ -620,6 +668,7 @@ async function doSave({ triggerCompile = true } = {}) {
   const path = state.openPath;
   const editor = state.editor;
   const content = editor.getContent();
+  state.saving = true;
   state.dirty = false;
   setSaveState('Saving…');
   try {
@@ -641,6 +690,8 @@ async function doSave({ triggerCompile = true } = {}) {
       toast(`Save failed: ${err.message}`, 'error');
     }
     throw err;
+  } finally {
+    if (state.projectId === projectId && state.openPath === path && state.editor === editor) state.saving = false;
   }
 }
 
@@ -694,9 +745,71 @@ async function refreshAnalysis() {
 // The source bar's section level and location row follow the caret and path.
 const renderCrumbs = () => ui.sourceBar?.update();
 
+// ---------- TeXpresso native live preview ----------
+
+function startTexPresso() {
+  pendingCompile = false;
+  return texpresso?.start(unsavedTexPressoFiles(state)).catch((error) => toast(error.message, 'error'));
+}
+
+function captureTexPresso() {
+  return texpresso && { session: texpresso, epoch: texpresso.state.epoch, enabled: texpresso.state.enabled };
+}
+
+function restartTexPresso(previous) {
+  // A status poll may observe the host stopping for a path/main mutation.
+  // Preserve that opt-in, while respecting a Stop clicked during the request.
+  if (previous?.session === texpresso) {
+    return texpresso.restart(unsavedTexPressoFiles(state), previous).catch((error) => toast(error.message, 'error'));
+  }
+}
+
+async function toggleTexPresso() {
+  if (texpresso?.state.enabled || texpresso?.state.running) {
+    const session = texpresso;
+    const generation = workspaceGeneration;
+    try {
+      await session.stop({ global: !session.state.enabled });
+      if (generation === workspaceGeneration && session === texpresso && prefs.autoCompile) compile({ auto: true });
+    } catch (error) { toast(error.message, 'error'); }
+    return;
+  }
+  return startTexPresso();
+}
+
+export async function stopTexPresso() {
+  if (texpresso?.state.enabled || texpresso?.state.running) await texpresso.stop();
+}
+
+export function leaveTexPressoPage(options) { return texpresso?.leavePage(options); }
+
+function renderTexPresso() {
+  const live = texpresso?.state;
+  if (!live || !ui.texpressoLabel) return;
+  const action = live.enabled || live.running ? 'Stop TeXpresso' : 'Start TeXpresso';
+  const buttonText = live.phase === 'stopping' ? 'Stopping…' : action;
+  if (ui.texpressoButton.textContent !== buttonText) ui.texpressoButton.textContent = buttonText;
+  const label = live.phase === 'starting' ? 'Starting…'
+    : live.phase === 'stopping' ? 'Stopping…'
+      : live.error ? 'Needs attention'
+        : live.enabled && live.running ? 'Live in native window'
+          : live.available === false ? 'Not installed' : 'Stopped · separate native window';
+  const labelText = `TeXpresso: ${label}`;
+  if (ui.texpressoLabel.textContent !== labelText) ui.texpressoLabel.textContent = labelText;
+  const help = live.available === false
+    ? 'Set TEXLOCAL_TEXPRESSO to the TeXpresso executable before starting Underleaf, or put texpresso on PATH.' : '';
+  const log = [live.error, help, live.log, live.output].filter(Boolean).join('\n\n')
+    || 'Start TeXpresso to preview edits as you type. Session logs appear here.';
+  if (ui.texpressoLog.textContent !== log) ui.texpressoLog.textContent = log;
+  const errors = new Set(live.error ? live.error.split('\n') : []);
+  if ([...errors].some((error) => !ui.texpressoErrors?.has(error))) ui.texpressoDetails.open = true;
+  ui.texpressoErrors = errors;
+}
+
 // ---------- compile ----------
 
 async function compile({ auto = false } = {}) {
+  if (auto && texpresso?.state.enabled) return;
   if (!state.projectId || !state.tex.available) return;
   if (state.compiling) { pendingCompile = true; return; }
   state.compiling = true;
@@ -725,6 +838,7 @@ async function compile({ auto = false } = {}) {
 
   try {
     if (!(await flushCurrent())) return;
+    if (auto && texpresso?.state.enabled) return;
     if (!current() || state.settings?.mainFile !== mainFile) return;
     if (stopRequested) return;
 

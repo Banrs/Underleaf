@@ -254,11 +254,12 @@ function rowMenu(e, node, origin) {
       label: 'Set as Main File',
       action: async () => {
         try {
+          const wasLive = origin.beforeMainFileChange?.();
           const settings = await api.saveSettings(projectId, { mainFile: node.path });
           if (!active(origin)) return;
           state.settings = settings;
           renderTree();
-          origin.onMainFileChange?.();
+          origin.onMainFileChange?.(wasLive);
         } catch (err) { toast(err.message, 'error'); }
       },
     });
@@ -270,7 +271,7 @@ function rowMenu(e, node, origin) {
         const to = await promptModal({ title: `Rename “${node.name}”`, label: 'Path', value: node.path, confirm: 'Rename' });
         if (!to || to === node.path) return;
         try {
-          if (active(origin)) await origin.beforePathMutation?.();
+          const mutationContext = active(origin) ? await origin.beforePathMutation?.() : undefined;
           const result = await api.renameEntry(projectId, node.path, to);
           if (!active(origin)) return;
           const oldOpen = state.openPath;
@@ -286,6 +287,7 @@ function rowMenu(e, node, origin) {
           await refreshTree(origin);
           if (!active(origin)) return;
           if (containsPath(node.path, oldOpen)) origin.onOpenPathChange?.();
+          origin.onFilesChanged?.(mutationContext);
           if (oldMain !== state.settings?.mainFile) origin.onMainFileChange?.();
         } catch (err) { toast(err.message, 'error'); }
       },
@@ -310,7 +312,7 @@ function rowMenu(e, node, origin) {
         });
         if (!ok) return;
         try {
-          if (active(origin)) await origin.beforePathMutation?.();
+          const mutationContext = active(origin) ? await origin.beforePathMutation?.() : undefined;
           await api.deleteEntry(projectId, node.path);
           if (!active(origin)) return;
           // Keep the buffer intact until deletion has actually succeeded. On a
@@ -319,6 +321,7 @@ function rowMenu(e, node, origin) {
           for (const dir of [...openDirs]) if (containsPath(node.path, dir)) openDirs.delete(dir);
           persistOpenDirs();
           await refreshTree(origin);
+          if (active(origin)) origin.onFilesChanged?.(mutationContext);
         } catch (err) { toast(err.message, 'error'); }
       },
     },
@@ -352,6 +355,7 @@ async function newEntry(isDir, origin) {
     await api.createEntry(origin.projectId, path, isDir);
     if (!active(origin)) return;
     await refreshTree(origin);
+    if (active(origin)) origin.onFilesChanged?.();
     if (!isDir && active(origin)) origin.openFile(path);
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -442,6 +446,7 @@ function askClash(existing) {
 async function upload(files, origin) {
   const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
   let msg, kind;
+  const mutationContext = origin.beforeFilesReload?.();
   try {
     const { saved, stopped } = await api.upload(origin.projectId, files, '', askClash);
     if (stopped) return;
@@ -454,7 +459,7 @@ async function upload(files, origin) {
   if (!active(origin)) return;
   await refreshTree(origin);
   if (!active(origin)) return;
-  origin.onFilesChanged?.();
+  origin.onFilesChanged?.(mutationContext);
   toast(msg, kind);
 }
 

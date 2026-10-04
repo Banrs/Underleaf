@@ -34,6 +34,15 @@ struct StatusBar: View {
                 buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
+            if project.texpresso.phase != .stopped || project.texpresso.status != nil || project.texpresso.failure != nil {
+                Button { project.showTeXpressoLog() } label: {
+                    Label(project.texpresso.title,
+                          systemImage: project.texpresso.failure != nil || project.texpresso.status?.error != nil
+                            ? "exclamationmark.triangle" : "bolt")
+                        .hitTarget()
+                }
+                .help("Show TeXpresso Log")
+            }
             Spacer(minLength: 0)
             let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
@@ -78,13 +87,15 @@ struct StatusBar: View {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
                     .hitTarget()
             }
-            .help("The latest build failed; this is the last one that succeeded. Show Issues")
+            .help("The latest PDF build failed; this is the last one that succeeded. Show Issues")
         } else if project.pdfOutdated {
             Button { app.perform(.compileRun, on: project) } label: {
-                Label("Preview Out of Date", systemImage: "arrow.clockwise")
+                Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
-            .help("The preview doesn’t reflect the current source. Compile")
+            .help(project.texpresso.active
+                ? "TeXpresso updates its separate live window. Compile to refresh this PDF."
+                : "The PDF doesn’t reflect the current source. Compile")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }
     }
