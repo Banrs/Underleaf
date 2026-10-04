@@ -209,16 +209,11 @@ final class UndoableTrash {
 
     /// The user's own Move to Trash.
     func moveToTrash() async {
-        if await trash(self) { registerPutBack() }
+        if await trash(self) { register(putBack) }
     }
 
-    private func registerPutBack() {
-        undoManager?.registerUndo(withTarget: self) { _ in self.putBack() }
-        undoManager?.setActionName(String(localized: "Move to Trash"))
-    }
-
-    private func registerTrashAgain() {
-        undoManager?.registerUndo(withTarget: self) { _ in self.trashAgain() }
+    private func register(_ undo: @escaping () -> Void) {
+        undoManager?.registerUndo(withTarget: self) { _ in undo() }
         undoManager?.setActionName(String(localized: "Move to Trash"))
     }
 
@@ -237,7 +232,7 @@ final class UndoableTrash {
     }
 
     private func putBack() {
-        registerTrashAgain()
+        register(trashAgain)
         then { [self] in
             guard let trashed else { return false }
             do {
@@ -253,7 +248,7 @@ final class UndoableTrash {
     }
 
     private func trashAgain() {
-        registerPutBack()
+        register(putBack)
         then { [self] in await trash(self) }
     }
 }
