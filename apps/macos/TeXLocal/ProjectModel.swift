@@ -540,6 +540,8 @@ final class ProjectModel {
     func close() {
         stopCompile()
         closed = true
+        // Its renames can't be undone once it's closed; the window's stack outlives it.
+        app?.undoManager?.removeAllActions(withTarget: self)
         compileQueued = nil
         folderWatcher = nil
         saveTask?.cancel()
