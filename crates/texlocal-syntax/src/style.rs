@@ -40,7 +40,7 @@ pub(crate) fn text_styles(text: &Text, selection: TextRange) -> TextStyles {
         &[start, end],
         |_, _| {},
         |_, _, _| {},
-        |_, groups| open.push(groups.to_vec()),
+        |groups| open.push(groups.to_vec()),
         |group, close| {
             let Some((command, _)) = group.command else {
                 return;

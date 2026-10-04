@@ -57,7 +57,7 @@ pub(crate) fn scan(
     range: impl FnMut(usize, usize),
     command: impl FnMut(&str, usize, usize),
 ) -> bool {
-    scan_groups(src, &[], range, command, |_, _| {}, |_, _| {})
+    scan_groups(src, &[], range, command, |_| {}, |_, _| {})
 }
 
 /// `scan`, which also hands `at` the groups open at each of `probes` (in
@@ -67,7 +67,7 @@ pub(crate) fn scan_groups(
     probes: &[usize],
     mut range: impl FnMut(usize, usize),
     mut command: impl FnMut(&str, usize, usize),
-    mut at: impl FnMut(usize, &[Group]),
+    mut at: impl FnMut(&[Group]),
     mut closed: impl FnMut(&Group, usize),
 ) -> bool {
     let catalog = &*catalog::CATALOG;
@@ -96,7 +96,7 @@ pub(crate) fn scan_groups(
     while i < n {
         let token_start = i;
         while probe < probes.len() && probes[probe] <= token_start {
-            at(probes[probe], &stack);
+            at(&stack);
             probe += 1;
         }
         let pending = last_command.take();
@@ -259,8 +259,8 @@ pub(crate) fn scan_groups(
         }
         math_run = next_math;
     }
-    for &p in &probes[probe..] {
-        at(p, &stack);
+    for _ in &probes[probe..] {
+        at(&stack);
     }
     math(&stack)
 }
