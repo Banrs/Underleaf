@@ -69,6 +69,12 @@ struct HomeView: View {
         } primaryAction: { ids in
             if let id = ids.first { Task { await app.open(id) } }
         }
+        // Return opens the chosen project, as in Xcode's project list; double-clicking does too.
+        .onKeyPress(.return) {
+            guard rename.id == nil, let id = selection else { return .ignored }
+            Task { await app.open(id) }
+            return .handled
+        }
         .focused($listFocused)
         .offersActions(for: listFocused && rename.id == nil ? selection : nil) { id in
             shown.first { $0.id == id }.map(actions)
