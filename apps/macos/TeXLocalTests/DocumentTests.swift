@@ -299,23 +299,16 @@ struct PDFFitTests {
         #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Zoom In", "Zoom Out"])
     }
 
-    /// A forward search marks SyncTeX's box beside the page, not with an annotation,
-    /// which Print and VoiceOver would see.
-    @Test func theForwardSearchMarkIsNoAnnotation() throws {
+    /// A forward search marks SyncTeX's box beside the page, not with an annotation, which
+    /// Print and VoiceOver would see; one mark at a time, a second search's replacing the
+    /// first's, and a rebuilt PDF has none.
+    @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
         let document = try pages(2)
         controller.show(document)
         controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
-    }
-
-    /// One mark at a time: a second search's replaces the first's, and a rebuilt PDF has none.
-    @Test func aForwardSearchMarkReplacesTheLast() throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try pages(2))
-        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
         controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
         #expect(controller.view.marks.count == 1)
         controller.show(try pages(2))
