@@ -704,12 +704,14 @@ struct UndoableTrashTests {
         let undo = UndoManager()
         undo.groupsByEvent = false
         var listed = 0
-        let item = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
+        // Not kept here: the undo manager's entries keep it, as in the app.
+        var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
                                  trash: { item in (try? item.recycle()) != nil },
                                  changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
         undo.beginUndoGrouping()
-        await item.moveToTrash()
+        await item?.moveToTrash()
         undo.endUndoGrouping()
+        item = nil
         #expect(!files.fileExists(atPath: url.path) && undo.undoActionName == "Move to Trash")
 
         undo.undo()

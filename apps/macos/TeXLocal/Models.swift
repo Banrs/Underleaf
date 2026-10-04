@@ -172,14 +172,15 @@ private nonisolated enum FileKind {
 /// A Move to Trash that Edit › Undo takes back, as Finder's does. The move goes through
 /// `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo
 /// puts it back and Redo trashes it again; each registers the other as its handler starts,
-/// so a stack's other entries survive the work that follows.
+/// so a stack's other entries survive the work that follows. The handlers hold the item:
+/// an undo manager doesn't retain its targets.
 @MainActor
 final class UndoableTrash {
     let original: URL
     let name: String
     /// Where the Trash put it.
     private var trashed: URL?
-    private let undoManager: UndoManager?
+    private weak var undoManager: UndoManager?
     /// Does the move, calling `recycle` where it belongs; false once it has failed and said so.
     private let trash: (UndoableTrash) async -> Bool
     /// Runs once the item is back or gone again, for whatever lists it.
@@ -212,12 +213,12 @@ final class UndoableTrash {
     }
 
     private func registerPutBack() {
-        undoManager?.registerUndo(withTarget: self) { $0.putBack() }
+        undoManager?.registerUndo(withTarget: self) { _ in self.putBack() }
         undoManager?.setActionName(String(localized: "Move to Trash"))
     }
 
     private func registerTrashAgain() {
-        undoManager?.registerUndo(withTarget: self) { $0.trashAgain() }
+        undoManager?.registerUndo(withTarget: self) { _ in self.trashAgain() }
         undoManager?.setActionName(String(localized: "Move to Trash"))
     }
 
