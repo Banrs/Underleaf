@@ -33,11 +33,13 @@ fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>
 /// Resolve only the closest path component that already exists. This retains
 /// lexical path semantics for new files while preventing an existing symlink
 /// from redirecting the final operation outside `root`.
+/// Returns where `target` leads inside `root`: its physical path relative to the
+/// canonical root, the not-yet-existing suffix kept as written.
 fn ensure_existing_ancestor_within(
     root: &Path,
     target: &Path,
     escape_err: &str,
-) -> Result<(), CoreError> {
+) -> Result<PathBuf, CoreError> {
     let canonical_root = fs::canonicalize(root)?;
     let mut existing = target;
     loop {
@@ -59,10 +61,11 @@ fn ensure_existing_ancestor_within(
     }
 
     let resolved = fs::canonicalize(existing).map_err(|_| CoreError::bad_request(escape_err))?;
-    if !resolved.starts_with(&canonical_root) {
+    let Ok(inside) = resolved.strip_prefix(&canonical_root) else {
         return Err(CoreError::bad_request(escape_err));
-    }
-    Ok(())
+    };
+    let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
+    Ok(inside.join(suffix))
 }
 
 /// Resolve a project id to its directory under `data_dir`, rejecting escapes,
@@ -97,23 +100,54 @@ fn safe_segments(rel: &str) -> Result<Vec<&str>, CoreError> {
     if segments.is_empty() {
         return Err(CoreError::bad_request("Path escapes project"));
     }
-    if segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE) {
+    if is_settings_file(&segments) {
         return Err(CoreError::bad_request("Reserved file"));
     }
     Ok(segments)
 }
 
-/// `segments` joined onto `root`, provided no existing link leads out of it.
-fn join_within(root: &Path, segments: &[&str]) -> Result<PathBuf, CoreError> {
+fn is_settings_file(segments: &[&str]) -> bool {
+    segments.len() == 1 && segments[0].eq_ignore_ascii_case(SETTINGS_FILE)
+}
+
+fn is_in_build_dir(segments: &[&str]) -> bool {
+    segments.first().is_some_and(|first| first.eq_ignore_ascii_case(BUILD_DIR))
+}
+
+/// Segments of a path relative to the project root, as `ensure_existing_ancestor_within` gives it.
+fn physical_segments(path: &Path) -> Vec<&str> {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `segments` joined onto `root`, provided no existing link leads out of it, nor to the
+/// settings file, nor, for a write, into the build folder: a link inside the project is
+/// held to the rules its target's own path is.
+fn join_within(root: &Path, segments: &[&str], write: bool) -> Result<PathBuf, CoreError> {
     let mut abs = root.to_path_buf();
     abs.extend(segments);
-    ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
+    let physical = ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
+    let physical = physical_segments(&physical);
+    if is_settings_file(&physical) {
+        return Err(CoreError::bad_request("Reserved file"));
+    }
+    if write && is_in_build_dir(&physical) {
+        return Err(build_dir_err());
+    }
     Ok(abs)
+}
+
+fn build_dir_err() -> CoreError {
+    CoreError::bad_request("“build” holds the compiled PDF. Choose another name.")
 }
 
 /// Absolute path for a user-supplied relative path inside a project.
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    join_within(root, &safe_segments(rel)?)
+    join_within(root, &safe_segments(rel)?, false)
 }
 
 /// `safe_path` for a path about to be created or written. The project's
@@ -122,12 +156,10 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
 /// `Build` is the same folder, and the tree hides it.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     let segments = safe_segments(rel)?;
-    if segments[0].eq_ignore_ascii_case(BUILD_DIR) {
-        return Err(CoreError::bad_request(
-            "“build” holds the compiled PDF. Choose another name.",
-        ));
+    if is_in_build_dir(&segments) {
+        return Err(build_dir_err());
     }
-    join_within(root, &segments)
+    join_within(root, &segments, true)
 }
 
 /// A path as the volume compares it: macOS volumes usually ignore case.
@@ -157,7 +189,7 @@ pub fn safe_rel_file(root: &Path, rel: &str) -> Result<String, CoreError> {
             "Path segments cannot start with \"-\"",
         ));
     }
-    join_within(root, &segments)?;
+    join_within(root, &segments, false)?;
     Ok(segments.join("/"))
 }
 
