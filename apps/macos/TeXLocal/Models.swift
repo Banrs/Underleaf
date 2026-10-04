@@ -169,6 +169,81 @@ private nonisolated enum FileKind {
     }
 }
 
+/// A Move to Trash that Edit › Undo takes back, as Finder's does. The move goes through
+/// `FileManager`, which says where the Trash put the item (the core's trash doesn't). Undo
+/// puts it back and Redo trashes it again; each registers the other as its handler starts,
+/// so a stack's other entries survive the work that follows. The handlers hold the item:
+/// an undo manager doesn't retain its targets.
+@MainActor
+final class UndoableTrash {
+    let original: URL
+    let name: String
+    /// Where the Trash put it.
+    private var trashed: URL?
+    private weak var undoManager: UndoManager?
+    /// Does the move, calling `recycle` where it belongs; false once it has failed and said so.
+    private let trash: (UndoableTrash) async -> Bool
+    /// Runs once the item is back or gone again, for whatever lists it.
+    private let changed: () async -> Void
+    private let failed: (String, Error) -> Void
+
+    init(original: URL, name: String, undoManager: UndoManager?,
+         trash: @escaping (UndoableTrash) async -> Bool,
+         changed: @escaping () async -> Void,
+         failed: @escaping (String, Error) -> Void) {
+        self.original = original
+        self.name = name
+        self.undoManager = undoManager
+        self.trash = trash
+        self.changed = changed
+        self.failed = failed
+    }
+
+    /// The move itself, for `trash` to call. An item already gone is left.
+    func recycle() throws {
+        guard FileManager.default.fileExists(atPath: original.path(percentEncoded: false)) else { return }
+        var result: NSURL?
+        try FileManager.default.trashItem(at: original, resultingItemURL: &result)
+        trashed = result as URL?
+    }
+
+    /// The user's own Move to Trash.
+    func moveToTrash() async {
+        if await trash(self) { registerPutBack() }
+    }
+
+    private func registerPutBack() {
+        undoManager?.registerUndo(withTarget: self) { _ in self.putBack() }
+        undoManager?.setActionName(String(localized: "Move to Trash"))
+    }
+
+    private func registerTrashAgain() {
+        undoManager?.registerUndo(withTarget: self) { _ in self.trashAgain() }
+        undoManager?.setActionName(String(localized: "Move to Trash"))
+    }
+
+    private func putBack() {
+        guard let trashed else { return }
+        do {
+            try FileManager.default.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: trashed, to: original)
+        } catch {
+            failed("Couldn’t Put “\(name)” Back", error)
+            return
+        }
+        self.trashed = nil
+        registerTrashAgain()
+        Task { await changed() }
+    }
+
+    private func trashAgain() {
+        registerPutBack()
+        Task {
+            if await trash(self) { await changed() } else { undoManager?.removeAllActions(withTarget: self) }
+        }
+    }
+}
+
 func isTextFile(_ path: String) -> Bool {
     FileKind(path) == .text
 }

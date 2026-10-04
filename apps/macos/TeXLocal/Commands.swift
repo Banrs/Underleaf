@@ -79,6 +79,19 @@ enum MenuCommand: String, CaseIterable {
         }
     }
 
+    /// The standard icon for the action (HIG, Icons) where its group has them: the system's Close
+    /// above Save has one, and Bold, Italic and Underline are the HIG's text-formatting trio.
+    var symbol: String? {
+        switch self {
+        case .fileSave: "square.and.arrow.down"
+        case .editBold: "bold"
+        case .editItalic: "italic"
+        case .editUnderline: "underline"
+        case .projectSearch, .pdfFind: "text.page.badge.magnifyingglass"
+        default: nil
+        }
+    }
+
     /// The menus' key equivalents, clear of the system's (HIG, Keyboards). ⌥⌘G is Go to
     /// Page, as in the Mac's PDF readers; Find in PDF… has none, as ⌘F finds in the PDF
     /// while it has the keyboard.
@@ -236,7 +249,12 @@ struct AppCommands: Commands {
     private var project: ProjectModel? { app.commandProject }
 
     private func item(_ command: MenuCommand) -> some View {
-        Button(app.title(command, on: project)) { app.perform(command, on: project) }
+        Button { app.perform(command, on: project) } label: {
+            let title = app.title(command, on: project)
+            // macOS 27 shows a menu item's image only with this style.
+            if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
+        }
+        .labelStyle(.titleAndIcon)
         // ⌘N follows whether a project is open, not which window is key.
         .keyboardShortcut(app.shortcut(command, on: app.project))
         .disabled(!app.isEnabled(command, on: project))
@@ -267,17 +285,6 @@ struct AppCommands: Commands {
             }
             Divider()
             items([.fileNew, .fileNewFolder, .fileUpload])
-            Divider()
-            // These act on the chosen item of the list with the keyboard.
-            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
-            Button("Rename") { chosen?.rename() }
-                .disabled(chosen == nil)
-            Button("Show in Finder") { chosen?.showInFinder() }
-                .disabled(chosen == nil)
-            Divider()
-            Button("Move to Trash") { chosen?.moveToTrash() }
-                .keyboardShortcut(.delete)
-                .disabled(chosen == nil)
         }
         // After the system's Close (⌘W).
         CommandGroup(after: .saveItem) {
@@ -285,12 +292,23 @@ struct AppCommands: Commands {
             Divider()
             item(.projectClose)
             Divider()
+            // These act on the chosen item of the list with the keyboard. After Save, as
+            // Pages and Finder put Rename; the standard icons (HIG, Icons) on all three.
+            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
+            Button { chosen?.rename() } label: { Label("Rename", systemImage: "pencil") }.labelStyle(.titleAndIcon)
+                .disabled(chosen == nil)
+            Button { chosen?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }.labelStyle(.titleAndIcon)
+                .disabled(chosen == nil)
+            Button { chosen?.moveToTrash() } label: { Label("Move to Trash", systemImage: "trash") }.labelStyle(.titleAndIcon)
+                .keyboardShortcut(.delete)
+                .disabled(chosen == nil)
+            Divider()
             items([.pdfSave, .projectExport])
             Divider()
             if let project, project.hasPDF, let url = project.pdfURL {
                 ShareLink(item: url)
             } else {
-                Button("Share…") {}.disabled(true)
+                Button {} label: { Label("Share…", systemImage: "square.and.arrow.up") }.labelStyle(.titleAndIcon).disabled(true)
             }
         }
         CommandGroup(replacing: .printItem) {
@@ -315,7 +333,7 @@ struct AppCommands: Commands {
             Divider()
             item(.editComment)
         }
-        CommandGroup(after: .sidebar) {
+        CommandGroup(before: .toolbar) {
             item(.viewToggleSidebar)
             // The keyboard's and VoiceOver's way to the File Outline header's fold.
             Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
