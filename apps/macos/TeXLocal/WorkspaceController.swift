@@ -94,9 +94,10 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// The panel's height as it was hidden, or its first (`setPanelShown`).
     private var panelHeight: CGFloat = 0
-    /// Pane animations running, the scroll views keeping their scrollers out of sight
-    /// until the last ends, and the frames laying out the split views (`paneAnimation`).
+    /// Pane animations running and the frames laying out the split views (`paneAnimation`);
+    /// those and drags keeping the scroll views' scrollers out of sight until the last ends (`quiet`).
     private var paneAnimations = 0
+    private var quieting = 0
     private var quietScrollViews: [NSScrollView] = []
     private var paneFrames: CADisplayLink?
     private var watches: [Task<Void, Never>] = []
@@ -105,7 +106,7 @@ final class WorkspaceController: RestoredSplitViewController {
     init(app: AppModel, project: ProjectModel, size: CGSize) {
         self.app = app
         self.project = project
-        super.init(nibName: nil, bundle: nil)
+        super.init()
         splitView.autosaveName = "Workspace"
         buildSidebar(height: size.height)
         // Before the area, which opens in the room the side columns leave; added after it.
@@ -122,6 +123,10 @@ final class WorkspaceController: RestoredSplitViewController {
         columns.detent = { [unowned columns] _ in
             let split = columns.splitView
             return ((split.bounds.width - split.dividerThickness) / 2).rounded(.down)
+        }
+        // A drag resizes the panes live, which would show their overlay scrollers: no scrolling happens.
+        for split in [self, columns, area, sidebar] as [RestoredSplitViewController] {
+            split.dragging = { [unowned self] in quiet($0) }
         }
         toolbar = WorkspaceToolbar(app: app, project: project, workspace: self)
         watch()
@@ -375,24 +380,32 @@ final class WorkspaceController: RestoredSplitViewController {
         }
     }
 
-    /// AppKit's split animation puts every pane in live resize, which shows their overlay
-    /// scrollers: they keep out of sight until the last animation running ends. And its
-    /// steps don't always reach the screen: with nothing else waking the run loop, a pane
-    /// would hold still, then jump to its end (27.2). Laid out on every frame meanwhile,
-    /// the panes keep up with it.
+    /// AppKit's split animation puts every pane in live resize (`quiet`). And its steps
+    /// don't always reach the screen: with nothing else waking the run loop, a pane would
+    /// hold still, then jump to its end (27.2). Laid out on every frame meanwhile, the
+    /// panes keep up with it.
     private func paneAnimation(_ running: Bool) {
+        quiet(running)
         paneAnimations += running ? 1 : -1
         guard paneAnimations == (running ? 1 : 0) else { return }
         if running {
-            quietScrollViews = Self.scrollViews(in: view)
             paneFrames = view.displayLink(target: self, selector: #selector(paneFrame))
             paneFrames?.add(to: .main, forMode: .common)
         } else {
             paneFrames?.invalidate()
             paneFrames = nil
         }
-        for scroll in quietScrollViews { scroll.hideOverlayScrollers(running) }
-        if !running { quietScrollViews = [] }
+    }
+
+    /// Panes in live resize show their overlay scrollers, though nothing scrolls; scroll
+    /// bars come with scrolling (HIG, Scroll views). They keep out of sight until the last
+    /// animation or drag ends.
+    private func quiet(_ resizing: Bool) {
+        quieting += resizing ? 1 : -1
+        guard quieting == (resizing ? 1 : 0) else { return }
+        if resizing { quietScrollViews = Self.scrollViews(in: view) }
+        for scroll in quietScrollViews { scroll.hideOverlayScrollers(resizing) }
+        if !resizing { quietScrollViews = [] }
     }
 
     @objc private func paneFrame(_ link: CADisplayLink) {
@@ -592,6 +605,19 @@ private nonisolated enum OutlineState {
 class RestoredSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
     var detent: (_ divider: Int) -> CGFloat? = { _ in nil }
+    /// As a divider's drag starts, and as it ends.
+    var dragging: (Bool) -> Void = { _ in }
+
+    /// NSSplitViewController's own: side by side, with the thin divider.
+    init(splitView: DraggedSplitView = DraggedSplitView()) {
+        super.init(nibName: nil, bundle: nil)
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.dragging = { [unowned self] in dragging($0) }
+        self.splitView = splitView
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -612,20 +638,30 @@ class RestoredSplitViewController: NSSplitViewController {
     }
 }
 
+/// A split view that says when a divider is dragged: AppKit tracks the drag within the
+/// press on a divider, the only place the split itself is hit.
+class DraggedSplitView: NSSplitView {
+    var dragging: (Bool) -> Void = { _ in }
+
+    override func mouseDown(with event: NSEvent) {
+        dragging(true)
+        defer { dragging(false) }
+        super.mouseDown(with: event)
+    }
+}
+
 /// Files over the File Outline. The separator over the outline's header, at the foot of
 /// the files, stands for the divider: AppKit has no thin divider that draws no line, so
 /// the divider's own, under the header, isn't drawn, and it takes drags at the separator.
 private final class SidebarSplitViewController: RestoredSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: NSSplitView {
+    private final class SplitView: DraggedSplitView {
         override func drawDivider(in rect: NSRect) {}
     }
 
-    override init(nibName: NSNib.Name?, bundle: Bundle?) {
-        super.init(nibName: nibName, bundle: bundle)
-        splitView = SplitView()
-        splitView.dividerStyle = .thin
+    init() {
+        super.init(splitView: SplitView())
     }
 
     required init?(coder: NSCoder) { fatalError() }
