@@ -87,13 +87,13 @@ struct StatusBar: View {
                     .hitTarget()
             }
             .help("The latest PDF build failed; this is the last one that succeeded. Show Issues")
-        } else if project.pdfOutdated {
+        } else if project.pdfOutdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
                     .hitTarget()
             }
             .help(project.texpresso.active
-                ? "TeXpresso updates its separate live window. Compile to refresh this PDF."
+                ? "TeXpresso updates its own window. Compile to refresh this PDF."
                 : "The PDF doesn’t reflect the current source. Compile")
             .disabled(!app.isEnabled(.compileRun, on: project))
         }

@@ -24,7 +24,8 @@ struct BuildPanel: View {
             case .texpresso:
                 if project.texpresso.log.isEmpty {
                     ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                           description: Text("TeXpresso shows the document in its own window. Compile to update the PDF here."))
+                                           description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
+                                                             : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
                 } else {
                     LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                 }

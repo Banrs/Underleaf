@@ -44,6 +44,11 @@ pub struct Status {
     pub error: Option<String>,
     pub revision: u64,
     pub session: Option<String>,
+    /// The whole document as TeXpresso last wrote it, when its build writes one
+    /// (TEXPRESSO_PDF_OUTPUT), and how many times it has.
+    pub pdf: Option<String>,
+    #[serde(rename = "pdfVersion")]
+    pub pdf_version: u64,
 }
 
 // Retain a bounded tail while preserving absolute byte offsets for backtracking.
@@ -89,6 +94,7 @@ struct State {
     stderr: Output,
     error: Option<String>,
     revision: u64,
+    pdf_version: u64,
 }
 struct Input {
     stdin: ChildStdin,
@@ -98,6 +104,8 @@ struct Session {
     token: String,
     executable: PathBuf,
     main: String,
+    /// Where a patched build writes the document, when the client shows it.
+    pdf: Option<PathBuf>,
     state: Mutex<State>,
     input: tokio::sync::Mutex<Input>,
     revision: Arc<AtomicU64>,
@@ -138,6 +146,12 @@ impl Session {
             error: state.error.clone(),
             revision: state.revision,
             session: Some(self.token.clone()),
+            pdf: self
+                .pdf
+                .as_ref()
+                .filter(|_| state.pdf_version > 0)
+                .map(|pdf| pdf.to_string_lossy().into_owned()),
+            pdf_version: state.pdf_version,
         }
     }
     async fn send(&self, messages: &[Value]) {
@@ -226,6 +240,8 @@ impl Manager {
             error: None,
             revision: self.revision.load(Ordering::Relaxed),
             session: None,
+            pdf: None,
+            pdf_version: 0,
         }
     }
     /// Inspection does not acquire ownership or renew the viewer's lease.
@@ -253,6 +269,7 @@ impl Manager {
         files: &[FileBuffer],
         expected: Option<&str>,
         path_env: &str,
+        pdf: bool,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
@@ -291,11 +308,17 @@ impl Manager {
         let build = paths::safe_path(&root, BUILD_DIR)?;
         fs::create_dir_all(&build)?;
         let build = fs::canonicalize(build)?;
+        // For a client that shows it, a build with Underleaf's patch writes the
+        // document here instead of opening its own window; upstream opens one.
+        let pdf = pdf.then(|| build.join("texpresso-live.pdf"));
+        if let Some(pdf) = &pdf {
+            let _ = fs::remove_file(pdf);
+        }
         self.stop(&root)?;
         let mut command = std::process::Command::new(&executable);
         command
             .args(["-json", "-texlive", "-I"])
-            .arg(build)
+            .arg(&build)
             .arg(&main_path)
             .current_dir(&root)
             .env("PATH", path_env)
@@ -303,6 +326,9 @@ impl Manager {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(pdf) = &pdf {
+            command.env("TEXPRESSO_PDF_OUTPUT", pdf);
+        }
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
         let mut token = [0u8; 16];
@@ -322,6 +348,7 @@ impl Manager {
             token,
             executable,
             main,
+            pdf,
             input: tokio::sync::Mutex::new(Input {
                 stdin: child.stdin.take().unwrap(),
                 files: buffers,
@@ -336,6 +363,7 @@ impl Manager {
                 stderr: Output::default(),
                 error: None,
                 revision: self.revision.fetch_add(1, Ordering::Relaxed) + 1,
+                pdf_version: 0,
             }),
         });
         {
@@ -591,6 +619,14 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
 fn apply_message(session: &Session, message: &Value) {
     let mut guard = session.state.lock().unwrap();
     let state = &mut *guard;
+    // [pdf, path, pages]: the document written to the path it was given.
+    if message[0] == "pdf" {
+        if session.pdf.is_some() {
+            state.pdf_version += 1;
+            session.bump(state);
+        }
+        return;
+    }
     let output = match message[1].as_str() {
         Some("out") => &mut state.output,
         Some("log") => &mut state.log,
@@ -657,7 +693,7 @@ mod tests {
         let child_pid = tmp.path().join("engine.pid");
         let stub = bin.join("texpresso");
         fs::write(&stub, format!(
-            "#!/bin/sh\n/bin/sleep 300 &\necho $! > '{}'\nprintf '[\"append\",\"out\",0,\"ready\"]\\n'\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> '{}'\n  case \"$line\" in *EXIT_CLEAN*) exit 0;; *EXIT_STUB*) exit 7;; esac\ndone\n",
+            "#!/bin/sh\n/bin/sleep 300 &\necho $! > '{}'\nprintf '[\"append\",\"out\",0,\"ready\"]\\n'\nprintf '[\"pdf\",\"%s\",1]\\n' \"$TEXPRESSO_PDF_OUTPUT\"\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> '{}'\n  case \"$line\" in *EXIT_CLEAN*) exit 0;; *EXIT_STUB*) exit 7;; esac\ndone\n",
             child_pid.display(), commands.display()
         )).unwrap();
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
@@ -694,11 +730,19 @@ mod tests {
                 }],
                 None,
                 &path_env,
+                true,
             )
             .await
             .unwrap();
         assert!(first.running && first.available);
         let token = first.session.as_deref().unwrap();
+        // The live PDF is the build folder's, whatever path the viewer reports.
+        let live = || manager.status(&root, None, &path_env).unwrap();
+        until(|| live().pdf_version == 1).await;
+        let pdf = fs::canonicalize(root.join(BUILD_DIR))
+            .unwrap()
+            .join("texpresso-live.pdf");
+        assert_eq!(live().pdf.as_deref(), Some(pdf.to_str().unwrap()));
         until(|| commands(&tmp).len() >= 2).await;
         let sent = commands(&tmp);
         assert!(sent.iter().any(|c| c == &json!(["rerun", true])));
@@ -763,13 +807,16 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(token), &path_env)
+                .start(&root, &[], Some(token), &path_env, false)
                 .await
                 .unwrap_err()
                 .status,
             409
         );
-        let restarted = manager.start(&root, &[], None, &path_env).await.unwrap();
+        let restarted = manager
+            .start(&root, &[], None, &path_env, false)
+            .await
+            .unwrap();
         assert!(restarted.running && restarted.revision > second.revision);
         manager
             .update(
@@ -787,7 +834,10 @@ mod tests {
             .unwrap()
             .error
             .is_none());
-        manager.start(&root, &[], None, &path_env).await.unwrap();
+        manager
+            .start(&root, &[], None, &path_env, false)
+            .await
+            .unwrap();
         manager.kill_all();
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
     }
@@ -795,7 +845,10 @@ mod tests {
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
         let manager = Manager::default();
-        let owner = manager.start(&root, &[], None, &path_env).await.unwrap();
+        let owner = manager
+            .start(&root, &[], None, &path_env, false)
+            .await
+            .unwrap();
         until(|| {
             fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
                 && manager.status(&root, None, &path_env).unwrap().output == "ready"
@@ -819,6 +872,8 @@ mod tests {
         until(|| !manager.status(&root, None, &path_env).unwrap().running).await;
         let status = manager.status(&root, None, &path_env).unwrap();
         assert_eq!(status.output, "ready");
+        // Not asked for, the stub's document isn't offered.
+        assert!(status.pdf.is_none() && status.pdf_version == 0);
         assert!(status.error.unwrap().contains("exited"));
         // Killed descendants can remain zombies briefly while init reaps them.
         until(|| {
@@ -832,7 +887,10 @@ mod tests {
     async fn abandoned_session_lease_expires_without_polling() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager.start(&root, &[], None, &path_env).await.unwrap();
+        manager
+            .start(&root, &[], None, &path_env, false)
+            .await
+            .unwrap();
         let session = manager
             .sessions
             .lock()
@@ -850,7 +908,10 @@ mod tests {
     async fn backtracked_tex_log_excludes_historical_process_stderr() {
         let (_tmp, root, path_env) = setup();
         let manager = Manager::default();
-        manager.start(&root, &[], None, &path_env).await.unwrap();
+        manager
+            .start(&root, &[], None, &path_env, false)
+            .await
+            .unwrap();
         let session = manager
             .sessions
             .lock()
@@ -878,7 +939,7 @@ mod tests {
         let manager = Arc::new(Manager::default());
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
         let old = manager
-            .start(&root, &[], None, &path_env)
+            .start(&root, &[], None, &path_env, false)
             .await
             .unwrap()
             .session
@@ -897,6 +958,7 @@ mod tests {
                         }],
                         None,
                         &path_env,
+                        false,
                     )
                     .await
                     .unwrap()
@@ -971,7 +1033,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], Some(&old), &path_env)
+                .start(&root, &[], Some(&old), &path_env, false)
                 .await
                 .unwrap_err()
                 .status,
@@ -980,7 +1042,7 @@ mod tests {
         manager.stop(&root).unwrap();
         assert!(!manager.status(&root, None, &path_env).unwrap().running);
         let restarted = manager
-            .start(&root, &[], Some(&current), &path_env)
+            .start(&root, &[], Some(&current), &path_env, false)
             .await
             .unwrap();
         assert!(restarted.running);
@@ -995,7 +1057,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .start(&root, &[], restarted.session.as_deref(), &path_env)
+                .start(&root, &[], restarted.session.as_deref(), &path_env, false)
                 .await
                 .unwrap_err()
                 .status,

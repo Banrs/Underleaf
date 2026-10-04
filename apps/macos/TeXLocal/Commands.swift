@@ -170,9 +170,10 @@ extension AppModel {
         case .compileStop: project?.compiling == true
         case .viewZoomIn: project.map { $0.hasPDF && $0.pdf.canZoomIn } ?? false
         case .viewZoomOut: project.map { $0.hasPDF && $0.pdf.canZoomOut } ?? false
-        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
+        case .syncInverse: project.map { $0.hasPDF && !$0.livePDF } ?? false
+        case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
             project?.hasPDF == true
-        case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
+        case .syncForward: project.map { $0.hasPDF && $0.isLaTeX && !$0.livePDF } ?? false
         default: project != nil
         }
     }

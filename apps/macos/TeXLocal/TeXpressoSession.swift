@@ -8,6 +8,9 @@ nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
     let output: String
     let error: String?
     let session: String?
+    /// The document as a build with Underleaf's patch last wrote it, and how many times it has.
+    let pdf: String?
+    let pdfVersion: Int
 }
 
 nonisolated struct TeXpressoFile: Sendable {
@@ -31,6 +34,9 @@ final class TeXpressoSession {
     var onFailure: () -> Void = {}
     var onEnded: () -> Void = {}
     var onOwnershipLost: () -> Void = {}
+    /// Each new live PDF, while the session runs.
+    var onPDF: (URL) -> Void = { _ in }
+    @ObservationIgnored private var shownPDF = 0
 
     @ObservationIgnored private let id: String
     @ObservationIgnored private let call: Call
@@ -99,6 +105,7 @@ final class TeXpressoSession {
 
     private func beginStart(files: [TeXpressoFile], replacing: Bool) {
         generation += 1
+        shownPDF = 0
         phase = .starting
         requestFailure = nil
         rejected.removeAll()
@@ -113,7 +120,8 @@ final class TeXpressoSession {
             guard let files = session.queuedFiles else { return }
             session.queuedFiles = nil
             do {
-                var arguments: [String: Any] = ["id": session.id, "files": files.map(\.arguments)]
+                // A patched build writes the document for the PDF pane rather than opening a window.
+                var arguments: [String: Any] = ["id": session.id, "files": files.map(\.arguments), "pdf": true]
                 if replacing {
                     guard let owner = session.owner else { session.ended(); return }
                     arguments["session"] = owner
@@ -253,6 +261,10 @@ final class TeXpressoSession {
 
     private func receive(_ status: TeXpressoStatus) {
         if self.status != status { self.status = status }
+        if status.running, let path = status.pdf, status.pdfVersion > shownPDF {
+            shownPDF = status.pdfVersion
+            onPDF(URL(fileURLWithPath: path))
+        }
         reportFailure()
         if status.running {
             phase = .running

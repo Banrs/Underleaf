@@ -33,6 +33,8 @@ final class ProjectModel {
     var result: CompileResult?
     /// The PDF the viewer shows; nil until one loads.
     var pdfURL: URL?
+    /// The PDF pane shows TeXpresso's live document, not the last build's.
+    private(set) var livePDF = false
     var showLogs = false
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
@@ -106,10 +108,15 @@ final class ProjectModel {
         }
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
-        // Automatic builds paused for it.
+        texpresso.onPDF = { [weak self] in self?.showLivePDF($0) }
+        // The last build's PDF comes back, and automatic builds paused for it resume.
         texpresso.onEnded = { [weak self] in
-            guard let self, autoCompile else { return }
-            Task { await self.compile(auto: true) }
+            guard let self else { return }
+            if livePDF {
+                livePDF = false
+                Task { await self.showPDFOnDisk() }
+            }
+            if autoCompile { Task { await self.compile(auto: true) } }
         }
     }
 
@@ -236,9 +243,11 @@ final class ProjectModel {
     /// The main file's PDF on disk, unless a later load replaces this one. A no-op
     /// build's PDF is already shown: reopening every page would lose PDFKit's state.
     @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true) async -> Bool {
+        // A build during live preview keeps its PDF for after it.
+        guard !livePDF else { return true }
         pdfLoad?.cancel()
         let load = Task {
-            guard !closed, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
+            guard !closed, !livePDF, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
             let url = URL(fileURLWithPath: path)
             if !reloadIfUnchanged, url == pdfURL { return true }
@@ -249,6 +258,20 @@ final class ProjectModel {
         }
         pdfLoad = load
         return await load.value
+    }
+
+    /// TeXpresso's document in the PDF pane, as a build's replaces the last; the pane shows on
+    /// the first, as the preview the person asked for.
+    private func showLivePDF(_ url: URL) {
+        pdfLoad?.cancel()
+        pdfLoad = Task {
+            guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, texpresso.active else { return false }
+            if !livePDF, app?.showPDF == false { app?.showPDF = true }
+            livePDF = true
+            pdfURL = url
+            pdf.show(document)
+            return true
+        }
     }
 
     // ---------- editing ----------
@@ -655,8 +678,8 @@ final class ProjectModel {
     func startTeXpresso() {
         guard !closed, texpresso.canStart else { return }
         liveIntent += 1
+        // The preview is the feedback; the log opens only on a failure.
         texpresso.start(files: liveFiles)
-        showTeXpressoLog()
     }
 
     func stopTeXpresso() {
@@ -737,6 +760,8 @@ final class ProjectModel {
 
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
     func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
+        // SyncTeX describes the last build, not TeXpresso's pages.
+        guard !livePDF else { return }
         syncTask?.cancel()
         let task = Task {
             do {

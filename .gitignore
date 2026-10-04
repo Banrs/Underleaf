@@ -27,3 +27,6 @@ xcuserdata/
 
 # Apple UI kits: local reference only (licence, and too large for GitHub).
 /design/
+
+# TeXpresso checkout made by tools/texpresso/build.sh
+/tools/texpresso/source/

@@ -1,0 +1,145 @@
+diff --git a/src/frontend/driver.c b/src/frontend/driver.c
+index 9337b08..f67bcf3 100644
+--- a/src/frontend/driver.c
++++ b/src/frontend/driver.c
+@@ -288,6 +288,10 @@ int main(int argc, const char **argv)
+ 
+   bool init = 0;
+ 
++  // Writing a PDF for the editor to show, there is no window of our own.
++  if (getenv("TEXPRESSO_PDF_OUTPUT"))
++    SDL_SetHint(SDL_HINT_VIDEODRIVER, "dummy");
++
+   //Initialize SDL
+   if (init == 0 && SDL_Init(SDL_INIT_VIDEO) < 0)
+   {
+diff --git a/src/frontend/editor.c b/src/frontend/editor.c
+index 6face98..e3cdbf8 100644
+--- a/src/frontend/editor.c
++++ b/src/frontend/editor.c
+@@ -554,6 +554,18 @@ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf)
+   }
+ }
+ 
++/* The whole document written to `path` (TEXPRESSO_PDF_OUTPUT), for the editor to show. */
++void editor_pdf(const char *path, int pages)
++{
++  switch (protocol)
++  {
++    case EDITOR_SEXP: fprintf(stdout, "(pdf \""); output_sexp_string(stdout, path, strlen(path)); break;
++    case EDITOR_JSON: fprintf(stdout, "[\"pdf\", \""); output_json_string(stdout, path, strlen(path)); break;
++  }
++  fprintf(stdout, protocol == EDITOR_SEXP ? "\" %d)\n" : "\", %d]\n", pages);
++  fflush(stdout);
++}
++
+ void editor_flush(void)
+ {
+   switch (protocol)
+diff --git a/src/frontend/editor.h b/src/frontend/editor.h
+index 05fdd1c..a35979d 100644
+--- a/src/frontend/editor.h
++++ b/src/frontend/editor.h
+@@ -155,6 +155,7 @@ enum EDITOR_INFO_BUFFER
+ void editor_append(enum EDITOR_INFO_BUFFER name, fz_buffer *buf, int pos);
+ void editor_truncate(enum EDITOR_INFO_BUFFER name, fz_buffer *buf);
+ void editor_flush(void);
++void editor_pdf(const char *path, int pages);
+ void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
+ void editor_reset_sync(void);
+ void editor_notify_file_opened(int index, const char *path, int len);
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index c202294..ee1e1ae 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -151,11 +151,58 @@ static int repaint_on_resize(void *data, SDL_Event *event)
+ 
+ /* Document processing */
+ 
++/* TEXPRESSO_PDF_OUTPUT: the document runs to its end, then every page is written there. */
++static const char *pdf_output;
++static bool pdf_dirty;
++
++static void export_pdf(fz_context *ctx, ui_state *ui)
++{
++  int pages = send(page_count, ui->eng);
++  char part[4200];
++  snprintf(part, sizeof part, "%s.part", pdf_output);
++  fz_document_writer *writer = NULL;
++  fz_display_list *dl = NULL;
++  fz_var(writer);
++  fz_var(dl);
++  fz_try(ctx)
++  {
++    writer = fz_new_pdf_writer(ctx, part, "");
++    for (int i = 0; i < pages; i++)
++    {
++      dl = send(render_page, ui->eng, ctx, i);
++      fz_device *dev = fz_begin_page(ctx, writer, fz_bound_display_list(ctx, dl));
++      fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
++      fz_end_page(ctx, writer);
++      fz_drop_display_list(ctx, dl);
++      dl = NULL;
++    }
++    fz_close_document_writer(ctx, writer);
++  }
++  fz_always(ctx)
++  {
++    fz_drop_display_list(ctx, dl);
++    fz_drop_document_writer(ctx, writer);
++  }
++  fz_catch(ctx)
++  {
++    fprintf(stderr, "[pdf] couldn't write %s: %s\n", part, fz_caught_message(ctx));
++    remove(part);
++    return;
++  }
++  if (rename(part, pdf_output) == 0)
++    editor_pdf(pdf_output, pages);
++  else
++    perror("[pdf] rename");
++}
++
+ static bool need_advance(fz_context *ctx, ui_state *ui)
+ {
+   if (send(get_status, ui->eng) != DOC_RUNNING)
+     return false;
+ 
++  if (pdf_output)
++    return true;
++
+   if (send(is_finishing, ui->eng))
+     return true;
+ 
+@@ -190,6 +237,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
+   {
+     if (!send(step, ui->eng, ctx, false))
+       break;
++    pdf_dirty = true;
+ 
+     steps -= 1;
+     need = need_advance(ctx, ui);
+@@ -1170,6 +1218,9 @@ bool texpresso_main(struct persistent_state *ps)
+   editor_set_protocol(ps->protocol);
+   editor_set_line_output(ps->line_output);
+   pstate = ps;
++  pdf_output = getenv("TEXPRESSO_PDF_OUTPUT");
++  if (pdf_output && !*pdf_output)
++    pdf_output = NULL;
+ 
+   struct fullscreen_state fs = {
+     .has_backup = false,
+@@ -1354,6 +1405,13 @@ bool texpresso_main(struct persistent_state *ps)
+       if (ui->page >= before_page_count && ui->page < after_page_count)
+         schedule_event(RELOAD_EVENT);
+ 
++      if (pdf_output && pdf_dirty && !advance &&
++          send(get_status, ui->eng) != DOC_RUNNING)
++      {
++        pdf_dirty = false;
++        export_pdf(ps->ctx, ui);
++      }
++
+       // Fire an on-demand rerun as soon as the engine is ready, regardless of
+       // idle state. Runs in the main body of the loop (not inside the idle
+       // wait) so it triggers even during active compilation cycles.

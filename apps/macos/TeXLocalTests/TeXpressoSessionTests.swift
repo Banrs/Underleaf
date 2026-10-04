@@ -6,8 +6,32 @@ import Testing
 
 @MainActor
 struct TeXpressoSessionTests {
-    private func status(running: Bool = true, error: String? = nil) -> TeXpressoStatus {
-        TeXpressoStatus(running: running, log: "", output: "", error: error, session: running ? "owner" : nil)
+    private func status(running: Bool = true, error: String? = nil, pdf: Int = 0) -> TeXpressoStatus {
+        TeXpressoStatus(running: running, log: "", output: "", error: error, session: running ? "owner" : nil,
+                        pdf: pdf > 0 ? "/tmp/live.pdf" : nil, pdfVersion: pdf)
+    }
+
+    /// Each newly written live PDF reaches the pane once, and none once the session stops.
+    @Test func eachNewLivePDFIsShownOnce() async {
+        let version = OSAllocatedUnfairLock(initialState: 1)
+        let session = TeXpressoSession(id: "project") { command, _ in
+            status(running: command != "texpresso_stop", pdf: version.withLock { $0 })
+        }
+        var shown: [URL] = []
+        session.onPDF = { shown.append($0) }
+        session.start(files: [])
+        await session.waitForPendingCalls()
+        session.rescan(files: [])
+        await session.waitForPendingCalls()
+        #expect(shown == [URL(fileURLWithPath: "/tmp/live.pdf")])
+        version.withLock { $0 = 2 }
+        session.rescan(files: [])
+        await session.waitForPendingCalls()
+        #expect(shown.count == 2)
+        version.withLock { $0 = 3 }
+        session.stop()
+        await session.waitForPendingCalls()
+        #expect(shown.count == 2)
     }
 
     private func until(_ ready: () -> Bool) async throws {
@@ -295,6 +319,8 @@ struct TeXpressoSessionTests {
                 starts += 1
                 #expect(arguments["session"] == nil)
                 #expect(arguments["files"] as? [[String: String]] == [["path": "main.tex", "text": "latest"]])
+                // For the PDF pane, not TeXpresso's own window.
+                #expect(arguments["pdf"] as? Bool == true)
             }
             return status(running: command != "texpresso_stop")
         }

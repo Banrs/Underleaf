@@ -5,9 +5,13 @@ session from both the Mac and browser clients. It sends unsaved editor changes
 after a short typing pause to a persistent XeTeX process. Errors while typing
 appear in the TeXpresso log; correcting the source updates the same preview.
 
-The preview uses TeXpresso's separate window. The existing PDF pane and Compile
-command still use latexmk and the project's selected engine. Automatic latexmk
-builds pause during a live session, without changing your saved preference.
+Upstream TeXpresso shows the preview in a window of its own. Built with
+Underleaf's patch (below), it writes the whole document as a PDF after each
+change instead, and the Mac app shows it in the PDF pane until live preview
+stops, when the last build's PDF returns. The browser client keeps TeXpresso's
+window either way. Compile still uses latexmk and the project's selected engine.
+Automatic latexmk builds pause during a live session, without changing your
+saved preference.
 
 ## Start locally
 
@@ -16,6 +20,20 @@ TeX Live (`kpsewhich` on the TeX path). See the upstream
 [build instructions](https://github.com/let-def/texpresso/blob/main/INSTALL.md).
 The integration was verified against upstream commit
 `e8df7709077b2f86f6e16e6c86ceefb86de06f8d`.
+
+For the PDF pane, build that commit with Underleaf's patch. With TeXpresso's
+build dependencies installed:
+
+```sh
+tools/texpresso/build.sh            # checks out into tools/texpresso/source
+```
+
+then choose `tools/texpresso/source/build` in the Mac app's Settings. The patch
+(`tools/texpresso/underleaf-pdf.patch`, MIT like TeXpresso) only acts when
+`TEXPRESSO_PDF_OUTPUT` is set: TeXpresso then runs the document to its end,
+writes every page there with MuPDF's PDF writer (to a `.part` file, renamed when
+complete), reports `["pdf", path, pages]` on its editor protocol, and opens no
+window. The Mac app asks for this; the browser client doesn't.
 
 Point the app at the executable without changing your system installation:
 
@@ -40,8 +58,9 @@ Host validation failures, such as a file exceeding 8 MB, remain visible until
 that file is accepted. They do not block other files or retry on every poll.
 
 The Mac controls use the existing native toolbar, menus and system materials.
-Live log updates preserve selection, Find and reading position; the PDF status
-explicitly distinguishes the last normal build from the separate live preview.
+Starting live preview opens the PDF pane, and the log only on a failure. Each
+new live document replaces the pages in the PDF pane in place, keeping the
+reading position, zoom and Find, as a normal build's PDF does.
 
 ## Verify without touching the desktop
 
@@ -64,8 +83,12 @@ For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 
 - Live preview uses TeXpresso's XeTeX engine regardless of the normal build's
   pdfLaTeX/XeLaTeX/LuaLaTeX setting. Engine-specific documents can differ.
-- TeXpresso's editor protocol has no embedded PDF/bitmap preview endpoint.
-  The PDF pane and its SyncTeX refer to the last normal build.
+- Upstream TeXpresso's editor protocol has no PDF/bitmap preview endpoint;
+  Underleaf's patch adds the PDF output above. SyncTeX describes the last
+  normal build, so PDF↔source navigation is off while the live document shows.
+- The live document is written after TeXpresso runs to the end, so a long
+  document updates the pane less often than TeXpresso's own window, which
+  renders only the page in view.
 - A normal Compile is still needed for final PDF output and bibliography
   tools. Live sessions enable TeXpresso's idle reruns for references/TOC and
   include the normal build directory for existing auxiliary files.
@@ -79,7 +102,6 @@ For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
   changed UTF-8 range to TeXpresso. Pending edits coalesce while a request is
   running, and the browser flattens its editor snapshot only when dispatching.
   This keeps the integration small without repeatedly copying each keystroke.
-- Underleaf retains native macOS window chrome and system styling, including
-  Liquid Glass where the OS provides it. TeXpresso's separate SDL window does
-  not expose equivalent native controls; restyling it requires upstream changes
-  or replacing its viewer.
+- TeXpresso's own SDL window, used without the patch and by the browser client,
+  has none of the Mac app's native controls; the patched build replaces it with
+  the PDF pane.

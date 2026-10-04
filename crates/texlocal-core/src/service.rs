@@ -404,6 +404,8 @@ impl Service {
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
                     &self.texpresso_path(),
+                    // The Mac app shows the document in its PDF pane.
+                    arg::<Option<bool>>(args, "pdf")?.unwrap_or(false),
                 )
                 .await?),
             "texpresso_update" => out(self
