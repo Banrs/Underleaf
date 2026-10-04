@@ -6,11 +6,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::{catalog, complete, is, space, utf16, Insertion, Text, TextEdit, TextRange};
-
-fn blank(line: &[u16]) -> bool {
-    line.iter().all(|&u| space(u))
-}
+use crate::{
+    blank, catalog, complete, edit, is, space, utf16, Insertion, Text, TextEdit, TextRange,
+};
 
 /// The lines the selections touch, in order. A selection ending at a
 /// line's start leaves that line alone.
@@ -28,14 +26,6 @@ fn touched_lines(text: &Text, selections: &[TextRange]) -> BTreeSet<usize> {
         lines.extend(text.line_index(from)..=text.line_index(end));
     }
     lines
-}
-
-fn edit(start: u32, length: u32, text: impl Into<String>) -> TextEdit {
-    TextEdit {
-        start,
-        length,
-        text: text.into(),
-    }
 }
 
 pub fn toggle_comment(text: &Text, selections: &[TextRange]) -> Vec<TextEdit> {

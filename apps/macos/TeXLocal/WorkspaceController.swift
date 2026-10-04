@@ -463,7 +463,7 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// Hidden ones too: the build panel's appear as it opens.
     private static func scrollViews(in view: NSView) -> [NSScrollView] {
-        return [view as? NSScrollView].compactMap(\.self) + view.subviews.flatMap(scrollViews)
+        [view as? NSScrollView].compactMap(\.self) + view.subviews.flatMap(scrollViews)
     }
 
     /// The pane folds down under its header to the sidebar's foot, and opens up from there.

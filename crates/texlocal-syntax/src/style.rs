@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::maths::{scan_groups, Group};
-use crate::{Text, TextEdit, TextRange};
+use crate::{edit, Text, TextEdit, TextRange};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing
@@ -94,16 +94,8 @@ pub(crate) fn text_styles(text: &Text, selection: TextRange) -> TextStyles {
         let (backslash, _) = group.command?;
         let close = closes.iter().find(|c| c.0 == group.open)?.1;
         Some(vec![
-            TextEdit {
-                start: backslash as u32,
-                length: (group.open + 1 - backslash) as u32,
-                text: String::new(),
-            },
-            TextEdit {
-                start: close as u32,
-                length: 1,
-                text: String::new(),
-            },
+            edit(backslash as u32, (group.open + 1 - backslash) as u32, ""),
+            edit(close as u32, 1, ""),
         ])
     };
     TextStyles {

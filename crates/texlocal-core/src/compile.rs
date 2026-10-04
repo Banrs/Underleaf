@@ -42,28 +42,27 @@ pub(crate) fn engine_flags(engine: &str) -> Option<&'static [&'static str]> {
 
 // ---------- TeX PATH discovery ----------
 
-/// Year/architecture-specific TeX Live bin dirs, newest year first.
-fn texlive_bins() -> impl Iterator<Item = PathBuf> {
-    let mut years: Vec<_> = std::fs::read_dir("/usr/local/texlive")
+/// What `dir` holds; nothing if it can't be read.
+fn children(dir: impl AsRef<Path>) -> impl Iterator<Item = PathBuf> {
+    std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
+        .map(|entry| entry.path())
+}
+
+/// Year/architecture-specific TeX Live bin dirs, newest year first.
+fn texlive_bins() -> impl Iterator<Item = PathBuf> {
+    let mut years: Vec<_> = children("/usr/local/texlive")
+        .filter(|year| {
+            year.file_name()
+                .and_then(|name| name.to_str())
                 .is_some_and(|name| name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit()))
         })
-        .map(|entry| entry.path().join("bin"))
+        .map(|year| year.join("bin"))
         .collect();
     years.sort_unstable_by(|a, b| b.cmp(a));
-    years.into_iter().flat_map(|bin| {
-        std::fs::read_dir(bin)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-    })
+    years.into_iter().flat_map(children)
 }
 
 /// PATH for spawned TeX tools: the folder the user chose first, then the
@@ -98,13 +97,7 @@ pub fn latexmk_dir(path_env: &str) -> Option<PathBuf> {
 /// TeX Live root picked in its place.
 pub fn tex_bin_dir(dir: &Path) -> Option<PathBuf> {
     std::iter::once(dir.to_path_buf())
-        .chain(
-            std::fs::read_dir(dir.join("bin"))
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .map(|e| e.path()),
-        )
+        .chain(children(dir.join("bin")))
         .find(|c| has_latexmk(c))
 }
 

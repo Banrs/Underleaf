@@ -209,9 +209,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     private func keepingTopLine(_ change: () -> Void) {
-        guard let top = shownTop, let location = textRange(NSRange(location: top.offset, length: 0))?.location else { return change() }
+        let top = shownTop
         change()
-        scroll(location) { $0.minY - top.below }
+        top.map(scroll(toShownTop:))
     }
 
     /// The first paragraph showing below the bars, and how far its top is below the clip's.

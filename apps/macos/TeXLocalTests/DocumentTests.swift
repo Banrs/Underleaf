@@ -299,23 +299,16 @@ struct PDFFitTests {
         #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [MenuCommand.syncInverse.title, "-", "Zoom In", "Zoom Out"])
     }
 
-    /// A forward search marks SyncTeX's box beside the page, not with an annotation,
-    /// which Print and VoiceOver would see.
-    @Test func theForwardSearchMarkIsNoAnnotation() throws {
+    /// A forward search marks SyncTeX's box beside the page, not with an annotation, which
+    /// Print and VoiceOver would see; one mark at a time, a second search's replacing the
+    /// first's, and a rebuilt PDF has none.
+    @Test func theForwardSearchMarkIsOneAndNoAnnotation() throws {
         let controller = PDFController()
         controller.view.setFrameSize(NSSize(width: 600, height: 500))
         let document = try pages(2)
         controller.show(document)
         controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
-    }
-
-    /// One mark at a time: a second search's replaces the first's, and a rebuilt PDF has none.
-    @Test func aForwardSearchMarkReplacesTheLast() throws {
-        let controller = PDFController()
-        controller.view.setFrameSize(NSSize(width: 600, height: 500))
-        controller.show(try pages(2))
-        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
         controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
         #expect(controller.view.marks.count == 1)
         controller.show(try pages(2))
@@ -466,18 +459,26 @@ struct PDFFindTests {
         #expect(controller.matchIndex == 2)
     }
 
-    /// A new shared find term replaces an earlier PDF search; a just-typed PDF term wins over the older pasteboard.
+    /// Shared text replaces an earlier search, including an in-flight one; pending local typing wins.
     @Test(arguments: ["alpha", "nothing"], [1, -1])
     func findNextUsesTheLatestSharedOrTypedText(_ earlier: String, _ step: Int) async throws {
         let controller = try targets()
         controller.findText = earlier
         controller.findTyped()
-        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier }
-        #expect(controller.matches.count == (earlier == "alpha" ? 1 : 0))
+        try await waitUntil(timeout: .seconds(5)) { controller.query == earlier && controller.matches.count == (earlier == "alpha" ? 1 : 0) }
         PDFFind.shared = "target"
         controller.findNext(step)
         try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
         #expect(controller.findText == "target")
+
+        controller.findText = "gamma"
+        controller.findTyped()
+        try #require(controller.view.document?.isFinding == true)
+        PDFFind.shared = "target" // Another pane changes it while gamma is still being searched.
+        controller.findNext(step)
+        #expect(controller.findText == "target")
+        try await waitUntil(timeout: .seconds(5)) { controller.view.document?.isFinding == false }
+        #expect(controller.query == "target" && controller.matches.count == 3)
 
         controller.findText = "gamma" // Its typing debounce has not fired yet.
         controller.findNext(step)
