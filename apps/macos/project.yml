@@ -12,6 +12,7 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "27.0"
     ARCHS: arm64
+    TEXLOCAL_APP_IDENTIFIER: com.texlocal.mac
 targets:
   TeXLocal:
     type: application
@@ -47,7 +48,7 @@ targets:
               public.filename-extension: [tex]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.texlocal.mac
+        PRODUCT_BUNDLE_IDENTIFIER: $(TEXLOCAL_APP_IDENTIFIER)
         PRODUCT_NAME: TeXLocal
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: TeXLocal
@@ -108,16 +109,32 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
         # @testable import TeXLocal loads the core's module too.
         SWIFT_INCLUDE_PATHS: $(SRCROOT)/../../crates/texlocal-ffi/include
+  TeXLocalUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: TeXLocalUITests
+        type: syncedFolder
+    dependencies:
+      - target: TeXLocal
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        TEST_TARGET_NAME: TeXLocal
 schemes:
   TeXLocal:
     build:
       targets:
         TeXLocal: all
         TeXLocalTests: [test]
+        TeXLocalUITests: [test]
     test:
-      targets: [TeXLocalTests]
+      targets: [TeXLocalTests, TeXLocalUITests]
       # A scratch library: the tests make and remove projects in it.
       environmentVariables:
         TEXLOCAL_DATA: /tmp/texlocal-xctest
+        UNDERLEAF_UI_TESTS: $(UNDERLEAF_UI_TESTS)
     run:
       config: Debug
