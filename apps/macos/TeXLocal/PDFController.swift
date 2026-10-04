@@ -55,6 +55,22 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     enum Fit { case width, page }
     private(set) var fit: Fit? = .width
 
+    /// The fit or scale, kept with the project for its next opening, as Preview keeps a document's.
+    nonisolated enum Zoom: Codable, Equatable {
+        case fitWidth, fitPage, scale(Double)
+    }
+
+    var zoom: Zoom {
+        switch fit {
+        case .width: .fitWidth
+        case .page: .fitPage
+        case nil: .scale(Double(scale))
+        }
+    }
+
+    /// The zoom a reopened project's first PDF opens at.
+    @ObservationIgnored var restoreZoom: Zoom?
+
     override init() {
         super.init()
         // Preview's canvas color; the PDF's paper keeps its own colors.
@@ -62,6 +78,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
+            restoreZoomIfReady()
             if fit == .page { fitPage() }
             restorePageIfReady()
             if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
@@ -244,6 +261,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         view.documentView?.enclosingScrollView?.setAccessibilityLabel("PDF")
         view.matchScroller()
         if autoScales { view.autoScales = true } else { view.scaleFactor = scale }
+        restoreZoomIfReady()
         if let place, let page = document.page(at: min(place.index, document.pageCount - 1)) {
             view.go(to: PDFDestination(page: page, at: place.point))
         } else {
@@ -252,6 +270,17 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         pageChanged()
         // A rebuild uses the field's current text, which may be ahead of the last result.
         if finding { find(findText, keepingPlace: true) }
+    }
+
+    /// Before the page: where a page lands depends on the scale.
+    private func restoreZoomIfReady() {
+        guard let zoom = restoreZoom, view.document != nil, view.hasShownArea else { return }
+        restoreZoom = nil
+        switch zoom {
+        case .fitWidth: fitWidth()
+        case .fitPage: fitPage()
+        case .scale(let scale): setScale(min(max(CGFloat(scale), view.minScaleFactor), Self.maxScale))
+        }
     }
 
     private func restorePageIfReady() {

@@ -269,6 +269,25 @@ struct PDFFitTests {
         #expect(project.saved.pdfPage == 2)
     }
 
+    /// A reopened project's PDF opens at the fit or scale it was left at, once it has a size,
+    /// and a workspace saved before zooms were kept still opens.
+    @Test(arguments: [PDFController.Zoom.fitPage, .scale(1.5), .fitWidth])
+    func theSavedZoomComesBack(zoom: PDFController.Zoom) throws {
+        let project = ProjectModel(id: "PDFFitTests", app: AppModel())
+        project.pdfURL = URL(filePath: "/dev/null")
+        project.pdf.restoreZoom = zoom
+        project.pdf.show(try pages(3))
+        // Kept until the view has a size to fit in.
+        #expect(project.saved.pdfZoom == zoom)
+        project.pdf.view.setFrameSize(NSSize(width: 600, height: 500))
+        project.pdf.view.layoutDocumentView()
+        #expect(project.pdf.restoreZoom == nil)
+        #expect(project.saved.pdfZoom == zoom)
+        if case .scale(let scale) = zoom { #expect(abs(project.pdf.view.scaleFactor - scale) < 0.001) }
+        let old = Data(#"{"project":"p","line":1,"buildPanel":false,"pdfPage":2}"#.utf8)
+        #expect(try JSONDecoder().decode(SavedWorkspace.self, from: old).pdfZoom == nil)
+    }
+
     /// The context menu: Go to Source Position and the zooms, without PDFKit's page
     /// layouts and page turns.
     @Test func theContextMenuGoesToTheSourceAndZooms() throws {

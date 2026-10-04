@@ -131,7 +131,8 @@ final class ProjectModel {
     var folders: [String] { tree.flattened.filter(\.isDirectory).map(\.path) }
 
     var saved: SavedWorkspace {
-        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.restorePage ?? pdf.page)
+        SavedWorkspace(project: id, file: openPath, line: cursorLine, buildPanel: showLogs, pdfPage: pdf.restorePage ?? pdf.page,
+                       pdfZoom: pdf.restoreZoom ?? pdf.zoom)
     }
 
     // ---------- loading ----------
@@ -166,6 +167,7 @@ final class ProjectModel {
             if let saved {
                 showLogs = saved.buildPanel
                 pdf.restorePage = saved.pdfPage
+                pdf.restoreZoom = saved.pdfZoom
             }
             let restored = saved?.file.flatMap { node(at: $0) == nil ? nil : $0 }
             if let file = restored ?? settings?.mainFile { await open(file, line: restored == nil ? nil : saved?.line) }
@@ -826,6 +828,8 @@ nonisolated struct SavedWorkspace: Codable, Equatable {
     var line: Int
     var buildPanel: Bool
     var pdfPage: Int
+    /// Nil in what an earlier version saved.
+    var pdfZoom: PDFController.Zoom?
 }
 
 /// An import whose names are already taken where it goes.
