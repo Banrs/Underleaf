@@ -24,9 +24,7 @@ struct BuildPanel: View {
             case .texpresso:
                 if project.texpresso.log.isEmpty {
                     ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                           description: Text(project.texpresso.active
-                                               ? "The live preview opens in a separate window. Compile to update the PDF pane."
-                                               : "Start TeXpresso from the Compile menu to open its live preview window."))
+                                           description: Text("TeXpresso shows the document in its own window. Compile to update the PDF here."))
                 } else {
                     LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                 }
@@ -85,7 +83,8 @@ struct BuildPanelHeader: View {
     var body: some View {
         HStack {
             Picker("Build Panel", selection: $project.panelTab) {
-                ForEach(PanelTab.allCases, id: \.self) { Text($0.rawValue) }
+                // TeXpresso's only once it has been started: most never use it.
+                ForEach(PanelTab.allCases.filter { $0 != .texpresso || project.texpresso.used }, id: \.self) { Text($0.rawValue) }
             }
             .pickerStyle(.tabs)
             .labelsHidden()

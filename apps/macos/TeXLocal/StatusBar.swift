@@ -34,11 +34,10 @@ struct StatusBar: View {
                 buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
-            if project.texpresso.phase != .stopped || project.texpresso.status != nil || project.texpresso.failure != nil {
+            if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.showTeXpressoLog() } label: {
                     Label(project.texpresso.title,
-                          systemImage: project.texpresso.failure != nil || project.texpresso.status?.error != nil
-                            ? "exclamationmark.triangle" : "bolt")
+                          systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                         .hitTarget()
                 }
                 .help("Show TeXpresso Log")

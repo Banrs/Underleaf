@@ -7,8 +7,7 @@ import Testing
 @MainActor
 struct TeXpressoSessionTests {
     private func status(running: Bool = true, error: String? = nil) -> TeXpressoStatus {
-        TeXpressoStatus(available: true, running: running, executable: "/tmp/texpresso",
-                       log: "", output: "", error: error, revision: 0, session: running ? "owner" : nil)
+        TeXpressoStatus(running: running, log: "", output: "", error: error, session: running ? "owner" : nil)
     }
 
     private func until(_ ready: () -> Bool) async throws {
@@ -245,7 +244,7 @@ struct TeXpressoSessionTests {
             commands.append(command)
             if commands.count > 1 {
                 #expect(arguments["session"] as? String == "owner")
-                throw CoreError(message: "This Live session was replaced. Start Live again.", status: 409)
+                throw CoreError(message: "Another window started TeXpresso for this project. Start TeXpresso again to preview here.", status: 409)
             }
             return status()
         }

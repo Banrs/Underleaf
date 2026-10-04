@@ -1,7 +1,7 @@
 # TeXpresso live preview
 
-This branch adds an optional [TeXpresso](https://github.com/let-def/texpresso)
-session to both the Mac and browser clients. It sends unsaved editor changes
+Underleaf can run an optional [TeXpresso](https://github.com/let-def/texpresso)
+session from both the Mac and browser clients. It sends unsaved editor changes
 after a short typing pause to a persistent XeTeX process. Errors while typing
 appear in the TeXpresso log; correcting the source updates the same preview.
 
@@ -30,10 +30,11 @@ The executable is otherwise discovered on the augmented TeX PATH. For a native
 build, pass these environment variables when launching its executable directly;
 a Finder launch does not inherit a terminal's environment.
 
-Use **Start TeXpresso** in the Compile menu on Mac or the browser workspace.
-Edits to the open source, including included files, reach the live preview.
-Use **Stop TeXpresso** to end the session. The TeXpresso log is separate from
-the normal build log. Rescan refreshes saved files and assets changed externally.
+On Mac, turn on **TeXpresso Live Preview** in the Compile menu; its log has its
+own tab in the build panel, and files changed by other apps are rescanned on
+their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
+files and assets changed externally. Edits to the open source, including
+included files, reach the live preview.
 Host validation failures, such as a file exceeding 8 MB, remain visible until
 that file is accepted. They do not block other files or retry on every poll.
 
@@ -57,21 +58,6 @@ No personal project, app preference or desktop window is used.
 
 For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 `TEXLOCAL_SERVER=/absolute/path/to/texlocal-server` as well.
-
-The local runtime built for this branch is
-`/private/tmp/underleaf-texpresso-runtime/bin/texpresso`. Its `BUILD-RECIPE.txt`
-and `bootstrap-isolated.sh` record the pinned source/dependencies and rebuild
-commands. It reuses existing TeX Live/Homebrew libraries without installing or
-changing system packages. This temporary runtime is not bundled with the app.
-
-Verification on 4 October 2026 passed all 20 real API checks, including clearing
-old errors after recovery and rejecting stale-owner edits, automatic restarts,
-rescans, status polls and cleanup after a replacement. A separate direct-engine test held seven malformed
-buffers for two seconds each; the same viewer survived, and every corresponding
-correction produced a new page. A test-only SDL framebuffer capture confirmed
-the corrected text, math and lists rendered. The product executable was unchanged
-for that capture. These checks used temporary data and SDL's dummy driver;
-foreground window behavior was not exercised while another agent used the Mac.
 
 ## Boundaries
 

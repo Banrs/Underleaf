@@ -1,14 +1,12 @@
 import Foundation
 import Observation
 
+/// What the views and the lane use of the core's status: an unchanged one doesn't redraw the log.
 nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
-    let available: Bool
     let running: Bool
-    let executable: String?
     let log: String
     let output: String
     let error: String?
-    let revision: Int
     let session: String?
 }
 
@@ -61,8 +59,11 @@ final class TeXpressoSession {
         let messages = requestErrors
         return messages.isEmpty ? nil : messages.joined(separator: "\n\n")
     }
+    var needsAttention: Bool { failure != nil || status?.error != nil }
+    /// Started in this window, so it has a log to show.
+    var used: Bool { phase != .stopped || status != nil || failure != nil }
     var title: String {
-        if failure != nil || status?.error != nil { return "TeXpresso Needs Attention" }
+        if needsAttention { return "TeXpresso Needs Attention" }
         switch phase {
         case .stopped: return "TeXpresso Stopped"
         case .starting: return "Starting TeXpresso…"
@@ -266,7 +267,7 @@ final class TeXpressoSession {
 
     private func fail(_ error: Error) {
         requestFailure = error.localizedDescription
-        if (error as? CoreError)?.status == 409 || requestFailure == "This Live session was replaced. Start Live again." {
+        if (error as? CoreError)?.status == 409 {
             generation += 1
             owner = nil
             onOwnershipLost()
