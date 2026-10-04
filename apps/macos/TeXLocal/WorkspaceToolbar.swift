@@ -24,8 +24,9 @@ extension NSToolbarItem.Identifier {
 /// Pane-aligned tools, with PDF tools following the source/PDF divider and window toggles trailing.
 /// Related tools share a capsule (HIG, Toolbars): the editing tools are separate items that
 /// AppKit joins side by side, as Xcode's and Notes'; the PDF and Inspector toggles stay apart.
-/// Items overflow from the least used in TeX editors: Zoom, then the editing tools (equal
-/// priorities leave from the right), then Back, and Compile and the toggles last.
+/// The window's minimum fits every default item over its pane (`ColumnMetrics`). Should added
+/// items crowd them, the least used in TeX editors leave first: Zoom, then the editing tools
+/// (equal priorities leave from the right). Back, Compile and the toggles stay (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
     /// Renamed as the defaults change: a layout saved under "Workspace" has Share, and one
@@ -82,10 +83,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     /// The system's toggles go to the window's split, not the nested ones, which would answer first.
+    /// They stay out of the overflow menu, as the leading and trailing edges' items do (HIG, Toolbars).
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?["item"] as? NSToolbarItem,
               [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.target = workspace
+        item.visibilityPriority = .high
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
@@ -96,6 +99,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             item = button(id, "Projects", "chevron.backward", #selector(back), help: "Back to Projects")
             // Back leads the title; there is no forward history.
             item.isNavigational = true
+            item.visibilityPriority = .high
         case .undo:
             item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")))
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
@@ -467,7 +471,8 @@ private struct CompileButton: View {
                 }
                 .opacity(compiling ? 1 : 0)
             }
-            // The item's glass: 36 points high, its title 12 points in from each end.
+            // The item's glass as AppKit draws a titled item's: 36 points high (the UI kit's
+            // toolbar controls), the title 12 points in from each end, 74 points for Compile (27.2).
             .padding(.horizontal, 12)
             .frame(height: 36)
             .contentShape(.capsule)
