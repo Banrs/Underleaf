@@ -246,6 +246,68 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
+    /// Jump to Selection centres the selection, far down a long file whose heights TextKit
+    /// has only estimated.
+    @Test func jumpToSelectionCentresIt() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        open((1...6000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
+        let start = text.document.lineStart(5000)
+        text.setSelectedRange(NSRange(location: start, length: 4))
+        text.centerSelectionInVisibleArea(nil)
+        let clip = editor.scrollView.contentView
+        let fragment = try #require(text.textRange(NSRange(location: start, length: 0))
+            .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) })
+        let line = try #require(fragment.textLineFragments.first)
+        let middle = fragment.layoutFragmentFrame.minY + line.typographicBounds.midY + text.textContainerOrigin.y
+        let shown = clip.bounds.height - editor.scrollView.contentInsets.top - editor.scrollView.contentInsets.bottom
+        let centre = clip.bounds.minY + editor.scrollView.contentInsets.top + shown / 2
+        // Within a line: TextKit settles the heights above as it lays out what now shows.
+        #expect(abs(middle - centre) < (text.defaultParagraphStyle?.minimumLineHeight ?? 18), "Line at \(middle), centre \(centre)")
+    }
+
+    /// Move Line Up and Down take the selections' lines past their neighbours, the selections
+    /// going with them, in one undo step; a last line without a line break keeps none.
+    @Test func linesMoveUpAndDown() throws {
+        open("a\nb\nc\nd", caret: 2)
+        #expect(editor.perform(.moveLineUp))
+        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 0, length: 0))
+        #expect(!editor.perform(.moveLineUp))
+        #expect(text.string == "b\na\nc\nd")
+        // Down to the end: the moved line takes the last one's place, without its break.
+        text.setSelectedRange(NSRange(location: 4, length: 1))
+        #expect(editor.perform(.moveLineDown))
+        #expect(text.string == "b\na\nd\nc" && text.selectedRange() == NSRange(location: 6, length: 1))
+        #expect(!editor.perform(.moveLineDown))
+        // The last line, without a break, up, in an undo group of its own as a key press has.
+        let undo = try #require(text.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        #expect(editor.perform(.moveLineUp))
+        undo.endUndoGrouping()
+        #expect(text.string == "b\na\nc\nd" && text.selectedRange() == NSRange(location: 4, length: 1))
+        #expect(text.undoManager?.undoActionName == "Move Line Up")
+        text.undoManager?.undo()
+        #expect(text.string == "b\na\nd\nc")
+        #expect(text.document.text == text.string)
+    }
+
+    /// Several selections move together; a selection ending at a line's start leaves that line.
+    @Test func severalSelectionsMoveTogether() {
+        open("1\n2\n3\n4\n5\n6", caret: 0)
+        // Lines 2–3 (selected up to line 4's start) and line 5.
+        text.setSelectedRanges([NSValue(range: NSRange(location: 2, length: 4)), NSValue(range: NSRange(location: 8, length: 1))],
+                               affinity: .downstream, stillSelecting: false)
+        #expect(editor.perform(.moveLineUp))
+        #expect(text.string == "2\n3\n1\n5\n4\n6")
+        #expect(text.selectedRanges.map(\.rangeValue) == [NSRange(location: 0, length: 4), NSRange(location: 6, length: 1)])
+        #expect(text.document.text == text.string)
+    }
+
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {

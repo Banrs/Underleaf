@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 
 /// The project's files, or the project search's results while there is a
@@ -9,6 +10,8 @@ struct FilesList: View {
     @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
     @FocusState private var listFocused: Bool
+    /// The file Space shows in Quick Look.
+    @State private var quickLook: URL?
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
 
@@ -106,6 +109,14 @@ struct FilesList: View {
                 Task { actions(node).rename() }
                 return .handled
             }
+            // Space previews the chosen file, as in Finder's list and Xcode's navigator.
+            .onKeyPress(.space) {
+                guard rename.id == nil, let path = selection, project.node(at: path)?.isDirectory == false,
+                      let url = project.url(path) else { return .ignored }
+                quickLook = url
+                return .handled
+            }
+            .quickLookPreview($quickLook)
             .focused($listFocused)
             .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in
                 project.node(at: path).map(actions)

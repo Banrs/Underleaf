@@ -223,6 +223,22 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY)
     }
 
+    /// Edit › Find › Jump to Selection: the selection's line in the middle of what shows below the
+    /// bars. AppKit's own lands lines off where TextKit 2 has only estimated the heights above (27.2).
+    override func centerSelectionInVisibleArea(_ sender: Any?) {
+        guard let scrollView = enclosingScrollView, let manager = textLayoutManager,
+              let location = textRange(NSRange(location: selectedRange().location, length: 0))?.location
+        else { return super.centerSelectionInVisibleArea(sender) }
+        let insets = scrollView.contentInsets
+        let shown = scrollView.contentView.bounds.height - insets.top - insets.bottom
+        scroll(location) { [unowned self] paragraph in
+            guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - insets.top - shown / 2 }
+            let inParagraph = offset(location) - offset(fragment.rangeInElement.location)
+            let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
+            return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - insets.top - shown / 2
+        }
+    }
+
     /// Back to a `shownTop`.
     func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
         guard let location = textRange(NSRange(location: min(top.offset, (string as NSString).length), length: 0))?.location else { return }
