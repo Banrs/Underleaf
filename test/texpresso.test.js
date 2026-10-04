@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTexPressoSession } from '../web/src/texpresso.js';
+import { createTexPressoSession, unsavedTexPressoFiles } from '../web/src/texpresso.js';
 
 const turn = () => new Promise(setImmediate);
 const status = (running = true, extra = {}) => ({
@@ -123,7 +123,7 @@ test('stop cancels a queued start and later starts use only the new main buffer'
   await session.destroy();
 });
 
-test('failed updates retain the newest buffer for retry, and TeX errors recover', async () => {
+test('failed updates retain the newest buffer for retry', async () => {
   const gate = Promise.withResolvers();
   let updates = 0;
   const { session, calls } = fixture('retry', { Update: () => ++updates === 1 ? gate.promise : status() });
@@ -139,6 +139,51 @@ test('failed updates retain the newest buffer for retry, and TeX errors recover'
   assert.equal(calls.filter(([name]) => name === 'Update').at(-1)[3], 'fixed');
   assert.equal(session.state.error, null);
   assert.equal(session.state.enabled, true);
+  await session.destroy();
+});
+
+test('main-file mutation restarts after host invalidation but respects a later Stop', async () => {
+  let running = false;
+  const { session, calls } = fixture('mutation', { Status: () => status(running) });
+  await session.start();
+  const beforeMainChange = session.state;
+  await session.inspect();
+  assert.equal(session.state.enabled, false, 'the host stopped for a new main file');
+  await session.restart([{ path: 'new.tex', text: 'unsaved new main' }], beforeMainChange);
+  assert.equal(session.state.enabled, true);
+  const beforeNextChange = session.state;
+  await session.stop();
+  const requestCount = calls.length;
+  await session.restart([], beforeNextChange);
+  assert.equal(calls.length, requestCount, 'a late mutation callback cannot undo Stop');
+  await session.destroy();
+});
+
+test('reloads discard saved VFS snapshots and preserve only the active unsaved source', async () => {
+  const { session, calls } = fixture('reload');
+  const editor = { getContent: () => 'old included content' };
+  const current = { openPath: 'chapter.tex', editor, dirty: false };
+  await session.start([{ path: current.openPath, text: editor.getContent() }]);
+  // Upload replacement / external disk edit must no longer be shadowed by a
+  // saved editor snapshot when the whole native session reloads.
+  await session.restart(unsavedTexPressoFiles(current));
+  assert.deepEqual(calls.at(-1), ['Start', 'reload', []]);
+  current.dirty = true;
+  await session.restart(unsavedTexPressoFiles(current));
+  assert.deepEqual(calls.at(-1), ['Start', 'reload', [{ path: 'chapter.tex', text: 'old included content' }]]);
+  await session.destroy();
+});
+
+test('a start during an in-flight save still receives the editor snapshot', async () => {
+  const { session, calls } = fixture('saving');
+  const current = {
+    dirty: false, saving: true, openPath: 'main.tex',
+    editor: { getContent: () => 'new source still being written to disk' },
+  };
+  await session.start(unsavedTexPressoFiles(current));
+  assert.deepEqual(calls[0][2], [{ path: 'main.tex', text: current.editor.getContent() }]);
+  current.saving = false;
+  assert.deepEqual(unsavedTexPressoFiles(current), []);
   await session.destroy();
 });
 

@@ -47,7 +47,7 @@ async function until(check, timeout = 90_000) {
     assert.equal(server.exitCode, null, `Server exited unexpectedly: ${serverLog}`);
     await delay(75);
   }
-  throw new Error(`Timed out. Last preview status: ${JSON.stringify(latest)}\n${serverLog}`);
+  throw new Error(`Timed out. Preview running: ${latest?.running}; error: ${latest?.error}; output: ${latest?.output?.slice(-2000)}`);
 }
 async function api(command, args = {}) {
   const response = await fetch(new URL(`/api/${command}`, endpoint), {
@@ -66,7 +66,8 @@ async function marker(text, label) {
     const status = await api('texpresso_status');
     latest = status;
     assert(status.running, `Preview exited: ${JSON.stringify(status)}`);
-    return `${status.output}\n${status.log}`.includes(text) && status;
+    // Only compiler output counts: raw diagnostic streams may echo stdin.
+    return status.output.includes(text) && status;
   });
   evidence.checks.push({ check: label, observedWithinMs: Math.round(performance.now() - start) });
 }
@@ -87,7 +88,7 @@ try {
   const unicode = main.replace('UL_MAIN_INITIAL', 'UL_MAIN_UNSAVED').replace('Hello café.', 'Unsaved café — naïve.');
   await api('texpresso_update', { path: 'main.tex', text: unicode });
   await marker('UL_MAIN_UNSAVED', 'Unsaved Unicode main-file update');
-  const include = section.replace('UL_SECTION_INITIAL', 'UL_SECTION_UNSAVED').replace('Included text.', 'Included unsaved α text.');
+  const include = section.replace('UL_SECTION_INITIAL', 'UL_SECTION_UNSAVED').replace('Included text.', 'Included unsaved café text.');
   await api('texpresso_update', { path: 'section.tex', text: include });
   await marker('UL_SECTION_UNSAVED', 'Unsaved included-file update');
 
@@ -152,7 +153,7 @@ try {
   if (endpoint && project) await api('texpresso_stop').catch(() => {});
   const exited = once(server, 'exit').catch(() => {});
   if (server.exitCode === null) server.kill('SIGINT');
-  await Promise.race([exited, delay(5000)]);
+  await Promise.race([exited, delay(5000, undefined, { ref: false })]);
   if (server.exitCode === null) server.kill('SIGKILL');
   await writeFile(join(scratch, 'server.log'), serverLog);
   await writeFile(join(scratch, 'result.json'), JSON.stringify(evidence, null, 2) + '\n');

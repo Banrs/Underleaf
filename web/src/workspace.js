@@ -19,7 +19,7 @@ import {
 import { buildLogsView, renderLogs, destroyLogsView } from './logs.js';
 import { buildSourceBar } from './sourcebar.js';
 import { createWorkspaceLayout } from './workspace-layout.js';
-import { createTexPressoSession } from './texpresso.js';
+import { createTexPressoSession, unsavedTexPressoFiles } from './texpresso.js';
 
 let ui = {};              // mounted elements
 let disposeCommands = null;
@@ -162,6 +162,7 @@ function buildChrome(id) {
       else texpresso?.rescan().catch((error) => toast(error.message, 'error'));
     },
     beforeMainFileChange: captureTexPresso,
+    beforeFilesReload: captureTexPresso,
     onMainFileChange: (liveBeforeMutation) => {
       refreshAnalysis();
       restartTexPresso(liveBeforeMutation);
@@ -440,7 +441,7 @@ function commandDefs() {
       ? 'Stop TeXpresso (Native Window)' : 'Start TeXpresso (Native Window)',
       run: toggleTexPresso, enabled: () => hasProject() && texpresso?.state.phase !== 'stopping' },
     { id: 'compile.texpressoRescan', title: 'Rescan TeXpresso Files',
-      run: () => texpresso?.rescan().catch((error) => toast(error.message, 'error')),
+      run: () => restartTexPresso(captureTexPresso()),
       enabled: () => !!texpresso?.state.enabled && texpresso?.state.phase === 'idle' },
     { id: 'sync.forward', title: 'Go to PDF Position', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
     { id: 'sync.inverse', title: 'Go to Source Position', run: inverseSync, enabled: hasPdf },
@@ -667,6 +668,7 @@ async function doSave({ triggerCompile = true } = {}) {
   const path = state.openPath;
   const editor = state.editor;
   const content = editor.getContent();
+  state.saving = true;
   state.dirty = false;
   setSaveState('Saving…');
   try {
@@ -688,6 +690,8 @@ async function doSave({ triggerCompile = true } = {}) {
       toast(`Save failed: ${err.message}`, 'error');
     }
     throw err;
+  } finally {
+    if (state.projectId === projectId && state.openPath === path && state.editor === editor) state.saving = false;
   }
 }
 
@@ -743,31 +747,32 @@ const renderCrumbs = () => ui.sourceBar?.update();
 
 // ---------- TeXpresso native live preview ----------
 
-function currentTexPressoFiles() {
-  return state.openPath && state.editor
-    ? [{ path: state.openPath, text: state.editor.getContent() }] : [];
-}
-
 function startTexPresso() {
   pendingCompile = false;
-  return texpresso?.start(currentTexPressoFiles()).catch((error) => toast(error.message, 'error'));
+  return texpresso?.start(unsavedTexPressoFiles(state)).catch((error) => toast(error.message, 'error'));
 }
 
 function captureTexPresso() {
-  return texpresso && { session: texpresso, ...texpresso.state };
+  return texpresso && { session: texpresso, epoch: texpresso.state.epoch, enabled: texpresso.state.enabled };
 }
 
 function restartTexPresso(previous) {
   // A status poll may observe the host stopping for a path/main mutation.
   // Preserve that opt-in, while respecting a Stop clicked during the request.
-  if (previous?.session === texpresso && previous.enabled && previous.epoch === texpresso.state.epoch) {
-    return startTexPresso();
+  if (previous?.session === texpresso) {
+    return texpresso.restart(unsavedTexPressoFiles(state), previous).catch((error) => toast(error.message, 'error'));
   }
 }
 
-function toggleTexPresso() {
+async function toggleTexPresso() {
   if (texpresso?.state.enabled || texpresso?.state.running) {
-    return texpresso.stop().catch((error) => toast(error.message, 'error'));
+    const session = texpresso;
+    const generation = workspaceGeneration;
+    try {
+      await session.stop();
+      if (generation === workspaceGeneration && session === texpresso && prefs.autoCompile) compile({ auto: true });
+    } catch (error) { toast(error.message, 'error'); }
+    return;
   }
   return startTexPresso();
 }
@@ -828,6 +833,7 @@ async function compile({ auto = false } = {}) {
 
   try {
     if (!(await flushCurrent())) return;
+    if (auto && texpresso?.state.enabled) return;
     if (!current() || state.settings?.mainFile !== mainFile) return;
     if (stopRequested) return;
 

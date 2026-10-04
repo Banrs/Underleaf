@@ -52,6 +52,20 @@ No personal project, app preference or desktop window is used.
 For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 `TEXLOCAL_SERVER=/absolute/path/to/texlocal-server` as well.
 
+The local runtime built for this branch is
+`/private/tmp/underleaf-texpresso-runtime/bin/texpresso`. Its `BUILD-RECIPE.txt`
+and `bootstrap-isolated.sh` record the pinned source/dependencies and rebuild
+commands. It reuses existing TeX Live/Homebrew libraries without installing or
+changing system packages. This temporary runtime is not bundled with the app.
+
+Verification on 4 October 2026 passed all 18 real API checks, including clearing
+old errors after recovery. A separate direct-engine test held seven malformed
+buffers for two seconds each; the same viewer survived, and every corresponding
+correction produced a new page. A test-only SDL framebuffer capture confirmed
+the corrected text, math and lists rendered. The product executable was unchanged
+for that capture. These checks used temporary data and SDL's dummy driver;
+foreground window behavior was not exercised while another agent used the Mac.
+
 ## Boundaries
 
 - Live preview uses TeXpresso's XeTeX engine regardless of the normal build's

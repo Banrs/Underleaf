@@ -91,7 +91,7 @@ final class ProjectModel {
     /// Stop while the build's save runs, before the core has a build to stop.
     private var stopRequested = false
     /// A build still running when the project closes reports nothing.
-    private var closed = false
+    private(set) var closed = false
 
     /// Long enough to cover a pause between keystrokes.
     private static let autosaveDelay = Duration.milliseconds(700)
@@ -565,8 +565,11 @@ final class ProjectModel {
 
     /// A build still running stops and reports nothing, so it can't supersede the next project's.
     func close() {
+        guard !closed else { return }
         stopCompile()
         closed = true
+        // The old workspace can remain visible while a live start drains.
+        editor.textView.isEditable = false
         liveIntent += 1
         liveRestartTask?.cancel()
         liveDiskTask?.cancel()

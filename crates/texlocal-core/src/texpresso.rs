@@ -81,6 +81,7 @@ struct State {
     last_used: Instant,
     output: Output,
     log: Output,
+    protocol_seen: bool,
     stderr: Output,
     error: Option<String>,
     revision: u64,
@@ -118,7 +119,16 @@ impl Session {
         let mut state = self.state.lock().unwrap();
         state.last_used = Instant::now();
         let mut log = state.log.text();
-        log.push_str(&state.stderr.text());
+        // stderr includes historical TeX diagnostics and echoed VFS commands.
+        // The protocol buffers alone track the engine's current backtracking.
+        if !state.protocol_seen || state.error.is_some() {
+            let stderr = state.stderr.text();
+            let mut start = stderr.len().saturating_sub(16 * 1024);
+            while !stderr.is_char_boundary(start) {
+                start += 1;
+            }
+            log.push_str(&stderr[start..]);
+        }
         if log.len() > MAX_OUTPUT {
             let mut start = log.len() - MAX_OUTPUT;
             while !log.is_char_boundary(start) {
@@ -277,6 +287,7 @@ impl Manager {
                 last_used: Instant::now(),
                 output: Output::default(),
                 log: Output::default(),
+                protocol_seen: false,
                 stderr: Output::default(),
                 error: None,
                 revision: self.revision.fetch_add(1, Ordering::Relaxed) + 1,
@@ -306,8 +317,12 @@ impl Manager {
                 tokio::select! {
                     result = child.wait() => {
                         if let Some(session) = weak.upgrade() {
-                            session.stop(Some(format!("TeXpresso exited ({}). Check the live log and start Live again.",
-                                result.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))));
+                            let error = match result {
+                                Ok(status) if status.success() => None,
+                                result => Some(format!("TeXpresso exited ({}). Check the live log and start Live again.",
+                                    result.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
+                            };
+                            session.stop(error);
                         }
                         break;
                     }
@@ -526,6 +541,10 @@ fn apply_message(session: &Session, message: &Value) {
         return;
     };
     let mut state = session.state.lock().unwrap();
+    if !matches!(name, "out" | "log") {
+        return;
+    }
+    state.protocol_seen = true;
     let output = match name {
         "out" => &mut state.output,
         "log" => &mut state.log,
@@ -580,5 +599,194 @@ mod tests {
         output.truncate(0);
         output.append(0, "é".as_bytes());
         assert_eq!(output.text(), "é");
+    }
+
+    fn setup() -> (tempfile::TempDir, PathBuf, String) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        let bin = tmp.path().join("bin");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&bin).unwrap();
+        fs::write(root.join("main.tex"), "disk text").unwrap();
+        let commands = tmp.path().join("commands");
+        let child_pid = tmp.path().join("engine.pid");
+        let stub = bin.join("texpresso");
+        fs::write(&stub, format!(
+            "#!/bin/sh\n/bin/sleep 300 &\necho $! > '{}'\nprintf '[\"append\",\"out\",0,\"ready\"]\\n'\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> '{}'\n  case \"$line\" in *EXIT_CLEAN*) exit 0;; *EXIT_STUB*) exit 7;; esac\ndone\n",
+            child_pid.display(), commands.display()
+        )).unwrap();
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        (tmp, root, bin.to_string_lossy().into_owned())
+    }
+    async fn until(mut check: impl FnMut() -> bool) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !check() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("stub made progress");
+    }
+    fn commands(tmp: &tempfile::TempDir) -> Vec<Value> {
+        fs::read_to_string(tmp.path().join("commands"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+    #[tokio::test]
+    async fn persistent_vfs_protocol_validates_paths_and_reconstructs_unicode() {
+        let (tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        let original = "prefix é😀 suffix";
+        let updated = "prefix ê😃 suffix";
+        let first = manager
+            .start(
+                &root,
+                &[FileBuffer {
+                    path: "main.tex".into(),
+                    text: original.into(),
+                }],
+                &path_env,
+            )
+            .await
+            .unwrap();
+        assert!(first.running && first.available);
+        until(|| commands(&tmp).len() >= 2).await;
+        let sent = commands(&tmp);
+        assert!(sent.iter().any(|c| c == &json!(["rerun", true])));
+        let opened = sent.iter().find(|c| c[0] == "open").unwrap();
+        assert_eq!(
+            opened[1],
+            fs::canonicalize(root.join("main.tex"))
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(opened[2], original);
+        let second = manager
+            .update(&root, "main.tex", updated, &path_env)
+            .await
+            .unwrap();
+        assert!(second.running && second.revision > first.revision);
+        until(|| commands(&tmp).iter().any(|c| c[0] == "change")).await;
+        let sent = commands(&tmp);
+        let changed = sent.iter().find(|c| c[0] == "change").unwrap();
+        let start = changed[2].as_u64().unwrap() as usize;
+        let remove = changed[3].as_u64().unwrap() as usize;
+        assert_eq!(
+            format!(
+                "{}{}{}",
+                &original[..start],
+                changed[4].as_str().unwrap(),
+                &original[start + remove..]
+            ),
+            updated
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("main.tex")).unwrap(),
+            "disk text"
+        );
+        assert!(manager
+            .update(&root, "../escape.tex", "bad", &path_env)
+            .await
+            .is_err());
+        assert!(manager
+            .update(&root, "build/out.tex", "bad", &path_env)
+            .await
+            .is_err());
+        assert!(manager
+            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), &path_env)
+            .await
+            .is_err());
+        manager.rescan(&root, &path_env).await.unwrap();
+        until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
+        assert!(!manager.stop_request(&root).await.unwrap().running);
+        let restarted = manager.start(&root, &[], &path_env).await.unwrap();
+        assert!(restarted.running && restarted.revision > second.revision);
+        manager
+            .update(&root, "main.tex", "EXIT_CLEAN", &path_env)
+            .await
+            .unwrap();
+        until(|| !manager.status(&root, &path_env).unwrap().running).await;
+        assert!(manager.status(&root, &path_env).unwrap().error.is_none());
+        manager.start(&root, &[], &path_env).await.unwrap();
+        manager.kill_all();
+        assert!(!manager.status(&root, &path_env).unwrap().running);
+    }
+    #[tokio::test]
+    async fn unexpected_exit_retains_output_and_stops_engine_group() {
+        let (tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        manager.start(&root, &[], &path_env).await.unwrap();
+        until(|| {
+            fs::read_to_string(tmp.path().join("engine.pid")).is_ok()
+                && manager.status(&root, &path_env).unwrap().output == "ready"
+        })
+        .await;
+        let child_pid: i32 = fs::read_to_string(tmp.path().join("engine.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        manager
+            .update(&root, "main.tex", "EXIT_STUB", &path_env)
+            .await
+            .unwrap();
+        until(|| !manager.status(&root, &path_env).unwrap().running).await;
+        let status = manager.status(&root, &path_env).unwrap();
+        assert_eq!(status.output, "ready");
+        assert!(status.error.unwrap().contains("exited"));
+        // Killed descendants can remain zombies briefly while init reaps them.
+        until(|| {
+            (unsafe { libc::kill(child_pid, 0) == -1 })
+                || fs::read_to_string(format!("/proc/{child_pid}/stat"))
+                    .is_ok_and(|stat| stat.contains(") Z "))
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn abandoned_session_lease_expires_without_polling() {
+        let (_tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        manager.start(&root, &[], &path_env).await.unwrap();
+        let session = manager
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&fs::canonicalize(&root).unwrap())
+            .cloned()
+            .unwrap();
+        session.state.lock().unwrap().last_used = Instant::now() - LEASE;
+        tokio::time::sleep(Duration::from_millis(5100)).await;
+        let status = manager.status(&root, &path_env).unwrap();
+        assert!(!status.running);
+        assert!(status.error.unwrap().contains("expired"));
+    }
+    #[tokio::test]
+    async fn backtracked_tex_log_excludes_historical_process_stderr() {
+        let (_tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        manager.start(&root, &[], &path_env).await.unwrap();
+        let session = manager
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&fs::canonicalize(&root).unwrap())
+            .cloned()
+            .unwrap();
+        let diagnostic = "Undefined control sequence";
+        session
+            .state
+            .lock()
+            .unwrap()
+            .stderr
+            .append(0, diagnostic.as_bytes());
+        apply_message(&session, &json!(["append", "log", 0, diagnostic]));
+        assert!(session.status().log.contains(diagnostic));
+        apply_message(&session, &json!(["truncate", "log", 0]));
+        assert!(!session.status().log.contains(diagnostic));
+        session.stop(Some("TeXpresso exited".into()));
+        assert!(session.status().log.contains(diagnostic));
     }
 }

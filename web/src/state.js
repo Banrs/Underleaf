@@ -11,6 +11,7 @@ const PROJECT_DEFAULTS = () => ({
   editor: null,
   pdf: null,
   dirty: false,
+  saving: false,
   compiling: false,
   lastResult: null,
   logOpen: false,

@@ -446,6 +446,7 @@ function askClash(existing) {
 async function upload(files, origin) {
   const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
   let msg, kind;
+  const mutationContext = origin.beforeFilesReload?.();
   try {
     const { saved, stopped } = await api.upload(origin.projectId, files, '', askClash);
     if (stopped) return;
@@ -458,7 +459,7 @@ async function upload(files, origin) {
   if (!active(origin)) return;
   await refreshTree(origin);
   if (!active(origin)) return;
-  origin.onFilesChanged?.();
+  origin.onFilesChanged?.(mutationContext);
   toast(msg, kind);
 }
 

@@ -372,7 +372,8 @@ impl Service {
                     .as_deref()
                     .unwrap_or("article"),
             )?),
-            "rename_project" => out(self.with_project(s("id")?, |_| {
+            "rename_project" => out(self.with_project(s("id")?, |root| {
+                self.texpresso.stop(root)?;
                 projects::rename_project(&self.data_dir, s("id")?, s("name")?)
             })?),
             "delete_project" => out(self.with_project(s("id")?, |_| {
@@ -434,9 +435,9 @@ impl Service {
             "delete_entry" => {
                 let path = s("path")?;
                 out(self.with_project(s("id")?, |root| {
-                    let result = projects::delete_entry(root, path)?;
+                    projects::delete_entry(root, path)?;
                     self.texpresso.stop(root)?;
-                    Ok(result)
+                    Ok(())
                 })?)
             }
             "validate_uploads" => out(self.validate_uploads(

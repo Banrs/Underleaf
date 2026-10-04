@@ -4,6 +4,11 @@
 // session for the same project. Every request (including polls) is ordered.
 const projectQueues = new Map();
 
+// Saved snapshots can hide disk changes or upload replacements on restart.
+export function unsavedTexPressoFiles({ dirty, saving, openPath, editor }) {
+  return (dirty || saving) && openPath && editor ? [{ path: openPath, text: editor.getContent() }] : [];
+}
+
 function inProjectOrder(id, task) {
   const result = (projectQueues.get(id) ?? Promise.resolve()).then(task);
   const settled = result.catch(() => {});
@@ -58,7 +63,11 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     const request = epoch;
     return inProjectOrder(projectId, async () => {
       if (!current(request)) return snapshot();
-      try { accept(await api.texpressoStatus(projectId), request); }
+      try {
+        const value = await api.texpressoStatus(projectId);
+        if (current(request)) failure = null;
+        accept(value, request);
+      }
       catch (error) { report(error, request); throw error; }
       return snapshot();
     });
@@ -96,6 +105,13 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     pending.set(path, text);
     clearTimeout(debounce);
     debounce = setTimeout(() => { flush().catch(() => {}); }, debounceMs);
+  }
+
+  function restart(files, previous = snapshot()) {
+    // A filesystem request captures the user's intent before awaiting I/O.
+    // A later explicit Stop/Start supersedes it; host invalidation does not.
+    if (disposed || !previous.enabled || previous.epoch !== epoch) return Promise.resolve(snapshot());
+    return start(files);
   }
 
   function flush() {
@@ -182,5 +198,5 @@ export function createTexPressoSession({ projectId, api, onChange = () => {}, de
     return stop({ keepalive: true }).catch(() => {});
   }
 
-  return { get state() { return snapshot(); }, inspect, start, update, flush, rescan, stop, destroy, leavePage };
+  return { get state() { return snapshot(); }, inspect, start, restart, update, flush, rescan, stop, destroy, leavePage };
 }
