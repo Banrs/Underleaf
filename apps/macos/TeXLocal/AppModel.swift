@@ -219,14 +219,33 @@ final class AppModel {
         await refresh()
     }
 
-    /// Without asking, as in Finder: the Trash gives the item back (HIG, Alerts).
+    /// The main window's, which Edit › Undo reaches while the list has the keyboard.
+    var undoManager: UndoManager? { NSApp.mainWindow?.undoManager }
+
+    /// Without asking, as in Finder: Edit › Undo and the Trash give the item back (HIG, Alerts).
     func delete(_ project: ProjectInfo) async {
+        let root: URL
         do {
-            try await core.perform("delete_project", ["id": project.id])
-            recentProjects.removeAll { $0 == project.id }
+            root = URL(fileURLWithPath: try await core.call("project_root", ["id": project.id], as: String.self))
         } catch {
             alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
+            return
         }
+        let item = UndoableTrash(
+            original: root, name: project.name, undoManager: undoManager,
+            trash: { [weak self] item in
+                do {
+                    try item.recycle()
+                    self?.recentProjects.removeAll { $0 == project.id }
+                    return true
+                } catch {
+                    self?.alert = AppAlert("Couldn’t Move “\(project.name)” to the Trash", error)
+                    return false
+                }
+            },
+            changed: { [weak self] in await self?.refresh() },
+            failed: { [weak self] title, error in self?.alert = AppAlert(title, error) })
+        await item.moveToTrash()
         await refresh()
     }
 

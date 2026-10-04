@@ -201,6 +201,51 @@ struct SourceEditorTests {
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
 
+    /// A file shown again comes back scrolled where it was left, as its caret does, while its
+    /// text is as it was; changed since, it opens at its top.
+    @Test func aFileShownAgainIsWhereItWasLeft() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        editor.scrollView.frame = window.contentView!.bounds
+        window.contentView!.addSubview(editor.scrollView)
+        editor.shown = true
+        let long = (1...2000).map { "Line \($0)" }.joined(separator: "\n")
+        open(long, caret: 0, path: "a.tex")
+        editor.reveal(line: 1200, atTop: true, focus: false)
+        let left = try #require(text.shownTop)
+        open("short", path: "b.tex")
+        open(long, path: "a.tex")
+        #expect(text.shownTop?.offset == left.offset && text.shownTop?.below == left.below)
+        open("short", path: "b.tex")
+        open(long + "\nmore", path: "a.tex")
+        #expect(editor.scrollView.contentView.bounds.minY == -editor.scrollView.contentInsets.top)
+    }
+
+    /// A command is its own named undo step between the typing before and after it.
+    @Test func aCommandIsItsOwnUndoStep() throws {
+        open("", caret: 0)
+        let undo = try #require(text.undoManager)
+        // Each step an event of its own, in its own top-level undo group, as AppKit gives it.
+        undo.groupsByEvent = false
+        func step(_ action: () -> Void) {
+            undo.beginUndoGrouping()
+            action()
+            undo.endUndoGrouping()
+        }
+        step { text.insertText("a", replacementRange: typed) }
+        step { text.insertText("b", replacementRange: typed) }
+        step { editor.perform(.bold) }
+        #expect(undo.undoActionName == "Bold")
+        step { text.insertText("c", replacementRange: typed) }
+        #expect(text.string == "ab\\textbf{c}")
+        undo.undo()
+        #expect(text.string == "ab\\textbf{}")
+        #expect(undo.undoActionName == "Bold")
+        undo.undo()
+        #expect(text.string == "ab")
+        #expect(text.document.text == text.string)
+    }
+
     /// SyncTeX's word: an inverse search's column selects the word there, and a
     /// forward search sends the word at the caret.
     @Test func syncTeXGoesToTheWord() {
@@ -316,6 +361,22 @@ struct SourceEditorTests {
         #expect(list.selection == 0 && window.childWindows?.count == 1)
         show(0, size: 11)
         #expect(window.childWindows?.isEmpty != false)
+    }
+
+    /// The selected row is drawn as the focused list's, the accent's, from the first show,
+    /// though the document keeps the keyboard.
+    @Test func theCompletionListSelectsAsTheFocusedList() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        let list = CompletionList()
+        list.show((0..<3).map { (label: "\\item\($0)", kind: CompletionKind.command) }, font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+                  theme: .overleaf, under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
+        let panel = try #require(window.childWindows?.first)
+        panel.layoutIfNeeded()
+        let table = try #require(panel.firstResponder as? NSTableView)
+        #expect(table.rowView(atRow: 0, makeIfNecessary: false)?.isEmphasized == true)
+        #expect(NSApp.keyWindow !== panel && !panel.canBecomeKey)
+        list.close()
     }
 
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
@@ -507,6 +568,30 @@ struct SourceEditorTests {
         #expect(try renderedText() != before, "A theme change must repaint the already-visible text.")
         text.syntaxTheme = .overleaf
         try await waitUntil { (try? self.colour(of: "\\section")) == SyntaxTheme.overleaf.colours.command }
+    }
+
+    /// With Increase Contrast every theme colour reaches 7:1 on the text's background, as little
+    /// changed as that takes: one that has it already stays as it is.
+    @Test(arguments: [NSAppearance.Name.aqua, .darkAqua])
+    func increasedContrastRaisesTheThemes(appearance: NSAppearance.Name) throws {
+        func resolved(_ color: NSColor) -> NSColor {
+            var out = color
+            NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance { out = color.usingColorSpace(.sRGB) ?? color }
+            return out
+        }
+        let background = resolved(.textBackgroundColor)
+        for theme in [SyntaxTheme.overleaf, .texstudio] {
+            let c = theme.colours
+            for color in [c.command, c.keyword, c.argument, c.maths, c.comment, c.invalid].map(resolved) {
+                let raised = color.contrasting(in: appearance, by: 7)
+                #expect(raised.contrast(with: background) >= 7, "\(theme) \(color)")
+                if color.contrast(with: background) >= 7 { #expect(raised == color) }
+            }
+        }
+        // Overleaf's Light comments, at 4.2:1, are raised; its commands, at 8.6:1, are not.
+        if appearance == .aqua {
+            #expect(resolved(SyntaxTheme.overleaf.colours.comment).contrast(with: background) < 4.5)
+        }
     }
 
     /// A double-click goes to the PDF from the word it selects; a single click only places the caret.

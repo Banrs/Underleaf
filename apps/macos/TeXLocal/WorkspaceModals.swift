@@ -45,8 +45,10 @@ struct WorkspaceModals: ViewModifier {
                 }
             }
             .alert(project.importClash?.title ?? "", item: $project.importClash) { clash in
-                Button("Replace") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
+                // Keep Both, which loses nothing, is the default, as in Finder's copy alert;
+                // Replace trashes the item here.
                 Button("Keep Both") { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "keepBoth") } }
+                Button("Replace", role: .destructive) { Task { await project.importFiles(clash.urls, into: clash.dir, conflict: "replace") } }
                 Button("Cancel", role: .cancel) {}
             } message: { clash in
                 Text(clash.message)
@@ -62,9 +64,9 @@ struct WorkspaceModals: ViewModifier {
             .alert(project.missingFile.map { "“\($0.fileName)” Was Moved or Deleted" } ?? "",
                    item: $project.missingFile) { _ in
                 Button("Save Again") { project.saveMissingFile() }
-                Button("Close", role: .destructive) { project.closeMissingFile() }
+                Button("Discard Changes", role: .destructive) { project.closeMissingFile() }
             } message: { path in
-                Text("Another app moved or deleted \(path), which has unsaved changes here. Save them to make the file again, or close it and discard them.")
+                Text("Another app moved or deleted \(path), which has unsaved changes here. Save them to make the file again, or discard them and close it.")
             }
     }
 }

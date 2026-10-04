@@ -144,6 +144,25 @@ struct MenuStructureTests {
         #expect(titles(engine).starts(with: ["pdfLaTeX", "XeLaTeX", "LuaLaTeX"]))
     }
 
+    /// A group's items all have an icon or none do (HIG, Menus): Close and Save, Rename's three, and Format's styles.
+    @Test func iconsComeByGroup() throws {
+        let file = try menu("File"), format = try menu("Format")
+        for title in ["Close", "Save", "Rename", "Show in Finder", "Move to Trash", "Share…"] {
+            #expect(try item(title, in: file).image != nil, "\(title)")
+        }
+        for title in ["Bold", "Italic", "Underline"] { #expect(try item(title, in: format).image != nil, "\(title)") }
+        for title in ["Save PDF As…", "Export Project as ZIP…", "Page Setup…", "Print…"] {
+            #expect(try item(title, in: file).image == nil, "\(title)")
+        }
+    }
+
+    /// Rename, Show in Finder and Move to Trash follow Save, as in Pages and Finder.
+    @Test func renameFollowsSave() throws {
+        let order = titles(try menu("File"))
+        let save = try #require(order.firstIndex(of: "Save"))
+        #expect(Array(order[save...].prefix(6)) == ["Save", "Close Project", "Rename", "Show in Finder", "Move to Trash", "Save PDF As…"])
+    }
+
     /// Share… as the HIG names it, there even with nothing to share.
     @Test func shareIsOneItem() throws {
         let file = try menu("File")

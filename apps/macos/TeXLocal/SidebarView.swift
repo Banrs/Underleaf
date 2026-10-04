@@ -41,6 +41,23 @@ struct FilesList: View {
             }
             .listStyle(.sidebar)
             .accessibilityLabel("Files")
+            // The blank space below the rows is the project's top level, as in Finder; the
+            // rows' own drops are the innermost.
+            .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
+                Task { await project.dropFiles(urls, into: "") }
+            }
+            .overlay {
+                if project.initialLoadComplete, project.tree.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Files", systemImage: "doc")
+                    } description: {
+                        Text("Create or drop files here.")
+                    } actions: {
+                        Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
+                        Button(MenuCommand.fileUpload.title) { app.perform(.fileUpload, on: project) }
+                    }
+                }
+            }
             // The clicked row's menu, which leaves the selection (and the open file) as
             // it is. None for no row: SwiftUI's asks AppKit for row -1's view, which raises (27.2).
             .contextMenu(forSelectionType: String.self) { paths in
@@ -186,7 +203,7 @@ struct FilesList: View {
         return Label {
             HStack {
                 if rename.id == node.path {
-                    RenameField(text: $rename.name, isFile: !node.isDirectory, ended: { listFocused = true }) {
+                    RenameField(text: $rename.name, isFile: !node.isDirectory, forbidden: "/", ended: { listFocused = true }) {
                         commitRename(node)
                     } cancel: {
                         rename.cancel()
@@ -221,6 +238,7 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
+        // The field refuses a "/" as it is typed; this is for one that got by.
         guard !name.contains("/") else {
             app.alert = AppAlert("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
             return

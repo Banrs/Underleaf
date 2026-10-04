@@ -291,6 +291,18 @@ struct PDFFitTests {
         #expect(document.page(at: 0)?.annotations.isEmpty == true)
     }
 
+    /// One mark at a time: a second search's replaces the first's, and a rebuilt PDF has none.
+    @Test func aForwardSearchMarkReplacesTheLast() throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try pages(2))
+        controller.reveal(ForwardLoc(page: 1, h: 72, v: 150, width: 180, height: 10), word: nil)
+        controller.reveal(ForwardLoc(page: 2, h: 72, v: 300, width: 180, height: 10), word: nil)
+        #expect(controller.view.marks.count == 1)
+        controller.show(try pages(2))
+        #expect(controller.view.marks.isEmpty)
+    }
+
     private func pages(_ count: Int) throws -> PDFDocument {
         let image = NSImage(size: NSSize(width: 612, height: 792), flipped: false) { rect in
             NSColor.white.setFill()
@@ -418,6 +430,17 @@ struct PDFFindTests {
             "query \(controller.query), matches \(controller.matches.count)"
         }
         #expect(controller.matches.count == 1)
+    }
+
+    /// Find ignores case and accents, as typed without them.
+    @Test func findIgnoresCaseAndAccents() async throws {
+        let controller = PDFController()
+        controller.view.setFrameSize(NSSize(width: 600, height: 500))
+        controller.show(try document(["Gödel and Erdős"]))
+        controller.find("godel")
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "godel" && controller.matches.count == 1 }
+        controller.find("ERDOS")
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "ERDOS" && controller.matches.count == 1 }
     }
 
     /// Typing back to the found text while a longer one is searched ends with the field's matches.

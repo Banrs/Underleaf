@@ -209,13 +209,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     private func keepingTopLine(_ change: () -> Void) {
-        // From the fragments last laid out: asked by point, TextKit answers from its new estimates.
+        guard let top = shownTop, let location = textRange(NSRange(location: top.offset, length: 0))?.location else { return change() }
+        change()
+        scroll(location) { $0.minY - top.below }
+    }
+
+    /// The first paragraph showing below the bars, and how far its top is below the clip's.
+    /// From the fragments last laid out: asked by point, TextKit answers from its new estimates.
+    var shownTop: (offset: Int, below: CGFloat)? {
         guard let clip = enclosingScrollView?.contentView,
               let top = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY + textContainerOrigin.y > clip.bounds.minY + clip.contentInsets.top })?.fragment
-        else { return change() }
-        let offset = top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY
-        change()
-        scroll(top.rangeInElement.location) { $0.minY - offset }
+        else { return nil }
+        return (offset(top.rangeInElement.location), top.layoutFragmentFrame.minY + textContainerOrigin.y - clip.bounds.minY)
+    }
+
+    /// Back to a `shownTop`.
+    func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
+        guard let location = textRange(NSRange(location: min(top.offset, (string as NSString).length), length: 0))?.location else { return }
+        scroll(location) { $0.minY - top.below }
     }
 
     /// Scrolls to where `y` puts the clip for the location's paragraph (its frame in the view),
@@ -247,6 +258,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
+        // Invalidated, the fragments laid out before keep no colours until validated again.
+        if needsColours, let manager = textLayoutManager {
+            needsColours = false
+            for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
+        }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
         needsDisplay = true
@@ -275,8 +291,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let font = numberFont
         for (offset, fragment) in fragments {
             guard let line = fragment.textLineFragments.first else { continue }
-            // Measured: the current line's in the text's colour, the others at 30%.
-            let color: NSColor = offset == current ? .labelColor : .textColor.withAlphaComponent(0.3)
+            // Measured: the current line's in the text's colour, the others at 30%, or with
+            // Increase Contrast the system's secondary label, which reads at the HIG's 4.5:1.
+            let color: NSColor = offset == current ? .labelColor
+                : effectiveAppearance.increasesContrast ? .secondaryLabelColor : .textColor.withAlphaComponent(0.3)
             let number = NSAttributedString(string: "\(document.line(at: offset))",
                                             attributes: [.font: font, .foregroundColor: color])
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
@@ -286,6 +304,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     // MARK: colours
+
+    /// The shown fragments' colours were invalidated (`recolour`).
+    private var needsColours = false
 
     /// TextKit validates colours when it renders a fragment, without editing the
     /// document's attributes or disturbing its estimated scroll geometry.
@@ -306,6 +327,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             }
         }
         manager.invalidateRenderingAttributes(for: manager.documentRange)
+        // TextKit validates only the fragments it lays out anew; the rest, after the next layout.
+        needsColours = true
+        needsLayout = true
         if invalidatingLayout, let viewport = manager.textViewportLayoutController.viewportRange {
             for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
             manager.invalidateLayout(for: viewport)
@@ -812,6 +836,48 @@ extension NSColor {
     /// DVTSourceTextSelectionColor.
     static let sourceSelection = theme(NSColor(srgbRed: 0.642038, green: 0.802669, blue: 0.999195, alpha: 1),
                                        NSColor(srgbRed: 0.317647, green: 0.356862, blue: 0.439215, alpha: 1))
+
+    /// WCAG's relative luminance.
+    var luminance: CGFloat {
+        guard let rgb = usingColorSpace(.sRGB) else { return 0 }
+        func linear(_ v: CGFloat) -> CGFloat { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
+    }
+
+    /// WCAG's contrast ratio, 1 to 21.
+    func contrast(with other: NSColor) -> CGFloat {
+        let (a, b) = (luminance, other.luminance)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// Mixed towards black on a light background or white on a dark one, as little as gives
+    /// `ratio` on it, so it keeps its hue; as it is when it has that already.
+    func contrasting(with background: NSColor, by ratio: CGFloat) -> NSColor {
+        // Where black and white contrast equally with a colour.
+        let ink: NSColor = background.luminance > 0.179 ? .black : .white
+        var mixed = self
+        for step in 1...20 where mixed.contrast(with: background) < ratio {
+            mixed = blended(withFraction: CGFloat(step) / 20, of: ink) ?? ink
+        }
+        return mixed
+    }
+
+    /// `contrasting(with:by:)` on the text's background in that appearance.
+    func contrasting(in appearance: NSAppearance.Name, by ratio: CGFloat) -> NSColor {
+        var background = NSColor.white
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            background = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? background
+        }
+        return contrasting(with: background, by: ratio)
+    }
+}
+
+extension NSAppearance {
+    /// Increase Contrast is on: its appearances answer only `bestMatch(from:)`.
+    var increasesContrast: Bool {
+        let all: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        return bestMatch(from: all).map([.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains) == true
+    }
 }
 
 /// The editor's syntax colours: Settings' Colour Theme. Text, braces and brackets are plain in all of them.
@@ -850,12 +916,22 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// With Increase Contrast, each raised to WCAG's enhanced 7:1 on the text's background: the
+    /// themes' own colours fall short of the HIG's 4.5:1 in places (Overleaf's comments, 4.2:1).
     private static func rgb(_ light: UInt32, _ dark: UInt32) -> NSColor {
         func srgb(_ hex: UInt32) -> NSColor {
             NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
         }
         let light = srgb(light), dark = srgb(dark)
-        return NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+        let raised = (light: light.contrasting(in: .aqua, by: 7), dark: dark.contrasting(in: .darkAqua, by: 7))
+        return NSColor(name: nil) { appearance in
+            switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
+            case .darkAqua: dark
+            case .accessibilityHighContrastAqua: raised.light
+            case .accessibilityHighContrastDarkAqua: raised.dark
+            default: light
+            }
+        }
     }
 
     /// Overleaf's source editor themes (services/web/frontend/js/features/source-editor/themes/cm6/): "textmate",

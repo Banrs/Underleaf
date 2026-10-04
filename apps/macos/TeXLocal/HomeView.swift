@@ -101,10 +101,13 @@ struct HomeView: View {
         if !query.isEmpty {
             ContentUnavailableView.search(text: query)
         } else {
-            ContentUnavailableView(
-                "No Projects Yet", systemImage: "text.document",
-                description: Text("Choose a template above, or open or drop a folder, .tex file or .zip.")
-            )
+            ContentUnavailableView {
+                Label("No Projects Yet", systemImage: "text.document")
+            } description: {
+                Text("Choose a template above, or open or drop a folder, .tex file or .zip.")
+            } actions: {
+                Button("Open…") { app.openingProject = true }
+            }
         }
     }
 

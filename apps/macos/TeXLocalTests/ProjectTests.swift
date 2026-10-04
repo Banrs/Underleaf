@@ -692,3 +692,39 @@ final class ProjectFlowTests {
         await app.close()
     }
 }
+
+/// Move to Trash that Edit › Undo takes back, as Finder's does.
+@MainActor
+struct UndoableTrashTests {
+    @Test(.timeLimit(.minutes(1)))
+    func undoPutsATrashedItemBackAndRedoTrashesItAgain() async throws {
+        let files = FileManager.default
+        let url = files.temporaryDirectory.appending(path: "undo-\(UUID().uuidString.prefix(8)).tex")
+        try "text".write(to: url, atomically: false, encoding: .utf8)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        var listed = 0
+        // Not kept here: the undo manager's entries keep it, as in the app.
+        var item: UndoableTrash? = UndoableTrash(original: url, name: url.lastPathComponent, undoManager: undo,
+                                 trash: { item in (try? item.recycle()) != nil },
+                                 changed: { listed += 1 }, failed: { title, _ in Issue.record("\(title)") })
+        undo.beginUndoGrouping()
+        await item?.moveToTrash()
+        undo.endUndoGrouping()
+        item = nil
+        #expect(!files.fileExists(atPath: url.path) && undo.undoActionName == "Move to Trash")
+
+        undo.undo()
+        try await waitUntil { files.fileExists(atPath: url.path) && listed == 1 }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "text" && undo.canRedo && listed == 1)
+
+        undo.redo()
+        try await waitUntil { !files.fileExists(atPath: url.path) && listed == 2 }
+        #expect(undo.canUndo)
+
+        // Leave the Trash as it was.
+        undo.undo()
+        try await waitUntil { files.fileExists(atPath: url.path) }
+        try files.removeItem(at: url)
+    }
+}

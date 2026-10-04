@@ -59,6 +59,9 @@ struct FormatPanel: View {
 
     /// Notes' list markers sit a word space from their text.
     private static let markerGap: CGFloat = 4
+    /// The UI kit's menu (macOS 27, Menus, Regular): an item's highlight 5 pt in from the edge with
+    /// 8 pt corners, its content and the separators 16 pt in, the first item 6 pt down.
+    private static let highlightInset: CGFloat = 5, highlightRadius: CGFloat = 8, contentInset: CGFloat = 16, menuTop: CGFloat = 6
 
     var body: some View {
         let headings = project.headingStyles
@@ -71,13 +74,14 @@ struct FormatPanel: View {
             }
             .padding(.vertical, 8)
             Divider()
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Self.contentInset)
             VStack(spacing: 0) {
                 ForEach(headings.levels, id: \.self) { level in
                     row(level, marker: headings.marker(level), layout: layout)
                 }
             }
-            .padding(6)
+            .padding(.horizontal, Self.highlightInset)
+            .padding(.vertical, Self.menuTop)
             .onKeyPress(.downArrow) { move(by: 1, in: headings.levels) }
             .onKeyPress(.upArrow) { move(by: -1, in: headings.levels) }
             .onKeyPress(.return) { chooseFocused() }
@@ -121,8 +125,9 @@ struct FormatPanel: View {
         let font = layout.font(level)
         return Button { choose(level) } label: {
             HStack(spacing: 6) {
+                // The kit's checkmark: bold at the menu's size.
                 Image(systemName: "checkmark")
-                    .font(.body.weight(.semibold))
+                    .font(.body.bold())
                     .opacity(project.headingLevel == level ? 1 : 0)
                 HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
                     if layout.markers > 0 {
@@ -135,11 +140,11 @@ struct FormatPanel: View {
                 .font(font)
                 Spacer(minLength: 12)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, Self.contentInset - Self.highlightInset)
             .frame(height: layout.pitch)
             // A menu's highlight, the system's, which follows the pointer and the arrow keys.
             .foregroundStyle(lit ? Color(nsColor: .selectedMenuItemTextColor) : .primary)
-            .background(lit ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: 6))
+            .background(lit ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: Self.highlightRadius))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -200,7 +205,7 @@ struct FormatPanel: View {
             }
             self.fonts = fonts
             self.shapes = shapes
-            // The rows' even pitch, as Notes': the largest line and a little.
+            // The rows' even pitch, as Notes': the largest line and a little, and at least the kit's 24 pt item.
             let line = fonts.values.map { $0.ascender - $0.descender + $0.leading }.max() ?? 16
             pitch = max(24, (line + 4).rounded(.up))
             markers = headings.levels.compactMap { level in
