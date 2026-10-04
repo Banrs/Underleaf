@@ -285,9 +285,12 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     var canFindNext: Bool { view.document != nil && (!matches.isEmpty || !(PDFFind.shared ?? "").isEmpty) }
 
     func findNext(_ step: Int) {
-        if !matches.isEmpty, PDFFind.normalize(findText) == query { return self.step(step) }
-        let text = findText.isEmpty ? PDFFind.shared ?? "" : findText
+        // Keep text typed before its debounce; otherwise follow the shared find text.
+        let local = PDFFind.normalize(findText)
+        let text = local != (search?.query ?? query) ? local : PDFFind.normalize(PDFFind.shared ?? findText)
         guard !text.isEmpty else { return }
+        if !matches.isEmpty, text == query, search == nil { return self.step(step) }
+        PDFFind.shared = text
         finding = true
         findText = text
         startFrom = anchor.map { ($0, step) }

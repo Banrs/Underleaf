@@ -414,6 +414,7 @@ struct PDFFitTests {
 
 /// Find in PDF across a rebuild, off screen.
 @MainActor
+@Suite(.serialized)
 struct PDFFindTests {
     init() {
         // The system's find text is the user's: the tests keep their own.
@@ -463,6 +464,23 @@ struct PDFFindTests {
         try await waitUntil(timeout: .seconds(5)) { controller.matches.count == 3 }
         // Nothing before the first page's: round to the last.
         #expect(controller.matchIndex == 2)
+    }
+
+    /// A new shared find term replaces an earlier PDF search; a just-typed PDF term wins over the older pasteboard.
+    @Test(arguments: [1, -1]) func findNextUsesTheLatestSharedOrTypedText(_ step: Int) async throws {
+        let controller = try targets()
+        controller.findText = "alpha"
+        controller.findTyped()
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "alpha" && controller.matches.count == 1 }
+        PDFFind.shared = "target"
+        controller.findNext(step)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "target" && controller.matches.count == 3 }
+        #expect(controller.findText == "target")
+
+        controller.findText = "gamma" // Its typing debounce has not fired yet.
+        controller.findNext(step)
+        try await waitUntil(timeout: .seconds(5)) { controller.query == "gamma" && controller.matches.count == 1 }
+        #expect(controller.findText == "gamma" && PDFFind.shared == "gamma")
     }
 
     /// Jump to Selection brings the PDF's selection into view, and is there only with one.
