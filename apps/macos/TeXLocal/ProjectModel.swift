@@ -112,10 +112,7 @@ final class ProjectModel {
         // The last build's PDF comes back, and automatic builds paused for it resume.
         texpresso.onEnded = { [weak self] in
             guard let self else { return }
-            if livePDF {
-                livePDF = false
-                Task { await self.showPDFOnDisk() }
-            }
+            if livePDF { Task { await self.endLivePDF() } }
             if autoCompile { Task { await self.compile(auto: true) } }
         }
     }
@@ -179,7 +176,8 @@ final class ProjectModel {
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.forwardSync = { [weak self] in
-            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync() } } : nil
+            // SyncTeX describes the last build, not live pages.
+            self?.hasPDF == true && self?.isLaTeX == true && self?.livePDF == false ? { Task { await self?.forwardSync() } } : nil
         }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
@@ -242,22 +240,33 @@ final class ProjectModel {
 
     /// The main file's PDF on disk, unless a later load replaces this one. A no-op
     /// build's PDF is already shown: reopening every page would lose PDFKit's state.
-    @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true) async -> Bool {
+    /// `replacingLive`, it takes the live document's place, which stays until then.
+    @discardableResult private func showPDFOnDisk(reloadIfUnchanged: Bool = true, replacingLive: Bool = false) async -> Bool {
         // A build during live preview keeps its PDF for after it.
-        guard !livePDF else { return true }
+        guard !livePDF || replacingLive else { return true }
         pdfLoad?.cancel()
         let load = Task {
-            guard !closed, !livePDF, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
+            guard !closed, !livePDF || replacingLive, let path = try? await core.call("pdf_path", ["id": id], as: String.self),
                   !Task.isCancelled, !closed else { return false }
             let url = URL(fileURLWithPath: path)
             if !reloadIfUnchanged, url == pdfURL { return true }
             guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed else { return false }
+            livePDF = false
             pdfURL = url
             pdf.show(document)
             return true
         }
         pdfLoad = load
         return await load.value
+    }
+
+    /// Live preview over, the last build's PDF, or the pane's empty state without one: the live
+    /// document isn't a build's, to save or sync with. A new live session's document wins.
+    private func endLivePDF() async {
+        guard !(await showPDFOnDisk(replacingLive: true)), livePDF, !texpresso.active, !closed else { return }
+        livePDF = false
+        pdfURL = nil
+        pdf.clear()
     }
 
     /// TeXpresso's document in the PDF pane, as a build's replaces the last; the pane shows on
@@ -739,7 +748,7 @@ final class ProjectModel {
 
     /// Each sync replaces the one before; the PDF pane shows the spot once it has its width.
     func forwardSync() async {
-        guard let path = openPath else { return }
+        guard let path = openPath, !livePDF else { return }
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
         syncTask?.cancel()
         let task = Task {
@@ -748,7 +757,7 @@ final class ProjectModel {
             let shown = pdf.shownVersion
             do {
                 let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
-                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown else { return }
+                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, !livePDF else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
                 if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }

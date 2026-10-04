@@ -354,6 +354,45 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's
+    /// patched build does, and reads edits until it's stopped.
+    private func liveTeXpresso() throws -> URL {
+        let folder = files.temporaryDirectory.appending(path: "texpresso-\(UUID().uuidString)")
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        folders.append(folder)
+        let page = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        page.string = "live"
+        let pdf = folder.appending(path: "live.pdf")
+        try page.dataWithPDF(inside: page.bounds).write(to: pdf)
+        let script = folder.appending(path: "texpresso")
+        try """
+        #!/bin/sh
+        cp '\(pdf.path)' "$TEXPRESSO_PDF_OUTPUT"
+        printf '["pdf","%s",1]\\n' "$TEXPRESSO_PDF_OUTPUT"
+        exec cat > /dev/null
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    /// Live pages aren't a build's: a double-click in the source doesn't look them up in SyncTeX,
+    /// and stopping without a build's PDF empties the pane rather than leaving them as one.
+    @Test(.timeLimit(.minutes(1)))
+    func livePagesAreNeverTakenForABuilds() async throws {
+        setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
+        defer { unsetenv("TEXLOCAL_TEXPRESSO") }
+        let project = try await opened("\\documentclass{article}\\begin{document}x\\end{document}").project
+        project.startTeXpresso()
+        try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
+            "phase \(project.texpresso.phase), log \(project.texpresso.log)"
+        }
+        #expect(project.editor.textView.forwardSync() == nil)
+        project.stopTeXpresso()
+        try await waitUntil(timeout: .seconds(10)) { !project.livePDF }
+        #expect(!project.hasPDF && project.pdf.view.document == nil && project.pdf.pageCount == 0)
+        await app.close()
+    }
+
     /// A clean no-op build keeps the PDF's pages and closes an empty Issues
     /// panel, while a Log panel stays open.
     @Test(.timeLimit(.minutes(1)))

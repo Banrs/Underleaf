@@ -375,6 +375,19 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if finding { find(findText, keepingPlace: true) }
     }
 
+    /// No PDF, as before the first: the pane shows its empty state.
+    func clear() {
+        shownVersion += 1
+        view.removeMarks()
+        if let document = search?.document {
+            search = nil
+            document.cancelFindString()
+        }
+        view.document = nil
+        (query, matches, matchIndex, limited) = ("", [], 0, false)
+        (page, pageCount) = (0, 0)
+    }
+
     /// Before the page: where a page lands depends on the scale.
     private func restoreZoomIfReady() {
         guard let zoom = restoreZoom, view.document != nil, view.hasShownArea else { return }
