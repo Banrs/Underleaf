@@ -17,6 +17,8 @@ struct TeXLocalApp: App {
             // The app has no help book; the default item would only say so.
             CommandGroup(replacing: .help) {
                 Link("TeXLocal on GitHub", destination: URL(string: "https://github.com/Banrs/Underleaf")!)
+                // Where Apple's apps put their feedback: Help.
+                Link("Report an Issue…", destination: URL(string: "https://github.com/Banrs/Underleaf/issues")!)
             }
         }
     }

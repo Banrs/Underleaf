@@ -108,24 +108,26 @@ struct StatusBar: View {
                 Text(project.noBuildTitle)
             }
             if project.errorCount > 0, project.result?.failed != true {
-                badge("\(project.errorCount)", "xmark.octagon.fill")
-                    .accessibilityLabel(Text("^[\(project.errorCount) error](inflect: true)"))
+                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)")
             }
             if project.warningCount > 0 {
-                badge("\(project.warningCount)", "exclamationmark.triangle.fill")
-                    .accessibilityLabel(Text("^[\(project.warningCount) warning](inflect: true)"))
+                badge("\(project.warningCount)", "exclamationmark.triangle.fill", spoken: "^[\(project.warningCount) warning](inflect: true)")
             }
         }
         .fixedSize()
     }
 
-    private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil) -> some View {
+    /// `spoken` is what the short `title` stands for, as the title itself, so VoiceOver and
+    /// Voice Control name the badge "3 errors", not "3".
+    private func badge(_ title: LocalizedStringKey, _ systemImage: String, _ color: Color? = nil,
+                       spoken: LocalizedStringKey? = nil) -> some View {
         Label {
-            Text(title)
+            if let spoken { Text(title).accessibilityLabel(Text(spoken)) } else { Text(title) }
         } icon: {
             Image(systemName: systemImage)
                 .symbolRenderingMode(color == nil ? .multicolor : nil)
                 .foregroundStyle(color ?? .primary)
+                .accessibilityHidden(true)
         }
         .labelStyle(.titleAndIcon)
     }
