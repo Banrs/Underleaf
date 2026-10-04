@@ -180,11 +180,9 @@ struct SourceEditorTests {
     /// narrows: TextKit 2 estimates what's above it, and the width changes that. The
     /// lines wrap at once, at the width AppKit's tracking gives as a live resize ends.
     @Test(arguments: [false, true]) func aRevealedLineStaysAtTheTop(syntax: Bool) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
-        editor.shown = true
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
         open((1...6000).map { (syntax ? "\\section{Line \($0)} " : "Line \($0) ")
             + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         /// From the top of what shows to the line's paragraph.
@@ -204,11 +202,9 @@ struct SourceEditorTests {
     /// A file shown again comes back scrolled where it was left, as its caret does, while its
     /// text is as it was; changed since, it opens at its top.
     @Test func aFileShownAgainIsWhereItWasLeft() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
-        editor.shown = true
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
         let long = (1...2000).map { "Line \($0)" }.joined(separator: "\n")
         open(long, caret: 0, path: "a.tex")
         editor.reveal(line: 1200, atTop: true, focus: false)
@@ -249,11 +245,9 @@ struct SourceEditorTests {
     /// Jump to Selection centres the selection, far down a long file whose heights TextKit
     /// has only estimated.
     @Test func jumpToSelectionCentresIt() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
-        editor.shown = true
+        // Held to the end: the text lays out in it.
+        let window = inWindow()
+        defer { withExtendedLifetime(window) {} }
         open((1...6000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         let start = text.document.lineStart(5000)
         text.setSelectedRange(NSRange(location: start, length: 4))
@@ -332,8 +326,7 @@ struct SourceEditorTests {
     /// A file opened with the keyboard asked for takes it once the editor shows,
     /// as a project opens; one chosen in the sidebar leaves it where it is.
     @Test func theKeyboardFollowsTheOpen() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = Self.window()
         // Something else with the keyboard, as the Files list.
         let list = NSTextView()
         window.contentView!.addSubview(list)
@@ -408,8 +401,7 @@ struct SourceEditorTests {
     /// Shown again with fewer rows, in another size, or with none, the list never
     /// asks for a row it no longer has.
     @Test func theCompletionListKeepsItsRowsInStep() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = Self.window()
         let list = CompletionList()
         let rows = (0..<20).map { (label: "\\item\($0)", kind: CompletionKind.command) }
         func show(_ count: Int, size: CGFloat) {
@@ -428,8 +420,7 @@ struct SourceEditorTests {
     /// The selected row is drawn as the focused list's, the accent's, from the first show,
     /// though the document keeps the keyboard.
     @Test func theCompletionListSelectsAsTheFocusedList() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = Self.window()
         let list = CompletionList()
         list.show((0..<3).map { (label: "\\item\($0)", kind: CompletionKind.command) }, font: .monospacedSystemFont(ofSize: 13, weight: .regular),
                   theme: .overleaf, under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
@@ -567,12 +558,15 @@ struct SourceEditorTests {
     }
 
     private func inWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = Self.window()
         editor.scrollView.frame = window.contentView!.bounds
         window.contentView!.addSubview(editor.scrollView)
         editor.shown = true
         return window
+    }
+
+    private static func window() -> NSWindow {
+        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
     }
 
     /// The colour the editor draws `word` in, once laid out.
