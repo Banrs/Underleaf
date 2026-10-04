@@ -106,8 +106,9 @@ final class ProjectModel {
         }
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
+        // Automatic builds paused for it.
         texpresso.onEnded = { [weak self] in
-            guard let self, !closed, liveRestartTask == nil, autoCompile else { return }
+            guard let self, autoCompile else { return }
             Task { await self.compile(auto: true) }
         }
     }
@@ -526,11 +527,9 @@ final class ProjectModel {
 
     /// A request during a build queues one follow-up. Automatic failures open
     /// issues when the new build has no PDF; clean builds close empty issues.
+    /// Automatic ones wait while TeXpresso previews, without changing the preference.
     func compile(auto: Bool = false) async {
-        guard texAvailable, !closed else { return }
-        // Keep autosave and the preference; automatic PDF work resumes when
-        // live preview stops. An explicit Compile always works as before.
-        guard !auto || !texpresso.active && liveRestartTask == nil else { return }
+        guard texAvailable, !closed, !auto || !livePreviewing else { return }
         if compiling {
             compileQueued = (compileQueued ?? true) && auto
             return
@@ -541,7 +540,7 @@ final class ProjectModel {
         // Through the mutation lane, after the settings and renames asked for before.
         let built = edits
         let saved = await flush()
-        if saved, !stopRequested, !closed, !auto || !texpresso.active && liveRestartTask == nil {
+        if saved, !stopRequested, !closed, !auto || !livePreviewing {
             do {
                 let result = try await core.call("compile", ["id": id], as: CompileResult.self)
                 // The PDF is the main file's now: a main-file change stopped any build of the old one.
@@ -631,11 +630,22 @@ final class ProjectModel {
     }
 
     func setMainFile(_ path: String) async {
-        let live = texpresso.active ? liveIntent : nil
-        if await patchSettings(["mainFile": path]), !closed { await mainFileChanged(restartLive: live == liveIntent) }
+        if await keepingLive({ await patchSettings(["mainFile": path]) }), !closed { await mainFileChanged() }
     }
 
     // ---------- TeXpresso live preview ----------
+
+    private var livePreviewing: Bool { texpresso.active || liveRestartTask != nil }
+
+    /// The core ends a live session when a rename or a new main file changes what it previews.
+    /// One live before `change` starts again after it, unless stopped or started meanwhile.
+    @discardableResult
+    private func keepingLive(_ change: () async -> Bool) async -> Bool {
+        let live = texpresso.active ? liveIntent : nil
+        let changed = await change()
+        if changed, live == liveIntent, !closed { restartTeXpresso() }
+        return changed
+    }
 
     private var liveFiles: [TeXpressoFile] {
         guard editsText, let document = editor.document, document.path == openPath else { return [] }
@@ -680,29 +690,24 @@ final class ProjectModel {
         }
     }
 
+    /// Another app's change to an include the editor sent replaces TeXpresso's copy; the open
+    /// file's is the editor's, even while it asks about the change. A path whose read fails waits
+    /// for the next change.
     private func refreshTeXpressoDisk() {
         liveDiskTask?.cancel()
         liveDiskTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
-            guard let self, !closed, !Task.isCancelled, texpresso.active else { return }
-            let paths = liveDiskPaths
-            for path in paths where isTextFile(path) {
+            guard let self else { return }
+            for path in liveDiskPaths {
                 guard !closed, !Task.isCancelled, texpresso.active else { return }
-                // The editor owns its current snapshot, including during a
-                // disk-conflict alert. Other previously edited includes must
-                // receive their new disk text to replace TeXpresso's override.
-                if path == openPath {
-                    liveDiskPaths.remove(path)
-                    continue
-                }
-                if let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self),
-                   !closed, !Task.isCancelled, path != openPath {
+                if path != openPath, isTextFile(path) {
+                    guard let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self) else { continue }
+                    guard !Task.isCancelled, path != openPath else { continue }
                     texpresso.update(TeXpressoFile(path: path, text: file.text))
-                    liveDiskPaths.remove(path)
                 }
+                liveDiskPaths.remove(path)
             }
             guard !closed, !Task.isCancelled else { return }
-            liveDiskPaths.subtract(paths.filter { !isTextFile($0) })
             rescanTeXpresso()
         }
     }
@@ -798,39 +803,42 @@ final class ProjectModel {
 
     private func performRename(_ from: String, to: String) async -> RenameResult? {
         guard to != from, await saveEdits() else { return nil }
-        let live = texpresso.active ? liveIntent : nil
         var reopen: String?
         var mainChanged = false
         var renamed: RenameResult?
-        _ = await mutate("Couldn’t Rename “\(from.fileName)”") { model in
-            let result = try await model.core.call("rename_entry", ["id": model.id, "from": from, "to": to], as: RenameResult.self)
-            guard !model.closed else { return false }
-            renamed = result
-            model.editor.rename(from: result.from, to: result.to)
-            // The open file may move with its folder. The editor keeps its
-            // text; only the save path changes, so the old path can't return.
-            if let was = model.openPath, case let now = remapPath(was, from: result.from, to: result.to), now != was {
-                model.openPath = now
-                model.openURL = model.url(now)
-                // Its new kind may edit or preview it differently.
-                if isTextFile(now) != isTextFile(was) || isLaTeXFile(now) != isLaTeXFile(was) { reopen = now }
+        // Restarted once the editor and tree have the new names.
+        await keepingLive {
+            let renaming = await mutate("Couldn’t Rename “\(from.fileName)”") { model in
+                let result = try await model.core.call("rename_entry", ["id": model.id, "from": from, "to": to], as: RenameResult.self)
+                guard !model.closed else { return false }
+                renamed = result
+                model.editor.rename(from: result.from, to: result.to)
+                // The open file may move with its folder. The editor keeps its
+                // text; only the save path changes, so the old path can't return.
+                if let was = model.openPath, case let now = remapPath(was, from: result.from, to: result.to), now != was {
+                    model.openPath = now
+                    model.openURL = model.url(now)
+                    // Its new kind may edit or preview it differently.
+                    if isTextFile(now) != isTextFile(was) || isLaTeXFile(now) != isLaTeXFile(was) { reopen = now }
+                }
+                mainChanged = result.mainFile != model.settings?.mainFile
+                model.settings = model.settings.map {
+                    ProjectSettings(mainFile: result.mainFile, engine: $0.engine,
+                                    shellEscape: $0.shellEscape, stopOnFirstError: $0.stopOnFirstError)
+                }
+                return true
             }
-            mainChanged = result.mainFile != model.settings?.mainFile
-            model.settings = model.settings.map {
-                ProjectSettings(mainFile: result.mainFile, engine: $0.engine,
-                                shellEscape: $0.shellEscape, stopOnFirstError: $0.stopOnFirstError)
+            // Opening flushes edits, so it must run after this mutation releases the queue.
+            guard !closed else { return false }
+            if let reopen, openPath == reopen, await flush(), !closed, openPath == reopen {
+                clearOpenFile()
+                await open(reopen, focus: false)
             }
-            return true
+            await reloadTree()
+            return renaming
         }
-        // Opening flushes edits, so it must run after this mutation releases the queue.
         guard !closed else { return nil }
-        if let reopen, openPath == reopen, await flush(), !closed, openPath == reopen {
-            clearOpenFile()
-            await open(reopen, focus: false)
-        }
-        await reloadTree()
-        if live == liveIntent, !closed { restartTeXpresso() }
-        if mainChanged, !closed { await mainFileChanged() }
+        if mainChanged { await mainFileChanged() }
         return renamed
     }
 
@@ -840,12 +848,7 @@ final class ProjectModel {
         let item = UndoableTrash(
             original: original, name: path.fileName, undoManager: app?.undoManager,
             trash: { [weak self] item in await self?.trashEntry(path, item) ?? false },
-            changed: { [weak self] in
-                guard let self else { return }
-                let live = texpresso.active ? liveIntent : nil
-                await reloadTree()
-                if live == liveIntent, !closed { restartTeXpresso() }
-            },
+            changed: { [weak self] in await self?.reloadTree() },
             failed: { [weak self] title, error in self?.report(error, title) })
         await item.moveToTrash()
         if !closed { await reloadTree() }
@@ -853,8 +856,7 @@ final class ProjectModel {
 
     /// In the lane, so it follows the saves and renames asked for before it.
     private func trashEntry(_ path: String, _ item: UndoableTrash) async -> Bool {
-        let live = texpresso.active ? liveIntent : nil
-        let deleted = await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
+        await mutate("Couldn’t Move “\(path.fileName)” to the Trash") { model in
             // Saved first, so an autosave cannot recreate the deleted file.
             repeat {
                 guard await model.write() else { return false }
@@ -873,8 +875,6 @@ final class ProjectModel {
             if let open = model.openPath, open == path || open.hasPrefix(path + "/") { model.clearOpenFile() }
             return true
         }
-        if deleted, live == liveIntent, !closed { restartTeXpresso() }
-        return deleted
     }
 
     /// No file editing: the editor may still hold the old text, but nothing saves or analyses it.
@@ -890,10 +890,10 @@ final class ProjectModel {
 
     /// The new main file's PDF, if it has one, replaces the old one's; a build of
     /// the old one stops (the core reports it stopped) and a build of the new one follows.
-    private func mainFileChanged(restartLive: Bool = false) async {
+    private func mainFileChanged() async {
         analyze()
         stopCompile()
-        if restartLive || texpresso.active || liveRestartTask != nil { restartTeXpresso() }
+        if texpresso.active { restartTeXpresso() }
         await showPDFOnDisk()
         if !closed { await compile(auto: true) }
     }
