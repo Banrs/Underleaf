@@ -106,6 +106,9 @@ final class ProjectModel {
         texpresso = TeXpressoSession(id: id) { command, arguments in
             try await Core.shared.call(command, arguments, as: TeXpressoStatus.self)
         }
+        texpresso.pdfCall = { arguments in
+            try await Core.shared.call("texpresso_pdf", arguments, as: TeXpressoPDF.self)
+        }
         texpresso.onFailure = { [weak self] in self?.showTeXpressoLog() }
         texpresso.onOwnershipLost = { [weak self] in self?.cancelTeXpressoWork() }
         texpresso.onPDF = { [weak self] in self?.showLivePDF($0) }
@@ -176,8 +179,7 @@ final class ProjectModel {
         }
         editor.textView.fileDrop = { [weak self] in self?.dropped($0) }
         editor.textView.forwardSync = { [weak self] in
-            // SyncTeX describes the last build, not live pages.
-            self?.hasPDF == true && self?.isLaTeX == true && self?.livePDF == false ? { Task { await self?.forwardSync() } } : nil
+            self?.hasPDF == true && self?.isLaTeX == true ? { Task { await self?.forwardSync() } } : nil
         }
         do {
             settings = try await core.call("get_settings", ["id": id], as: ProjectSettings.self)
@@ -730,8 +732,12 @@ final class ProjectModel {
         liveDiskTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
             guard let self else { return }
+            // Our own save of the open file isn't news to TeXpresso, which has the editor's text:
+            // a rescan then, landing as it typesets the edit, stalled it (TeXpresso e8df770).
+            var others = false
             for path in liveDiskPaths {
                 guard !closed, !Task.isCancelled, texpresso.active else { return }
+                if path != openPath { others = true }
                 if path != openPath, isTextFile(path) {
                     guard let file = try? await core.call("read_file", ["id": id, "path": path], as: FileText.self) else { continue }
                     guard !Task.isCancelled, path != openPath else { continue }
@@ -739,7 +745,7 @@ final class ProjectModel {
                 }
                 liveDiskPaths.remove(path)
             }
-            guard !closed, !Task.isCancelled else { return }
+            guard others, !closed, !Task.isCancelled else { return }
             rescanTeXpresso()
         }
     }
@@ -748,16 +754,17 @@ final class ProjectModel {
 
     /// Each sync replaces the one before; the PDF pane shows the spot once it has its width.
     func forwardSync() async {
-        guard let path = openPath, !livePDF else { return }
+        guard let path = openPath else { return }
         let (line, column, word) = (editor.currentLine, editor.currentColumn, editor.currentSyncWord)
+        let live = livePDF, args = syncArguments(["id": id, "file": path, "line": line, "column": column])
         syncTask?.cancel()
         let task = Task {
             guard await saveEdits(), !Task.isCancelled, !closed, openPath == path else { return }
             // Only on the pages it was found in: a rebuild may have moved it.
             let shown = pdf.shownVersion
             do {
-                let loc = try await core.call("synctex_forward", ["id": id, "file": path, "line": line, "column": column], as: ForwardLoc.self)
-                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, !livePDF else { return }
+                let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
+                guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
                 app?.requestPDF(.reveal(loc, word))
             } catch {
                 if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }
@@ -767,16 +774,20 @@ final class ProjectModel {
         await task.value
     }
 
+    /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
+    private func syncArguments(_ arguments: [String: Any]) -> [String: Any] {
+        guard livePDF, let session = texpresso.session else { return arguments }
+        return arguments.merging(["live": true, "session": session]) { $1 }
+    }
+
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.
     func inverseSync(page: Int, x: Double, y: Double, word: SyncTeXWord? = nil) async {
-        // SyncTeX describes the last build, not TeXpresso's pages.
-        guard !livePDF else { return }
         syncTask?.cancel()
         let task = Task {
             do {
                 // A nil word bridges as null, which the core reads as none.
-                let args: [String: Any] = ["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
-                                           "context": word?.context as Any, "contextOffset": word?.contextOffset as Any]
+                let args = syncArguments(["id": id, "page": page, "x": x, "y": y, "word": word?.text as Any, "offset": word?.offset as Any,
+                                          "context": word?.context as Any, "contextOffset": word?.contextOffset as Any])
                 let loc = try await core.call("synctex_inverse", args, as: InverseLoc.self)
                 guard !Task.isCancelled, !closed else { return }
                 await open(loc.file, line: loc.line, column: loc.column)

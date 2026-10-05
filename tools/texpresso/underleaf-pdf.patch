@@ -1,3 +1,453 @@
+diff --git a/src/dvi/Makefile b/src/dvi/Makefile
+index 6036686..e645eb8 100644
+--- a/src/dvi/Makefile
++++ b/src/dvi/Makefile
+@@ -2,7 +2,7 @@ OBJECTS= \
+ 	dvi_context.o dvi_interp.o dvi_prim.o dvi_special.o \
+ 	dvi_scratch.o dvi_fonttable.o dvi_resmanager.o \
+ 	tex_tfm.o tex_fontmap.o tex_vf.o tex_enc.o \
+-  vstack.o pdf_lexer.o
++  vstack.o pdf_lexer.o type1_cff.o
+ 
+ BUILD=../../build
+ DIR=$(BUILD)/frontend
+@@ -17,6 +17,9 @@ $(DIR)/libmydvi.a: $(DIR_OBJECTS)
+ $(DIR)/dvi_resmanager.o: dvi_resmanager.c
+ 	$(CC) -I../include $(shell pkg-config --cflags freetype2) -c -o $@ $<
+ 
++$(DIR)/type1_cff.o: type1_cff.c
++	$(CC) -I../include $(shell pkg-config --cflags freetype2) -c -o $@ $<
++
+ $(DIR)/%.o: %.c
+ 	$(CC) -I../include -c -o $@ $<
+ 
+diff --git a/src/dvi/dvi_prim.c b/src/dvi/dvi_prim.c
+index 92548a0..58d9b6d 100644
+--- a/src/dvi/dvi_prim.c
++++ b/src/dvi/dvi_prim.c
+@@ -136,7 +136,7 @@ void dvi_exec_char(fz_context *ctx, dvi_context *dc, dvi_state *st, uint32_t c,
+       if (dc->dev)
+       {
+         float s = dc->scale * scale_factor.value;
+-        fz_show_glyph(ctx, get_text(ctx, dc), font->fz,
++        fz_show_glyph(ctx, get_text(ctx, dc), dvi_page_font(ctx, font->fz),
+                       fz_pre_scale(dvi_get_ctm(dc, st), s, s), u, c, 0, 0,
+                       FZ_BIDI_LTR, FZ_LANG_UNSET);
+       }
+@@ -345,13 +345,14 @@ void dvi_exec_xdvglyphs(fz_context *ctx, dvi_context *dc, dvi_state *st, fixed_t
+     if (dc->dev)
+     {
+       fz_text *text = get_text(ctx, dc);
++      fz_font *shown = dvi_page_font(ctx, font);
+       for (int i = 0; i < num_glyphs; ++i)
+       {
+         int32_t h = sh + dx[i].value;
+         int32_t v = dy ? sv + dy[i].value : sv;
+         fz_matrix ctm =
+             fz_pre_scale(fz_pre_translate(st->gs.ctm, h * ds, -v * ds), fs, fs);
+-        fz_show_glyph(ctx, text, font, ctm, glyphs[i], 0, 0, 0, FZ_BIDI_LTR,
++        fz_show_glyph(ctx, text, shown, ctm, glyphs[i], 0, 0, 0, FZ_BIDI_LTR,
+                       FZ_LANG_UNSET);
+       }
+     }
+diff --git a/src/dvi/mydvi.h b/src/dvi/mydvi.h
+index e2f2105..fd3cba6 100644
+--- a/src/dvi/mydvi.h
++++ b/src/dvi/mydvi.h
+@@ -210,6 +210,10 @@ dvi_resmanager *dvi_resmanager_new(fz_context *ctx, dvi_reshooks hooks);
+ void dvi_resmanager_free(fz_context *ctx, dvi_resmanager *rm);
+ dvi_font *dvi_resmanager_get_tex_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen);
+ fz_font *dvi_resmanager_get_xdv_font(fz_context *ctx, dvi_resmanager *rm, const char *name, int namelen, int index);
++
++/* The font a glyph of `font` goes to the page in: a CFF copy of a Type 1 font while
++   TEXPRESSO_PDF_OUTPUT is set (type1_cff.c), else the font itself. */
++fz_font *dvi_page_font(fz_context *ctx, fz_font *font);
+ pdf_document *dvi_resmanager_get_pdf(fz_context *ctx, dvi_resmanager *rm, const char *filename);
+ fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
+ void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
+diff --git a/src/dvi/type1_cff.c b/src/dvi/type1_cff.c
+new file mode 100644
+index 0000000..42475d7
+--- /dev/null
++++ b/src/dvi/type1_cff.c
+@@ -0,0 +1,377 @@
++/* Type 1 fonts as CFF, for the PDF written with TEXPRESSO_PDF_OUTPUT.
++ *
++ * MuPDF's PDF writer embeds a Type 1 font program as the descendant of a CID font, which PDF
++ * doesn't allow (CID fonts take CFF or TrueType programs): PDF viewers other than MuPDF draw
++ * the wrong glyphs. The glyphs a Type 1 font shows go to the page through a CFF copy of it
++ * instead, with the same glyphs in the same order, which MuPDF embeds as PDF allows. The Type 1
++ * font still answers the DVI's glyph lookups. */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <math.h>
++#include <ft2build.h>
++#include FT_FREETYPE_H
++#include FT_OUTLINE_H
++#include FT_FONT_FORMATS_H
++#include <mupdf/fitz.h>
++#include "mydvi.h"
++
++typedef struct { unsigned char *data; size_t len, cap; int failed; } cff_buf;
++
++static void put(cff_buf *b, const void *p, size_t n)
++{
++  if (b->failed) return;
++  if (b->len + n > b->cap)
++  {
++    size_t cap = b->cap ? b->cap * 2 : 4096;
++    while (cap < b->len + n) cap *= 2;
++    unsigned char *data = realloc(b->data, cap);
++    if (!data) { b->failed = 1; return; }
++    b->data = data;
++    b->cap = cap;
++  }
++  memcpy(b->data + b->len, p, n);
++  b->len += n;
++}
++
++static void put8(cff_buf *b, int v) { unsigned char c = v; put(b, &c, 1); }
++static void put16(cff_buf *b, int v) { put8(b, v >> 8); put8(b, v); }
++static void put32(cff_buf *b, long v) { put16(b, (int)(v >> 16)); put16(b, (int)(v & 0xffff)); }
++
++/* A Type 2 charstring operand, or a DICT one: the same encodings up to two bytes. */
++static void put_number(cff_buf *b, long v, int dict)
++{
++  if (v >= -107 && v <= 107)
++    put8(b, (int)v + 139);
++  else if (v >= 108 && v <= 1131)
++  {
++    v -= 108;
++    put8(b, (int)(v >> 8) + 247);
++    put8(b, (int)v);
++  }
++  else if (v >= -1131 && v <= -108)
++  {
++    v = -v - 108;
++    put8(b, (int)(v >> 8) + 251);
++    put8(b, (int)v);
++  }
++  else if (dict && (v < -32768 || v > 32767))
++  {
++    put8(b, 29);
++    put32(b, v);
++  }
++  else
++  {
++    if (v < -32768) v = -32768;
++    if (v > 32767) v = 32767;
++    put8(b, 28);
++    put16(b, (int)v);
++  }
++}
++
++/* A DICT offset at a fixed five bytes, so the DICT's size is known before its offsets. */
++static void put_offset(cff_buf *b, long v) { put8(b, 29); put32(b, v); }
++
++/* An INDEX of `count` items, `data` holding them end to end and `ends` where each ends. */
++static void put_index(cff_buf *b, const unsigned char *data, const size_t *ends, int count)
++{
++  put16(b, count);
++  if (count == 0) return;
++  size_t total = ends[count - 1];
++  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
++  put8(b, size);
++  for (int i = 0; i <= count; i++)
++  {
++    size_t offset = (i ? ends[i - 1] : 0) + 1;
++    for (int k = size - 1; k >= 0; k--)
++      put8(b, (int)(offset >> (8 * k)));
++  }
++  put(b, data, total);
++}
++
++static size_t index_size(size_t total, int count)
++{
++  if (count == 0) return 2;
++  int size = total + 1 < 0x100 ? 1 : total + 1 < 0x10000 ? 2 : total + 1 < 0x1000000 ? 3 : 4;
++  return 3 + (size_t)size * (count + 1) + total;
++}
++
++static const char *const standard_strings[391] = {
++  ".notdef", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand",
++  "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period",
++  "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
++  "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E",
++  "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W",
++  "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore",
++  "quoteleft", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
++  "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright",
++  "asciitilde", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section",
++  "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft",
++  "guilsinglright", "fi", "fl", "endash", "dagger", "daggerdbl", "periodcentered", "paragraph",
++  "bullet", "quotesinglbase", "quotedblbase", "quotedblright", "guillemotright", "ellipsis",
++  "perthousand", "questiondown", "grave", "acute", "circumflex", "tilde", "macron", "breve",
++  "dotaccent", "dieresis", "ring", "cedilla", "hungarumlaut", "ogonek", "caron", "emdash",
++  "AE", "ordfeminine", "Lslash", "Oslash", "OE", "ordmasculine", "ae", "dotlessi", "lslash",
++  "oslash", "oe", "germandbls", "onesuperior", "logicalnot", "mu", "trademark", "Eth",
++  "onehalf", "plusminus", "Thorn", "onequarter", "divide", "brokenbar", "degree", "thorn",
++  "threequarters", "twosuperior", "registered", "minus", "eth", "multiply", "threesuperior",
++  "copyright", "Aacute", "Acircumflex", "Adieresis", "Agrave", "Aring", "Atilde", "Ccedilla",
++  "Eacute", "Ecircumflex", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis",
++  "Igrave", "Ntilde", "Oacute", "Ocircumflex", "Odieresis", "Ograve", "Otilde", "Scaron",
++  "Uacute", "Ucircumflex", "Udieresis", "Ugrave", "Yacute", "Ydieresis", "Zcaron", "aacute",
++  "acircumflex", "adieresis", "agrave", "aring", "atilde", "ccedilla", "eacute", "ecircumflex",
++  "edieresis", "egrave", "iacute", "icircumflex", "idieresis", "igrave", "ntilde", "oacute",
++  "ocircumflex", "odieresis", "ograve", "otilde", "scaron", "uacute", "ucircumflex",
++  "udieresis", "ugrave", "yacute", "ydieresis", "zcaron", "exclamsmall", "Hungarumlautsmall",
++  "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior",
++  "parenrightsuperior", "twodotenleader", "onedotenleader", "zerooldstyle", "oneoldstyle",
++  "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle",
++  "sevenoldstyle", "eightoldstyle", "nineoldstyle", "commasuperior", "threequartersemdash",
++  "periodsuperior", "questionsmall", "asuperior", "bsuperior", "centsuperior", "dsuperior",
++  "esuperior", "isuperior", "lsuperior", "msuperior", "nsuperior", "osuperior", "rsuperior",
++  "ssuperior", "tsuperior", "ff", "ffi", "ffl", "parenleftinferior", "parenrightinferior",
++  "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall",
++  "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall",
++  "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall",
++  "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall",
++  "exclamdownsmall", "centoldstyle", "Lslashsmall", "Scaronsmall", "Zcaronsmall",
++  "Dieresissmall", "Brevesmall", "Caronsmall", "Dotaccentsmall", "Macronsmall", "figuredash",
++  "hypheninferior", "Ogoneksmall", "Ringsmall", "Cedillasmall", "questiondownsmall",
++  "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds",
++  "zerosuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior",
++  "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior",
++  "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior",
++  "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior",
++  "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall",
++  "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall", "Eacutesmall",
++  "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall", "Icircumflexsmall",
++  "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall", "Oacutesmall",
++  "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall", "Oslashsmall", "Ugravesmall",
++  "Uacutesmall", "Ucircumflexsmall", "Udieresissmall", "Yacutesmall", "Thornsmall",
++  "Ydieresissmall", "001.000", "001.001", "001.002", "001.003", "Black", "Bold", "Book",
++  "Light", "Medium", "Regular", "Roman", "Semibold",
++};
++
++/* The outline, in 1000 units to the em, as Type 2 operators; the advance leads the first. */
++typedef struct { cff_buf *b; double scale; long x, y; long width; int started; } outline_state;
++
++static long units(outline_state *s, FT_Pos v) { return lround(v * s->scale); }
++
++static void start(outline_state *s)
++{
++  if (!s->started) put_number(s->b, s->width, 0);
++  s->started = 1;
++}
++
++static int move_to(const FT_Vector *to, void *user)
++{
++  outline_state *s = user;
++  long x = units(s, to->x), y = units(s, to->y);
++  start(s);
++  put_number(s->b, x - s->x, 0);
++  put_number(s->b, y - s->y, 0);
++  put8(s->b, 21); /* rmoveto */
++  s->x = x; s->y = y;
++  return 0;
++}
++
++static int line_to(const FT_Vector *to, void *user)
++{
++  outline_state *s = user;
++  long x = units(s, to->x), y = units(s, to->y);
++  put_number(s->b, x - s->x, 0);
++  put_number(s->b, y - s->y, 0);
++  put8(s->b, 5); /* rlineto */
++  s->x = x; s->y = y;
++  return 0;
++}
++
++static void curve(outline_state *s, long x1, long y1, long x2, long y2, long x3, long y3)
++{
++  put_number(s->b, x1 - s->x, 0);
++  put_number(s->b, y1 - s->y, 0);
++  put_number(s->b, x2 - x1, 0);
++  put_number(s->b, y2 - y1, 0);
++  put_number(s->b, x3 - x2, 0);
++  put_number(s->b, y3 - y2, 0);
++  put8(s->b, 8); /* rrcurveto */
++  s->x = x3; s->y = y3;
++}
++
++static int cubic_to(const FT_Vector *c1, const FT_Vector *c2, const FT_Vector *to, void *user)
++{
++  outline_state *s = user;
++  curve(s, units(s, c1->x), units(s, c1->y), units(s, c2->x), units(s, c2->y), units(s, to->x), units(s, to->y));
++  return 0;
++}
++
++/* Type 1 has no quadratic curves; a font FreeType gives one for still converts. */
++static int conic_to(const FT_Vector *c, const FT_Vector *to, void *user)
++{
++  outline_state *s = user;
++  long cx = units(s, c->x), cy = units(s, c->y), x = units(s, to->x), y = units(s, to->y);
++  curve(s, lround(s->x + 2.0 * (cx - s->x) / 3), lround(s->y + 2.0 * (cy - s->y) / 3),
++        lround(x + 2.0 * (cx - x) / 3), lround(y + 2.0 * (cy - y) / 3), x, y);
++  return 0;
++}
++
++/* A Type 1 face as a CFF font program (malloc'd, `*len` bytes), or NULL for another kind of
++ * font, or a failure. Glyph i is the face's glyph i, with its name and advance; hints go. */
++static unsigned char *type1_to_cff(FT_Face face, size_t *len)
++{
++  const char *format = FT_Get_Font_Format(face);
++  if (!format || strcmp(format, "Type 1") || face->num_glyphs < 1 || face->num_glyphs > 0xffff)
++    return NULL;
++
++  int n = face->num_glyphs;
++  double scale = face->units_per_EM ? 1000.0 / face->units_per_EM : 1;
++  int *sids = calloc(n, sizeof *sids);
++  char **custom = calloc(n, sizeof *custom);
++  size_t *string_ends = calloc(n, sizeof *string_ends);
++  size_t *glyph_ends = calloc(n, sizeof *glyph_ends);
++  cff_buf strings = {0}, glyphs = {0}, top = {0}, out = {0};
++  int ncustom = 0, failed = !sids || !custom || !string_ends || !glyph_ends;
++
++  /* Names: standard strings by their SID, the others in the String INDEX. */
++  for (int gid = 1; gid < n && !failed; gid++)
++  {
++    char name[128];
++    if (FT_Get_Glyph_Name(face, gid, name, sizeof name) || !*name)
++      snprintf(name, sizeof name, "g%d", gid);
++    int sid = -1;
++    for (int k = 0; k < 391 && sid < 0; k++)
++      if (!strcmp(standard_strings[k], name)) sid = k;
++    for (int k = 0; k < ncustom && sid < 0; k++)
++      if (!strcmp(custom[k], name)) sid = 391 + k;
++    if (sid < 0)
++    {
++      custom[ncustom] = strdup(name);
++      if (!custom[ncustom]) { failed = 1; break; }
++      put(&strings, name, strlen(name));
++      string_ends[ncustom] = strings.len;
++      sid = 391 + ncustom++;
++    }
++    sids[gid] = sid;
++  }
++
++  /* Charstrings, from FreeType's outlines in font units. */
++  FT_Outline_Funcs funcs = { move_to, line_to, conic_to, cubic_to, 0, 0 };
++  for (int gid = 0; gid < n && !failed; gid++)
++  {
++    outline_state s = { &glyphs, scale, 0, 0, 0, 0 };
++    if (!FT_Load_Glyph(face, gid, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP))
++    {
++      s.width = lround(face->glyph->metrics.horiAdvance * scale);
++      if (face->glyph->format == FT_GLYPH_FORMAT_OUTLINE)
++        FT_Outline_Decompose(&face->glyph->outline, &funcs, &s);
++    }
++    start(&s);
++    put8(&glyphs, 14); /* endchar */
++    glyph_ends[gid] = glyphs.len;
++  }
++
++  const char *ps_name = FT_Get_Postscript_Name(face);
++  if (!ps_name || !*ps_name) ps_name = "Type1";
++  size_t name_len = strlen(ps_name);
++  size_t name_end = name_len;
++
++  /* The Top DICT: everything after it is laid out from its size. */
++  long bbox[4] = { lround(face->bbox.xMin * scale), lround(face->bbox.yMin * scale),
++                   lround(face->bbox.xMax * scale), lround(face->bbox.yMax * scale) };
++  cff_buf bbox_ops = {0};
++  for (int k = 0; k < 4; k++) put_number(&bbox_ops, bbox[k], 1);
++  put8(&bbox_ops, 5); /* FontBBox */
++  size_t top_len = bbox_ops.len + 6 + 6 + 11;
++  unsigned char private_dict[] = { 139, 20, 139, 21 }; /* defaultWidthX 0, nominalWidthX 0 */
++
++  size_t charset_at = 4 + index_size(name_len, 1) + index_size(top_len, 1)
++                      + index_size(strings.len, ncustom) + index_size(0, 0);
++  size_t charstrings_at = charset_at + 1 + 2 * (size_t)(n - 1);
++  size_t private_at = charstrings_at + index_size(glyphs.len, n);
++
++  put(&top, bbox_ops.data, bbox_ops.len);
++  put_offset(&top, (long)charset_at); put8(&top, 15);
++  put_offset(&top, (long)charstrings_at); put8(&top, 17);
++  put_offset(&top, (long)sizeof private_dict); put_offset(&top, (long)private_at); put8(&top, 18);
++  size_t top_end = top.len;
++
++  put8(&out, 1); put8(&out, 0); put8(&out, 4); put8(&out, 4); /* Header */
++  put_index(&out, (const unsigned char *)ps_name, &name_end, 1);
++  put_index(&out, top.data, &top_end, 1);
++  put_index(&out, strings.data, string_ends, ncustom);
++  put_index(&out, NULL, NULL, 0); /* Global Subrs */
++  put8(&out, 0); /* charset, format 0 */
++  for (int gid = 1; gid < n; gid++) put16(&out, sids[gid]);
++  put_index(&out, glyphs.data, glyph_ends, n);
++  put(&out, private_dict, sizeof private_dict);
++
++  failed |= strings.failed || glyphs.failed || top.failed || bbox_ops.failed || out.failed
++            || top.len != top_len || out.len != private_at + sizeof private_dict;
++
++  for (int k = 0; k < ncustom; k++) free(custom[k]);
++  free(custom); free(sids); free(string_ends); free(glyph_ends);
++  free(strings.data); free(glyphs.data); free(top.data); free(bbox_ops.data);
++  if (failed)
++  {
++    free(out.data);
++    return NULL;
++  }
++  *len = out.len;
++  return out.data;
++}
++
++/* Each Type 1 font met and its CFF copy (NULL when it couldn't be made), for the process. */
++typedef struct page_font { fz_font *font, *cff; struct page_font *next; } page_font;
++static page_font *page_fonts;
++
++fz_font *dvi_page_font(fz_context *ctx, fz_font *font)
++{
++  static int pdf_output = -1;
++  static page_font *last;
++  if (pdf_output < 0)
++  {
++    const char *path = getenv("TEXPRESSO_PDF_OUTPUT");
++    pdf_output = path && *path;
++  }
++  if (!pdf_output || !font)
++    return font;
++  if (!last || last->font != font)
++  {
++    for (last = page_fonts; last && last->font != font; last = last->next);
++    if (!last)
++    {
++      last = fz_malloc_struct(ctx, page_font);
++      /* Kept, so another font can't come to have its address. */
++      last->font = fz_keep_font(ctx, font);
++      last->next = page_fonts;
++      page_fonts = last;
++      size_t len;
++      unsigned char *data = NULL;
++      FT_Face face = fz_font_ft_face(ctx, font);
++      /* MuPDF's FreeType allocates through the context only while it's locked. */
++      if (face)
++      {
++        fz_ft_lock(ctx);
++        data = type1_to_cff(face, &len);
++        fz_ft_unlock(ctx);
++      }
++      if (data)
++      {
++        fz_buffer *buf = NULL;
++        fz_var(buf);
++        fz_try(ctx)
++        {
++          buf = fz_new_buffer_from_copied_data(ctx, data, len);
++          last->cff = fz_new_font_from_buffer(ctx, fz_font_name(ctx, font), buf, 0, 0);
++        }
++        fz_always(ctx)
++          fz_drop_buffer(ctx, buf);
++        fz_catch(ctx)
++          fz_warn(ctx, "%s stays Type 1 in the PDF: %s", fz_font_name(ctx, font), fz_caught_message(ctx));
++        free(data);
++      }
++    }
++  }
++  return last->cff ? last->cff : font;
++}
 diff --git a/src/frontend/driver.c b/src/frontend/driver.c
 index 9337b08..f67bcf3 100644
 --- a/src/frontend/driver.c
@@ -49,16 +499,37 @@ index 05fdd1c..a35979d 100644
  void editor_reset_sync(void);
  void editor_notify_file_opened(int index, const char *path, int len);
 diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..ee1e1ae 100644
+index c202294..b7819d8 100644
 --- a/src/frontend/main.c
 +++ b/src/frontend/main.c
-@@ -151,11 +151,58 @@ static int repaint_on_resize(void *data, SDL_Event *event)
+@@ -151,11 +151,82 @@ static int repaint_on_resize(void *data, SDL_Event *event)
  
  /* Document processing */
  
 +/* TEXPRESSO_PDF_OUTPUT: the document runs to its end, then every page is written there. */
 +static const char *pdf_output;
 +static bool pdf_dirty;
++
++static void export_synctex(fz_context *ctx, ui_state *ui)
++{
++  fz_buffer *buf = NULL;
++  send(synctex, ui->eng, &buf);
++  size_t len = strlen(pdf_output);
++  if (!buf || len < 4 || len > 4000 || strcmp(pdf_output + len - 4, ".pdf"))
++    return;
++  char path[4200], part[4200];
++  snprintf(path, sizeof path, "%.*s.synctex", (int)(len - 4), pdf_output);
++  snprintf(part, sizeof part, "%s.part", path);
++  FILE *f = fopen(part, "wb");
++  if (!f)
++    return;
++  bool written = fwrite(buf->data, 1, buf->len, f) == buf->len;
++  if (fclose(f) != 0 || !written || rename(part, path) != 0)
++  {
++    fprintf(stderr, "[pdf] couldn't write %s\n", path);
++    remove(part);
++  }
++}
 +
 +static void export_pdf(fz_context *ctx, ui_state *ui)
 +{
@@ -94,6 +565,9 @@ index c202294..ee1e1ae 100644
 +    remove(part);
 +    return;
 +  }
++  // Its SyncTeX beside it, as live.synctex for live.pdf, for the editor's jumps between
++  // source and pages; written first, so a PDF never comes without its own.
++  export_synctex(ctx, ui);
 +  if (rename(part, pdf_output) == 0)
 +    editor_pdf(pdf_output, pages);
 +  else
@@ -111,7 +585,7 @@ index c202294..ee1e1ae 100644
    if (send(is_finishing, ui->eng))
      return true;
  
-@@ -190,6 +237,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
+@@ -190,6 +261,7 @@ static bool advance_engine(fz_context *ctx, ui_state *ui)
    {
      if (!send(step, ui->eng, ctx, false))
        break;
@@ -119,7 +593,7 @@ index c202294..ee1e1ae 100644
  
      steps -= 1;
      need = need_advance(ctx, ui);
-@@ -1170,6 +1218,9 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1170,6 +1242,9 @@ bool texpresso_main(struct persistent_state *ps)
    editor_set_protocol(ps->protocol);
    editor_set_line_output(ps->line_output);
    pstate = ps;
@@ -129,7 +603,17 @@ index c202294..ee1e1ae 100644
  
    struct fullscreen_state fs = {
      .has_backup = false,
-@@ -1354,6 +1405,13 @@ bool texpresso_main(struct persistent_state *ps)
+@@ -1334,6 +1409,9 @@ bool texpresso_main(struct persistent_state *ps)
+       }
+     }
+     if (n == 0) stdin_eof = 1;
++    // Writing a PDF for an editor, whose pipe closing means it has gone (even unexpectedly).
++    if (stdin_eof && pdf_output)
++      break;
+ 
+     if (send(end_changes, ui->eng, ps->ctx))
+     {
+@@ -1354,6 +1432,13 @@ bool texpresso_main(struct persistent_state *ps)
        if (ui->page >= before_page_count && ui->page < after_page_count)
          schedule_event(RELOAD_EVENT);
  

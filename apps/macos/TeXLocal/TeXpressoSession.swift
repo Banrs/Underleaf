@@ -13,6 +13,13 @@ nonisolated struct TeXpressoStatus: Decodable, Sendable, Equatable {
     let pdfVersion: Int
 }
 
+/// The status's document fields alone, which the core answers without the log.
+nonisolated struct TeXpressoPDF: Decodable, Sendable {
+    let running: Bool
+    let pdf: String?
+    let pdfVersion: Int
+}
+
 nonisolated struct TeXpressoFile: Sendable {
     let path: String
     let text: String
@@ -26,6 +33,7 @@ nonisolated struct TeXpressoFile: Sendable {
 final class TeXpressoSession {
     enum Phase { case stopped, starting, running, stopping }
     typealias Call = @MainActor (String, [String: Any]) async throws -> TeXpressoStatus
+    typealias PDFCall = @MainActor ([String: Any]) async throws -> TeXpressoPDF
 
     private(set) var phase: Phase = .stopped
     private(set) var status: TeXpressoStatus?
@@ -37,6 +45,11 @@ final class TeXpressoSession {
     /// Each new live PDF, while the session runs.
     var onPDF: (URL) -> Void = { _ in }
     @ObservationIgnored private var shownPDF = 0
+    /// When the last edit went out: TeXpresso writes the document as its pages come, and the
+    /// poll quickens for them meanwhile.
+    @ObservationIgnored private var lastEdit: ContinuousClock.Instant?
+    /// Asks for the document alone, so the quick poll doesn't carry the log.
+    @ObservationIgnored var pdfCall: PDFCall?
 
     @ObservationIgnored private let id: String
     @ObservationIgnored private let call: Call
@@ -57,6 +70,8 @@ final class TeXpressoSession {
     }
 
     var active: Bool { phase == .starting || phase == .running }
+    /// The core's token for this client's session, which its other calls name.
+    var session: String? { owner }
     var canStart: Bool { !closed && phase == .stopped }
     private var requestErrors: [String] {
         [requestFailure].compactMap { $0 } + rejected.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
@@ -120,8 +135,10 @@ final class TeXpressoSession {
             guard let files = session.queuedFiles else { return }
             session.queuedFiles = nil
             do {
-                // A patched build writes the document for the PDF pane rather than opening a window.
-                var arguments: [String: Any] = ["id": session.id, "files": files.map(\.arguments), "pdf": true]
+                // A patched build writes the document for the PDF pane rather than opening a window;
+                // TeXpresso's own window, which draws with MuPDF, is the fallback Settings offers.
+                var arguments: [String: Any] = ["id": session.id, "files": files.map(\.arguments),
+                                                "pdf": LiveViewer.current == .pane]
                 if replacing {
                     guard let owner = session.owner else { session.ended(); return }
                     arguments["session"] = owner
@@ -147,7 +164,8 @@ final class TeXpressoSession {
         pending[file.path] = file.text
         debounce?.cancel()
         debounce = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(110))
+            // TeXpresso reads all pending input before it typesets, so a short pause is enough.
+            try? await Task.sleep(for: .milliseconds(20))
             guard !Task.isCancelled else { return }
             self?.flushEdits()
         }
@@ -166,6 +184,7 @@ final class TeXpressoSession {
             while session.generation == current, session.active, !session.closed,
                   let path = session.pending.keys.min(), let text = session.pending.removeValue(forKey: path) {
                 let file = TeXpressoFile(path: path, text: text)
+                session.lastEdit = .now
                 if !(await session.request("texpresso_update", file.arguments, generation: current)) {
                     if session.generation == current, session.active, !session.closed, session.pending[path] == nil {
                         session.pending[path] = text
@@ -309,8 +328,20 @@ final class TeXpressoSession {
         polling?.cancel()
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(750))
+                // For 3 s after an edit, the document every 15 ms, as TeXpresso writes its pages;
+                // otherwise the whole status every 750 ms.
+                let quick = self?.pdfCall != nil && self?.lastEdit.map { .now - $0 < .seconds(3) } == true
+                try? await Task.sleep(for: .milliseconds(quick ? 15 : 750))
                 guard !Task.isCancelled, let self, active, !closed, generation == current else { return }
+                if quick, let pdfCall, let owner {
+                    guard let state = try? await pdfCall(["id": id, "session": owner]),
+                          !Task.isCancelled, active, !closed, generation == current else { continue }
+                    if state.running, let path = state.pdf, state.pdfVersion > shownPDF {
+                        shownPDF = state.pdfVersion
+                        onPDF(URL(fileURLWithPath: path))
+                    }
+                    continue
+                }
                 enqueue { session in
                     guard session.generation == current, session.active, !session.closed else { return }
                     if await session.request("texpresso_status", [:], generation: current), !session.pending.isEmpty {
@@ -319,6 +350,26 @@ final class TeXpressoSession {
                 }
                 await lane?.value
             }
+        }
+    }
+}
+
+/// Where live preview shows the document: the PDF pane, or TeXpresso's own window. Read as a
+/// session starts.
+nonisolated enum LiveViewer: String, CaseIterable, Identifiable {
+    case pane, window
+
+    static let key = "liveViewer"
+    static var current: Self {
+        UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .pane
+    }
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .pane: "PDF Pane"
+        case .window: "TeXpresso Window"
         }
     }
 }

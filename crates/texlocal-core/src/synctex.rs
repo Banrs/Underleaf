@@ -52,7 +52,11 @@ pub struct InverseLoc {
     pub column: Option<u32>,
 }
 
-fn pdf_for(root: &Path) -> Result<std::path::PathBuf, CoreError> {
+/// The PDF to sync with: `live`, TeXpresso's (with its live.synctex beside it), or the build's.
+fn pdf_for(root: &Path, live: Option<&Path>) -> Result<std::path::PathBuf, CoreError> {
+    if let Some(live) = live {
+        return Ok(live.to_path_buf());
+    }
     let pdf = compiled_pdf_path(root)?;
     if !pdf.exists() {
         return Err(CoreError::not_found("No compiled PDF yet"));
@@ -67,9 +71,10 @@ pub async fn synctex_forward_at(
     file: &str,
     line: u32,
     column: Option<u32>,
+    live: Option<&Path>,
     path_env: &str,
 ) -> Result<ForwardLoc, CoreError> {
-    let pdf = pdf_for(root)?;
+    let pdf = pdf_for(root, live)?;
     // synctex expects the input path as TeX saw it (relative to cwd,
     // ./-prefixed, forward slashes).
     let rel = safe_rel_file(root, file)?;
@@ -156,7 +161,7 @@ pub async fn synctex_inverse(
     offset: Option<usize>,
     path_env: &str,
 ) -> Result<InverseLoc, CoreError> {
-    synctex_inverse_with_context(root, page, x, y, word, offset, None, None, path_env).await
+    synctex_inverse_with_context(root, page, x, y, word, offset, None, None, None, path_env).await
 }
 
 /// PDF context identifies a repeated word by the text on either side of the
@@ -171,12 +176,13 @@ pub async fn synctex_inverse_with_context(
     offset: Option<usize>,
     context: Option<&str>,
     context_offset: Option<usize>,
+    live: Option<&Path>,
     path_env: &str,
 ) -> Result<InverseLoc, CoreError> {
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
         return Err(CoreError::bad_request("Invalid PDF location"));
     }
-    let pdf = pdf_for(root)?;
+    let pdf = pdf_for(root, live)?;
     let target = format!("{page}:{x}:{y}:{}", pdf.to_string_lossy());
     let (code, stdout) = run(
         "synctex",

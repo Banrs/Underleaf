@@ -319,9 +319,10 @@ final class WorkspaceController: RestoredSplitViewController {
         // so the open panel and its bar are one surface under the clear header.
         statusFill.shown = project.showLogs
         let statusBar = accessory(StatusBar(project: project).background {
-            Mounted(mount: statusFill, content: Color.textSurface
-                .padding(.horizontal, -ColumnMetrics.barSideInset).padding(.vertical, -9))
+            Mounted(mount: statusFill, content: Color.textSurface)
         })
+        // Its own insets, Xcode's (`StatusBar`), so the fill reaches its edges.
+        statusBar.automaticallyAppliesContentInsets = false
         statusBar.preferredScrollEdgeEffectStyle = .automatic
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)

@@ -124,6 +124,17 @@ impl Service {
         paths::project_root(&self.data_dir, id)
     }
 
+    /// With `live`, the TeXpresso session the client owns (`session`) syncs, not the build:
+    /// its PDF is the one shown.
+    fn live_pdf(&self, root: &Path, args: &Value) -> Result<Option<PathBuf>, CoreError> {
+        if !arg::<Option<bool>>(args, "live")?.unwrap_or(false) {
+            return Ok(None);
+        }
+        let token = arg::<Option<String>>(args, "session")?
+            .ok_or_else(|| CoreError::bad_request("Live sync needs the TeXpresso session"))?;
+        self.texpresso.live_pdf(root, &token).map(Some)
+    }
+
     fn with_project<T>(
         &self,
         id: &str,
@@ -396,6 +407,7 @@ impl Service {
                 arg::<Option<String>>(args, "session")?.as_deref(),
                 &self.texpresso_path(),
             )?),
+            "texpresso_pdf" => out(self.texpresso.pdf_state(&root()?, &s("session")?)?),
             "texpresso_start" => out(self
                 .texpresso
                 .start(
@@ -534,6 +546,7 @@ impl Service {
                 s("file")?,
                 arg(args, "line")?,
                 arg(args, "column")?,
+                self.live_pdf(&root()?, args)?.as_deref(),
                 &self.tex_path(),
             )
             .await?),
@@ -546,6 +559,7 @@ impl Service {
                 arg(args, "offset")?,
                 arg::<Option<String>>(args, "context")?.as_deref(),
                 arg(args, "contextOffset")?,
+                self.live_pdf(&root()?, args)?.as_deref(),
                 &self.tex_path(),
             )
             .await?),

@@ -74,6 +74,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         let workspace = WorkspaceController(app: app, project: project, size: window.contentLayoutRect.size)
         setContent(workspace)
+        // The editor's colour, untinted: the toolbar's scroll edge fades the text into the
+        // window's background, so at rest the toolbar is the editor's surface, as Xcode's.
+        window.backgroundColor = .untintedTextBackground
         window.toolbar = workspace.toolbar.toolbar
         self.workspace = workspace
         home = nil
@@ -92,6 +95,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         workspace?.close()
         workspace = nil
         window.toolbar = nil
+        window.backgroundColor = .windowBackgroundColor
         window.subtitle = ""
         window.representedURL = nil
         let home = NSHostingController(rootView: HomeRoot(app: app))

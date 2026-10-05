@@ -20,9 +20,11 @@ Claude worktrees were left alone, and no commit history was discarded.
   shows (27.2). Its Filter is the stock search field at the regular size, the tabs' height.
 - With the panel closed, source/PDF extend under the clear status bar and its
   automatic edge, as Xcode's. While the panel shows, the area ends above the bars,
-  so the panel rises from the status bar's top, and the bar is solid in the
-  panel's text background. Both switch at the rise's start and after the collapse.
-  `setBarsSolid` deactivates the outgoing bottom constraint before activating the
+  so the panel rises from the status bar's top. The bar has no fill of its own in
+  either state: AppKit's automatic bottom edge is hard there (a soft one leaves the
+  bar's text unreadable over white pages), and it reads a shade lighter than the
+  text background in dark (about 50 against 40), as the system draws it.
+  `placeAreaAboveBars` deactivates the outgoing bottom constraint before activating the
   incoming one (#45): both active at once broke a safe-area constraint on every close.
 - The status bar has Xcode's hairline (a SwiftUI `Divider`, 12 pt, the toggle symbol's
   height) between the caret's place and the panel toggle; its spacing and insets are
@@ -43,6 +45,12 @@ Claude worktrees were left alone, and no commit history was discarded.
 - Source and PDF share one background, the system text background (TextEdit, Notes,
   Xcode in Light; Preview's canvas is the same colour, wallpaper-tinted). PDFKit
   tints a system colour it's given, so the PDF view gets it resolved per appearance.
+- The workspace window's background and the editor's scroll and text views are that
+  resolved colour too: the toolbar's soft edge fades content into the window's
+  background, and the source column's band takes the scroll view's, so with the
+  system's (wallpaper-tinted) colours the toolbar sat a tint apart from the editor.
+  Over the PDF the band lightens where a white page meets it, as Preview's does.
+  Home keeps the stock window background.
 - The workspace representable returns its proposed size. This fixes a reproducible
   compact-window layout recursion crash. Pane minima are independent of window
   minima; the supported window content minimum is now 960 × 600 points.

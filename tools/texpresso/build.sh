@@ -3,7 +3,11 @@
 #
 # TeXpresso at the commit Underleaf is verified against, with Underleaf's patch: with
 # TEXPRESSO_PDF_OUTPUT set, it writes the whole document there as a PDF after each change
-# and opens no window of its own, so the Mac app shows the live preview in its PDF pane.
+# and opens no window of its own, so the Mac app shows the live preview in its PDF pane;
+# its SyncTeX goes beside it (live.synctex), for the app's jumps between source and PDF.
+# TeX's Type 1 fonts go into that PDF as CFF copies (src/dvi/type1_cff.c): MuPDF's writer
+# would embed them as PDF doesn't allow, and PDFKit would draw the wrong glyphs. It quits
+# when its standard input closes, as the app's pipe does when the app quits or crashes.
 # Without the variable it behaves as upstream does.
 #
 # Needs TeXpresso's build dependencies (see its INSTALL.md). Then install.sh <folder>/build

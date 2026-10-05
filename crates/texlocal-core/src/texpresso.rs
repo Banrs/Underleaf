@@ -34,6 +34,15 @@ pub struct FileBuffer {
     pub text: String,
 }
 
+/// `Status`'s document fields alone (`Manager::pdf_state`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfState {
+    pub running: bool,
+    pub pdf: Option<String>,
+    #[serde(rename = "pdfVersion")]
+    pub pdf_version: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
     pub available: bool,
@@ -212,6 +221,32 @@ impl Manager {
         self.sessions.lock().unwrap().remove(&root);
         Ok(session.status())
     }
+    /// The session's document alone, for a client waiting on it after an edit: no log, and
+    /// no settings read, so it can ask often.
+    pub fn pdf_state(&self, root: &Path, token: &str) -> Result<PdfState, CoreError> {
+        let session = self.owned(&fs::canonicalize(root)?, token)?;
+        let mut state = session.state.lock().unwrap();
+        state.last_used = Instant::now();
+        Ok(PdfState {
+            running: state.pid.is_some(),
+            pdf: session
+                .pdf
+                .as_ref()
+                .filter(|_| state.pdf_version > 0)
+                .map(|pdf| pdf.to_string_lossy().into_owned()),
+            pdf_version: state.pdf_version,
+        })
+    }
+    /// The live document the client's session last wrote, which has its SyncTeX beside it.
+    pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
+        let session = self.owned(&fs::canonicalize(root)?, token)?;
+        let written = session.state.lock().unwrap().pdf_version > 0;
+        session
+            .pdf
+            .clone()
+            .filter(|pdf| written && pdf.with_extension("synctex").is_file())
+            .ok_or_else(|| CoreError::not_found("TeXpresso hasn't written a document to sync with yet"))
+    }
     fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
         self.sessions
             .lock()
@@ -343,6 +378,21 @@ impl Manager {
             .stderr(Stdio::piped());
         if let Some(pdf) = &pdf {
             command.env("TEXPRESSO_PDF_OUTPUT", pdf);
+        }
+        // A Mac app runs with signals ignored or blocked that a child inherits across exec.
+        // TeXpresso stops a stale TeX worker with SIGTERM, and ignored it never ends: the
+        // snapshot waiting on it never resumes, and live preview stops at the first edit.
+        // SAFETY: only async-signal-safe calls, between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                for signal in 1..32 {
+                    libc::signal(signal, libc::SIG_DFL);
+                }
+                let mut none: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut none);
+                libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+                Ok(())
+            });
         }
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);

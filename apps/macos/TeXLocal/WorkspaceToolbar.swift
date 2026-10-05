@@ -425,8 +425,22 @@ private final class ZoomControl: NSSegmentedControl {
         didSet { font = font }
     }
 
-    /// A set width gets the same margins as a label's own: the widest label's width, less them.
+    private var reserving = false
+
+    /// After the change that asks for it: inside the toolbar's own update, as it sets the font
+    /// on showing a hidden item, the control's size lags each change by one, and the round trip
+    /// below widened the scale each time the PDF came back (27.2).
     private func reserveWidth() {
+        guard !reserving else { return }
+        reserving = true
+        DispatchQueue.main.async { [weak self] in
+            self?.reserving = false
+            self?.measure()
+        }
+    }
+
+    /// A set width gets the same margins as a label's own: the widest label's width, less them.
+    private func measure() {
         guard !widestLabel.isEmpty, segmentCount == 3 else { return }
         let label = label(forSegment: 1) ?? ""
         setLabel(widestLabel, forSegment: 1)

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage(EditorPrefs.fontSizeKey) private var fontSize = EditorPrefs.fontSize
     @AppStorage(EditorPrefs.syntaxThemeKey) private var syntaxTheme = SyntaxTheme.overleaf
     @AppStorage(PDFPrefs.paperKey) private var pdfPaper = PDFPrefs.paper
+    @AppStorage(LiveViewer.key) private var liveViewer = LiveViewer.pane
     /// The folder a file dialog is choosing: TeX's, or TeXpresso's.
     @State private var choosing: Program?
     enum Program { case tex, texpresso }
@@ -48,6 +49,13 @@ struct SettingsView: View {
                                   chosen: tex.texpressoDir, busy: app.settingTeX) {
                         choosing = .texpresso
                     } automatic: { setTeXFolder(nil, texpresso: true) }
+                    Picker(selection: $liveViewer) {
+                        ForEach(LiveViewer.allCases) { Text($0.title).tag($0) }
+                    } label: {
+                        Text("Live Preview In")
+                        Text("TeXpresso’s own window draws with MuPDF. Takes effect when Live Preview next starts.")
+                    }
+                    .pickerStyle(.radioGroup)
                 } else {
                     LabeledContent("TeX") { ProgressView().controlSize(.small).accessibilityLabel("Looking for TeX") }
                 }

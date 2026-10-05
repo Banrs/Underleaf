@@ -3,15 +3,21 @@ import SwiftUI
 /// Status below source and PDF. Page uses PDFKit numbering, which can differ
 /// from LaTeX; save failures and the engine appear elsewhere.
 struct StatusBar: View {
-    /// A bar's height: its controls' 20 pt hit targets within AppKit's accessory insets. The
-    /// folded File Outline's header matches it.
-    static let height = ColumnMetrics.bar(20)
+    /// Xcode's bar (27), 36 pt: its controls' 20 pt hit targets 8 pt from its top and bottom, in
+    /// insets of its own rather than AppKit's 9 pt ones. The folded File Outline's header matches it.
+    static let height: CGFloat = 20 + 2 * verticalInset
+    static let verticalInset: CGFloat = 8
+    /// From the toggle's hit target to the bar's end: its symbol 16.5 pt from the window's edge.
+    static let trailingInset: CGFloat = 13
+    /// From the bar's start to its first item, as at its end: a leading symbol shows 14 pt in
+    /// from the column's edge, as Xcode's first item (Breakpoints) does (27), and text 13.5 pt.
+    static let leadingInset: CGFloat = trailingInset
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            content(showsCounts: true).labelStyle(.titleAndIcon)
+            content(showsCounts: true).labelStyle(BarLabelStyle())
             content(showsCounts: false).labelStyle(.iconOnly)
         }
         .font(.subheadline)
@@ -19,6 +25,9 @@ struct StatusBar: View {
         .controlSize(.small)
         .lineLimit(1)
         .buttonStyle(.borderless)
+        .padding(.leading, Self.leadingInset)
+        .padding(.trailing, Self.trailingInset)
+        .padding(.vertical, Self.verticalInset)
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
@@ -35,6 +44,7 @@ struct StatusBar: View {
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
+                separator
                 Button { project.showTeXpressoLog() } label: {
                     Label(project.texpresso.title,
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
@@ -69,16 +79,20 @@ struct StatusBar: View {
                 }
                 .fixedSize()
             }
-            // Xcode's bar: the system's hairline between the caret's place and the panel's toggle,
-            // as tall as the toggle's symbol.
-            Divider()
-                .frame(height: 12)
-            Toggle(isOn: $project.showLogs) {
-                Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
+            // Xcode's bar end, as measured (27): the hairline 10.5 pt after the text, and the
+            // toggle's square symbol 8.5 pt after that.
+            HStack(spacing: 5) {
+                separator
+                Toggle(isOn: $project.showLogs) {
+                    Label("Build Panel", systemImage: "inset.filled.bottomthird.square").hitTarget()
+                }
+                .labelStyle(.iconOnly)
+                // Xcode's 13 pt symbol, against the small controls' 10 pt.
+                .imageScale(.large)
+                .toggleStyle(.button)
+                .help(app.title(.viewToggleLogs, on: project))
             }
-            .labelStyle(.iconOnly)
-            .toggleStyle(.button)
-            .help(app.title(.viewToggleLogs, on: project))
+            .padding(.leading, 2)
         }
     }
 
@@ -106,8 +120,9 @@ struct StatusBar: View {
     private var buildStatus: some View {
         HStack {
             if project.compiling {
-                ProgressView()
-                Text("Compiling…")
+                // The mini spinner, about as wide as the other states' symbols.
+                Label { Text("Compiling…") } icon: { ProgressView().controlSize(.mini) }
+                    .labelStyle(BarLabelStyle())
             } else if let result = project.result {
                 if result.stopped {
                     Text("Build Stopped")
@@ -143,7 +158,26 @@ struct StatusBar: View {
                 .foregroundStyle(color ?? .primary)
                 .accessibilityHidden(true)
         }
-        .labelStyle(.titleAndIcon)
+        .labelStyle(BarLabelStyle())
+    }
+
+    /// Xcode's bar sets its items apart with the system's hairline, as tall as the toggle's
+    /// symbol: 9.5–10.5 pt from the text before it, 10 pt to the symbol after it.
+    private var separator: some View {
+        Divider()
+            .frame(height: 12)
+    }
+}
+
+/// Xcode's bar labels (27): the symbol 4 pt from its title, so it reads as the title's, against
+/// about 10 pt between items. A symbol's image carries about 2 pt of margin of its own; the
+/// stock `.titleAndIcon` puts 10 pt between symbol and title here, as far as the next item.
+private struct BarLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 
