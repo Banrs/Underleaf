@@ -39,6 +39,8 @@ enum MenuCommand: String, CaseIterable {
     case compileStop = "compile.stop"
     case syncForward = "sync.forward"
     case syncInverse = "sync.inverse"
+    case issueNext = "issue.next"
+    case issuePrevious = "issue.previous"
 
     /// The toggles' titles name what they show; the menus say Show or Hide (`AppModel.title`).
     var title: String {
@@ -80,6 +82,8 @@ enum MenuCommand: String, CaseIterable {
         case .compileStop: "Stop"
         case .syncForward: "Go to PDF Position"
         case .syncInverse: "Go to Source Position"
+        case .issueNext: "Go to Next Issue"
+        case .issuePrevious: "Go to Previous Issue"
         }
     }
 
@@ -135,6 +139,9 @@ enum MenuCommand: String, CaseIterable {
         case .compileStop: KeyboardShortcut(".")
         // As the Mac's VS Code LaTeX extension; the PDF answers a double-click for the other way.
         case .syncForward: KeyboardShortcut("j", modifiers: [.command, .option])
+        // Xcode's Navigate › Jump to Next Issue.
+        case .issueNext: KeyboardShortcut("'")
+        case .issuePrevious: KeyboardShortcut("'", modifiers: [.command, .shift])
         case .projectExport, .fileUpload, .pdfFind, .viewToggleWordCount, .syncInverse: nil
         }
     }
@@ -174,6 +181,7 @@ extension AppModel {
         case .pdfSave, .filePrint, .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage:
             project?.hasPDF == true
         case .syncForward: project.map { $0.hasPDF && $0.isLaTeX } ?? false
+        case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
         default: project != nil
         }
     }
@@ -248,6 +256,8 @@ extension AppModel {
         case .compileStop: project?.stopCompile()
         case .syncForward: Task { await project?.forwardSync() }
         case .syncInverse: requestPDF(.inverseFromView)
+        case .issueNext: project?.goToIssue(next: true)
+        case .issuePrevious: project?.goToIssue(next: false)
         }
     }
 }
@@ -391,6 +401,8 @@ struct AppCommands: Commands {
             .disabled(project?.isLaTeX != true || project?.openPath == project?.settings?.mainFile)
             Divider()
             items([.syncForward, .syncInverse])
+            Divider()
+            items([.issueNext, .issuePrevious])
         }
     }
 }

@@ -189,6 +189,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
+    /// The lines the last build has issues on, true for an error: their numbers are marked.
+    var issueLines: [Int: Bool] = [:] {
+        didSet { if issueLines != oldValue { redrawLineAndGutter() } }
+    }
 
     private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
@@ -297,17 +301,28 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         redrawLineAndGutter()
     }
 
+    /// The document's last line when it's empty: TextKit lays it out as an extra line of the paragraph before.
+    private func extraLine(of fragment: NSTextLayoutFragment) -> NSTextLineFragment? {
+        let lines = fragment.textLineFragments
+        guard lines.count > 1, let last = lines.last, last.characterRange.length == 0 else { return nil }
+        return last
+    }
+
     /// The current line's highlight, as Xcode's, measured: for a caret only, its paragraph
     /// from 14 pt to 8 pt from the right edge, with 4 pt corners round the line number.
-    private var currentLine: (offset: Int, rect: NSRect)? {
+    private var currentLine: (number: Int, rect: NSRect)? {
         let selection = selectedRange(), length = (string as NSString).length
         guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
         let end = offset(entry.fragment.rangeInElement.endLocation)
         guard selection.location < end || end == length else { return nil }
-        let frame = entry.fragment.layoutFragmentFrame, lines = entry.fragment.textLineFragments
+        let frame = entry.fragment.layoutFragmentFrame
+        var lines = entry.fragment.textLineFragments[...]
+        // The caret at the document's end is on the extra line, and elsewhere in the paragraph not.
+        if extraLine(of: entry.fragment) != nil { lines = selection.location == length ? lines.suffix(1) : lines.dropLast() }
         let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
         let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height)
-        return (entry.offset, NSRect(x: 14, y: textContainerOrigin.y + top + rowShift, width: bounds.width - 22, height: bottom - top))
+        return (document.line(at: selection.location),
+                NSRect(x: 14, y: textContainerOrigin.y + top + rowShift, width: bounds.width - 22, height: bottom - top))
     }
     /// Where the highlight was last drawn.
     private var drawnLine: NSRect?
@@ -316,7 +331,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// line where it was and is. The text draws in TextKit's own views.
     private func redrawLineAndGutter() {
         let shown = visibleRect
-        setNeedsDisplay(NSRect(x: shown.minX, y: shown.minY, width: numbersEnd + 1 - shown.minX, height: shown.height))
+        setNeedsDisplay(NSRect(x: shown.minX, y: shown.minY, width: numbersEnd + 4 - shown.minX, height: shown.height))
         if let drawnLine { setNeedsDisplay(drawnLine) }
         if let rect = currentLine?.rect { setNeedsDisplay(rect) }
     }
@@ -335,7 +350,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return typeset
     }
 
-    /// Draw the current line and numbers on each paragraph's first baseline.
+    /// Draw the current line, and the numbers on each paragraph's first baseline.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         let origin = textContainerOrigin
@@ -346,7 +361,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             NSColor.secondarySystemFill.setFill()
             NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
         }
-        guard rect.minX < numbersEnd, let context = NSGraphicsContext.current?.cgContext else { return }
+        guard rect.minX < numbersEnd + 4, let context = NSGraphicsContext.current?.cgContext else { return }
         // The current line's number as a label, the others tertiary, as Xcode's; the system
         // raises both for Increase Contrast.
         context.saveGState()
@@ -355,10 +370,22 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         for (offset, fragment) in fragments {
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: origin.y)
             guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
-            (offset == current?.offset ? NSColor.labelColor : .tertiaryLabelColor).setFill()
-            let number = numberLine(document.line(at: offset))
-            context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
-            CTLineDraw(number.line, context)
+            let lineNumber = document.line(at: offset), issue = issueLines[lineNumber]
+            if let issue {
+                // The number on the issue's colour, in the highlight's shape and place.
+                (issue ? NSColor.systemRed : .systemYellow).withAlphaComponent(0.3).setFill()
+                let bounds = line.typographicBounds
+                NSBezierPath(roundedRect: NSRect(x: 14, y: frame.minY + bounds.minY + rowShift, width: numbersEnd - 10, height: bounds.height),
+                             xRadius: 4, yRadius: 4).fill()
+            }
+            func draw(_ lineNumber: Int, on line: NSTextLineFragment) {
+                (lineNumber == current?.number || issueLines[lineNumber] != nil ? NSColor.labelColor : .tertiaryLabelColor).setFill()
+                let number = numberLine(lineNumber)
+                context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
+                CTLineDraw(number.line, context)
+            }
+            draw(lineNumber, on: line)
+            if let extra = extraLine(of: fragment) { draw(lineNumber + 1, on: extra) }
         }
     }
 

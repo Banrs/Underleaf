@@ -272,6 +272,25 @@ final class ProjectFlowTests {
         await app.close()
     }
 
+    /// Go to Next Issue goes round the issues the log places in a file, and the gutter marks
+    /// their lines until the file is edited. CI has no TeX.
+    @Test(.timeLimit(.minutes(1)))
+    func issuesAreSteppedThroughAndMarked() async throws {
+        let project = try await openedWithTeX("\\documentclass{article}\n\\begin{document}\n\\undefinedmacro\n\n\\anotherundefined\n\\end{document}\n")
+        await project.compile()
+        let text = project.editor.textView, issues = project.issues
+        let places = issues.indices.filter { issues[$0].file != nil }
+        #expect(places.map { issues[$0].line } == [3, 5] && text.issueLines == [3: true, 5: true])
+        for (next, place) in [(true, 0), (true, 1), (true, 0), (false, 1)] {
+            project.goToIssue(next: next)
+            #expect(project.chosenIssue == places[place])
+            try await waitUntil { project.cursorLine == issues[places[place]].line }
+        }
+        text.insertText("x", replacementRange: text.selectedRange())
+        #expect(text.issueLines.isEmpty)
+        await app.close()
+    }
+
     /// A TeXpresso stand-in that writes a one-page PDF where it's asked to, as Underleaf's
     /// patched build does, and reads edits until it's stopped.
     private func liveTeXpresso() throws -> URL {

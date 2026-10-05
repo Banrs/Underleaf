@@ -43,8 +43,7 @@ struct BuildPanel: View {
     @ViewBuilder
     private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
-        let all = (project.result?.errors ?? []) + (showWarnings ? project.result?.warnings ?? [] : [])
-        let items = all.enumerated().filter { matches($0.element) }
+        let items = project.issues.enumerated().filter { (showWarnings || $0.element.isError) && matches($0.element) }
         if !items.isEmpty {
             IssueList(items: items, project: project)
         } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
@@ -119,34 +118,40 @@ private struct BuildPanelHeader: View {
 
 /// The errors and warnings. Choosing one shows its line and leaves the keyboard
 /// in the list, as the outline does; a double-click or Return goes into the source.
-/// Rows are places in the build's issues, so a new build starts with none chosen.
+/// Rows are places in the build's issues, and the chosen one the project's, as the menus move it too.
 private struct IssueList: View {
     let items: [(offset: Int, element: LogItem)]
     let project: ProjectModel
-    @State private var selection: Int?
 
     var body: some View {
-        List(items, id: \.offset, selection: $selection) { IssueRow(item: $0.element) }
-        .listStyle(.inset)
-        .accessibilityLabel("Issues")
-        .contextMenu(forSelectionType: Int.self) { rows in
-            if let item = rows.first.flatMap(item) {
-                if item.file != nil {
-                    Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
+        let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
+        ScrollViewReader { proxy in
+            List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element) }
+                .listStyle(.inset)
+                .accessibilityLabel("Issues")
+                .contextMenu(forSelectionType: Int.self) { rows in
+                    if let item = rows.first.flatMap(item) {
+                        if item.file != nil {
+                            Button(item.line == nil ? "Open File" : "Go to Line") { open(item) }
+                        }
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(item.message, forType: .string)
+                        }
+                    }
+                } primaryAction: { rows in
+                    if let item = rows.first.flatMap(item) { open(item) }
                 }
-                Button("Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(item.message, forType: .string)
+                // Edit › Copy copies the selected issue.
+                .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
+                // The menus' choice may be out of sight, and the panel closed: a hidden list
+                // scrolls by its rows' estimated heights, so again as it comes up.
+                .onChange(of: project.chosenIssue) { _, place in
+                    if let place { proxy.scrollTo(place) }
                 }
-            }
-        } primaryAction: { rows in
-            if let item = rows.first.flatMap(item) { open(item) }
-        }
-        // Edit › Copy copies the selected issue.
-        .copyable(selection.flatMap(item).map { [$0.message] } ?? [])
-        .onChange(of: project.compiling) { selection = nil }
-        .onChange(of: selection) { _, id in
-            if let item = id.flatMap(item) { open(item, focus: false) }
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
+                    if let place = project.chosenIssue { proxy.scrollTo(place) }
+                }
         }
     }
 
@@ -154,8 +159,8 @@ private struct IssueList: View {
         items.first { $0.offset == id }?.element
     }
 
-    private func open(_ item: LogItem, focus: Bool = true) {
-        if let file = item.file { Task { await project.open(file, line: item.line, focus: focus) } }
+    private func open(_ item: LogItem) {
+        if let file = item.file { Task { await project.open(file, line: item.line) } }
     }
 }
 

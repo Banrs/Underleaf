@@ -29,8 +29,14 @@ final class ProjectModel {
     /// Edits since the build of the PDF on screen started.
     private(set) var pdfOutdated = false
     @ObservationIgnored private var edits = 0
+    /// `edits` at each file's last edit, and when `result`'s build started: the build's
+    /// lines are a file's until it's edited.
+    @ObservationIgnored private var lastEdit: [String: Int] = [:]
+    @ObservationIgnored private var resultEdits = 0
     var compiling = false
     var result: CompileResult?
+    /// The issue chosen in the list or by Go to Next Issue, a place in `issues`; a new build starts with none.
+    private(set) var chosenIssue: Int?
     /// The PDF the viewer shows; nil until one loads.
     var pdfURL: URL?
     /// The PDF pane shows TeXpresso's live document, not the last build's.
@@ -50,6 +56,43 @@ final class ProjectModel {
     func showBuildPanel() {
         panelTab = .issues
         showLogs = true
+    }
+
+    /// The build's errors, then its warnings.
+    var issues: [LogItem] { (result?.errors ?? []) + (result?.warnings ?? []) }
+
+    /// Choosing an issue shows its line; the list keeps the keyboard, the menus give it to the source.
+    func chooseIssue(_ place: Int?, focus: Bool) {
+        chosenIssue = place
+        let issues = issues
+        guard let place, issues.indices.contains(place), let file = issues[place].file else { return }
+        Task { await open(file, line: issues[place].line, focus: focus) }
+    }
+
+    /// The next or previous issue the log places in a file, round from the chosen one, with
+    /// the list open on it: the message is there.
+    func goToIssue(next: Bool) {
+        let issues = issues, places = issues.indices.filter { issues[$0].file != nil }
+        guard let first = places.first, let last = places.last else { return }
+        let place = if let chosenIssue {
+            next ? places.first { $0 > chosenIssue } ?? first : places.last { $0 < chosenIssue } ?? last
+        } else {
+            next ? first : last
+        }
+        showBuildPanel()
+        chooseIssue(place, focus: true)
+    }
+
+    /// The open file's lines with issues, for the editor's gutter.
+    private func markIssues() {
+        var lines: [Int: Bool] = [:]
+        if let openPath, lastEdit[openPath, default: 0] <= resultEdits {
+            // Errors last: a line with both is an error's.
+            for item in issues.reversed() where item.file == openPath {
+                if let line = item.line { lines[line] = item.isError }
+            }
+        }
+        editor.textView.issueLines = lines
     }
 
     /// The open file on disk, for the window's document icon.
@@ -307,6 +350,7 @@ final class ProjectModel {
                     if let text {
                         editor.open(path: path, text: text, focus: focus)
                         cursorLine = editor.currentLine
+                        markIssues()
                     }
                 } catch {
                     if !Task.isCancelled, !closed { report(error, "Couldn’t Open “\(path.fileName)”") }
@@ -342,6 +386,8 @@ final class ProjectModel {
     private func edited() {
         dirty = true
         edits += 1
+        if let openPath { lastEdit[openPath] = edits }
+        if !editor.textView.issueLines.isEmpty { editor.textView.issueLines = [:] }
         if texpresso.active, let document = editor.document {
             texpresso.update(TeXpressoFile(path: document.path, text: document.text))
         }
@@ -585,6 +631,9 @@ final class ProjectModel {
                 }
                 if !closed {
                     self.result = result
+                    resultEdits = built
+                    chosenIssue = nil
+                    markIssues()
                     if result.failed, !auto || result.pdf == nil { showBuildPanel() }
                     if result.ok, panelTab == .issues, result.errors.isEmpty, result.warnings.isEmpty { showLogs = false }
                 }
