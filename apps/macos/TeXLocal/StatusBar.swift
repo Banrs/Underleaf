@@ -6,6 +6,7 @@ struct StatusBar: View {
     /// The bar's height, which the folded File Outline's header shares (`OutlineHeader`).
     static let height: CGFloat = 36
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var project: ProjectModel
 
     var body: some View {
@@ -124,6 +125,8 @@ struct StatusBar: View {
             }
         }
         .fixedSize()
+        // A build starting or ending crossfades its status; nothing here moves with typing.
+        .animation(reduceMotion ? nil : .snappy, value: project.compiling)
     }
 
     /// `spoken` is what the short `title` stands for, as the title itself, so VoiceOver and
