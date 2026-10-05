@@ -76,8 +76,6 @@ struct SearchField: NSViewRepresentable {
     var handle: FieldHandle?
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
-    /// On Liquid Glass of its own (`glassEffect`), as a toolbar's field: no bezel.
-    var glass = false
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
@@ -113,10 +111,6 @@ struct SearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSSearchField {
         let view = NSSearchField()
         view.sendsSearchStringImmediately = true
-        if glass {
-            view.isBezeled = false
-            view.drawsBackground = false
-        }
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))

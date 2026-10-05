@@ -100,9 +100,9 @@ struct BuildPanelHeader: View {
                     .toggleStyle(.button)
                     .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle", glass: true)
+                // The regular size, the tabs' 24 points.
+                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(minWidth: 100, maxWidth: 180)
-                    .glassEffect(.regular, in: .capsule)
             } else {
                 let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {

@@ -17,13 +17,14 @@ Claude worktrees were left alone, and no commit history was discarded.
 - The build header is a bottom accessory of the source/PDF columns with AppKit's
   automatic scroll edge, no material of its own. It's built visible and hidden once
   the area loads: an accessory hidden as it's added gets no edge when it later
-  shows (27.2). Its Filter field sits on SwiftUI Liquid Glass without a bezel.
+  shows (27.2). Its Filter is the stock search field at the regular size, the tabs' height.
 - With the panel closed, source/PDF extend under the clear status bar and its
   automatic edge, as Xcode's. While the panel shows, the area ends above the bars,
   so the panel rises from the status bar's top, and the bar is solid in the
   panel's text background. Both switch at the rise's start and after the collapse.
-- Backgrounds follow Apple's apps: the editor uses the text background (TextEdit,
-  Notes, Xcode in Light), and the PDF canvas the under-page colour (Pages, Keynote).
+- Source and PDF share one background, the system text background (TextEdit, Notes,
+  Xcode in Light; Preview's canvas is the same colour, wallpaper-tinted). PDFKit
+  tints a system colour it's given, so the PDF view gets it resolved per appearance.
 - The workspace representable returns its proposed size. This fixes a reproducible
   compact-window layout recursion crash. Pane minima are independent of window
   minima; the supported window content minimum is now 960 × 600 points.

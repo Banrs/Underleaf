@@ -75,8 +75,16 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     override init() {
         super.init()
-        // The area behind a document's pages, as Pages and Keynote draw theirs; the PDF's paper keeps its own colors.
-        view.backgroundColor = .underPageBackgroundColor
+        // The editor's text background beside it, so source and PDF are one surface; the PDF's
+        // paper keeps its own colors. Resolved here: PDFKit tints a system background with
+        // the wallpaper, as Preview's canvas, which would set the two panes a shade apart.
+        view.backgroundColor = NSColor(name: nil) { appearance in
+            var color = NSColor.white
+            appearance.performAsCurrentDrawingAppearance {
+                color = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? color
+            }
+            return color
+        }
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
