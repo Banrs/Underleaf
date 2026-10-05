@@ -10,21 +10,24 @@ struct StatusBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            content(showsCounts: true).labelStyle(.titleAndIcon)
-            content(showsCounts: false).labelStyle(.iconOnly)
+        VStack(spacing: 0) {
+            // Over the bar, as the folded File Outline's line is over its header.
+            Divider()
+            ViewThatFits(in: .horizontal) {
+                content(showsCounts: true).labelStyle(.titleAndIcon)
+                content(showsCounts: false).labelStyle(.iconOnly)
+            }
+            // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
+            // item, the toggle's symbol 17.5 pt from the right edge.
+            .padding(.leading, 14)
+            .padding(.trailing, 16.5)
+            .frame(height: Self.height)
         }
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)
         .lineLimit(1)
         .buttonStyle(.borderless)
-        // Xcode's bar, measured (2026-10-06): 14 pt to the first item, the toggle's symbol 17.5 pt
-        // from the right edge, and a hairline along the top where the content scrolls under.
-        .padding(.leading, 14)
-        .padding(.trailing, 16.5)
-        .frame(height: Self.height)
-        .overlay(alignment: .top) { Divider() }
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
