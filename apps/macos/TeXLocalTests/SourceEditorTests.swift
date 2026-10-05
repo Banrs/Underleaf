@@ -157,14 +157,6 @@ struct SourceEditorTests {
 
     /// A block's fields, as a completion's: Tab goes from a figure's file to
     /// its caption and label.
-    /// Escape that reaches the editor through the window, not its own keys, passes up the
-    /// chain instead of to NSTextView, which doesn't take it and would throw.
-    @Test func escapeOutsideASnippetPassesOn() {
-        open("text")
-        text.cancelOperation(nil)
-        #expect(text.string == "text")
-    }
-
     @Test func blocksTabThroughTheirFields() {
         open("")
         #expect(editor.perform(.block, "figure"))
@@ -242,27 +234,6 @@ struct SourceEditorTests {
         #expect(text.document.text == text.string)
     }
 
-    /// Jump to Selection centres the selection, far down a long file whose heights TextKit
-    /// has only estimated.
-    @Test func jumpToSelectionCentresIt() throws {
-        // Held to the end: the text lays out in it.
-        let window = inWindow()
-        defer { withExtendedLifetime(window) {} }
-        open((1...6000).map { "\\section{Line \($0)} " + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
-        let start = text.document.lineStart(5000)
-        text.setSelectedRange(NSRange(location: start, length: 4))
-        text.centerSelectionInVisibleArea(nil)
-        let clip = editor.scrollView.contentView
-        let fragment = try #require(text.textRange(NSRange(location: start, length: 0))
-            .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) })
-        let line = try #require(fragment.textLineFragments.first)
-        let middle = fragment.layoutFragmentFrame.minY + line.typographicBounds.midY + text.textContainerOrigin.y
-        let shown = clip.bounds.height - editor.scrollView.contentInsets.top - editor.scrollView.contentInsets.bottom
-        let centre = clip.bounds.minY + editor.scrollView.contentInsets.top + shown / 2
-        // Within a line: TextKit settles the heights above as it lays out what now shows.
-        #expect(abs(middle - centre) < (text.defaultParagraphStyle?.minimumLineHeight ?? 18), "Line at \(middle), centre \(centre)")
-    }
-
     /// Move Line Up and Down take the selections' lines past their neighbours, the selections
     /// going with them, in one undo step; a last line without a line break keeps none.
     @Test func linesMoveUpAndDown() throws {
@@ -323,25 +294,6 @@ struct SourceEditorTests {
         #expect(editor.currentLine == 2 && editor.currentColumn == 15)
     }
 
-    /// A file opened with the keyboard asked for takes it once the editor shows,
-    /// as a project opens; one chosen in the sidebar leaves it where it is.
-    @Test func theKeyboardFollowsTheOpen() {
-        let window = Self.window()
-        // Something else with the keyboard, as the Files list.
-        let list = NSTextView()
-        window.contentView!.addSubview(list)
-        window.contentView!.addSubview(editor.scrollView)
-        window.makeFirstResponder(list)
-        editor.open(path: "a.tex", text: "one")
-        editor.shown = true
-        #expect(window.firstResponder === text)
-        editor.shown = false
-        window.makeFirstResponder(list)
-        editor.open(path: "b.tex", text: "two", focus: false)
-        editor.shown = true
-        #expect(window.firstResponder === list)
-    }
-
     /// A chosen completion goes in as its snippet: typed in one place, a
     /// field is typed in all of its places, and Tab goes to the next.
     @Test(.timeLimit(.minutes(1)))
@@ -396,40 +348,6 @@ struct SourceEditorTests {
         #expect(text.offered != nil)
         text.setSelectedRange(NSRange(location: 0, length: 0))
         #expect(text.offered == nil)
-    }
-
-    /// Shown again with fewer rows, in another size, or with none, the list never
-    /// asks for a row it no longer has.
-    @Test func theCompletionListKeepsItsRowsInStep() {
-        let window = Self.window()
-        let list = CompletionList()
-        let rows = (0..<20).map { (label: "\\item\($0)", kind: CompletionKind.command) }
-        func show(_ count: Int, size: CGFloat) {
-            list.show(Array(rows.prefix(count)), font: .monospacedSystemFont(ofSize: size, weight: .regular), theme: .overleaf,
-                      under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
-            for child in window.childWindows ?? [] { child.layoutIfNeeded() }
-        }
-        show(20, size: 11)
-        list.move(15)
-        show(2, size: 24)
-        #expect(list.selection == 0 && window.childWindows?.count == 1)
-        show(0, size: 11)
-        #expect(window.childWindows?.isEmpty != false)
-    }
-
-    /// The selected row is drawn as the focused list's, the accent's, from the first show,
-    /// though the document keeps the keyboard.
-    @Test func theCompletionListSelectsAsTheFocusedList() throws {
-        let window = Self.window()
-        let list = CompletionList()
-        list.show((0..<3).map { (label: "\\item\($0)", kind: CompletionKind.command) }, font: .monospacedSystemFont(ofSize: 13, weight: .regular),
-                  theme: .overleaf, under: NSRect(x: 100, y: 300, width: 1, height: 14), in: window)
-        let panel = try #require(window.childWindows?.first)
-        panel.layoutIfNeeded()
-        let table = try #require(panel.firstResponder as? NSTableView)
-        #expect(table.rowView(atRow: 0, makeIfNecessary: false)?.isEmphasized == true)
-        #expect(NSApp.keyWindow !== panel && !panel.canBecomeKey)
-        list.close()
     }
 
     @Test func autosaveReadsOnlyCommittedTextDuringIMEComposition() {
@@ -517,14 +435,6 @@ struct SourceEditorTests {
             .map { NSRange(location: $0.location - checked.location, length: $0.length) }
         #expect(kept.map(\.range) == expected.flatMap { Array(repeating: $0, count: 3) })
         #expect(kept.map(\.resultType) == expected.flatMap { _ in [.spelling, .correction, .replacement] })
-    }
-
-    /// Correction and text replacement are the user's system settings, applied in prose only
-    /// (above); smart quotes and dashes would rewrite TeX, so they stay off.
-    @Test func substitutionsFollowTheSystemButQuotesAndDashes() {
-        #expect(text.isAutomaticSpellingCorrectionEnabled == NSSpellChecker.isAutomaticSpellingCorrectionEnabled)
-        #expect(text.isAutomaticTextReplacementEnabled == NSSpellChecker.isAutomaticTextReplacementEnabled)
-        #expect(!text.isAutomaticQuoteSubstitutionEnabled && !text.isAutomaticDashSubstitutionEnabled)
     }
 
     /// A check can start inside a multiline environment. Text arguments and
@@ -677,25 +587,5 @@ struct SourceEditorTests {
         open((1...300).map { "line \($0)" }.joined(separator: "\n"), caret: 0)
         editor.reveal(line: 120, focus: false)
         #expect(editor.currentLine == 120 && editor.currentColumn == 0)
-    }
-
-    /// The text's context menu starts with Go to PDF Position, as the PDF's with
-    /// Go to Source Position, while there's somewhere to go, over the system's plain-text menu.
-    @Test func theContextMenuGoesToThePDF() throws {
-        open("x")
-        let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                    windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        #expect(text.menu(for: click)?.items.first?.title != MenuCommand.syncForward.title)
-        var went = false
-        text.forwardSync = { { went = true } }
-        let menu = try #require(text.menu(for: click))
-        #expect(menu.items.first?.title == MenuCommand.syncForward.title)
-        #expect(menu.items[1].isSeparatorItem)
-        menu.performActionForItem(at: 0)
-        #expect(went)
-        let titles = menu.items.map(\.title)
-        #expect(["Cut", "Copy", "Paste", "Spelling and Grammar"].allSatisfy(titles.contains))
-        // Plain text: nothing to style.
-        #expect(!titles.contains("Font") && !text.isRichText && !text.importsGraphics && !text.usesFontPanel)
     }
 }

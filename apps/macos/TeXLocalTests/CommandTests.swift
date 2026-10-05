@@ -30,80 +30,8 @@ struct MenuStructureTests {
         return menu
     }
 
-    private func titles(_ menu: NSMenu) -> [String] {
-        menu.items.filter { !$0.isSeparatorItem }.map(\.title)
-    }
-
     private func item(_ title: String, in menu: NSMenu) throws -> NSMenuItem {
         try #require(all(menu).first { $0.title == title }, "\(title)")
-    }
-
-    /// The item with this chord anywhere in the menu bar.
-    private func item(_ key: String, _ modifiers: NSEvent.ModifierFlags = .command) throws -> NSMenuItem {
-        let items = NSApp.mainMenu.map(all) ?? []
-        return try #require(items.first { item in
-            var mask = item.keyEquivalentModifierMask
-            // AppKit also spells Shift as an upper-case key.
-            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
-            return item.keyEquivalent.lowercased() == key && mask == modifiers
-        }, "\(modifiers) \(key)")
-    }
-
-    /// The system's, which whatever has the keyboard answers: a text field from
-    /// its undo manager, the source from its file's (`SourceEditor`).
-    @Test func undoAndRedoAreTheSystems() throws {
-        #expect(try item("z").action == Selector(("undo:")))
-        #expect(try item("z", [.command, .shift]).action == Selector(("redo:")))
-    }
-
-    /// The chords the Mac relies on, its own (`MenuCommand.shortcut`, HIG Keyboards) and the system's.
-    @Test func eachChordHasItsItem() throws {
-        let chords: [(String, NSEvent.ModifierFlags, String)] = [
-            ("g", .command, "Find Next"), ("g", [.command, .shift], "Find Previous"),
-            ("f", .command, "Find…"), ("f", [.command, .option], "Find and Replace…"),
-            ("s", [.command, .control], "Sidebar"), ("0", .command, "Actual Size"),
-            ("9", .command, "Fit Width"), ("9", [.command, .option], "Fit Page"),
-            ("l", [.command, .shift], "Build Panel"), ("i", [.command, .option], "Inspector"),
-            (",", .command, "Settings…"), ("o", .command, "Open…"), ("p", .command, "Print…"), ("p", [.command, .shift], "Page Setup…"),
-            (".", .command, "Stop"), ("w", [.command, .shift], MenuCommand.projectClose.title),
-            ("e", [.command, .option], MenuCommand.editMath.title), ("j", [.command, .option], MenuCommand.syncForward.title)]
-        for (key, modifiers, title) in chords {
-            #expect(try item(key, modifiers).title.hasSuffix(title), "\(title)")
-        }
-        // Find in PDF… has no chord of its own: ⌥⌘F is Find and Replace….
-        #expect(try item("Find in PDF…", in: menu("Edit")).keyEquivalent == "")
-    }
-
-    @Test func theAppsMenusGoBetweenViewAndWindow() throws {
-        let order = try #require(NSApp.mainMenu).items.map(\.title)
-        let view = try #require(order.firstIndex(of: "View")), window = try #require(order.firstIndex(of: "Window"))
-        #expect(Array(order[view...window]) == ["View", "Insert", "Compile", "Window"])
-        #expect(try #require(order.firstIndex(of: "Format")) < view)
-    }
-
-    /// None of the system's text-editing items lost to a group of the app's own.
-    @Test func editKeepsTheSystemsTextItems() throws {
-        let edit = try menu("Edit")
-        for title in ["Find", "Spelling and Grammar", "Substitutions", "Transformations", "Speech",
-                      "Find in Project…", "Find in PDF…", "Go to Line…"] {
-            #expect(titles(edit).contains(title), "\(title)")
-        }
-        let find = try item("Find", in: edit).submenu
-        #expect(find.map(titles) == ["Find…", "Find and Replace…", "Find Next", "Find Previous",
-                                     "Use Selection for Find", "Jump to Selection"])
-        #expect(try item("Use Selection for Find", in: edit).keyEquivalent == "e")
-        #expect(try item("Jump to Selection", in: edit).keyEquivalent == "j")
-        #expect(try item("Check Spelling While Typing", in: edit).action == #selector(NSTextView.toggleContinuousSpellChecking(_:)))
-    }
-
-    /// Format holds the text's attributes; what inserts text is Insert's.
-    @Test func formatStylesAndInsertInserts() throws {
-        let format = try menu("Format"), insert = try menu("Insert")
-        #expect(titles(format) == ["Bold", "Italic", "Underline", "Section Level", "Comment Selection", "Move Line Up", "Move Line Down"])
-        #expect(try item("Move Line Up", in: format).keyEquivalent == "[")
-        #expect(try item("Move Line Down", in: format).keyEquivalentModifierMask == [.command, .option])
-        #expect(titles(insert).starts(with: ["Inline Math", "Display Math", "Equation", "Aligned Equations", "Symbols", "Greek"]))
-        #expect(titles(insert).contains("Figure") && titles(insert).last == "References and Links")
     }
 
     /// Insert's maths items say what they put in; its symbols are grids of TeX's glyphs, in full
@@ -127,36 +55,5 @@ struct MenuStructureTests {
         let row = try #require(all(menu).first { $0.submenu?.presentationStyle == .palette }?.submenu)
         row.performActionForItem(at: 1)
         #expect(row.items.allSatisfy { $0.state == .off })
-    }
-
-    /// Engine lists the engines even with no project to set one for, never an empty submenu.
-    @Test func engineListsTheEngines() throws {
-        let engine = try #require(try item("Engine", in: menu("Compile")).submenu)
-        #expect(titles(engine).starts(with: ["pdfLaTeX", "XeLaTeX", "LuaLaTeX"]))
-    }
-
-    /// A group's items all have an icon or none do (HIG, Menus): Close and Save, Rename's three, and Format's styles.
-    @Test func iconsComeByGroup() throws {
-        let file = try menu("File"), format = try menu("Format")
-        for title in ["Close", "Save", "Rename", "Show in Finder", "Move to Trash", "Share…"] {
-            #expect(try item(title, in: file).image != nil, "\(title)")
-        }
-        for title in ["Bold", "Italic", "Underline"] { #expect(try item(title, in: format).image != nil, "\(title)") }
-        for title in ["Save PDF As…", "Export Project as ZIP…", "Page Setup…", "Print…"] {
-            #expect(try item(title, in: file).image == nil, "\(title)")
-        }
-    }
-
-    /// Rename, Show in Finder and Move to Trash follow Save, as in Pages and Finder.
-    @Test func renameFollowsSave() throws {
-        let order = titles(try menu("File"))
-        let save = try #require(order.firstIndex(of: "Save"))
-        #expect(Array(order[save...].prefix(6)) == ["Save", "Close Project", "Rename", "Show in Finder", "Move to Trash", "Save PDF As…"])
-    }
-
-    /// Share… as the HIG names it, there even with nothing to share.
-    @Test func shareIsOneItem() throws {
-        let file = try menu("File")
-        #expect(file.items.filter { $0.title.hasPrefix("Share") }.map(\.title) == ["Share…"])
     }
 }

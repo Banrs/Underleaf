@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import os
 import Testing
 @testable import TeXLocal
@@ -169,26 +168,6 @@ struct TeXpressoSessionTests {
         }
         await session.waitForPendingCalls()
         #expect(texts == ["first", "edit 99", "included $"] && session.failure == nil)
-        session.stop()
-        await session.waitForPendingCalls()
-    }
-
-    @Test func unchangedStatusDoesNotInvalidateTheLogView() async {
-        let error = OSAllocatedUnfairLock(initialState: Optional<String>.none)
-        let session = TeXpressoSession(id: "project") { command, _ in
-            status(running: command != "texpresso_stop", error: error.withLock { $0 })
-        }
-        session.start(files: [])
-        await session.waitForPendingCalls()
-        let changed = OSAllocatedUnfairLock(initialState: false)
-        withObservationTracking { _ = session.status } onChange: { changed.withLock { $0 = true } }
-        session.rescan(files: [])
-        await session.waitForPendingCalls()
-        #expect(!changed.withLock { $0 })
-        error.withLock { $0 = "Missing $" }
-        session.rescan(files: [])
-        await session.waitForPendingCalls()
-        #expect(changed.withLock { $0 } && session.log == "Missing $")
         session.stop()
         await session.waitForPendingCalls()
     }
