@@ -5,32 +5,32 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
-/// The build panel below the editors and their status bar: its tabs, then the build's issues
-/// or its whole log. No close button: the status bar's toggle and View › Hide Build Panel close it.
+/// The build panel below the editors and their status bar: the build's issues or its whole
+/// log, with the tabs and filter in a bar at its foot, as Xcode's navigator and console filters,
+/// that they scroll under. No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            BuildPanelHeader(project: project, filter: $filter, showWarnings: $showWarnings)
-            Divider()
-            Group {
-                switch project.panelTab {
-                case .issues: issues
-                case .log: log
-                case .texpresso:
-                    if project.texpresso.log.isEmpty {
-                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                               description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
-                                                                 : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
-                    } else {
-                        LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
-                    }
+        Group {
+            switch project.panelTab {
+            case .issues: issues
+            case .log: log
+            case .texpresso:
+                if project.texpresso.log.isEmpty {
+                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                           description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
+                                                             : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
+                } else {
+                    LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            BuildPanelBar(project: project, filter: $filter, showWarnings: $showWarnings)
         }
     }
 
@@ -72,7 +72,7 @@ struct BuildPanel: View {
 
 /// The panel's tabs and its tab's controls. The log has the text view's own find bar, so only
 /// the issues have a filter.
-private struct BuildPanelHeader: View {
+private struct BuildPanelBar: View {
     @Bindable var project: ProjectModel
     @Binding var filter: String
     @Binding var showWarnings: Bool
