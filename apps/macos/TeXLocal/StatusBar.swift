@@ -19,15 +19,20 @@ struct StatusBar: View {
         .controlSize(.small)
         .lineLimit(1)
         .buttonStyle(.borderless)
-        .padding(.horizontal)
+        // Xcode's bar, measured (2026-10-06): 14 pt to the first item, the toggle's symbol 17.5 pt
+        // from the right edge, and a hairline along the top where the content scrolls under.
+        .padding(.leading, 14)
+        .padding(.trailing, 16.5)
         .frame(height: Self.height)
+        .overlay(alignment: .top) { Divider() }
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
     }
 
     private func content(showsCounts: Bool) -> some View {
-        HStack {
+        // Xcode's hairline before the toggle, 9 pt either side.
+        HStack(spacing: 9) {
             // A button, not a toggle: the panel's own toggle is the one place its open state shows.
             let showingIssues = project.showLogs && project.panelTab == .issues
             Button {
@@ -47,38 +52,41 @@ struct StatusBar: View {
             Spacer(minLength: 0)
             let counts = showsCounts && project.editsText && app.showWordCount ? project.counts : nil
             let pages = app.showPDF && project.hasPDF && project.pdf.pageCount > 0
-            if project.editsText || pages {
-                HStack {
-                    if project.editsText {
-                        // The caret's place; Go to Line from it.
-                        Button { app.perform(.editGotoLine, on: project) } label: {
-                            Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)").hitTarget()
-                        }
-                        .help("Go to Line")
+            HStack(spacing: 16) {
+                if project.editsText {
+                    // The caret's place; Go to Line from it.
+                    Button { app.perform(.editGotoLine, on: project) } label: {
+                        Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)").hitTarget()
                     }
-                    if let counts {
-                        Text("^[\(counts.words) word](inflect: true)")
-                            .foregroundStyle(.secondary)
-                            .layoutPriority(-1)
-                    }
-                    if pages {
-                        freshness
-                        Button { app.perform(.pdfGotoPage, on: project) } label: {
-                            Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
-                        }
-                        .help("Go to Page")
-                    }
+                    .help("Go to Line")
                 }
-                .fixedSize()
+                if let counts {
+                    Text("^[\(counts.words) word](inflect: true)")
+                        .foregroundStyle(.secondary)
+                        .layoutPriority(-1)
+                }
+                if pages {
+                    freshness
+                    Button { app.perform(.pdfGotoPage, on: project) } label: {
+                        Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
+                    }
+                    .help("Go to Page")
+                }
             }
+            .fixedSize()
+            if project.editsText || pages { hairline }
             Toggle(isOn: $project.showLogs) {
-                Label("Build Panel", systemImage: "inset.filled.bottomthird.square").hitTarget()
+                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps.
+                Label("Build Panel", systemImage: "inset.filled.bottomthird.square").frame(minHeight: 20)
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
             .help(app.title(.viewToggleLogs, on: project))
         }
     }
+
+    /// Xcode's: as tall as the toggle's symbol.
+    private var hairline: some View { Divider().frame(height: 12) }
 
     /// The PDF shown isn't the source's: edits since its build, or a failed build after it.
     @ViewBuilder
