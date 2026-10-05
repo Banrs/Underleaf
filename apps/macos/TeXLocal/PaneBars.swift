@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// The PDF's find bar, its field taking the keyboard as it appears.
+/// The PDF's find bar. Its pane accessory keeps the field ready to focus.
 struct FindBar: View {
     @Binding var query: String
     let prompt: String
     let field: FieldHandle
-    /// Where the field passes Edit › Find's items (`FindPassingTextView`).
-    var findTarget: SyncPDFView?
     let matches: FindMatches
     /// The query the matches are for, which the count reads.
     let searched: String
@@ -15,7 +13,7 @@ struct FindBar: View {
 
     var body: some View {
         HStack {
-            SearchField(text: $query, prompt: prompt, handle: field, findTarget: findTarget, step: step, close: close)
+            SearchField(text: $query, prompt: prompt, handle: field, step: step, close: close)
                 .frame(minWidth: 100, maxWidth: .infinity)
             ControlGroup {
                 Button("Previous Match", systemImage: "chevron.backward") { step(-1) }
@@ -33,8 +31,6 @@ struct FindBar: View {
             Button("Done") { close() }
         }
         .lineLimit(1)
-        // A turn later, once AppKit has made the field.
-        .onAppear { Task { field.focus() } }
     }
 }
 
@@ -54,7 +50,7 @@ struct FindMatches: Equatable {
     }
 }
 
-/// A field to focus once AppKit has made it.
+/// A field the window can focus after AppKit creates it.
 final class FieldHandle {
     fileprivate(set) weak var field: NSTextField?
 
@@ -78,7 +74,6 @@ struct SearchField: NSViewRepresentable {
     /// In the magnifying glass's place: a filter's, as Xcode's filter fields.
     var symbol: String?
     var handle: FieldHandle?
-    var findTarget: SyncPDFView?
     var step: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
 
@@ -114,7 +109,7 @@ struct SearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSearchField {
-        let view = findTarget == nil ? NSSearchField() : FindField()
+        let view = NSSearchField()
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -132,7 +127,6 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
-        (view.cell as? FindFieldCell)?.editor.pdf = findTarget
         view.placeholderString = prompt
         // VoiceOver's name: the placeholder goes once there's text.
         view.setAccessibilityLabel(prompt)
@@ -144,36 +138,23 @@ struct SearchField: NSViewRepresentable {
     }
 }
 
-/// The PDF find bar's field, whose editor passes Edit › Find's items to the PDF.
-private final class FindField: NSSearchField {
-    override class var cellClass: AnyClass? {
-        get { FindFieldCell.self }
-        set {}
-    }
-}
-
-private final class FindFieldCell: NSSearchFieldCell {
-    let editor: FindPassingTextView = {
-        let editor = FindPassingTextView()
-        editor.isFieldEditor = true
-        return editor
-    }()
-
-    override func fieldEditor(for controlView: NSView) -> NSTextView? { editor }
-}
-
-/// A field editor that passes Edit › Find to the PDF: the field isn't inside the PDF view,
-/// so the responder chain wouldn't reach it, and a text view would answer itself.
+/// Pass Edit › Find from the PDF find field's editor to the window, which routes it to the PDF.
 final class FindPassingTextView: NSTextView {
-    weak var pdf: SyncPDFView?
-
     override func performFindPanelAction(_ sender: Any?) {
-        pdf?.performFindPanelAction(sender)
+        nextResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: sender)
     }
 
     override func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(NSTextView.performFindPanelAction(_:)) else { return super.validateMenuItem(item) }
-        return pdf?.validatesFind(item) ?? false
+        guard let action = item.action, action == #selector(NSTextView.performFindPanelAction(_:)) else {
+            return super.validateMenuItem(item)
+        }
+        // The chain from the next responder; NSApp.target(forAction:) starts
+        // at the first responder, which is this editor.
+        let target = nextResponder.flatMap { first in
+            sequence(first: first, next: \.nextResponder).first { $0.responds(to: action) }
+        }
+        guard let target else { return false }
+        return (target as? NSMenuItemValidation)?.validateMenuItem(item) ?? true
     }
 }
 
@@ -274,11 +255,26 @@ struct ItemMenuItems: View {
 }
 
 extension View {
-    /// The chosen item's actions for File's items while the list has the keyboard, none while
-    /// its name is edited (where ⌘⌫ edits the name). Only while its item exists: one trashed
-    /// or renamed away, here or by another app, takes its actions with it.
-    func offersActions<ID: Hashable>(for id: ID?, _ actions: (ID) -> ItemActions?) -> some View {
-        focusedValue(\.itemActions, id.flatMap(actions))
+    /// The chosen item's actions for File's items, none while its name is edited
+    /// (where ⌘⌫ edits the name). Through `AppModel`: a focused value doesn't
+    /// reach the menus from an AppKit window's hosting views.
+    func offersActions<ID: Hashable>(for id: ID?, _ actions: @escaping (ID) -> ItemActions?) -> some View {
+        modifier(ActionsOffer(id: id, actions: actions))
+    }
+}
+
+private struct ActionsOffer<ID: Hashable>: ViewModifier {
+    @Environment(AppModel.self) private var app
+    let id: ID?
+    let actions: (ID) -> ItemActions?
+
+    func body(content: Content) -> some View {
+        // Only while its item exists: one trashed or renamed away, here or by
+        // another app, takes its actions with it.
+        let present = id.flatMap { actions($0) == nil ? nil : $0 }
+        content
+            .onChange(of: present, initial: true) { _, id in app.chosenItem = id.flatMap(actions) }
+            .onDisappear { app.chosenItem = nil }
     }
 }
 

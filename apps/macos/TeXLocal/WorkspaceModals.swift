@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The workspace's sheets, alerts and file dialogs.
+/// Workspace sheets, alerts, and file dialogs on the always-visible source column.
 struct WorkspaceModals: ViewModifier {
     @Environment(AppModel.self) private var app
     @Bindable var project: ProjectModel
@@ -36,7 +36,7 @@ struct WorkspaceModals: ViewModifier {
                 switch prompt {
                 case .gotoPage:
                     GoToSheet(noun: "Page", limit: { project.pdf.pageCount > 0 ? project.pdf.pageCount : nil }) {
-                        project.performPDF(.goToPage($0))
+                        app.requestPDF(.goToPage($0))
                     }
                 case .gotoLine:
                     GoToSheet(noun: "Line", limit: { project.editor.textView.document.lineCount }) {

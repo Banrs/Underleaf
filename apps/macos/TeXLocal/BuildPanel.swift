@@ -5,12 +5,16 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
-/// The build panel below the editors: its tabs, then the build's issues or its whole log.
+@Observable final class BuildPanelState {
+    var filter = ""
+    var showWarnings = true
+}
+
+/// The build panel below the editors: the build's issues, or its whole log.
 /// No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
-    @State private var filter = ""
-    @State private var showWarnings = true
+    let state: BuildPanelState
 
     var body: some View {
         Group {
@@ -28,32 +32,30 @@ struct BuildPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaBar(edge: .top) {
-            BuildPanelHeader(project: project, filter: $filter, showWarnings: $showWarnings)
-        }
+        .background(.textSurface)
     }
 
     private func matches(_ item: LogItem) -> Bool {
-        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
-            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
+        state.filter.isEmpty || item.message.localizedCaseInsensitiveContains(state.filter)
+            || (item.file?.localizedCaseInsensitiveContains(state.filter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
-        let all = (project.result?.errors ?? []) + (showWarnings ? project.result?.warnings ?? [] : [])
+        let all = (project.result?.errors ?? []) + (state.showWarnings ? project.result?.warnings ?? [] : [])
         let items = all.enumerated().filter { matches($0.element) }
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !state.showWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
-                Button("Show Warnings") { showWarnings = true }
+                Button("Show Warnings") { state.showWarnings = true }
             }
-        } else if !filter.isEmpty {
-            ContentUnavailableView.search(text: filter)
+        } else if !state.filter.isEmpty {
+            ContentUnavailableView.search(text: state.filter)
         } else {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
@@ -70,9 +72,11 @@ struct BuildPanel: View {
     }
 }
 
-/// The panel's tabs and its tab's controls, over its content. The log has the text view's
-/// own find bar, so only the issues have a filter.
-private struct BuildPanelHeader: View {
+/// Controls on the editors' bottom accessory, above the build panel's opaque content.
+/// The log has the text view's own find bar, so only the issues have a filter.
+struct BuildPanelHeader: View {
+    /// One height in both tabs: Copy Log's bezel is 2 pt taller than Warnings'.
+    static let height: CGFloat = 24
     @Bindable var project: ProjectModel
     @Binding var filter: String
     @Binding var showWarnings: Bool
@@ -96,8 +100,9 @@ private struct BuildPanelHeader: View {
                     .toggleStyle(.button)
                     .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
+                // The regular size, the tabs' 24 points.
                 SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
-                    .frame(maxWidth: 180)
+                    .frame(minWidth: 100, maxWidth: 180)
             } else {
                 let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
@@ -108,11 +113,14 @@ private struct BuildPanelHeader: View {
                 .disabled(text.isEmpty)
             }
         }
+        .frame(height: Self.height)
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.horizontal, ColumnMetrics.barSideInset)
+        .padding(.vertical, 9)
+        // Clear over the editors, which AppKit's scroll edge blurs; the split's divider is under it.
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
@@ -128,6 +136,7 @@ private struct IssueList: View {
         List(items, id: \.offset, selection: $selection) { IssueRow(item: $0.element) }
         .listStyle(.inset)
         .accessibilityLabel("Issues")
+        .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: Int.self) { rows in
             if let item = rows.first.flatMap(item) {
                 if item.file != nil {
@@ -201,6 +210,10 @@ struct LogTextView: NSViewRepresentable {
         view.isEditable = false
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
+        // Lines the text up with the header's controls, at AppKit's accessory
+        // inset; the fragment padding would put it past them.
+        view.textContainerInset = NSSize(width: 10, height: 10)
+        view.textContainer?.lineFragmentPadding = 0
         view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
                                           weight: .regular)
         // A text view has no title of its own for VoiceOver.

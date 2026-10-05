@@ -1,8 +1,46 @@
 import AppKit
 import SwiftUI
 
-/// Aa's popover, as Notes' Aa (`WorkspaceToolbar`): the styles' toggles, then the levels, the
-/// caret's checked. The menu bar's Format menu keeps them as plain menu items.
+/// Aa's popover, as Notes' Aa: the styles' toggles, then the levels, the caret's checked. The
+/// menu bar's Format menu and the toolbar's overflow menu keep them as plain menu items.
+@MainActor
+final class FormatPopover: NSObject, NSPopoverDelegate {
+    let popover = NSPopover()
+    private let app: AppModel
+    private let project: ProjectModel
+    /// When it last closed: the click on Aa that closes it isn't one to open it again.
+    private var closed = Date.distantPast
+
+    init(app: AppModel, project: ProjectModel) {
+        self.app = app
+        self.project = project
+        super.init()
+        // Escape and a click elsewhere close it.
+        popover.behavior = .transient
+        popover.delegate = self
+    }
+
+    func toggle(relativeTo item: NSToolbarItem) {
+        if popover.isShown {
+            popover.close()
+            return
+        }
+        guard Date.now.timeIntervalSince(closed) > 0.25 else { return }
+        // Made anew, so it opens at the caret's level.
+        let content = NSHostingController(rootView: FormatPanel(app: app, project: project) { [weak self] in
+            self?.popover.close()
+        })
+        content.sizingOptions = .preferredContentSize
+        popover.contentViewController = content
+        popover.show(relativeTo: item)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        closed = .now
+        popover.contentViewController = nil
+    }
+}
+
 /// Bold, Italic and Underline, centred, lit when the selection is in their command; then the
 /// levels the document's class has, each at its weight and shape there and its size scaled into
 /// Notes', at an even pitch, after its number as the class prints it. A style toggles and the popover

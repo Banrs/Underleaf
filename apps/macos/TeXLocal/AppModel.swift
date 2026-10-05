@@ -3,10 +3,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum DefaultsKey {
+    static let sidebarVisible = "sidebarVisible"
+    static let inspectorVisible = "inspectorVisible"
     static let autoCompile = "autoCompile"
     static let showWordCount = "showWordCount"
     static let recentProjects = "recentProjects"
+    static let showPDF = "showPDF"
     static let openProject = "openProject"
+    static let outlineCollapsed = "OutlineCollapsed"
 }
 
 /// An alert: a short, specific title and the detail in the message (HIG, Alerts).
@@ -58,14 +62,40 @@ final class AppModel {
     /// before copying it in.
     var pendingImport: URL?
     var exporting: ExportFile?
+    /// Bumped by Find in Project…, to focus the sidebar's search field.
+    var searchFocusToken = 0
+    /// The token lets the same action be asked for twice in a row.
+    var pdfRequest: (action: PDFAction, token: Int)?
+    private var pdfToken = 0
+
+    // Stored here rather than as @AppStorage so the menus and models observe them.
+    var sidebarVisible: Bool {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: DefaultsKey.sidebarVisible) }
+    }
+    /// The inspector: the project's settings and facts, the window's trailing column.
+    var inspectorVisible: Bool {
+        didSet { UserDefaults.standard.set(inspectorVisible, forKey: DefaultsKey.inspectorVisible) }
+    }
     var autoCompile: Bool {
         didSet { UserDefaults.standard.set(autoCompile, forKey: DefaultsKey.autoCompile) }
     }
     var showWordCount: Bool {
         didSet { UserDefaults.standard.set(showWordCount, forKey: DefaultsKey.showWordCount) }
     }
-    /// Brings the window back, made or shown by the window itself (`RootView`).
-    @ObservationIgnored var showWindow: () -> Void = {}
+    /// The PDF column. View › Show PDF and the toolbar keep the choice for later
+    /// launches (`togglePDF`); a PDF command or Go to PDF Position shows it for now.
+    var showPDF: Bool
+    /// The sidebar's File Outline folded to its header.
+    var outlineCollapsed: Bool {
+        didSet { UserDefaults.standard.set(outlineCollapsed, forKey: DefaultsKey.outlineCollapsed) }
+    }
+    /// Set by the window: the menus act on the project only while its window
+    /// is key, not behind Settings or a sheet.
+    var mainWindowIsKey = false
+    /// The project the menus act on.
+    var commandProject: ProjectModel? { mainWindowIsKey && project?.closed != true ? project : nil }
+    /// Offered by the list with the keyboard (`offersActions`).
+    var chosenItem: ItemActions?
     /// Newest first, by id.
     var recentProjects: [String] {
         didSet { UserDefaults.standard.set(recentProjects, forKey: DefaultsKey.recentProjects) }
@@ -78,15 +108,33 @@ final class AppModel {
 
     init() {
         let defaults = UserDefaults.standard
-        defaults.register(defaults: [DefaultsKey.autoCompile: true, DefaultsKey.showWordCount: true])
+        defaults.register(defaults: [DefaultsKey.sidebarVisible: true, DefaultsKey.autoCompile: true,
+                                     DefaultsKey.showWordCount: true, DefaultsKey.showPDF: true])
+        sidebarVisible = defaults.bool(forKey: DefaultsKey.sidebarVisible)
+        inspectorVisible = defaults.bool(forKey: DefaultsKey.inspectorVisible)
         autoCompile = defaults.bool(forKey: DefaultsKey.autoCompile)
         showWordCount = defaults.bool(forKey: DefaultsKey.showWordCount)
+        showPDF = defaults.bool(forKey: DefaultsKey.showPDF)
+        outlineCollapsed = defaults.bool(forKey: DefaultsKey.outlineCollapsed)
         recentProjects = defaults.stringArray(forKey: DefaultsKey.recentProjects) ?? []
         launchProject = defaults.string(forKey: DefaultsKey.openProject)
     }
 
     func newProject(_ template: String = "article") {
         newProjectTemplate = ProjectTemplate.all.first { $0.id == template }
+    }
+
+    func togglePDF() {
+        showPDF.toggle()
+        UserDefaults.standard.set(showPDF, forKey: DefaultsKey.showPDF)
+    }
+
+    /// Shows the PDF column too, so the action happens now rather than when
+    /// the column next appears. The workspace takes each request once.
+    func requestPDF(_ action: PDFAction) {
+        showPDF = true
+        pdfToken += 1
+        pdfRequest = (action, pdfToken)
     }
 
     private let core = Core.shared
@@ -284,6 +332,7 @@ final class AppModel {
 
     /// The project's own requests, which the next project mustn't present.
     private func dropRequests() {
+        pdfRequest = nil
         prompt = nil
         newEntry = nil
         addingFiles = false

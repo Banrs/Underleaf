@@ -1,41 +1,6 @@
 import QuickLook
 import SwiftUI
 
-/// The files over the File Outline, which folds down to its header at the sidebar's foot,
-/// as Overleaf's. The outline goes while the sidebar shows search results, or the open file
-/// isn't LaTeX.
-struct SidebarView: View {
-    let project: ProjectModel
-    @Binding var outlineFolded: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            FilesList(project: project)
-            if !project.isSearching, project.isLaTeX {
-                Divider()
-                // A disclosure with nothing in it: its chevron, state and VoiceOver; the outline follows.
-                DisclosureGroup(isExpanded: Binding(get: { !outlineFolded }, set: { outlineFolded = !$0 })) {
-                } label: {
-                    Text("File Outline")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
-                        .onTapGesture { outlineFolded.toggle() }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                if !outlineFolded {
-                    // Nearly half the sidebar, under the files.
-                    OutlineList(project: project)
-                        .containerRelativeFrame(.vertical) { height, _ in height * 0.45 }
-                }
-            }
-        }
-    }
-}
-
 /// The project's files, or the project search's results while there is a
 /// query.
 struct FilesList: View {
@@ -358,7 +323,7 @@ private extension Binding<Set<String>> {
         }
     }
     .listStyle(.sidebar)
-    .frame(width: 240, height: 240)
+    .frame(width: ColumnMetrics.sidebarIdeal, height: 240)
 }
 
 extension View {
@@ -395,7 +360,7 @@ private func fileDropConfiguration(_ accepts: (URL) -> Bool, _ moves: (URL) -> B
     return configuration
 }
 
-/// The project's sections from its main file, under the File Outline's header, which
+/// The project's sections from its main file, in a pane under `OutlineHeader`, which
 /// folds it away. Takes no drops: files go into the list above.
 struct OutlineList: View {
     let project: ProjectModel
@@ -430,6 +395,11 @@ struct OutlineList: View {
             }
             .listStyle(.sidebar)
             .accessibilityLabel("File Outline")
+            // The header above stands for a section's, so the list's room over its first
+            // row goes; the scroller keeps to what shows.
+            .contentMargins(.top, sidebarListRoom, for: .scrollIndicators)
+            .padding(.top, -sidebarListRoom)
+            .clipped()
             // A step under the files' rows: a table of contents under a list.
             .environment(\.sidebarRowSize, rowSize == .large ? .medium : .small)
             .overlay {
@@ -452,6 +422,51 @@ struct OutlineList: View {
         }
     }
 }
+
+/// The File Outline's header: the system's collapsible sidebar section (so it folds,
+/// shows its chevron on hover and gives VoiceOver its state), with no rows, at the
+/// files' foot so it stays put over the outline. Its whole row folds and unfolds.
+/// Folded, it lines up with the status bar; open, the first heading follows at the
+/// Files section's own spacing.
+struct OutlineHeader: View {
+    @Environment(AppModel.self) private var app
+
+    /// A sidebar section header's row (measured, 27.2).
+    private static let row: CGFloat = 19
+    /// Centred in the status bar's height, as folded, and kept there open.
+    private static let top = (StatusBar.height - row) / 2
+    static let openHeight = top + row
+
+    var body: some View {
+        let expanded = Binding(get: { !app.outlineCollapsed }, set: { app.outlineCollapsed = !$0 })
+        List {
+            Section(isExpanded: expanded) {
+            } header: {
+                Button { expanded.wrappedValue.toggle() } label: {
+                    Text("File Outline")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .listStyle(.sidebar)
+        // The sidebar's own material shows through, as behind the lists either side.
+        .scrollContentBackground(.hidden)
+        .scrollDisabled(true)
+        .frame(height: sidebarListRoom + Self.row + sidebarListRoom, alignment: .top)
+        // AppKit animates the bar's height with the split; the header keeps one
+        // size and one place under the line.
+        .offset(y: Self.top - sidebarListRoom)
+        .frame(height: Self.openHeight, alignment: .top)
+        .clipped()
+        .accessibilityLabel("File Outline")
+    }
+}
+
+/// The room a sidebar list leaves over its first row and under its last, inside its
+/// table (measured, 27.2); `contentMargins` doesn't reach it.
+private let sidebarListRoom: CGFloat = 10
 
 /// A heading in the file outline. Equatable: as a plain view, a heading that
 /// takes the place of a leaf and has subheadings opens closed (27.2).

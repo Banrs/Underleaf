@@ -4,6 +4,19 @@ import AppKit
 /// supplies LaTeX syntax; this view adds the gutter, colours, completion,
 /// brackets and indentation, with core edits grouped into undo steps.
 final class SourceTextView: NSTextView, NSTextStorageDelegate {
+    override func mouseMoved(with event: NSEvent) {
+        if updateDividerCursor(with: event) { return }
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !updateDividerCursor(with: event) { super.mouseEntered(with: event) }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
+    }
+
     /// The open file's text as the core mirrors it; every change reaches it.
     private(set) var document = SourceDocument(text: "")
     /// Only active IME composition needs a snapshot; ordinary edits and undo are live.

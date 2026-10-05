@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Native PDFKit pages, with controls in the toolbar, the find bar over them and the status bar.
+/// Native PDFKit pages, with controls in the toolbar, find accessory and status bar.
 struct PDFPane: View {
     @Environment(AppModel.self) private var app
     let project: ProjectModel
@@ -11,20 +11,11 @@ struct PDFPane: View {
     private var darkPaper: Bool { pdfPaper == .dark || (pdfPaper == .auto && colorScheme == .dark) }
 
     var body: some View {
-        Group {
-            if project.hasPDF {
-                PDFRepresentable(project: project, darkPaper: darkPaper)
-                    .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
-            } else {
-                emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .safeAreaBar(edge: .top) {
-            if project.pdf.finding {
-                PDFFindBar(controller: project.pdf)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-            }
+        if project.hasPDF {
+            PDFRepresentable(project: project, darkPaper: darkPaper)
+                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
+        } else {
+            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -67,7 +58,7 @@ struct PDFFindBar: View {
     @Bindable var controller: PDFController
 
     var body: some View {
-        FindBar(query: $controller.findText, prompt: "Find in PDF", field: controller.findField, findTarget: controller.view,
+        FindBar(query: $controller.findText, prompt: "Find in PDF", field: controller.findField,
                 matches: FindMatches(index: controller.matchIndex + 1, total: controller.matches.count,
                                      limited: controller.limited),
                 searched: controller.query, step: controller.findNext, close: controller.closeFind)
