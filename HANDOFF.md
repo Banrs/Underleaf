@@ -1,4 +1,4 @@
-# Underleaf review handoff — 4 October 2026
+# Underleaf review handoff — 4 October 2026, shell notes updated 6 October
 
 ## Working branch
 
@@ -14,34 +14,27 @@ Claude worktrees were left alone, and no commit history was discarded.
   TextKit rendering attributes now supply fragment colours without editing text
   storage or forcing viewport restoration for colour-only updates. Visible fragments
   are refreshed when the theme or appearance changes.
-- The build header is a bottom accessory of the source/PDF columns with AppKit's
-  automatic scroll edge, no material of its own. It's built visible and hidden once
-  the area loads: an accessory hidden as it's added gets no edge when it later
-  shows (27.2). Its Filter is the stock search field at the regular size, the tabs' height.
-- With the panel closed, source/PDF extend under the clear status bar and its
-  automatic edge, as Xcode's. While the panel shows, the area ends above the bars,
-  so the panel rises from the status bar's top. The bar has no fill of its own in
-  either state: AppKit's automatic bottom edge is hard there (a soft one leaves the
-  bar's text unreadable over white pages), and it reads a shade lighter than the
-  text background in dark (about 50 against 40), as the system draws it.
-  `placeAreaAboveBars` deactivates the outgoing bottom constraint before activating the
-  incoming one (#45): both active at once broke a safe-area constraint on every close.
-- The status bar has Xcode's hairline (a SwiftUI `Divider`, 12 pt, the toggle symbol's
-  height) between the caret's place and the panel toggle; its spacing and insets are
-  otherwise unchanged from f85f20b (pixel-identical captures, panel open and closed).
+- The status bar is the bottom accessory of the source/PDF columns, always, with AppKit's
+  automatic scroll edge and no fill of its own. The build panel is a split item below
+  the columns, so the bar rides up with the editors as the panel opens, as Xcode's does
+  over its debug area, and never changes look. The panel's header (tabs, Warnings,
+  Filter) is inside the panel, a SwiftUI `VStack` over the list or log.
+- The panel opens and closes with the one AppKit collapse animation. Gone with the old
+  arrangement: the solid/clear bar switch, the panel-header accessory, divider detents
+  and their haptic, overlay-scroller hiding during drags, and widening the window to
+  fit a pane (AppKit's own behaviour now).
+- Window, toolbar and splits stay AppKit: only `NSToolbar`'s tracking separators follow
+  the source|PDF divider, and a three-column `NavigationSplitView` can't hide its
+  detail column. A SwiftUI shell was tried on this branch (d8d9cf0) and reverted
+  (a2fd29d) for that. The panes are SwiftUI.
+- Compile › Go to Next/Previous Issue (⌘' and ⇧⌘') step round the build's issues that
+  name a file; the chosen issue is the project's (`chosenIssue`), shared with the list.
+  The editor's gutter marks the open file's issue lines until the file is edited.
 - The PDF hidden at launch is collapsed in `viewDidAppear`, not as the columns load:
   with the PDF collapsed as the window first lays out the columns, the source never got
   the toolbar's scroll edge (its text ran sharp under the toolbar, in every build back
   to f85f20b; uncollapsing and re-collapsing later doesn't bring it back). The autosave's
   collapse is undone in `columns.loaded` for the same reason.
-- Known AppKit edge quirk (27.2), not fixed: bottom accessories (panel header, status bar)
-  normally draw one frosted pocket of their own over source and PDF. A PDF collapse while
-  the panel header shows gives the source its own scroll pocket instead, and the PDF,
-  shown again, gets none, so the PDF runs clear under the header. Seen on any PDF
-  hide/show with the panel open (also before this change) and, now, on showing a PDF
-  that was hidden at launch with the panel open. Re-adding the accessory blanks the
-  columns; nudging safe areas, collapsing in `viewWillAppear` (loses the toolbar edge)
-  and hiding the header around the collapse don't help.
 - Source and PDF share one background, the system text background (TextEdit, Notes,
   Xcode in Light; Preview's canvas is the same colour, wallpaper-tinted). PDFKit
   tints a system colour it's given, so the PDF view gets it resolved per appearance.
@@ -71,9 +64,10 @@ preserved.
 
 ## Validation and installed build
 
-- **115 native tests in 15 suites passed**, including live theme bitmap repaint,
-  stable source position during panel animation, and first-open File Outline frame
-  checks at normal and minimum sizes. Log: `/private/tmp/underleaf-handoff-native-tests.log`.
+- 6 October, branch `swiftui-shell`: 102 native tests in 18 suites, one failing:
+  `livePagesAreNeverTakenForABuilds` (ProjectTests.swift), stale against the TeXpresso
+  work in progress and left for that review. The layout tests that pinned the old
+  shell's frames and the menu-structure, pixel and AppKit re-tests were deleted.
 - Shipping Release build passed: `/private/tmp/underleaf-handoff-release-build.log`.
 - Installed app: `/Applications/TeXLocal.app`. Signature verification passed; its
   binary matches the built product. SHA-256:
@@ -126,7 +120,6 @@ xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
 
 Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`,
 verify its signature, and compare installed/product binary hashes before visual QA.
-The layout tests require an awake, unlocked display.
 
 ## Focus for Claude review and refinement
 
