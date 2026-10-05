@@ -119,7 +119,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     var syntaxTheme = SyntaxTheme.overleaf {
         didSet {
             guard syntaxTheme != oldValue else { return }
-            recolour(invalidatingLayout: true)
+            recolour(redrawing: true)
         }
     }
 
@@ -140,13 +140,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: dark ? .medium : .regular)
         guard font != applied else { return }
+        let resized = applied?.pointSize != font.pointSize
         applied = font
+        self.font = font
+        typingAttributes[.font] = font
+        // The weights share their metrics: an appearance change leaves the lines and gutter as they are.
+        guard resized else { return }
         let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
         let style = NSMutableParagraphStyle()
         // A minimum, so taller fallback glyphs and input methods still fit.
         style.minimumLineHeight = (natural * 1.1).rounded()
         rowShift = (style.minimumLineHeight - natural) / 2
-        self.font = font
         defaultParagraphStyle = style
         if let storage = textStorage {
             storage.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: storage.length))
@@ -161,30 +165,33 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         updateGutterWidth()
     }
 
+    /// The colours are dynamic and the views redraw in the new appearance; only the weight changes.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyFont()
-        recolour(invalidatingLayout: true)
     }
 
     // MARK: the gutter
 
     private var gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
-    private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
+        didSet { numberLines.removeAll() }
+    }
     /// Where the line numbers end.
     private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
     private var fragments: [(offset: Int, fragment: NSTextLayoutFragment)] = []
 
-    private func digits(_ n: Int) -> Int { max(3, String(n).count) }
+    private func digits(_ n: Int) -> Int { max(4, String(n).count) }
 
-    /// Xcode's, measured at 13 pt: three digits' room from 19.5 pt, more as
-    /// the file needs them, and the text 11 pt after.
+    /// Xcode's, measured at 13 pt (2026-10-05): one width up to 9,999 lines, the numbers
+    /// ending 19.5 pt plus three digits in, a digit more for each digit past four, and the
+    /// text 11 pt after.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
         let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
-        numbersEnd = 19.5 + CGFloat(lineCountDigits) * digit
+        numbersEnd = 19.5 + CGFloat(lineCountDigits - 1) * digit
         let width = numbersEnd + 11 - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
@@ -281,41 +288,71 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         }
         // Scrolled, it follows the text.
         if offered != nil { showCompletions(reload: false) }
-        needsDisplay = true
+        redrawLineAndGutter()
+    }
+
+    /// The current line's highlight, as Xcode's, measured: for a caret only, its paragraph
+    /// from 14 pt to 8 pt from the right edge, with 4 pt corners round the line number.
+    private var currentLine: (offset: Int, rect: NSRect)? {
+        let selection = selectedRange(), length = (string as NSString).length
+        guard let entry = fragments.last(where: { $0.offset <= selection.location }) else { return nil }
+        let end = offset(entry.fragment.rangeInElement.endLocation)
+        guard selection.location < end || end == length else { return nil }
+        let frame = entry.fragment.layoutFragmentFrame, lines = entry.fragment.textLineFragments
+        let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
+        let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height)
+        return (entry.offset, NSRect(x: 14, y: textContainerOrigin.y + top + rowShift, width: bounds.width - 22, height: bottom - top))
+    }
+    /// Where the highlight was last drawn.
+    private var drawnLine: NSRect?
+
+    /// Only what the caret and an edit change in the background: the numbers, and the current
+    /// line where it was and is. The text draws in TextKit's own views.
+    private func redrawLineAndGutter() {
+        let shown = visibleRect
+        setNeedsDisplay(NSRect(x: shown.minX, y: shown.minY, width: numbersEnd + 1 - shown.minX, height: shown.height))
+        if let drawnLine { setNeedsDisplay(drawnLine) }
+        if let rect = currentLine?.rect { setNeedsDisplay(rect) }
+    }
+
+    /// Typeset line numbers, drawn in the context's colour (`numberFont` resets them).
+    private var numberLines: [Int: (line: CTLine, width: CGFloat)] = [:]
+
+    private func numberLine(_ number: Int) -> (line: CTLine, width: CGFloat) {
+        if let cached = numberLines[number] { return cached }
+        if numberLines.count > 4096 { numberLines.removeAll(keepingCapacity: true) }
+        let text = NSAttributedString(string: String(number), attributes: [
+            .font: numberFont, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true])
+        let line = CTLineCreateWithAttributedString(text)
+        let typeset = (line, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
+        numberLines[number] = typeset
+        return typeset
     }
 
     /// Draw the current line and numbers on each paragraph's first baseline.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         let origin = textContainerOrigin
-        let selection = selectedRange(), length = (string as NSString).length
-        let entry = fragments.last { $0.offset <= selection.location }.flatMap { entry in
-            let end = offset(entry.fragment.rangeInElement.endLocation)
-            return selection.location < end || end == length ? entry : nil
+        let current = selectedRange().length == 0 ? currentLine : nil
+        drawnLine = current?.rect
+        if let current, current.rect.intersects(rect) {
+            // Grey in Xcode 27 whatever its theme says, as the system's fill (measured, 2026-10-05).
+            NSColor.secondarySystemFill.setFill()
+            NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
         }
-        let current = entry?.offset
-        // As Xcode's, measured: for a caret only, its paragraph from 14 pt to
-        // 8 pt from the right edge, with 4 pt corners round the line number.
-        if let entry, selection.length == 0 {
-            let frame = entry.fragment.layoutFragmentFrame, lines = entry.fragment.textLineFragments
-            let top = frame.minY + (lines.first?.typographicBounds.minY ?? 0)
-            let bottom = frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height)
-            (hasKeyboard ? NSColor.currentLine : .inactiveCurrentLine).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 14, y: origin.y + top + rowShift, width: bounds.width - 22, height: bottom - top),
-                         xRadius: 4, yRadius: 4).fill()
-        }
-        let font = numberFont
+        guard rect.minX < numbersEnd, let context = NSGraphicsContext.current?.cgContext else { return }
+        // The current line's number as a label, the others tertiary, as Xcode's; the system
+        // raises both for Increase Contrast.
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         for (offset, fragment) in fragments {
-            guard let line = fragment.textLineFragments.first else { continue }
-            // Measured: the current line's in the text's colour, the others at 30%, or with
-            // Increase Contrast the system's secondary label, which reads at the HIG's 4.5:1.
-            let color: NSColor = offset == current ? .labelColor
-                : effectiveAppearance.increasesContrast ? .secondaryLabelColor : .textColor.withAlphaComponent(0.3)
-            let number = NSAttributedString(string: "\(document.line(at: offset))",
-                                            attributes: [.font: font, .foregroundColor: color])
-            let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
-            let width = number.size().width
-            number.draw(with: NSRect(x: numbersEnd - width, y: baseline, width: width, height: 0), options: [])
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: 0, dy: origin.y)
+            guard frame.maxY >= rect.minY, frame.minY <= rect.maxY, let line = fragment.textLineFragments.first else { continue }
+            (offset == current?.offset ? NSColor.labelColor : .tertiaryLabelColor).setFill()
+            let number = numberLine(document.line(at: offset))
+            context.textPosition = CGPoint(x: numbersEnd - number.width, y: frame.minY + line.typographicBounds.minY + line.glyphOrigin.y)
+            CTLineDraw(number.line, context)
         }
     }
 
@@ -326,7 +363,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     /// TextKit validates colours when it renders a fragment, without editing the
     /// document's attributes or disturbing its estimated scroll geometry.
-    private func recolour(invalidatingLayout: Bool = false) {
+    private func recolour(redrawing: Bool = false) {
         guard let manager = textLayoutManager else { return }
         if manager.renderingAttributesValidator == nil {
             manager.renderingAttributesValidator = { [weak self] manager, fragment in
@@ -346,12 +383,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         // TextKit validates only the fragments it lays out anew; the rest, after the next layout.
         needsColours = true
         needsLayout = true
-        if invalidatingLayout, let viewport = manager.textViewportLayoutController.viewportRange {
+        if redrawing {
             for (_, fragment) in fragments { manager.renderingAttributesValidator?(manager, fragment) }
-            manager.invalidateLayout(for: viewport)
-            needsLayout = true
+            // Each shown fragment draws in a view of its own, which new rendering attributes don't
+            // redraw, nor does the text view's own display (27.2).
+            func redraw(_ view: NSView) {
+                view.needsDisplay = true
+                view.subviews.forEach(redraw)
+            }
+            redraw(self)
         }
-        needsDisplay = true
     }
 
     // MARK: the selection
@@ -366,7 +407,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         if let snippet, !mirroring, !snippet.contains(selectedRange()) { self.snippet = nil }
         let lineStart = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         closers = closers.filter { $0 >= lineStart }
-        needsDisplay = true
+        redrawLineAndGutter()
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -838,21 +879,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 }
 
-/// Xcode's Default (Light) and (Dark) themes' editor colours.
 extension NSColor {
-    private static func theme(_ light: NSColor, _ dark: NSColor) -> NSColor {
-        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
-    }
-
-    /// DVTSourceTextCurrentLineHighlightColor.
-    static let currentLine = theme(NSColor(srgbRed: 0.909804, green: 0.94902, blue: 1, alpha: 1),
-                                   NSColor(srgbRed: 0.138526, green: 0.146864, blue: 0.169283, alpha: 1))
-    /// Xcode's in a window in the background: grey, measured in Light; Dark's is near grey already.
-    static let inactiveCurrentLine = theme(NSColor(white: 0.933, alpha: 1), currentLine)
-    /// DVTSourceTextSelectionColor.
-    static let sourceSelection = theme(NSColor(srgbRed: 0.642038, green: 0.802669, blue: 0.999195, alpha: 1),
-                                       NSColor(srgbRed: 0.317647, green: 0.356862, blue: 0.439215, alpha: 1))
-
     /// WCAG's relative luminance.
     var luminance: CGFloat {
         guard let rgb = usingColorSpace(.sRGB) else { return 0 }

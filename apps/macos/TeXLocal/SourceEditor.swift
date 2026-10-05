@@ -47,9 +47,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         // Xcode's first line, measured: its highlight 8 pt under the bar, a point under where TextKit's line starts.
         text.textContainerInset = NSSize(width: 0, height: 7)
         text.fontSize = NSFont.systemFontSize
-        // Xcode's theme colours; its caret is the text's.
-        text.selectedTextAttributes = [.backgroundColor: NSColor.sourceSelection]
-        text.insertionPointColor = .textColor
         text.allowsUndo = true
         // Native spelling, correction and text replacement in prose only (below); the last
         // two as the user has them in System Settings, which a text view follows unless

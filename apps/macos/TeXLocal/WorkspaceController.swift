@@ -90,6 +90,8 @@ final class WorkspaceController: RestoredSplitViewController {
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
+    /// The inspector's, the PDF find bar's and the panel header's content, there while they show (`Mount`).
+    private var mounts: [ObjectIdentifier: Mount] = [:]
     private var panelHeader: NSSplitViewItemAccessoryViewController!
     private let panelState = BuildPanelState()
     private let searchField = FieldHandle()
@@ -118,8 +120,8 @@ final class WorkspaceController: RestoredSplitViewController {
         buildInspector()
         buildArea(size: size)
         addSplitViewItem(inspectorItem)
-        for item in [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] {
-            item?.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        for item in panes {
+            item.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         }
         // The opening sizes: the sidebar's width, and source and PDF in halves.
         detent = { [unowned self] divider in
@@ -155,6 +157,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 if app.sidebarVisible != visible { app.sidebarVisible = visible }
             },
             follow(inspectorItem) { [unowned self] visible in
+                if visible { mount(inspectorItem.viewController, true) }
                 fitColumnsToToolbar()
                 if app.inspectorVisible != visible { app.inspectorVisible = visible }
             },
@@ -238,7 +241,7 @@ final class WorkspaceController: RestoredSplitViewController {
 
         pdfItem = NSSplitViewItem(viewController: host(PDFPane(project: project), width: pdfWidth))
         pdfItem.minimumThickness = pdfMinimum
-        pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true)
+        pdfFind = accessory(PDFFindBar(controller: pdf), hidden: true, mounts: true)
         pdfItem.addTopAlignedAccessoryViewController(pdfFind)
 
         columns.splitView.autosaveName = "Columns"
@@ -259,7 +262,7 @@ final class WorkspaceController: RestoredSplitViewController {
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum + ColumnMetrics.panelHeader
         panelHeader = accessory(BuildPanelHeader(project: project, filter: Bindable(panelState).filter,
-                                                showWarnings: Bindable(panelState).showWarnings), hidden: !project.showLogs)
+                                                showWarnings: Bindable(panelState).showWarnings), hidden: !project.showLogs, mounts: true)
         panelHeader.automaticallyAppliesContentInsets = false
         panelHeader.preferredScrollEdgeEffectStyle = .hard
         columnsItem.addBottomAlignedAccessoryViewController(panelHeader)
@@ -283,8 +286,17 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// AppKit's fixed inspector width fits its settings and facts.
     private func buildInspector() {
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project)))
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
         inspectorItem.isCollapsed = !app.inspectorVisible
+    }
+
+    /// The panes that collapse.
+    private var panes: [NSSplitViewItem] { [sidebarItem, outlineItem, pdfItem, panelItem, inspectorItem] }
+
+    /// The toolbar's Inspector goes through the model, as the menu's does, so the pane animates
+    /// as `setCollapsed` runs it and its content leaves once it has shut.
+    override func toggleInspector(_ sender: Any?) {
+        app.inspectorVisible.toggle()
     }
 
     /// The fixed inspector's divider takes no drag, so it shows no resize cursor.
@@ -297,11 +309,22 @@ final class WorkspaceController: RestoredSplitViewController {
 
     /// A pane: SwiftUI whose sizes stay out of Auto Layout, so the split item's
     /// limits size it and its content never sets the window's minimum.
-    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0) -> NSViewController {
-        let host = NSHostingController(rootView: content.environment(app))
+    /// `mounted`, for a pane that hides: its content there only while it shows.
+    private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mounted: Bool? = nil) -> NSViewController {
+        let mount = mounted.map(Mount.init)
+        let host = NSHostingController(rootView: Mounted(mount: mount, content: content.environment(app)))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
+        if let mount { mounts[ObjectIdentifier(host)] = mount }
         return host
+    }
+
+    /// A pane's or bar's content goes in before it shows, and out once it has hidden.
+    private func mount(_ controller: NSViewController, _ shown: Bool) {
+        guard let mount = mounts[ObjectIdentifier(controller)], mount.shown != shown else { return }
+        mount.shown = shown
+        // In at its size before AppKit measures it to show.
+        if shown { controller.view.layoutSubtreeIfNeeded() }
     }
 
     /// The system separator, edge to edge over a bar, outside its insets.
@@ -350,9 +373,11 @@ final class WorkspaceController: RestoredSplitViewController {
     }
 
     /// A pane bar sized to its content, inside AppKit's standard accessory insets.
-    private func accessory(_ content: some View, hidden: Bool = false) -> NSSplitViewItemAccessoryViewController {
+    private func accessory(_ content: some View, hidden: Bool = false, mounts: Bool = false) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
-        let host = NSHostingView(rootView: content.environment(app))
+        let mount = mounts ? Mount(!hidden) : nil
+        if let mount { self.mounts[ObjectIdentifier(accessory)] = mount }
+        let host = NSHostingView(rootView: Mounted(mount: mount, content: content.environment(app)))
         host.sizingOptions = [.intrinsicContentSize]
         host.setContentHuggingPriority(.defaultLow, for: .horizontal)
         host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -402,6 +427,10 @@ final class WorkspaceController: RestoredSplitViewController {
             return
         }
         let panel = item === panelItem, id = ObjectIdentifier(item)
+        if !collapsed {
+            mount(item.viewController, true)
+            if panel { mount(panelHeader, true) }
+        }
         paneAnimation(true)
         NSAnimationContext.runAnimationGroup { context in
             if !animates { context.duration = 0 }
@@ -421,7 +450,13 @@ final class WorkspaceController: RestoredSplitViewController {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return done?() ?? () }
-                if panel, self.panelHeader.isHidden { self.panelHeader.view.isHidden = true }
+                if panel, self.panelHeader.isHidden {
+                    self.panelHeader.view.isHidden = true
+                    self.mount(self.panelHeader, false)
+                }
+                if let item = self.panes.first(where: { ObjectIdentifier($0) == id }), item.isCollapsed {
+                    self.mount(item.viewController, false)
+                }
                 self.paneAnimation(false)
                 if collapsed { self.giveBackWidth(hiding: id) } else { self.widenedSettled(showing: id) }
                 done?()
@@ -535,10 +570,14 @@ final class WorkspaceController: RestoredSplitViewController {
     /// controls would stay in the key view loop and VoiceOver.
     private func setHidden(_ accessory: NSSplitViewItemAccessoryViewController, _ hidden: Bool) {
         guard accessory.isHidden != hidden else { return }
-        if !hidden { accessory.view.isHidden = false }
+        if !hidden {
+            mount(accessory, true)
+            accessory.view.isHidden = false
+        }
         guard animates else {
             accessory.isHidden = hidden
             accessory.view.isHidden = hidden
+            if hidden { mount(accessory, false) }
             return
         }
         paneAnimation(true)
@@ -546,7 +585,10 @@ final class WorkspaceController: RestoredSplitViewController {
             accessory.animator().isHidden = hidden
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                if hidden, accessory.isHidden { accessory.view.isHidden = true }
+                if hidden, accessory.isHidden {
+                    accessory.view.isHidden = true
+                    self?.mount(accessory, false)
+                }
                 self?.paneAnimation(false)
             }
         }
@@ -858,4 +900,21 @@ enum ColumnMetrics {
     static func bar(_ content: CGFloat) -> CGFloat { content + 2 * 9 }
     /// Those insets at the bar's sides.
     static let barSideInset: CGFloat = 10
+}
+
+/// Whether a pane's SwiftUI content is there: hidden, a hosting view still updates all of it
+/// for every appearance or environment change (measured on 27.2: 20 ms for the folded inspector).
+@Observable final class Mount {
+    var shown: Bool
+    init(_ shown: Bool) { self.shown = shown }
+}
+
+/// The content, while its `Mount` shows it; always, without one.
+private struct Mounted<Content: View>: View {
+    let mount: Mount?
+    let content: Content
+
+    var body: some View {
+        if mount?.shown ?? true { content }
+    }
 }

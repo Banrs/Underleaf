@@ -18,11 +18,6 @@ enum CompletionKind {
     }
 }
 
-private extension NSColor {
-    /// A badge's letter: white on Light's deep squares, near-black on Dark's pale ones.
-    static let badgeLetter = NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.1, alpha: 1) : .white }
-}
-
 /// The core's completions under the caret: a SwiftUI list on the system's glass, in a
 /// panel that never takes the keyboard, so typing stays in the document, which moves
 /// the selection and accepts it.
@@ -223,9 +218,11 @@ final class CompletionList {
                         measure()
                     }
             } icon: {
-                Image(nsImage: NSImage(systemSymbolName: item.badge.symbol, accessibilityDescription: item.badge.name)?
-                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: rows.font.pointSize, weight: .regular)
-                        .applying(NSImage.SymbolConfiguration(paletteColors: [.badgeLetter, item.badge.color]))) ?? NSImage())
+                // The letter in the text's background: white on Light's deep squares, dark on Dark's pale ones.
+                Image(systemName: item.badge.symbol)
+                    .font(.system(size: rows.font.pointSize))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color(nsColor: .textBackgroundColor), Color(nsColor: item.badge.color))
             }
             .lineLimit(1)
             // One element: the label, then its kind.

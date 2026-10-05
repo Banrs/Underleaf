@@ -132,7 +132,7 @@ struct FormatPanel: View {
                 HStack(alignment: .firstTextBaseline, spacing: Self.markerGap) {
                     if layout.markers > 0 {
                         Text(verbatim: marker ?? "")
-                            .foregroundStyle(lit ? AnyShapeStyle(Color(nsColor: .selectedMenuItemTextColor)) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(.secondary)
                             .frame(width: layout.markers, alignment: .trailing)
                     }
                     Text(level.title)
@@ -142,9 +142,11 @@ struct FormatPanel: View {
             }
             .padding(.horizontal, Self.contentInset - Self.highlightInset)
             .frame(height: layout.pitch)
-            // A menu's highlight, the system's, which follows the pointer and the arrow keys.
-            .foregroundStyle(lit ? Color(nsColor: .selectedMenuItemTextColor) : .primary)
-            .background(lit ? Color(nsColor: .controlAccentColor) : .clear, in: .rect(cornerRadius: Self.highlightRadius))
+            // A menu's highlight, the system's tint, which follows the pointer and the arrow keys;
+            // on it the text's styles turn as a selected row's do.
+            .foregroundStyle(.primary)
+            .background(lit ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: Self.highlightRadius))
+            .environment(\.backgroundProminence, lit ? .increased : .standard)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
