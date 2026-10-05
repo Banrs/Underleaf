@@ -262,24 +262,53 @@ final class WorkspaceController: RestoredSplitViewController {
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum + ColumnMetrics.panelHeader
         panelHeader = accessory(BuildPanelHeader(project: project, filter: Bindable(panelState).filter,
-                                                showWarnings: Bindable(panelState).showWarnings), hidden: !project.showLogs, mounts: true)
+                                                showWarnings: Bindable(panelState).showWarnings), mounts: true)
         panelHeader.automaticallyAppliesContentInsets = false
-        panelHeader.preferredScrollEdgeEffectStyle = .hard
+        // The open panel's clear bar, over the editors' text and the PDF.
+        panelHeader.preferredScrollEdgeEffectStyle = .automatic
         columnsItem.addBottomAlignedAccessoryViewController(panelHeader)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         area.loaded = { [unowned self] in
-            if !project.showLogs { panelItem.isCollapsed = true }
+            if !project.showLogs {
+                panelItem.isCollapsed = true
+                // Hidden only now: an accessory hidden as it's added gets no scroll edge
+                // when it later shows, and the text stays sharp under it (27.2).
+                panelHeader.isHidden = true
+                panelHeader.view.isHidden = true
+                mount(panelHeader, false)
+            }
         }
 
-        areaItem = NSSplitViewItem(viewController: area)
+        // The area reaches under the status bar while the panel is closed, for the bar's edge
+        // over the text, and ends above it while the panel shows, so the panel rises from
+        // the bar's top rather than from behind it (`setBarsSolid`).
+        let areaHost = NSViewController()
+        areaHost.view = NSView()
+        areaHost.addChild(area)
+        area.view.translatesAutoresizingMaskIntoConstraints = false
+        areaHost.view.addSubview(area.view)
+        areaUnderBars = area.view.bottomAnchor.constraint(equalTo: areaHost.view.bottomAnchor)
+        areaAboveBars = area.view.bottomAnchor.constraint(equalTo: areaHost.view.safeAreaLayoutGuide.bottomAnchor)
+        NSLayoutConstraint.activate([
+            area.view.topAnchor.constraint(equalTo: areaHost.view.topAnchor),
+            area.view.leadingAnchor.constraint(equalTo: areaHost.view.leadingAnchor),
+            area.view.trailingAnchor.constraint(equalTo: areaHost.view.trailingAnchor),
+            project.showLogs ? areaAboveBars : areaUnderBars,
+        ])
+        areaItem = NSSplitViewItem(viewController: areaHost)
         // The PDF hidden, the source keeps its room: the toolbar's items stay where they were.
         areaItem.minimumThickness = columnsWidth
-        // One look whether the panel shows or not: the system's hard edge under a hairline, over
-        // the editors' text and the panel's rows alike. The edge draws no line of its own here.
         areaItem.addBottomAlignedAccessoryViewController(Self.separator())
-        let statusBar = accessory(StatusBar(project: project))
-        statusBar.preferredScrollEdgeEffectStyle = .hard
+        // Xcode's bottom bar: clear over the text, which scrolls through under the system's
+        // edge; solid in the panel's colour while the panel shows, out over AppKit's insets,
+        // so the open panel and its bar are one surface under the clear header.
+        statusFill.shown = project.showLogs
+        let statusBar = accessory(StatusBar(project: project).background {
+            Mounted(mount: statusFill, content: Color(nsColor: .textBackgroundColor)
+                .padding(.horizontal, -ColumnMetrics.barSideInset).padding(.vertical, -9))
+        })
+        statusBar.preferredScrollEdgeEffectStyle = .automatic
         areaItem.addBottomAlignedAccessoryViewController(statusBar)
         addSplitViewItem(areaItem)
     }
@@ -288,6 +317,20 @@ final class WorkspaceController: RestoredSplitViewController {
     private func buildInspector() {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: host(InspectorView(project: project), mounted: app.inspectorVisible))
         inspectorItem.isCollapsed = !app.inspectorVisible
+    }
+
+    /// The status bar's solid fill, from the panel's rise until it's back down.
+    private let statusFill = Mount(false)
+    private var areaUnderBars: NSLayoutConstraint!
+    private var areaAboveBars: NSLayoutConstraint!
+
+    /// The status bar solid and the area above it while the panel shows, both at once:
+    /// the text under the bar goes as the bar's fill comes.
+    private func setBarsSolid(_ solid: Bool) {
+        statusFill.shown = solid
+        areaUnderBars.isActive = !solid
+        areaAboveBars.isActive = solid
+        view.layoutSubtreeIfNeeded()
     }
 
     /// The panes that collapse.
@@ -334,7 +377,8 @@ final class WorkspaceController: RestoredSplitViewController {
         line.sizingOptions = [.intrinsicContentSize]
         separator.view = line
         separator.automaticallyAppliesContentInsets = false
-        separator.preferredScrollEdgeEffectStyle = .hard
+        // As the status bar's: a hard edge here would cover the text the bar lets through.
+        separator.preferredScrollEdgeEffectStyle = .automatic
         return separator
     }
 
@@ -603,9 +647,14 @@ final class WorkspaceController: RestoredSplitViewController {
         let split = area.splitView, panel = panelItem.viewController.view
         // Opening, the hosted view is already at the height the pane is heading for.
         if !shown { panelHeight = panel.frame.height }
+        if shown { setBarsSolid(true) }
+        let closed = { [weak self] in
+            guard let self, panelItem.isCollapsed else { return }
+            setBarsSolid(false)
+        }
         guard animates else {
             setHidden(panelHeader, !shown)
-            setCollapsed(panelItem, !shown)
+            setCollapsed(panelItem, !shown, done: closed)
             if shown { split.setPosition(split.bounds.height - split.dividerThickness - panelHeight, ofDividerAt: 0) }
             return
         }
@@ -615,7 +664,7 @@ final class WorkspaceController: RestoredSplitViewController {
                 - area.splitViewItems[0].minimumThickness
             panel.frame.size.height = min(panelHeight, room)
         }
-        setCollapsed(panelItem, !shown)
+        setCollapsed(panelItem, !shown, done: closed)
     }
 
     private var animates: Bool {

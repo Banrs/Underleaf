@@ -163,10 +163,10 @@ final class WorkspaceLayoutTests {
         }
     }
 
-    /// Show Build Panel rises from the status bar through AppKit's animation, the first time
-    /// too in a window with a source and a PDF open: the columns' foot follows the panel's top
-    /// edge, where its header is, the status bar still, and the scrollers it kept out of sight
-    /// back after a toggle reversed midway.
+    /// Show Build Panel rises from the status bar's top through AppKit's animation, the first
+    /// time too in a window with a source and a PDF open: the columns' foot follows the panel's
+    /// top edge, where its header is, the status bar still, and the scrollers it kept out of
+    /// sight back after a toggle reversed midway.
     @Test(arguments: [false, true]) func thePanelRisesFromTheStatusBar(compact: Bool) async throws {
         let workspace = open(), project = workspace.project
         project.openPath = "main.tex"
@@ -201,7 +201,8 @@ final class WorkspaceLayoutTests {
         let panel = pane(workspace.panelItem), columns = pane(workspace.area.splitViewItems[0])
         let status = workspace.splitViewItems[1].bottomAlignedAccessoryViewControllers.last!.view
         let bar = status.convert(status.bounds, to: nil)
-        let area = pane(workspace.splitViewItems[1]), foot0 = area.convert(area.bounds, to: nil).minY
+        let area = pane(workspace.splitViewItems[1])
+        let bars = area.convert(area.bounds, to: nil).minY + area.safeAreaInsets.bottom
         var heights: [CGFloat] = []
         project.showLogs = true
         // Observation reaches AppKit asynchronously. Start sampling when opening
@@ -217,8 +218,8 @@ final class WorkspaceLayoutTests {
                 let foot = columns.convert(columns.bounds, to: nil).minY
                 #expect(abs(foot - frame.maxY - workspace.area.splitView.dividerThickness) <= 1,
                         "columns' foot \(foot), panel's top \(frame.maxY)")
-                // Its foot stays under the status bar, at the window's, as it rises from the bar.
-                #expect(abs(frame.minY - foot0) <= 1, "panel bottom \(frame.minY), area bottom \(foot0)")
+                // Its foot stays at the bars' top as it rises from them, not behind them.
+                #expect(abs(frame.minY - bars) <= 1, "panel bottom \(frame.minY), bars' top \(bars)")
             }
             #expect(status.convert(status.bounds, to: nil) == bar)
             #expect(sourceTop().map { abs($0 - initialTop) <= 1 } == true, "source top \(String(describing: sourceTop())), was \(initialTop)")

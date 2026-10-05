@@ -16,7 +16,8 @@ struct SourceColumn: View {
                 ContentUnavailableView("No File Open", systemImage: "text.document",
                                        description: Text("Choose a file in the sidebar."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.background)
+                    // The editor's own, untinted by the wallpaper as the window's would be.
+                    .background(Color(nsColor: .textBackgroundColor))
             } else if !project.editsText, let url = project.openURL {
                 FilePreview(url: url)
             }

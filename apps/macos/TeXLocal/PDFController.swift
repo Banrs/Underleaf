@@ -75,8 +75,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     override init() {
         super.init()
-        // Preview's canvas color; the PDF's paper keeps its own colors.
-        view.backgroundColor = .controlBackgroundColor
+        // The area behind a document's pages, as Pages and Keynote draw theirs; the PDF's paper keeps its own colors.
+        view.backgroundColor = .underPageBackgroundColor
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }

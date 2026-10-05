@@ -100,8 +100,9 @@ struct BuildPanelHeader: View {
                     .toggleStyle(.button)
                     .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle", glass: true)
                     .frame(minWidth: 100, maxWidth: 180)
+                    .glassEffect(.regular, in: .capsule)
             } else {
                 let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
                 Button("Copy Log", systemImage: "document.on.document") {
@@ -118,8 +119,7 @@ struct BuildPanelHeader: View {
         .labelStyle(.iconOnly)
         .padding(.horizontal, ColumnMetrics.barSideInset)
         .padding(.vertical, 9)
-        .background(.bar)
-        // Over the editors, as the status bar's; the split's divider is under it.
+        // Clear over the editors, which AppKit's scroll edge blurs; the split's divider is under it.
         .overlay(alignment: .top) { Divider() }
     }
 }

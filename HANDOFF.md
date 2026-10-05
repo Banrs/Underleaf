@@ -14,12 +14,16 @@ Claude worktrees were left alone, and no commit history was discarded.
   TextKit rendering attributes now supply fragment colours without editing text
   storage or forcing viewport restoration for colour-only updates. Visible fragments
   are refreshed when the theme or appearance changes.
-- The build header is a bottom accessory of the source/PDF columns. It uses
-  SwiftUI's system toolbar material across its full width. An accessory effect
-  preference alone did not diffuse the source text behind this nested header.
-- With the panel closed, source/PDF extend under the clear bottom status bar and
-  its native soft scroll edge. With the panel open, its contents stop above the
-  solid status strip. Status reservation lasts until collapse completes.
+- The build header is a bottom accessory of the source/PDF columns with AppKit's
+  automatic scroll edge, no material of its own. It's built visible and hidden once
+  the area loads: an accessory hidden as it's added gets no edge when it later
+  shows (27.2). Its Filter field sits on SwiftUI Liquid Glass without a bezel.
+- With the panel closed, source/PDF extend under the clear status bar and its
+  automatic edge, as Xcode's. While the panel shows, the area ends above the bars,
+  so the panel rises from the status bar's top, and the bar is solid in the
+  panel's text background. Both switch at the rise's start and after the collapse.
+- Backgrounds follow Apple's apps: the editor uses the text background (TextEdit,
+  Notes, Xcode in Light), and the PDF canvas the under-page colour (Pages, Keynote).
 - The workspace representable returns its proposed size. This fixes a reproducible
   compact-window layout recursion crash. Pane minima are independent of window
   minima; the supported window content minimum is now 960 × 600 points.
