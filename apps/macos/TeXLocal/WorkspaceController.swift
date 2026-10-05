@@ -307,9 +307,10 @@ final class WorkspaceController: RestoredSplitViewController {
     /// bar's height animates with the split, so folded it lines up with the status bar.
     private func buildOutlineBar() {
         let bar = NSView()
-        let line = NSBox()
-        line.boxType = .separator
+        // The status bar's line, so the two meet as one across the window.
+        let line = NSHostingView(rootView: Divider())
         let header = NSHostingView(rootView: OutlineHeader().environment(app))
+        line.sizingOptions = [.intrinsicContentSize]
         header.sizingOptions = [.intrinsicContentSize]
         for view in [line, header] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
