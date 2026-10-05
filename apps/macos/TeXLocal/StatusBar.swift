@@ -33,13 +33,14 @@ struct StatusBar: View {
             Button {
                 if showingIssues { project.showLogs = false } else { project.showBuildPanel() }
             } label: {
-                buildStatus
+                buildStatus.hitTarget()
             }
             .help(showingIssues ? "Hide Issues" : "Show Issues")
             if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
                 Button { project.showTeXpressoLog() } label: {
                     Label(project.texpresso.title,
                           systemImage: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                        .hitTarget()
                 }
                 .help("Show TeXpresso Log")
             }
@@ -51,7 +52,7 @@ struct StatusBar: View {
                     if project.editsText {
                         // The caret's place; Go to Line from it.
                         Button { app.perform(.editGotoLine, on: project) } label: {
-                            Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)")
+                            Text("Line: \(project.cursorLine)  Col: \(project.cursorColumn + 1)").hitTarget()
                         }
                         .help("Go to Line")
                     }
@@ -63,7 +64,7 @@ struct StatusBar: View {
                     if pages {
                         freshness
                         Button { app.perform(.pdfGotoPage, on: project) } label: {
-                            Text("Page \(project.pdf.page) of \(project.pdf.pageCount)")
+                            Text("Page \(project.pdf.page) of \(project.pdf.pageCount)").hitTarget()
                         }
                         .help("Go to Page")
                     }
@@ -71,7 +72,7 @@ struct StatusBar: View {
                 .fixedSize()
             }
             Toggle(isOn: $project.showLogs) {
-                Label("Build Panel", systemImage: "inset.filled.bottomthird.square")
+                Label("Build Panel", systemImage: "inset.filled.bottomthird.square").hitTarget()
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
@@ -85,11 +86,13 @@ struct StatusBar: View {
         if project.showsLastSuccessfulBuild {
             Button { project.showBuildPanel() } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
+                    .hitTarget()
             }
             .help("The latest PDF build failed; this is the last one that succeeded. Show Issues")
         } else if project.pdfOutdated, !project.livePDF {
             Button { app.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise")
+                    .hitTarget()
             }
             .help(project.texpresso.active
                 ? "TeXpresso updates its own window. Compile to refresh this PDF."
@@ -143,4 +146,9 @@ struct StatusBar: View {
         }
         .labelStyle(.titleAndIcon)
     }
+}
+
+private extension View {
+    /// The HIG's 20 × 20 pt least target for a borderless button.
+    func hitTarget() -> some View { frame(minWidth: 20, minHeight: 20).contentShape(.rect) }
 }
