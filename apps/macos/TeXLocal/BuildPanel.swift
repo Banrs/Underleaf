@@ -111,10 +111,9 @@ private struct BuildPanelHeader: View {
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The accessory-bar buttons' height, whichever tab shows them: the row never changes.
-        .frame(height: 26)
+        // The status bar's height, whichever tab's controls show: one bar height in the window.
+        .frame(height: StatusBar.height)
         .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 }
 
