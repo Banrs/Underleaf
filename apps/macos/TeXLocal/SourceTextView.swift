@@ -42,6 +42,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
         document = SourceDocument(text: text)
+        lastMath = nil
         snippet = nil
         closers.removeAll()
         closeCompletions()
@@ -65,6 +66,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         let old = NSRange(location: edited.location, length: edited.length - delta)
         document.edit(old, with: (textStorage.string as NSString).substring(with: edited))
+        edits += 1
         // The fields follow the change itself, when it's the one expected.
         let changed = changing.flatMap { $0.location == old.location && NSMaxRange($0) <= NSMaxRange(old) ? $0 : nil }
         changing = nil
@@ -176,8 +178,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     private var gutterWidth: CGFloat = 0
     private var lineCountDigits = 0
     private var numberFont = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
-        didSet { numberLines.removeAll() }
+        didSet {
+            numberLines.removeAll()
+            digitWidth = Self.digitWidth(numberFont)
+        }
     }
+    private lazy var digitWidth = Self.digitWidth(numberFont)
+    private static func digitWidth(_ font: NSFont) -> CGFloat { ("0" as NSString).size(withAttributes: [.font: font]).width }
     /// Where the line numbers end.
     private var numbersEnd: CGFloat = 0
     /// The fragments laid out for the viewport: where each starts, its frame.
@@ -190,8 +197,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     /// text 11 pt after.
     func updateGutterWidth() {
         lineCountDigits = digits(document.lineCount)
-        let digit = ("0" as NSString).size(withAttributes: [.font: numberFont]).width
-        numbersEnd = 19.5 + CGFloat(lineCountDigits - 1) * digit
+        numbersEnd = 19.5 + CGFloat(lineCountDigits - 1) * digitWidth
         let width = numbersEnd + 11 - (textContainer?.lineFragmentPadding ?? 0)
         guard width != gutterWidth else { return }
         gutterWidth = width
@@ -411,17 +417,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     }
 
     override func becomeFirstResponder() -> Bool {
-        defer {
-            needsDisplay = true
-            // Once the window has made it first responder.
-            DispatchQueue.main.async { self.previewMath() }
-        }
+        // Once the window has made it first responder.
+        defer { DispatchQueue.main.async { self.previewMath() } }
         return super.becomeFirstResponder()
     }
 
     override func resignFirstResponder() -> Bool {
         defer {
-            needsDisplay = true
             mathPopover?.close()
             closeCompletions()
         }
@@ -438,8 +440,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         }
     }
 
+    /// The background draws the same with and without the keyboard: only these follow it.
     @objc private func keyChanged() {
-        needsDisplay = true
         if !hasKeyboard { closeCompletions() }
         previewMath()
     }
@@ -449,12 +451,23 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     // MARK: the maths preview
 
     private var mathPopover: MathPopover?
+    /// The core's answer for a caret and text (`edits` counts the text's changes): scrolling,
+    /// focus and completions ask again for the same, and only its place changes.
+    private var lastMath: (caret: Int, edits: Int, value: MathPreview?)?
+    private var edits = 0
+
+    private func math(at caret: Int) -> MathPreview? {
+        if let lastMath, lastMath.caret == caret, lastMath.edits == edits { return lastMath.value }
+        let value = document.mathAt(caret: caret)
+        lastMath = (caret, edits, value)
+        return value
+    }
 
     /// Preview maths at the caret only while the caret is visible and focused:
     /// over its line, as Overleaf's, or under it while completions show over it.
     func previewMath() {
         guard let window, hasKeyboard, !loading,
-              let maths = document.mathAt(caret: selectedRange().location),
+              let maths = math(at: selectedRange().location),
               let clip = enclosingScrollView?.contentView else {
             mathPopover?.close()
             return
@@ -484,14 +497,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return text.substring(with: text.rangeOfComposedCharacterSequence(at: i)).first
     }
 
-    /// Where the bracket at `at` is matched, within 10,000 UTF-16 units.
+    /// Where the bracket at `at` is matched, within 10,000 UTF-16 units. Brackets are ASCII,
+    /// so code units compare exactly.
     private func partner(of at: Int) -> Int? {
-        guard let c = character(at: at) else { return nil }
+        let text = string as NSString
+        guard at >= 0, at < text.length, let c = Unicode.Scalar(text.character(at: at)).map(Character.init) else { return nil }
         let close = Self.pairs[c], open = Self.pairs.first { $0.value == c }?.key
-        guard let other = close ?? open else { return nil }
+        guard let other = (close ?? open)?.utf16.first, let unit = c.utf16.first else { return nil }
         var depth = 0, i = at
-        while abs(i - at) <= 10_000, let d = character(at: i) {
-            if d == c { depth += 1 } else if d == other { depth -= 1 }
+        while abs(i - at) <= 10_000, i >= 0, i < text.length {
+            let d = text.character(at: i)
+            if d == unit { depth += 1 } else if d == other { depth -= 1 }
             if depth == 0 { return i }
             i += close != nil ? 1 : -1
         }
@@ -876,50 +892,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         guard let storage = textContentStorage, let start = storage.location(storage.documentRange.location, offsetBy: range.location),
               let end = storage.location(start, offsetBy: range.length) else { return nil }
         return NSTextRange(location: start, end: end)
-    }
-}
-
-extension NSColor {
-    /// WCAG's relative luminance.
-    var luminance: CGFloat {
-        guard let rgb = usingColorSpace(.sRGB) else { return 0 }
-        func linear(_ v: CGFloat) -> CGFloat { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
-        return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
-    }
-
-    /// WCAG's contrast ratio, 1 to 21.
-    func contrast(with other: NSColor) -> CGFloat {
-        let (a, b) = (luminance, other.luminance)
-        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
-    }
-
-    /// Mixed towards black on a light background or white on a dark one, as little as gives
-    /// `ratio` on it, so it keeps its hue; as it is when it has that already.
-    func contrasting(with background: NSColor, by ratio: CGFloat) -> NSColor {
-        // Where black and white contrast equally with a colour.
-        let ink: NSColor = background.luminance > 0.179 ? .black : .white
-        var mixed = self
-        for step in 1...20 where mixed.contrast(with: background) < ratio {
-            mixed = blended(withFraction: CGFloat(step) / 20, of: ink) ?? ink
-        }
-        return mixed
-    }
-
-    /// `contrasting(with:by:)` on the text's background in that appearance.
-    func contrasting(in appearance: NSAppearance.Name, by ratio: CGFloat) -> NSColor {
-        var background = NSColor.white
-        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
-            background = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? background
-        }
-        return contrasting(with: background, by: ratio)
-    }
-}
-
-extension NSAppearance {
-    /// Increase Contrast is on: its appearances answer only `bestMatch(from:)`.
-    var increasesContrast: Bool {
-        let all: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
-        return bestMatch(from: all).map([.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains) == true
     }
 }
 

@@ -76,15 +76,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     override init() {
         super.init()
         // The editor's text background beside it, so source and PDF are one surface; the PDF's
-        // paper keeps its own colors. Resolved here: PDFKit tints a system background with
-        // the wallpaper, as Preview's canvas, which would set the two panes a shade apart.
-        view.backgroundColor = NSColor(name: nil) { appearance in
-            var color = NSColor.white
-            appearance.performAsCurrentDrawingAppearance {
-                color = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? color
-            }
-            return color
-        }
+        // paper keeps its own colors.
+        view.backgroundColor = .untintedTextBackground
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
@@ -107,23 +100,29 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         }
     }
 
+    /// Set only when changed: Observation notifies on every set, and these come on each
+    /// page turn of a scroll and each step of a pinch, for the toolbar, status bar and scale menu.
+    private func update<Value: Equatable>(_ key: ReferenceWritableKeyPath<PDFController, Value>, _ value: Value) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
+    }
+
     @objc private func pageChanged() {
         guard let document = view.document, let page = view.currentPage else { return }
-        self.page = document.index(for: page) + 1
-        pageCount = document.pageCount
+        update(\.page, document.index(for: page) + 1)
+        update(\.pageCount, document.pageCount)
     }
 
     @objc private func scaleChanged() {
         guard view.document != nil, view.hasShownArea else { return }
-        scale = view.scaleFactor
-        canZoomIn = view.canZoomIn
-        canZoomOut = view.canZoomOut
+        update(\.scale, view.scaleFactor)
+        update(\.canZoomIn, view.canZoomIn)
+        update(\.canZoomOut, view.canZoomOut)
         // Any other scale than the fitted one (a pinch, a zoom command) ends fitting. A pinch keeps
         // autoScales on until it ends: one back at the width fits again, one ending off it doesn't.
         if view.autoScales, abs(view.scaleFactor - view.scaleFactorForSizeToFit) < 0.001 {
-            fit = .width
+            update(\.fit, .width)
         } else if fit == .width || (fit == .page && abs(view.scaleFactor - pageScale) > 0.001) {
-            fit = nil
+            update(\.fit, nil)
         }
     }
 

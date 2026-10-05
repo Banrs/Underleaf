@@ -355,7 +355,8 @@ struct EditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
-        editor.textView.fontSize = CGFloat(fontSize)
+        // A new size only: setting one builds the font to compare.
+        if editor.textView.fontSize != CGFloat(fontSize) { editor.textView.fontSize = CGFloat(fontSize) }
         editor.textView.syntaxTheme = syntaxTheme
         if editor.shown != shown { editor.shown = shown }
     }

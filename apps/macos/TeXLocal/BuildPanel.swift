@@ -32,7 +32,7 @@ struct BuildPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.textSurface)
     }
 
     private func matches(_ item: LogItem) -> Bool {
@@ -221,30 +221,41 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
+    /// The text last shown: an update that leaves the log as it was (a tab or the filter
+    /// changing) compares the same storage, without passes over a megabyte log.
+    final class Coordinator {
+        var shown: String?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
+        context.coordinator.shown = text
     }
 
     func updateText(in scroll: NSScrollView) {
         let view = scroll.documentView as! NSTextView
-        guard view.string != text else { return }
+        let shown = view.string
+        guard shown != text else { return }
         let selections = view.selectedRanges.map(\.rangeValue)
         let origin = scroll.contentView.bounds.origin
         let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
-            && (view.string.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
+            && (shown.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
         // Append without invalidating the entire log's layout. A new build or
         // bounded log rollover can replace it; keep reading position in either case.
-        let previousLength = (view.string as NSString).length
-        if previousLength > 0, text.utf16.starts(with: view.string.utf16) {
+        let previousLength = (shown as NSString).length, new = text as NSString
+        if previousLength > 0, text.utf16.starts(with: shown.utf16) {
             view.textStorage?.replaceCharacters(in: NSRange(location: previousLength, length: 0),
-                                                with: (text as NSString).substring(from: previousLength))
+                                                with: new.substring(from: previousLength))
         } else {
             view.string = text
         }
         view.didChangeText()
-        let length = (text as NSString).length
+        let length = new.length
         view.selectedRanges = selections.map { range in
             let location = min(range.location, length)
             return NSValue(range: NSRange(location: location, length: min(range.length, length - location)))

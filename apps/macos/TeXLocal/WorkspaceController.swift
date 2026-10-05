@@ -90,7 +90,8 @@ final class WorkspaceController: RestoredSplitViewController {
     private var outlineBar: NSSplitViewItemAccessoryViewController!
     private var outlineBarHeight: NSLayoutConstraint!
     private var pdfFind: NSSplitViewItemAccessoryViewController!
-    /// The inspector's, the PDF find bar's and the panel header's content, there while they show (`Mount`).
+    /// Content there only while it shows (`Mount`): the panes that hide (`host(mounted:)`), the
+    /// PDF find bar's and the panel header's.
     private var mounts: [ObjectIdentifier: Mount] = [:]
     private var panelHeader: NSSplitViewItemAccessoryViewController!
     private let panelState = BuildPanelState()
@@ -318,7 +319,7 @@ final class WorkspaceController: RestoredSplitViewController {
         // so the open panel and its bar are one surface under the clear header.
         statusFill.shown = project.showLogs
         let statusBar = accessory(StatusBar(project: project).background {
-            Mounted(mount: statusFill, content: Color(nsColor: .textBackgroundColor)
+            Mounted(mount: statusFill, content: Color.textSurface
                 .padding(.horizontal, -ColumnMetrics.barSideInset).padding(.vertical, -9))
         })
         statusBar.preferredScrollEdgeEffectStyle = .automatic
@@ -610,9 +611,16 @@ final class WorkspaceController: RestoredSplitViewController {
 
     private var splitViews: [NSSplitView] { [splitView, sidebar.splitView, columns.splitView, area.splitView] }
 
-    /// Hidden ones too: the build panel's appear as it opens.
+    /// Hidden ones too: the build panel's appear as it opens. Not into the text views and
+    /// PDF pages scroll views show, which hold only TextKit's fragment views and page tiles.
     private static func scrollViews(in view: NSView) -> [NSScrollView] {
-        [view as? NSScrollView].compactMap(\.self) + view.subviews.flatMap(scrollViews)
+        var found: [NSScrollView] = [], stack = [view]
+        while let view = stack.popLast() {
+            if view is NSTextView || view is NSClipView && view.superview?.superview is PDFView { continue }
+            if let scroll = view as? NSScrollView { found.append(scroll) }
+            stack.append(contentsOf: view.subviews)
+        }
+        return found
     }
 
     /// The pane folds down under its header to the sidebar's foot, and opens up from there.
