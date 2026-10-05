@@ -196,6 +196,9 @@ final class WorkspaceController: RestoredSplitViewController {
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
         sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
+        // The list fades under the field, as under a Tahoe sidebar's bars; the automatic edge
+        // draws a half-point line unlike any other in the window.
+        sidebarSearch.preferredScrollEdgeEffectStyle = .soft
         sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }

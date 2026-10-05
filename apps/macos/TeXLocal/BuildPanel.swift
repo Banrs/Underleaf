@@ -111,9 +111,11 @@ private struct BuildPanelHeader: View {
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The status bar's height, whichever tab's controls show: one bar height in the window.
+        // The status bar's height and edges, whichever tab's controls show: the tabs' capsule
+        // starts over its first text, the filter ends over its toggle's symbol.
         .frame(height: StatusBar.height)
-        .padding(.horizontal)
+        .padding(.leading, 14)
+        .padding(.trailing, 17.5)
     }
 }
 
