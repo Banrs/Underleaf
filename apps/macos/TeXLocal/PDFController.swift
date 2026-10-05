@@ -25,8 +25,14 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     private(set) var page = 0
     /// The page a reopened project's first PDF opens at.
     @ObservationIgnored var restorePage: Int?
-    /// A forward search's spot, until the view has a size to show it in.
-    @ObservationIgnored private var pendingReveal: (loc: ForwardLoc, word: SyncTeXWord?)?
+    /// Actions waiting for the column to show at a width (`whenShown`).
+    @ObservationIgnored private var waiting: [@MainActor () -> Void] = []
+    /// Set by the column's split: off while it's hidden or still opening (`EditorSplit`).
+    @ObservationIgnored var columnShown = true {
+        didSet { if columnShown { runWaiting() } }
+    }
+    /// An action waits for the column, which the window shows for it.
+    private(set) var waitsForColumn = false
     private(set) var pageCount = 0
     /// The find bar shows. Opened empty, it takes the system's find text, as a text view's find bar does.
     var finding = false {
@@ -75,17 +81,15 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 
     override init() {
         super.init()
-        // The editor's text background beside it, so source and PDF are one surface; the PDF's
-        // paper keeps its own colors.
-        view.backgroundColor = .untintedTextBackground
         view.autoScales = true
         view.onResize = { [weak self] in
             guard let self else { return }
             restoreZoomIfReady()
             if fit == .page { fitPage() }
             restorePageIfReady()
-            if let pending = pendingReveal { reveal(pending.loc, word: pending.word) }
+            runWaiting()
         }
+        view.onFind = { [weak self] action, perform in self?.find(action, perform: perform) ?? false }
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
         // Comes only as a pinch ends; the scroll view's magnification follows each step.
         NotificationCenter.default.addObserver(self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
@@ -319,6 +323,31 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         find(text)
     }
 
+    /// The find bar, its field taking the keyboard: at once if it shows, else as it appears (`FindBar`).
+    func showFind() {
+        finding = true
+        findField.focus()
+    }
+
+    /// Edit › Find's items while the pages or the find field have the keyboard
+    /// (`SyncPDFView`, `FindPassingTextView`): whether one applies, and with `perform` doing it.
+    func find(_ action: NSTextFinder.Action, perform: Bool) -> Bool {
+        guard view.document != nil else { return false }
+        switch action {
+        case .showFindInterface:
+            if perform { showFind() }
+        case .nextMatch, .previousMatch:
+            guard canFindNext else { return false }
+            if perform { findNext(action == .nextMatch ? 1 : -1) }
+        case .setSearchString:
+            guard canUseSelectionForFind else { return false }
+            if perform { useSelectionForFind() }
+        default:
+            return false
+        }
+        return true
+    }
+
     /// Clear highlights; return focus to the PDF only when the bar had it.
     func closeFind() {
         let fromBar = findField.hasFocus
@@ -382,8 +411,28 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
         if finding { find(findText, keepingPlace: true) }
     }
 
+    /// Now, if the column shows at a width; else once it does, after the window shows it.
+    func whenShown(_ action: @escaping @MainActor () -> Void) {
+        waiting.append(action)
+        runWaiting()
+    }
+
+    private func runWaiting() {
+        guard !waiting.isEmpty else { return }
+        guard columnShown, view.hasShownArea else {
+            if !waitsForColumn { waitsForColumn = true }
+            return
+        }
+        let actions = waiting
+        waiting = []
+        waitsForColumn = false
+        for action in actions { action() }
+    }
+
     /// No PDF, as before the first: the pane shows its empty state.
     func clear() {
+        waiting = []
+        waitsForColumn = false
         shownVersion += 1
         view.removeMarks()
         if let document = search?.document {
@@ -416,11 +465,6 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     /// marked as Find marks a match; or SyncTeX's box, when the word can't be told
     /// from its neighbours or the find bar holds the selection.
     func reveal(_ loc: ForwardLoc, word: SyncTeXWord?) {
-        guard view.hasShownArea else {
-            pendingReveal = (loc, word)
-            return
-        }
-        pendingReveal = nil
         guard let document = view.document, let locatedPage = document.page(at: Int(loc.page) - 1) else { return }
         // The source occurrence can wrap beyond the first SyncTeX box.
         let match = word.flatMap { document.match(for: $0, near: loc.matches ?? [loc]) }
@@ -476,6 +520,8 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ word: SyncTeXWord?) -> Void = { _, _, _ in }
     var onResize: () -> Void = {}
+    /// Edit › Find's items, which PDFKit leaves to text views (`PDFController.find`).
+    var onFind: (_ action: NSTextFinder.Action, _ perform: Bool) -> Bool = { _, _ in false }
     private let pagesDark = Atomic(false)
 
     var darkPaper = false {
@@ -576,15 +622,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         overlay.addSubview(mark)
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        if updateDividerCursor(with: event) { return }
-        super.mouseMoved(with: event)
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) }
-    }
-
     /// SwiftUI reassigns unchanged frames during layout. PDFView would refit
     /// the width and undo a pinch while auto-scaling is still active.
     override var frame: NSRect {
@@ -604,18 +641,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         if atStart, widthChanged || !atDocumentStart, let page = document?.page(at: 0) {
             go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
         }
-    }
-
-    /// A divider or window drag refits the page each step, and every step would flash the
-    /// overlay scrollers; they stay out of sight until the drag ends.
-    override func viewWillStartLiveResize() {
-        super.viewWillStartLiveResize()
-        documentView?.enclosingScrollView?.hideOverlayScrollers(true)
-    }
-
-    override func viewDidEndLiveResize() {
-        super.viewDidEndLiveResize()
-        documentView?.enclosingScrollView?.hideOverlayScrollers(false)
     }
 
     /// Allow the scaled page-break margin when checking the first page's top.
@@ -645,9 +670,20 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         go(to: PDFDestination(page: page, at: CGPoint(x: box.minX, y: box.midY + shown / 2 / scaleFactor)))
     }
 
-    /// Jump to Selection only with one; PDFKit's own items as PDFKit has them (its
-    /// `validateMenuItem:` isn't in its interface).
+    /// Edit › Find while the pages have the keyboard.
+    @objc func performFindPanelAction(_ sender: Any?) {
+        guard let item = sender as? NSValidatedUserInterfaceItem, let action = NSTextFinder.Action(rawValue: item.tag) else { return }
+        _ = onFind(action, true)
+    }
+
+    func validatesFind(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        NSTextFinder.Action(rawValue: item.tag).map { onFind($0, false) } ?? false
+    }
+
+    /// Find's items as the PDF has them, and Jump to Selection only with one; PDFKit's own items
+    /// as PDFKit has them (its `validateMenuItem:` isn't in its interface).
     @objc(validateMenuItem:) func validate(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(performFindPanelAction(_:)) { return validatesFind(item) }
         if item.action == #selector(centerSelectionInVisibleArea(_:)) { return currentSelection?.pages.isEmpty == false }
         let selector = #selector(NSMenuItemValidation.validateMenuItem(_:))
         guard let inherited = class_getMethodImplementation(PDFView.self, selector) else { return true }

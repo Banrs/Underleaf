@@ -1,12 +1,6 @@
 import AppKit
 import SwiftUI
 
-extension ShapeStyle where Self == Color {
-    /// The editor's background, for the panes and bars that are one surface with it: the
-    /// system's text background, untinted by the wallpaper as the window's would be.
-    static var textSurface: Color { Color(nsColor: .textBackgroundColor) }
-}
-
 extension NSColor {
     /// WCAG's relative luminance.
     var luminance: CGFloat {
@@ -46,10 +40,6 @@ extension NSColor {
         }
         return color
     }
-
-    /// The text background, resolved for each appearance: PDFKit tints a system colour it's
-    /// given with the wallpaper, as Preview's canvas, which would set it a shade apart from the editor's.
-    static let untintedTextBackground = NSColor(name: nil, dynamicProvider: textBackground(in:))
 }
 
 extension NSAppearance {

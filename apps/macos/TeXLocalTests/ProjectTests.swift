@@ -114,13 +114,11 @@ struct CoreTests {
 @MainActor
 @Suite(.serialized)
 final class ProjectFlowTests {
-    /// The app's defaults the tests change, its window's frame and dividers among them, put back after.
-    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects, DefaultsKey.outlineCollapsed, DefaultsKey.sidebarVisible,
-                        "NSWindow Frame Main Window"] + ["Workspace", "Sidebar", "Columns", "Area"].map { "NSSplitView Subview Frames \($0)" }
+    /// The app's defaults the tests change, put back after.
+    private let keys = [DefaultsKey.autoCompile, DefaultsKey.recentProjects]
     private let kept: [Any?]
     private var folders: [URL] = []
     private let files = FileManager.default
-    private var windowController: MainWindowController?
     let app = AppModel()
 
     init() throws {
@@ -131,9 +129,6 @@ final class ProjectFlowTests {
     }
 
     isolated deinit {
-        windowController?.workspace?.close()
-        windowController?.window?.close()
-        windowController?.window?.contentViewController = nil
         app.project?.close()
         for (key, value) in zip(keys, kept) { UserDefaults.standard.set(value, forKey: key) }
         for folder in folders { try? files.removeItem(at: folder) }
@@ -160,17 +155,6 @@ final class ProjectFlowTests {
         await app.refresh()
         if app.tex?.available != true { try Test.cancel("No TeX") }
         return try await opened(text).project
-    }
-
-    private func windowFixture() async throws -> (ProjectModel, MainWindowController) {
-        let info = try await project("\\section{Introduction}\nText Text").info
-        app.outlineCollapsed = false
-        app.sidebarVisible = true
-        let model = ProjectModel(id: info.id, app: app)
-        app.project = model
-        let controller = MainWindowController(app: app)
-        windowController = controller
-        return (model, controller)
     }
 
     private func exists(_ url: URL) -> Bool { files.fileExists(atPath: url.path(percentEncoded: false)) }
@@ -205,72 +189,6 @@ final class ProjectFlowTests {
         #expect(document?.path == second.mainFile)
         #expect(document?.text == "second")
         await app.close()
-    }
-
-    /// Loading readiness and real outline rows; entrance animation needs native UI verification.
-    @Test func theFirstWorkspaceIncludesTheOutline() async throws {
-        let (project, controller) = try await windowFixture()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(controller.workspace == nil)
-
-        await project.load()
-        try await waitUntil { controller.workspace != nil }
-        let workspace = try #require(controller.workspace)
-        func lists(_ view: NSView) -> [NSOutlineView] {
-            [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists)
-        }
-        // The heading, under the File Outline's header at the files' foot.
-        try await waitUntil {
-            workspace.view.layoutSubtreeIfNeeded()
-            return lists(workspace.outlineItem.viewController.view).first?.numberOfRows == 1
-        }
-        #expect(!workspace.outlineItem.isCollapsed)
-        #expect(workspace.outlineItem.viewController.view.frame.height > 0)
-    }
-
-    /// Edit › Find's items reach the source's own find bar: from the text through the
-    /// responder chain, and through the window while the keyboard is elsewhere.
-    @Test func findAndReplaceAreTheTextViewsFindBar() async throws {
-        let (project, controller) = try await windowFixture()
-        await project.load()
-        try await waitUntil { controller.workspace != nil }
-        let window = try #require(controller.window)
-        let editor = project.editor, text = editor.textView
-        func item(_ action: NSTextFinder.Action) -> NSMenuItem {
-            let item = NSMenuItem(title: "", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "")
-            item.tag = action.rawValue
-            return item
-        }
-        func textFields(in view: NSView?) -> [NSTextField] {
-            guard let view else { return [] }
-            return [view as? NSTextField].compactMap(\.self) + view.subviews.flatMap { textFields(in: $0) }
-        }
-
-        window.makeFirstResponder(nil)
-        #expect(controller.validateMenuItem(item(.showFindInterface)))
-        controller.performFindPanelAction(item(.showFindInterface))
-        try await waitUntil { editor.scrollView.isFindBarVisible }
-
-        // Use Selection for Find, then Find Next, from the text.
-        let source = text.string as NSString
-        text.setSelectedRange(source.range(of: "Text"))
-        window.makeFirstResponder(text)
-        #expect(window.firstResponder?.tryToPerform(#selector(NSTextView.performFindPanelAction(_:)), with: item(.setSearchString)) == true)
-        #expect(text.validateUserInterfaceItem(item(.nextMatch)))
-        text.performFindPanelAction(item(.nextMatch))
-        #expect(text.selectedRange() == source.range(of: "Text", options: .backwards))
-
-        // Find and Replace adds the stock replace field; Replace All uses it, as one undo step.
-        #expect(text.validateUserInterfaceItem(item(.showReplaceInterface)))
-        text.performFindPanelAction(item(.showReplaceInterface))
-        try await waitUntil { textFields(in: editor.scrollView.findBarView).count == 2 }
-        let replace = try #require(textFields(in: editor.scrollView.findBarView).last)
-        replace.stringValue = "Word"
-        replace.sendAction(replace.action, to: replace.target)
-        text.performFindPanelAction(item(.replaceAll))
-        try await waitUntil { text.string.hasSuffix("Word Word") }
-        text.undoManager?.undo()
-        #expect(text.string.hasSuffix("Text Text"))
     }
 
     /// Overlapping requests settle at the new path; the scheduler chooses their core interleaving.
@@ -492,31 +410,6 @@ final class ProjectFlowTests {
         await app.close()
     }
 
-    /// After a jump that moves both the caret and the top line into new sections,
-    /// the File Outline selects the caret's.
-    @Test(.timeLimit(.minutes(1)))
-    func theOutlineFollowsTheCaretAfterAJump() async throws {
-        let text = ["A", "B", "C"].map { "\\section{\($0)}\n" + String(repeating: "x\n", count: 100) }.joined()
-        let project = try await opened(text).project
-        app.outlineCollapsed = false
-        app.sidebarVisible = true
-        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 900, height: 600))
-        let window = NSWindow(contentViewController: workspace)
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.orderFront(nil)
-        defer { workspace.close(); window.close() }
-        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        try await waitUntil { lists(workspace.view).last?.selectedRow == 0 }
-        let outline = try #require(lists(workspace.view).last)
-
-        // Centred two lines under C, the top line is in B at any font or window size.
-        await project.open(try #require(project.openPath), line: 205)
-        #expect(project.topHeading == project.outline[1].id)
-        try await waitUntil { outline.selectedRow == 2 } state: { "row \(outline.selectedRow), top line \(project.topLine)" }
-        await app.close()
-    }
-
     /// Files another app adds, moves or deletes show in the sidebar's tree.
     @Test(.timeLimit(.minutes(1)))
     func anotherAppsFilesComeAndGo() async throws {
@@ -615,134 +508,6 @@ final class ProjectFlowTests {
         #expect(exists(folder.appending(path: "untitled folder 2")) && exists(folder.appending(path: "untitled folder/untitled.tex")))
         #expect(".latexmkrc".numbered(2) == ".latexmkrc 2")
         #expect(app.alert == nil)
-        await app.close()
-    }
-
-    /// File › New File and New Folder make the item in the chosen folder, or the chosen
-    /// file's, choose it and put its name in a field with the base name selected, as
-    /// Finder's New Folder does: Return names it, Escape keeps it. The field stays through
-    /// another app's change, and comes with the sidebar over a search.
-    @Test(.timeLimit(.minutes(1)))
-    func newItemsAreNamedInPlace() async throws {
-        let (project, folder) = try await opened()
-        app.sidebarVisible = true
-        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 1200, height: 760))
-        let window = NSWindow(contentViewController: workspace)
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.orderFront(nil)
-        defer { workspace.close(); window.close() }
-        let sidebar = workspace.sidebarItem.viewController.view
-        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        func files() throws -> NSOutlineView { try #require(lists(sidebar).first) }
-        /// The name field's editor while it has the keyboard.
-        func field() -> NSTextView? {
-            guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
-                  (editor.delegate as? NSTextField)?.isDescendant(of: sidebar) == true else { return nil }
-            return editor
-        }
-        func key(_ characters: String, _ code: UInt16) throws {
-            window.sendEvent(try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                                                           context: nil, characters: characters, charactersIgnoringModifiers: characters,
-                                                           isARepeat: false, keyCode: code)))
-        }
-        /// The chosen row's item, from the tree as the list shows it.
-        func chosen() throws -> String? {
-            let list = try files()
-            var paths: [String] = []
-            func walk(_ nodes: [TreeNode]) {
-                for node in nodes {
-                    paths.append(node.path)
-                    if let kids = node.children, list.isItemExpanded(list.item(atRow: paths.count)) { walk(kids) }
-                }
-            }
-            walk(project.tree)
-            return paths.indices.contains(list.selectedRow - 1) ? paths[list.selectedRow - 1] : nil
-        }
-        let state = { "keyboard \(String(describing: window.firstResponder)), open \(project.openPath ?? "-"), tree \(project.tree.flattened.map(\.path))" }
-        try await waitUntil { (try? files().numberOfRows) == 2 }
-
-        // The open file's folder, the top level; the file opens, the keyboard in its name.
-        app.perform(.fileNew, on: project)
-        try await waitUntil { field()?.string == "untitled.tex" } state: { state() }
-        // The field's own selection, all of it, gives way to the base name's as it takes the keyboard.
-        try await waitUntil { field()?.selectedRange() == NSRange(location: 0, length: 8) } state: { state() }
-        #expect(project.openPath == "untitled.tex" && exists(folder.appending(path: "untitled.tex")))
-        #expect(try chosen() == "untitled.tex")
-
-        // Another app's file comes, and the field stays.
-        try "x".write(to: folder.appending(path: "notes.tex"), atomically: false, encoding: .utf8)
-        try await waitUntil(timeout: .seconds(5)) { project.tree.flattened.contains { $0.path == "notes.tex" } }
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(field()?.string == "untitled.tex")
-
-        // Return names it; the list has the keyboard back, with it chosen.
-        field()?.insertText("chapter", replacementRange: NSRange(location: NSNotFound, length: 0))
-        try key("\r", 36)
-        try await waitUntil(timeout: .seconds(5)) { project.openPath == "chapter.tex" && window.firstResponder === (try? files()) } state: { state() }
-        #expect(exists(folder.appending(path: "chapter.tex")) && !exists(folder.appending(path: "untitled.tex")))
-        try await waitUntil { (try? chosen()) == "chapter.tex" } state: { (try? chosen()) ?? "-" }
-
-        // A folder, whose name is selected whole; Escape keeps it, chosen.
-        app.perform(.fileNewFolder, on: project)
-        try await waitUntil { field()?.string == "untitled folder" } state: { state() }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(field()?.selectedRange() == NSRange(location: 0, length: 15))
-        try key("\u{1b}", 53)
-        try await waitUntil { field() == nil && window.firstResponder === (try? files()) } state: { state() }
-        #expect(exists(folder.appending(path: "untitled folder")) && project.openPath == "chapter.tex")
-        #expect(try chosen() == "untitled folder")
-
-        // In the chosen folder, then in the chosen file's.
-        app.perform(.fileNew, on: project)
-        try await waitUntil { field()?.string == "untitled.tex" && project.openPath == "untitled folder/untitled.tex" } state: { state() }
-        try key("\u{1b}", 53)
-        try await waitUntil { field() == nil } state: { state() }
-        app.perform(.fileNewFolder, on: project)
-        try await waitUntil { field()?.string == "untitled folder" } state: { state() }
-        #expect(exists(folder.appending(path: "untitled folder/untitled folder")))
-        try key("\u{1b}", 53)
-        try await waitUntil { field() == nil } state: { state() }
-
-        // From a hidden sidebar over search results: the files show, with the field.
-        app.sidebarVisible = false
-        project.searchQuery = "chapter"
-        try await waitUntil { workspace.sidebarItem.isCollapsed }
-        app.perform(.fileNew, on: project)
-        try await waitUntil { field()?.string == "untitled.tex" } state: { state() }
-        #expect(app.sidebarVisible && project.searchQuery.isEmpty)
-        #expect(project.openPath == "untitled folder/untitled folder/untitled.tex")
-        #expect(app.alert == nil)
-        await app.close()
-    }
-
-    /// A new item below the rows in sight scrolls into view to be named: the list
-    /// makes only the rows it shows.
-    @Test(.timeLimit(.minutes(1)))
-    func aNewItemOutOfSightComesIntoView() async throws {
-        let (project, folder) = try await opened()
-        for number in 1...40 { try "".write(to: folder.appending(path: "a\(number).tex"), atomically: false, encoding: .utf8) }
-        await project.reloadTree()
-        app.sidebarVisible = true
-        let workspace = WorkspaceController(app: app, project: project, size: NSSize(width: 1200, height: 760))
-        let window = NSWindow(contentViewController: workspace)
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.orderFront(nil)
-        defer { workspace.close(); window.close() }
-        func lists(_ view: NSView) -> [NSOutlineView] { [view as? NSOutlineView].compactMap(\.self) + view.subviews.flatMap(lists) }
-        try await waitUntil { (lists(workspace.view).first?.numberOfRows ?? 0) == 42 }
-        let files = try #require(lists(workspace.view).first)
-        files.scrollRowToVisible(0)
-        #expect(!files.rows(in: files.visibleRect).contains(41))
-
-        app.perform(.fileNew, on: project)
-        try await waitUntil {
-            ((window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.isDescendant(of: files) == true
-        } state: { "keyboard \(String(describing: window.firstResponder)), rows \(files.rows(in: files.visibleRect))" }
-        let field = try #require((window.firstResponder as? NSTextView)?.delegate as? NSTextField)
-        #expect(files.visibleRect.contains(field.convert(field.bounds, to: files)))
         await app.close()
     }
 

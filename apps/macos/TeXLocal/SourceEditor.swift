@@ -65,11 +65,6 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.delegate = self
         text.textStorage?.delegate = text
         scrollView.autohidesScrollers = true
-        // The clip shows under the toolbar above the first line, where AppKit
-        // takes the column's colour for its band and edge effect; untinted, as the window's.
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .untintedTextBackground
-        text.backgroundColor = .untintedTextBackground
         scrollView.isHidden = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,

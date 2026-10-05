@@ -271,13 +271,12 @@ final class ProjectModel {
         pdf.clear()
     }
 
-    /// TeXpresso's document in the PDF pane, as a build's replaces the last; the pane shows on
-    /// the first, as the preview the person asked for.
+    /// TeXpresso's document in the PDF pane, as a build's replaces the last; the window shows
+    /// the pane for the first, the preview the person asked for (`livePDF`).
     private func showLivePDF(_ url: URL) {
         pdfLoad?.cancel()
         pdfLoad = Task {
             guard let document = await PDFController.loadDocument(url), !Task.isCancelled, !closed, texpresso.active else { return false }
-            if !livePDF, app?.showPDF == false { app?.showPDF = true }
             livePDF = true
             pdfURL = url
             pdf.show(document)
@@ -765,13 +764,36 @@ final class ProjectModel {
             do {
                 let loc = try await core.call("synctex_forward", args, as: ForwardLoc.self)
                 guard !Task.isCancelled, !closed, openPath == path, pdf.shownVersion == shown, livePDF == live else { return }
-                app?.requestPDF(.reveal(loc, word))
+                performPDF(.reveal(loc, word))
             } catch {
                 if !Task.isCancelled, !closed { report(error, "Couldn’t Find This Line in the PDF") }
             }
         }
         syncTask = task
         await task.value
+    }
+
+    /// A menu's or a sync's PDF action, once the PDF column shows at its width: the window
+    /// shows a hidden one for it (`PDFController.whenShown`).
+    func performPDF(_ action: PDFAction) {
+        pdf.whenShown { [weak self] in
+            guard let self, hasPDF else { return }
+            switch action {
+            case .zoomIn: pdf.zoom(in: true)
+            case .zoomOut: pdf.zoom(in: false)
+            case .actualSize: pdf.setScale(1)
+            case .fitWidth: pdf.fitWidth()
+            case .fitPage: pdf.fitPage()
+            case .goToPage(let page): pdf.go(toPage: page)
+            case .find: pdf.showFind()
+            case .print: pdf.view.print(with: .shared, autoRotate: true)
+            case let .reveal(loc, word): pdf.reveal(loc, word: word)
+            case .inverseFromView:
+                if case let (page, point)? = pdf.sourcePoint() {
+                    Task { await inverseSync(page: page, x: point.x, y: point.y) }
+                }
+            }
+        }
     }
 
     /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
@@ -1013,8 +1035,7 @@ final class ProjectModel {
     }
 }
 
-/// Where a project was left, in the window's restorable state (`MainWindowController`).
-/// Pane visibility and sizes are in the defaults instead.
+/// Where a project was left, in the window's scene storage (`RootView`), as are which panes show.
 nonisolated struct SavedWorkspace: Codable, Equatable {
     var project: String
     var file: String?

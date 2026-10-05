@@ -13,17 +13,6 @@ struct MenuCommandTests {
             seen[shortcut] = command
         }
     }
-
-    /// A PDF command or Go to PDF Position shows the PDF for now; only the toggle keeps it for later launches.
-    @Test func onlyTheToggleKeepsThePDFShown() {
-        let defaults = UserDefaults.standard, kept = defaults.object(forKey: DefaultsKey.showPDF)
-        defer { defaults.set(kept, forKey: DefaultsKey.showPDF) }
-        let app = AppModel()
-        if app.showPDF { app.togglePDF() }
-        #expect(!app.showPDF && !defaults.bool(forKey: DefaultsKey.showPDF))
-        app.requestPDF(.find)
-        #expect(app.showPDF && !defaults.bool(forKey: DefaultsKey.showPDF))
-    }
 }
 
 /// The running app's menu bar (HIG, The menu bar).

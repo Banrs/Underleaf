@@ -25,9 +25,7 @@ enum MenuCommand: String, CaseIterable {
     case editGotoLine = "edit.gotoLine"
     case pdfFind = "pdf.find"
     case pdfGotoPage = "pdf.gotoPage"
-    case viewToggleSidebar = "view.toggleSidebar"
     case viewTogglePdf = "view.togglePdf"
-    case viewToggleInspector = "view.toggleInspector"
     case viewToggleLogs = "view.toggleLogs"
     case viewToggleWordCount = "view.toggleWordCount"
     case viewZoomIn = "view.zoomIn"
@@ -66,9 +64,7 @@ enum MenuCommand: String, CaseIterable {
         case .editGotoLine: "Go to Line…"
         case .pdfFind: "Find in PDF…"
         case .pdfGotoPage: "Go to Page…"
-        case .viewToggleSidebar: "Sidebar"
         case .viewTogglePdf: "PDF"
-        case .viewToggleInspector: "Inspector"
         case .viewToggleLogs: "Build Panel"
         case .viewToggleWordCount: "Word Count"
         case .viewZoomIn: "Zoom In"
@@ -122,9 +118,7 @@ enum MenuCommand: String, CaseIterable {
         case .editMoveLineDown: KeyboardShortcut("]", modifiers: [.command, .option])
         case .editGotoLine: KeyboardShortcut("l")
         case .pdfGotoPage: KeyboardShortcut("g", modifiers: [.command, .option])
-        case .viewToggleSidebar: KeyboardShortcut("s", modifiers: [.command, .control])
         case .viewTogglePdf: KeyboardShortcut("\\", modifiers: [.command, .shift])
-        case .viewToggleInspector: KeyboardShortcut("i", modifiers: [.command, .option])
         case .viewToggleLogs: KeyboardShortcut("l", modifiers: [.command, .shift])
         case .viewZoomIn: KeyboardShortcut("=")
         case .viewZoomOut: KeyboardShortcut("-")
@@ -179,11 +173,9 @@ extension AppModel {
     }
 
     /// View-menu titles say what the item will do (HIG, The menu bar).
-    func title(_ command: MenuCommand, on project: ProjectModel?) -> String {
+    func title(_ command: MenuCommand, on project: ProjectModel?, in workspace: WorkspaceActions? = nil) -> String {
         let shown: Bool? = switch command {
-        case .viewToggleSidebar: sidebarVisible
-        case .viewTogglePdf: showPDF
-        case .viewToggleInspector: inspectorVisible
+        case .viewTogglePdf: workspace?.pdf.wrappedValue ?? true
         case .viewToggleLogs: project?.showLogs == true
         case .viewToggleWordCount: showWordCount
         default: nil
@@ -200,7 +192,8 @@ extension AppModel {
         }
     }
 
-    func perform(_ command: MenuCommand, on project: ProjectModel?) {
+    /// `workspace`, the window's panes, for the commands that show them.
+    func perform(_ command: MenuCommand, on project: ProjectModel?, in workspace: WorkspaceActions? = nil) {
         guard isEnabled(command, on: project) else { return }
         switch command {
         case .projectNew: newProject()
@@ -208,11 +201,9 @@ extension AppModel {
         case .projectClose: Task { await close() }
         case .projectExport:
             if let project { exporting = ExportFile(name: "\(project.id).zip", type: .zip, make: project.exportZip) }
-        case .projectSearch:
-            sidebarVisible = true
-            searchFocusToken += 1
+        case .projectSearch: workspace?.focusSearch()
         case .fileNew, .fileNewFolder:
-            sidebarVisible = true
+            workspace?.sidebar.wrappedValue = true
             newEntry = NewEntry(directory: command == .fileNewFolder)
         case .fileUpload: addingFiles = true
         case .fileSave: Task { await project?.saveEdits() }
@@ -223,7 +214,7 @@ extension AppModel {
         // AppKit: SwiftUI has no page setup panel.
         case .filePageSetup: NSApp.runPageLayout(nil)
         // The PDF, not the first responder (usually the source).
-        case .filePrint: requestPDF(.print)
+        case .filePrint: project?.performPDF(.print)
         case .editBold: project?.editor.perform(.bold)
         case .editItalic: project?.editor.perform(.italic)
         case .editUnderline: project?.editor.perform(.underline)
@@ -233,34 +224,34 @@ extension AppModel {
         case .editMoveLineDown: project?.editor.perform(.moveLineDown)
         case .editGotoLine: prompt = .gotoLine
         case .pdfGotoPage: prompt = .gotoPage
-        case .pdfFind: requestPDF(.find)
-        case .viewToggleSidebar: sidebarVisible.toggle()
-        case .viewTogglePdf: togglePDF()
-        case .viewToggleInspector: inspectorVisible.toggle()
+        case .pdfFind: project?.performPDF(.find)
+        case .viewTogglePdf: workspace?.pdf.wrappedValue.toggle()
         case .viewToggleLogs: project?.showLogs.toggle()
         case .viewToggleWordCount: showWordCount.toggle()
-        case .viewZoomIn: requestPDF(.zoomIn)
-        case .viewZoomOut: requestPDF(.zoomOut)
-        case .viewActualSize: requestPDF(.actualSize)
-        case .viewFitWidth: requestPDF(.fitWidth)
-        case .viewFitPage: requestPDF(.fitPage)
+        case .viewZoomIn: project?.performPDF(.zoomIn)
+        case .viewZoomOut: project?.performPDF(.zoomOut)
+        case .viewActualSize: project?.performPDF(.actualSize)
+        case .viewFitWidth: project?.performPDF(.fitWidth)
+        case .viewFitPage: project?.performPDF(.fitPage)
         case .compileRun: Task { await project?.compile() }
         case .compileStop: project?.stopCompile()
         case .syncForward: Task { await project?.forwardSync() }
-        case .syncInverse: requestPDF(.inverseFromView)
+        case .syncInverse: project?.performPDF(.inverseFromView)
         }
     }
 }
 
 struct AppCommands: Commands {
     let app: AppModel
+    @FocusedValue(\.workspace) private var workspace
+    @FocusedValue(\.itemActions) private var chosen
     /// Nil on the projects screen, and while Settings or a sheet is key, which
     /// turns the project items off.
-    private var project: ProjectModel? { app.commandProject }
+    private var project: ProjectModel? { workspace.flatMap { $0.project.closed ? nil : $0.project } }
 
     private func item(_ command: MenuCommand) -> some View {
-        Button { app.perform(command, on: project) } label: {
-            let title = app.title(command, on: project)
+        Button { app.perform(command, on: project, in: workspace) } label: {
+            let title = app.title(command, on: project, in: workspace)
             // macOS 27 shows a menu item's image only with this style.
             if let symbol = command.symbol { Label(title, systemImage: symbol) } else { Text(title) }
         }
@@ -304,7 +295,6 @@ struct AppCommands: Commands {
             Divider()
             // These act on the chosen item of the list with the keyboard. After Save, as
             // Pages and Finder put Rename; the standard icons (HIG, Icons) on all three.
-            let chosen = app.mainWindowIsKey ? app.chosenItem : nil
             Button { chosen?.rename() } label: { Label("Rename", systemImage: "pencil") }.labelStyle(.titleAndIcon)
                 .disabled(chosen == nil)
             Button { chosen?.showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }.labelStyle(.titleAndIcon)
@@ -344,12 +334,14 @@ struct AppCommands: Commands {
             // As Xcode's Editor › Structure has them.
             items([.editComment, .editMoveLineUp, .editMoveLineDown])
         }
+        // After the system's sidebar and inspector items (`SidebarCommands`, `InspectorCommands`).
         CommandGroup(before: .toolbar) {
-            item(.viewToggleSidebar)
             // The keyboard's and VoiceOver's way to the File Outline header's fold.
-            Button(app.outlineCollapsed ? "Show File Outline" : "Hide File Outline") { app.outlineCollapsed.toggle() }
-                .disabled(project?.isLaTeX != true || !app.sidebarVisible)
-            items([.viewTogglePdf, .viewToggleInspector, .viewToggleLogs, .viewToggleWordCount])
+            Button(workspace?.outlineFolded.wrappedValue == true ? "Show File Outline" : "Hide File Outline") {
+                workspace?.outlineFolded.wrappedValue.toggle()
+            }
+            .disabled(project?.isLaTeX != true || workspace?.sidebar.wrappedValue != true)
+            items([.viewTogglePdf, .viewToggleLogs, .viewToggleWordCount])
             Divider()
             items([.viewZoomIn, .viewZoomOut, .viewActualSize, .viewFitWidth, .viewFitPage])
             Divider()
