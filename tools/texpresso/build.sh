@@ -6,8 +6,8 @@
 # and opens no window of its own, so the Mac app shows the live preview in its PDF pane.
 # Without the variable it behaves as upstream does.
 #
-# Needs TeXpresso's build dependencies (see its INSTALL.md). Then choose <folder>/build in
-# Underleaf's Settings, under TeXpresso.
+# Needs TeXpresso's build dependencies (see its INSTALL.md). Then install.sh <folder>/build
+# puts it where Underleaf finds it automatically (or choose <folder>/build in Settings).
 set -eu
 COMMIT=e8df7709077b2f86f6e16e6c86ceefb86de06f8d
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -23,4 +23,4 @@ if ! git apply --reverse --check "$HERE/underleaf-pdf.patch" 2>/dev/null; then
   git apply "$HERE/underleaf-pdf.patch"
 fi
 make -j4 all "$@"
-echo "Built $DEST/build/texpresso. Choose $DEST/build in Underleaf's Settings, under TeXpresso."
+echo "Built $DEST/build/texpresso. Run $HERE/install.sh $DEST/build to install it."
