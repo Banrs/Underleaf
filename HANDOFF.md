@@ -22,6 +22,24 @@ Claude worktrees were left alone, and no commit history was discarded.
   automatic edge, as Xcode's. While the panel shows, the area ends above the bars,
   so the panel rises from the status bar's top, and the bar is solid in the
   panel's text background. Both switch at the rise's start and after the collapse.
+  `setBarsSolid` deactivates the outgoing bottom constraint before activating the
+  incoming one (#45): both active at once broke a safe-area constraint on every close.
+- The status bar has Xcode's hairline (a SwiftUI `Divider`, 12 pt, the toggle symbol's
+  height) between the caret's place and the panel toggle; its spacing and insets are
+  otherwise unchanged from f85f20b (pixel-identical captures, panel open and closed).
+- The PDF hidden at launch is collapsed in `viewDidAppear`, not as the columns load:
+  with the PDF collapsed as the window first lays out the columns, the source never got
+  the toolbar's scroll edge (its text ran sharp under the toolbar, in every build back
+  to f85f20b; uncollapsing and re-collapsing later doesn't bring it back). The autosave's
+  collapse is undone in `columns.loaded` for the same reason.
+- Known AppKit edge quirk (27.2), not fixed: bottom accessories (panel header, status bar)
+  normally draw one frosted pocket of their own over source and PDF. A PDF collapse while
+  the panel header shows gives the source its own scroll pocket instead, and the PDF,
+  shown again, gets none, so the PDF runs clear under the header. Seen on any PDF
+  hide/show with the panel open (also before this change) and, now, on showing a PDF
+  that was hidden at launch with the panel open. Re-adding the accessory blanks the
+  columns; nudging safe areas, collapsing in `viewWillAppear` (loses the toolbar edge)
+  and hiding the header around the collapse don't help.
 - Source and PDF share one background, the system text background (TextEdit, Notes,
   Xcode in Light; Preview's canvas is the same colour, wallpaper-tinted). PDFKit
   tints a system colour it's given, so the PDF view gets it resolved per appearance.

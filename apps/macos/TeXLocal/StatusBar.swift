@@ -69,6 +69,10 @@ struct StatusBar: View {
                 }
                 .fixedSize()
             }
+            // Xcode's bar: the system's hairline between the caret's place and the panel's toggle,
+            // as tall as the toggle's symbol.
+            Divider()
+                .frame(height: 12)
             Toggle(isOn: $project.showLogs) {
                 Label("Build Panel", systemImage: "inset.filled.bottomthird.rectangle").hitTarget()
             }

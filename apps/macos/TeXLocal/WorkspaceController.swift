@@ -168,6 +168,16 @@ final class WorkspaceController: RestoredSplitViewController {
         }
     }
 
+    /// The PDF the model hides goes once the columns have been laid out in the window (`buildArea`).
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !appeared else { return }
+        appeared = true
+        if !app.showPDF { pdfItem.isCollapsed = true }
+    }
+
+    private var appeared = false
+
     /// The columns' minimums follow the toolbar sections over them. A hidden sidebar hands its
     /// section, the window controls and its toggle, on to the source's, and a shown inspector
     /// takes the PDF's toggles over it. A minimum drops as soon as its pane's section shrinks,
@@ -247,7 +257,10 @@ final class WorkspaceController: RestoredSplitViewController {
         columns.splitView.autosaveName = "Columns"
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        columns.loaded = { [unowned self] in if !app.showPDF { pdfItem.isCollapsed = true } }
+        // Shown, even if the autosave hid it, until the workspace appears (`viewDidAppear`): with the PDF
+        // collapsed as the window first lays out the columns, the source never gets the toolbar's
+        // scroll edge, and its text stays sharp under the toolbar (27.2).
+        columns.loaded = { [unowned self] in pdfItem.isCollapsed = false }
         // The last toolbar section's edge effect needs a safe area ending where the section does (27.2).
         columns.view.additionalSafeAreaInsets.right = ColumnMetrics.toolbarInset
 
@@ -328,8 +341,10 @@ final class WorkspaceController: RestoredSplitViewController {
     /// the text under the bar goes as the bar's fill comes.
     private func setBarsSolid(_ solid: Bool) {
         statusFill.shown = solid
-        areaUnderBars.isActive = !solid
-        areaAboveBars.isActive = solid
+        // The outgoing bottom goes before the incoming comes: both at once can't hold.
+        let (outgoing, incoming) = solid ? (areaUnderBars!, areaAboveBars!) : (areaAboveBars!, areaUnderBars!)
+        outgoing.isActive = false
+        incoming.isActive = true
         view.layoutSubtreeIfNeeded()
     }
 
@@ -438,7 +453,8 @@ final class WorkspaceController: RestoredSplitViewController {
         watches = [
             track({ app.sidebarVisible }) { [weak self] visible in if let self { setCollapsed(sidebarItem, !visible) } },
             track({ app.inspectorVisible }) { [weak self] visible in if let self { setCollapsed(inspectorItem, !visible) } },
-            track({ app.showPDF }) { [weak self] visible in if let self { setCollapsed(pdfItem, !visible) } },
+            // Until the workspace appears, `viewDidAppear` has it.
+            track({ app.showPDF }) { [weak self] visible in if let self, appeared { setCollapsed(pdfItem, !visible) } },
             track({ project.showLogs }) { [weak self] in self?.setPanelShown($0) },
             track({ OutlineState(app, project) }) { [weak self] in self?.setOutline($0) },
             track({ pdf.finding }) { [weak self] finding in if let self { setHidden(pdfFind, !finding) } },
