@@ -240,14 +240,17 @@ final class WorkspaceController: RestoredSplitViewController {
         let columnsItem = NSSplitViewItem(viewController: columns)
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
-        // The editors' own bar, at their foot: their text and the PDF's pages scroll on beneath
-        // it under the system's edge, whether the panel shows below them or not. It rides up
-        // with them as the panel opens, as Xcode's does over its debug area, so nothing under
-        // it changes and it never changes its look.
+        // The editors' own bar, at their foot, as Xcode's: their text and the PDF's pages scroll on
+        // beneath it, and their scrollers end at its top, as the accessory insets their scroll views
+        // by its height (measured 2026-10-06: the knobs stop 4 pt over the hairline, Xcode's 5). It
+        // rides up with them as the panel opens, as Xcode's does over its debug area, so nothing
+        // under it changes and it never changes its look.
         let statusBar = accessory(StatusBar(project: project))
-        // Its own height, which the folded File Outline's header shares (`StatusBar.height`).
+        // Its own height, which the folded File Outline's header shares (`StatusBar.height`), without
+        // AppKit's standard 10 pt and 9 pt bar margins.
         statusBar.automaticallyAppliesContentInsets = false
-        statusBar.preferredScrollEdgeEffectStyle = .automatic
+        // The bar paints its own colour over the edge (`StatusBar`): the hard cutoff is the nearest.
+        statusBar.preferredScrollEdgeEffectStyle = .hard
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)

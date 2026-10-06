@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Status below source and PDF, the same whether the build panel shows or not. Page uses
-/// PDFKit numbering, which can differ from LaTeX; save failures and the engine appear elsewhere.
+/// Status below source and PDF, which scroll on beneath it, the same whether the build panel
+/// shows or not. Page uses PDFKit numbering, which can differ from LaTeX; save failures and the
+/// engine appear elsewhere.
 struct StatusBar: View {
     /// The bar's height, which the folded File Outline's header shares (`OutlineHeader`).
     static let height: CGFloat = 36
@@ -23,6 +24,10 @@ struct StatusBar: View {
             .padding(.trailing, 16.5)
             .frame(height: Self.height)
         }
+        // Opaque in the editors' colour, as Xcode's bar is in its editor's (measured 2026-10-06, light
+        // and dark): the system's edge over the editors is a lighter glass, and over a white PDF page
+        // in Dark a grey one.
+        .background(.textSurface)
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)
@@ -79,8 +84,11 @@ struct StatusBar: View {
             .fixedSize()
             if project.editsText || pages { hairline }
             Toggle(isOn: $project.showLogs) {
-                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps.
-                Label("Build Panel", systemImage: "inset.filled.bottomthird.square").frame(minHeight: 20)
+                // Only as tall as the HIG's least target: its symbol sits at Xcode's gaps, at the body
+                // size, the nearest to Xcode's 12.5 pt symbol beside 11 pt text (measured 2026-10-06).
+                Label("Build Panel", systemImage: "inset.filled.bottomthird.square")
+                    .font(.body)
+                    .frame(minHeight: 20)
             }
             .labelStyle(.iconOnly)
             .toggleStyle(.button)
