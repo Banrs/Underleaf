@@ -66,7 +66,6 @@ final class WorkspaceController: RestoredSplitViewController {
     private(set) var inspectorItem: NSSplitViewItem!
     /// Source and PDF over the build panel and status bar.
     private var areaItem: NSSplitViewItem!
-    private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     /// The File Outline's header at the files' foot, and its height: as the outline's
     /// first row's room when open, the status bar's when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
@@ -75,7 +74,6 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Content there only while it shows (`Mount`): the panes that hide (`host(mounted:)`) and
     /// the PDF find bar's.
     private var mounts: [ObjectIdentifier: Mount] = [:]
-    private let searchField = FieldHandle()
 
     /// The panel's height as it was hidden, or its first (`setPanelShown`).
     private var panelHeight: CGFloat = 0
@@ -170,8 +168,8 @@ final class WorkspaceController: RestoredSplitViewController {
 
     // ---------- layout ----------
 
-    /// Search over the files over the File Outline. A pane's size is its view's frame
-    /// as it's added: the split opens it there, and a collapsed one shows there first.
+    /// The files over the File Outline; Search is the toolbar's, over them. A pane's size is its
+    /// view's frame as it's added: the split opens it there, and a collapsed one shows there first.
     private func buildSidebar(height: CGFloat) {
         sidebar.splitView.isVertical = false
         sidebar.splitView.autosaveName = "Sidebar"
@@ -195,11 +193,6 @@ final class WorkspaceController: RestoredSplitViewController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
-        sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
-        // The list fades under the field, as under a Tahoe sidebar's bars; the automatic edge
-        // draws a half-point line unlike any other in the window.
-        sidebarSearch.preferredScrollEdgeEffectStyle = .soft
-        sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
 
@@ -511,10 +504,10 @@ final class WorkspaceController: RestoredSplitViewController {
         field.focus()
     }
 
-    /// The field takes the keyboard at once, so typing during the sidebar's animation lands in it.
+    /// The sidebar shows for the results as the toolbar's field takes the keyboard.
     private func focusSearch() {
         setCollapsed(sidebarItem, false)
-        focusField(searchField, in: sidebarSearch)
+        toolbar.beginSearch()
     }
 
     func hostsFindField(_ field: NSTextField) -> Bool {
