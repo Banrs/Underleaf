@@ -179,14 +179,14 @@ struct SourceEditorTests {
             + String(repeating: "word ", count: $0 % 40) }.joined(separator: "\n"), caret: 0)
         /// From the top of what shows to the line's paragraph.
         func top(_ line: Int) -> CGFloat? {
-            let clip = editor.scrollView.contentView
+            let clip = editor.textView.enclosingScrollView!.contentView
             return text.textRange(NSRange(location: text.document.lineStart(line), length: 0))
                 .flatMap { text.textLayoutManager?.textLayoutFragment(for: $0.location) }
-                .map { $0.layoutFragmentFrame.minY + text.textContainerOrigin.y - clip.bounds.minY - editor.scrollView.contentInsets.top }
+                .map { $0.layoutFragmentFrame.minY + text.textContainerOrigin.y - clip.bounds.minY - clip.contentInsets.top }
         }
         editor.reveal(line: 5000, atTop: true, focus: false)
         #expect(top(5000) == 0, "Actual top: \(String(describing: top(5000)))")
-        editor.scrollView.setFrameSize(NSSize(width: 350, height: 400))
+        editor.textView.enclosingScrollView!.setFrameSize(NSSize(width: 350, height: 400))
         #expect(top(5000) == 0, "Actual top: \(String(describing: top(5000)))")
         #expect(text.textContainer?.size.width == text.frame.width - 2 * text.textContainerInset.width)
     }
@@ -206,7 +206,8 @@ struct SourceEditorTests {
         #expect(text.shownTop?.offset == left.offset && text.shownTop?.below == left.below)
         open("short", path: "b.tex")
         open(long + "\nmore", path: "a.tex")
-        #expect(editor.scrollView.contentView.bounds.minY == -editor.scrollView.contentInsets.top)
+        let clip = try #require(editor.textView.enclosingScrollView?.contentView)
+        #expect(clip.bounds.minY == -clip.contentInsets.top)
     }
 
     /// A command is its own named undo step between the typing before and after it.
@@ -467,10 +468,13 @@ struct SourceEditorTests {
         #expect(kept.map(\.range) == ["prosewrod", "commentwrod", "naïvve", "afterwrod"].map(relative))
     }
 
+    /// The text view in a scroll view, as SwiftUI's scroll view holds it in the app.
     private func inWindow() -> NSWindow {
         let window = Self.window()
-        editor.scrollView.frame = window.contentView!.bounds
-        window.contentView!.addSubview(editor.scrollView)
+        let scrollView = NSScrollView(frame: window.contentView!.bounds)
+        scrollView.documentView = editor.textView
+        editor.textView.frame.size.width = scrollView.contentSize.width
+        window.contentView!.addSubview(scrollView)
         editor.shown = true
         return window
     }

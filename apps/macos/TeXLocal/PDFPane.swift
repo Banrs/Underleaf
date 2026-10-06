@@ -12,8 +12,10 @@ struct PDFPane: View {
 
     var body: some View {
         if project.hasPDF {
-            PDFRepresentable(project: project, darkPaper: darkPaper)
-                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
+            // Under the toolbar and the status bar, as the source; PDFKit insets its own scrolling.
+            StatusBarGround(edges: [.top, .trailing]) {
+                PDFRepresentable(project: project, darkPaper: darkPaper)
+            }
         } else {
             emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
         }

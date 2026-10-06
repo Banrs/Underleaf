@@ -249,8 +249,11 @@ final class WorkspaceController: RestoredSplitViewController {
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`), without
         // AppKit's standard 10 pt and 9 pt bar margins.
         statusBar.automaticallyAppliesContentInsets = false
-        // The bar paints its own colour over the edge (`StatusBar`): the hard cutoff is the nearest.
-        statusBar.preferredScrollEdgeEffectStyle = .hard
+        // The panes draw the bar's ground themselves, SwiftUI's hard scroll edge in the editors'
+        // colour (`StatusBarGround`): the accessory's own edge would lay AppKit's glass over them
+        // instead (measured 2026-10-06: 38 over the source's 30 in Dark, 48 over the PDF pane,
+        // with `.hard` and `.automatic` alike), and `.soft` draws nothing over these panes.
+        statusBar.preferredScrollEdgeEffectStyle = .soft
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)

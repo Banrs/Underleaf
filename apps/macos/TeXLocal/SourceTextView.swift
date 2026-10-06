@@ -4,6 +4,64 @@ import AppKit
 /// supplies LaTeX syntax; this view adds the gutter, colours, completion,
 /// brackets and indentation, with core edits grouped into undo steps.
 final class SourceTextView: NSTextView, NSTextStorageDelegate {
+    /// A plain-text document view, as `scrollablePlainDocumentContentTextView` sets one up, to go
+    /// in SwiftUI's scroll view: that is an NSScrollView underneath (27.2), so TextKit 2's viewport
+    /// stays bounded by its clip and the scrolling code here finds it as `enclosingScrollView`.
+    static func plainDocument() -> SourceTextView {
+        let view = SourceTextView(usingTextLayoutManager: true)
+        view.isRichText = false
+        view.importsGraphics = false
+        view.usesRuler = false
+        view.allowsImageEditing = false
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.minSize = .zero
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        return view
+    }
+
+    /// The view has a new scroll view, or none (`SourceEditor` watches its scrolling). SwiftUI
+    /// puts the view in its scroll view after its superview (27.2), so it's told as it's sized.
+    var attached: () -> Void = {}
+    private weak var attachedTo: NSScrollView?
+
+    private func noteScrollView() {
+        guard enclosingScrollView !== attachedTo else { return }
+        attachedTo = enclosingScrollView
+        attached()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        noteScrollView()
+        reportContentHeight()
+    }
+
+    /// The height the text takes, as the view sizes itself to it by TextKit 2's estimates where it
+    /// hasn't laid out, and at least what shows, so it takes clicks under a short document.
+    /// SwiftUI's scroll view sizes it by this (`SourceColumn`), told through `heightChanged`:
+    /// SwiftUI doesn't measure a representable again on its own.
+    var heightChanged: (CGFloat) -> Void = { _ in }
+
+    private var reportedHeight: CGFloat = 0, sizing = false
+
+    func reportContentHeight() {
+        guard !sizing else { return }
+        sizing = true
+        defer { sizing = false }
+        if let clip = enclosingScrollView?.contentView {
+            minSize = NSSize(width: 0, height: clip.bounds.height - clip.contentInsets.top - clip.contentInsets.bottom)
+        }
+        sizeToFit()
+        let height = frame.height
+        guard height != reportedHeight else { return }
+        reportedHeight = height
+        heightChanged(height)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         if updateDividerCursor(with: event) { return }
         super.mouseMoved(with: event)
@@ -48,6 +106,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         closeCompletions()
         updateGutterWidth()
         recolour()
+        reportContentHeight()
     }
 
     // MARK: edits reach the core
@@ -217,6 +276,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     // The top paragraph stays put: TextKit 2 keeps the offset, over heights a new width re-estimates (27.2).
     override func setFrameSize(_ size: NSSize) {
+        noteScrollView()
+        defer { reportContentHeight() }
         guard size.width != frame.width else { return super.setFrameSize(size) }
         keepingTopLine {
             super.setFrameSize(size)
@@ -256,6 +317,43 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         }
     }
 
+    /// The caret's autoscroll as it moves or text is typed: SwiftUI's clip view takes no
+    /// `scrollToVisible` from a view inside it (27.2), so the clip is scrolled here, the least
+    /// that shows the rect between the bars.
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        guard let scroll = enclosingScrollView else { return super.scrollToVisible(rect) }
+        let clip = scroll.contentView, insets = clip.contentInsets
+        let target = convert(rect, to: clip)
+        let shown = NSRect(x: clip.bounds.minX, y: clip.bounds.minY + insets.top, width: clip.bounds.width,
+                           height: clip.bounds.height - insets.top - insets.bottom)
+        var origin = clip.bounds.origin
+        if target.minY < shown.minY { origin.y -= shown.minY - target.minY }
+        else if target.maxY > shown.maxY { origin.y += min(target.maxY - shown.maxY, target.minY - shown.minY) }
+        origin = clip.constrainBoundsRect(NSRect(origin: origin, size: clip.bounds.size)).origin
+        guard origin != clip.bounds.origin else { return false }
+        clip.scroll(to: origin)
+        scroll.reflectScrolledClipView(clip)
+        return true
+    }
+
+    /// Laying the range out first: far from the viewport it has no rect yet, and TextKit 2's
+    /// estimates above it settle as it's shown, so in two passes, as `scroll(_:to:)`.
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard let manager = textLayoutManager, enclosingScrollView != nil, let target = textRange(range)
+        else { return super.scrollRangeToVisible(range) }
+        for _ in 0..<2 {
+            manager.ensureLayout(for: target)
+            var rect = NSRect.null
+            manager.enumerateTextSegments(in: target, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
+                rect = rect.union(frame)
+                return true
+            }
+            guard !rect.isNull else { return }
+            guard scrollToVisible(rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)) else { return }
+            manager.textViewportLayoutController.layoutViewport()
+        }
+    }
+
     /// Back to a `shownTop`.
     func scroll(toShownTop top: (offset: Int, below: CGFloat)) {
         guard let location = textRange(NSRange(location: min(top.offset, (string as NSString).length), length: 0))?.location else { return }
@@ -291,6 +389,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         fragments.sort { $0.offset < $1.offset }
+        reportContentHeight()
         // Invalidated, the fragments laid out before keep no colours until validated again.
         if needsColours, let manager = textLayoutManager {
             needsColours = false

@@ -11,23 +11,17 @@ struct StatusBar: View {
     @Bindable var project: ProjectModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Over the bar, as the folded File Outline's line is over its header.
-            Divider()
-            ViewThatFits(in: .horizontal) {
-                content(showsCounts: true).labelStyle(.titleAndIcon)
-                content(showsCounts: false).labelStyle(.iconOnly)
-            }
-            // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
-            // item, the toggle's symbol 17.5 pt from the right edge.
-            .padding(.leading, 14)
-            .padding(.trailing, 16.5)
-            .frame(height: Self.height)
+        ViewThatFits(in: .horizontal) {
+            content(showsCounts: true).labelStyle(.titleAndIcon)
+            content(showsCounts: false).labelStyle(.iconOnly)
         }
-        // Opaque in the editors' colour, as Xcode's bar is in its editor's (measured 2026-10-06, light
-        // and dark): the system's edge over the editors is a lighter glass, and over a white PDF page
-        // in Dark a grey one.
-        .background(.textSurface)
+        // Xcode's bar, measured (2026-10-06): 36 pt under its hairline, 14 pt in to the first
+        // item, the toggle's symbol 17.5 pt from the right edge.
+        .padding(.leading, 14)
+        .padding(.trailing, 16.5)
+        .frame(height: Self.height)
+        // No ground or hairline of its own: the panes draw SwiftUI's hard scroll edge under it,
+        // the editors' colour with the system's hairline over it (`StatusBarGround`).
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)
