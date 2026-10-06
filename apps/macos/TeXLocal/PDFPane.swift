@@ -17,7 +17,8 @@ struct PDFPane: View {
                 PDFRepresentable(project: project, darkPaper: darkPaper)
             }
         } else {
-            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The status bar's edge over this half too, as over the source's empty state.
+            StatusBarGround { emptyState }
         }
     }
 
