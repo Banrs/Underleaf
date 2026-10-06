@@ -1,9 +1,14 @@
 name: CI
 
+# The browser client and the Rust core, on Linux. The Mac app has its own workflow
+# (macos-app.yml).
 on:
   pull_request:
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,6 +18,7 @@ jobs:
   web:
     name: Web tests and bundle
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,6 +26,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # With the TeXpresso installer's tests, which stub the Mach-O tools.
       - run: npm test
       - run: npm run build
       - run: node scripts/check-version.mjs
@@ -27,14 +34,13 @@ jobs:
   core:
     name: Rust core
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # These crates carry no GUI dependencies on purpose, so they are checked
-      # here without installing a webview stack.
       - run: cargo fmt --all --check
-      - run: cargo clippy -p texlocal-core -p texlocal-syntax -p texlocal-ffi -p texlocal-server --all-targets -- -D warnings
-      - run: cargo test -p texlocal-core -p texlocal-syntax -p texlocal-ffi -p texlocal-server
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

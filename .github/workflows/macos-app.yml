@@ -1,8 +1,8 @@
 name: macOS app
 
-# The macOS app in apps/macos, built with the committed Xcode project. It
-# runs on push as well as on pull requests so a branch changing the app gets a
-# compile without opening a PR first; only paths the app builds from trigger it.
+# The Mac app in apps/macos, built with the committed Xcode project and tested. It runs on
+# push as well as on pull requests, so a branch changing the app gets a build without a PR
+# first; only paths the app builds from trigger it.
 on:
   pull_request:
     paths: &paths
@@ -14,6 +14,9 @@ on:
       - .github/workflows/macos-app.yml
   push:
     paths: *paths
+
+permissions:
+  contents: read
 
 # A newer push to a pull request supersedes the older run. Pushes are grouped
 # by commit instead, so parallel work on one branch never cancels another's run.
@@ -27,6 +30,11 @@ jobs:
     # The app is built for macOS 27. GitHub's macOS 27 runner is the
     # xcode-27 image (in preview); there is no macos-27 label.
     runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      # The app and its test host in a defaults domain of their own; the scheme gives the
+      # tests a scratch project library.
+      APP_ID: com.texlocal.mac.ci${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,11 +45,9 @@ jobs:
       # The newest Xcode on the image, which is not always the default one.
       - name: Select the newest Xcode
         run: |
-          ls -d /Applications/Xcode*.app
           XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
-          xcodebuild -showsdks | grep -i macos
           sw_vers
       # Keyed on the deployment target (project.yml): cargo does not rebuild
       # when it changes, and objects cached for a newer macOS than the app
@@ -53,11 +59,9 @@ jobs:
       - run: npm ci
       - name: Build
         working-directory: apps/macos
-        # A separate defaults domain as well as the tests' scratch project library.
         run: >-
           xcodebuild -scheme TeXLocal -destination 'platform=macOS'
-          UNDERLEAF_UI_TESTS=1 TEXLOCAL_APP_IDENTIFIER="com.texlocal.mac.ci${GITHUB_RUN_ID}"
-          build-for-testing
+          TEXLOCAL_APP_IDENTIFIER="$APP_ID" build-for-testing
       # The core must be linked in, not loaded: a dylib from target/ would be
       # loaded from its build path, which exists only on the machine that
       # built the app.
@@ -74,24 +78,19 @@ jobs:
         working-directory: apps/macos
         run: >-
           xcodebuild -scheme TeXLocal -destination 'platform=macOS' -parallel-testing-enabled NO
-          -resultBundlePath "$RUNNER_TEMP/TeXLocal-tests.xcresult"
-          UNDERLEAF_UI_TESTS=1 TEXLOCAL_APP_IDENTIFIER="com.texlocal.mac.ci${GITHUB_RUN_ID}"
-          test-without-building
-      - name: Verify Aa UI coverage ran
+          -resultBundlePath "$RUNNER_TEMP/TeXLocal-tests.xcresult" TEXLOCAL_APP_IDENTIFIER="$APP_ID" test-without-building
+      # xcodebuild passes a run in which no test ran. Tests that need TeX skip themselves on
+      # the runner, which has none.
+      - name: Tests ran
         run: |
-          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/TeXLocal-tests.xcresult" --compact > "$RUNNER_TEMP/TeXLocal-tests.json"
-          node --input-type=module - "$RUNNER_TEMP/TeXLocal-tests.json" <<'JS'
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/TeXLocal-tests.xcresult" --compact > "$RUNNER_TEMP/summary.json"
+          node --input-type=module - "$RUNNER_TEMP/summary.json" <<'JS'
           import { readFileSync } from 'node:fs';
-          const nodes = JSON.parse(readFileSync(process.argv[2], 'utf8')).testNodes, matches = [];
-          while (nodes.length) {
-            const node = nodes.pop();
-            if (node.nodeType === 'Test Case' && node.name.startsWith('testFormattingControlsKeepTheirStateAndEditorSelection')) matches.push(node);
-            nodes.push(...node.children ?? []);
-          }
-          if (matches.length !== 1 || matches[0].result !== 'Passed') throw new Error(`Aa UI test did not execute successfully: ${JSON.stringify(matches)}`);
-          console.log(`Aa UI test executed: ${matches[0].result} (${matches[0].duration})`);
+          const { totalTestCount, passedTests, failedTests, skippedTests } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          console.log(`${totalTestCount} tests: ${passedTests} passed, ${failedTests} failed, ${skippedTests} skipped`);
+          if (!(passedTests > 0) || failedTests !== 0) throw new Error('No test passed, or one failed');
           JS
-      - name: Upload failed macOS test results
+      - name: Upload the test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:

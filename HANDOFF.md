@@ -41,8 +41,12 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
 
 ## Validation, 6 October
 
-- Native: 102 tests in 18 suites pass (`-skip-testing:TeXLocalUITests`; that target is an
-  empty stub).
+CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy and tests on
+Linux; `macos-app.yml` builds the app, checks the core is linked statically, runs the native
+tests and fails a run in which none passed.
+
+- Native: 102 tests in 18 suites pass. The empty UI-test target is gone, and with it the
+  need to skip it.
 - `npm test`: 148, including the TeXpresso installer's 5. Rust: 197, with rustfmt and
   clippy `-D warnings` clean.
 - Checked on a dev copy: the status bar's hairline runs across both halves with and without
@@ -50,8 +54,8 @@ Platform quirks met on the way (27.2) are in the code's comments where they're h
   above the bar; wheel-scrolling that source keeps the main thread mostly idle.
 
 The native tests run a host app that shares the app's defaults unless built with another
-bundle identifier: build with `PRODUCT_BUNDLE_IDENTIFIER=com.texlocal.mac.dev`, or quit the
-installed app first.
+bundle identifier: build with `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI does with
+its own, or quit the installed app first.
 
 ## Build and install
 
@@ -60,8 +64,7 @@ Requires Xcode 27, Rust stable and installed npm dependencies.
 ```sh
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug \
   -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-dd \
-  PRODUCT_BUNDLE_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO \
-  -skip-testing:TeXLocalUITests test
+  TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO test
 
 xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
   -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-release \
@@ -73,9 +76,6 @@ its signature, and compare the installed and built binaries.
 
 ## Open
 
-- CI's macOS job still checks that the Aa UI test ran (`.github/workflows/macos-app.yml`),
-  but that test was deleted with the audit's others and the UI target is an empty stub:
-  either the step or the target (and the step) should go before `main` is pushed.
 - Physical trackpad gestures and interactive IME remain manual checks. ZIP import has
   per-entry limits but no total extraction budget.
 
