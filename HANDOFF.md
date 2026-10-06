@@ -1,140 +1,83 @@
-# Underleaf review handoff — 4 October 2026, shell notes updated 6 October
+# Underleaf handoff — 6 October 2026
 
-## Working branch
+## Branches
 
-Work is consolidated on `main`. All 13 other local branches were verified as
-ancestors and pruned. GitHub `main` was fast-forwarded to the verified implementation
-commit `409d83f`; the three merged remote branches and their stale tracking references
-were then removed. Only `main` remains locally and on GitHub. Existing detached
-Claude worktrees were left alone, and no commit history was discarded.
+`main` holds the work. The SwiftUI-shell branch (`swiftui-shell`, and the Claude worktree
+branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is merged too.
 
-## Changes to review
+## The Mac app's shape
 
-- Native theme changes reach the open editor through its SwiftUI representable.
-  TextKit rendering attributes now supply fragment colours without editing text
-  storage or forcing viewport restoration for colour-only updates. Visible fragments
-  are refreshed when the theme or appearance changes.
-- The status bar is the bottom accessory of the source/PDF columns, always, with AppKit's
-  automatic scroll edge and no fill of its own. The build panel is a split item below
-  the columns, so the bar rides up with the editors as the panel opens, as Xcode's does
-  over its debug area, and never changes look. The panel's header (tabs, Warnings,
-  Filter) is inside the panel, a SwiftUI `VStack` over the list or log.
-- The panel opens and closes with the one AppKit collapse animation. Gone with the old
-  arrangement: the solid/clear bar switch, the panel-header accessory, divider detents
-  and their haptic, overlay-scroller hiding during drags, and widening the window to
-  fit a pane (AppKit's own behaviour now).
-- Window, toolbar and splits stay AppKit: only `NSToolbar`'s tracking separators follow
-  the source|PDF divider, and a three-column `NavigationSplitView` can't hide its
-  detail column. A SwiftUI shell was tried on this branch (d8d9cf0) and reverted
-  (a2fd29d) for that. The panes are SwiftUI.
-- Compile › Go to Next/Previous Issue (⌘' and ⇧⌘') step round the build's issues that
-  name a file; the chosen issue is the project's (`chosenIssue`), shared with the list.
-  The editor's gutter marks the open file's issue lines until the file is edited.
-- The PDF hidden at launch is collapsed in `viewDidAppear`, not as the columns load:
-  with the PDF collapsed as the window first lays out the columns, the source never got
-  the toolbar's scroll edge (its text ran sharp under the toolbar, in every build back
-  to f85f20b; uncollapsing and re-collapsing later doesn't bring it back). The autosave's
-  collapse is undone in `columns.loaded` for the same reason.
-- Source and PDF share one background, the system text background (TextEdit, Notes,
-  Xcode in Light; Preview's canvas is the same colour, wallpaper-tinted). PDFKit
-  tints a system colour it's given, so the PDF view gets it resolved per appearance.
-- The workspace window's background and the editor's scroll and text views are that
-  resolved colour too: the toolbar's soft edge fades content into the window's
-  background, and the source column's band takes the scroll view's, so with the
-  system's (wallpaper-tinted) colours the toolbar sat a tint apart from the editor.
-  Over the PDF the band lightens where a white page meets it, as Preview's does.
-  Home keeps the stock window background.
-- The workspace representable returns its proposed size. This fixes a reproducible
-  compact-window layout recursion crash. Pane minima are independent of window
-  minima; the supported window content minimum is now 960 × 600 points.
-- Pane collapse prefers resizing siblings within the window. The File Outline
-  regression now checks the window frame on its first expansion at the minimum.
-- Removed per-frame forced split layout. Format style buttons use SwiftUI Toggle
-  instead of an NSButton coordinator. Compact status layout uses ViewThatFits.
-- Web fixes retain fit-height during resize, avoid no-op PDF redraws, cancel stale
-  rendering, preserve inverse-search coordinates under display scaling, restore
-  menu focus, and accept uppercase TeX extensions. Shared DOM and tree-row code
-  replaces duplicate construction and traversal.
-- Rust/web outline scanning skips comments and literal environments; the shared
-  fixtures cover escaped commands and percent signs inside braced input commands.
+- **Window, toolbar and splits are AppKit**: only `NSToolbar`'s tracking separators follow
+  the source|PDF divider, and a three-column `NavigationSplitView` can't hide its detail
+  column. A SwiftUI shell was tried (d8d9cf0) and reverted (a2fd29d) for that. Panes, bars,
+  sheets, popovers and Home are SwiftUI, hosting AppKit's text and PDF views where SwiftUI
+  has none.
+- **Source**: one TextKit 2 `NSTextView` (`SourceTextView`), shared across files, inside
+  SwiftUI's `ScrollView` (`SourceColumn`), which on 27.2 is an `NSScrollView` underneath. The
+  text view reports its height (`heightChanged`), scrolls SwiftUI's clip itself for the caret
+  and far ranges (`scrollToVisible`, `scrollRangeToVisible`), and notices its scroll view once
+  SwiftUI places it (`attached`). Xcode's metrics for the font, gutter and current line.
+- **Status bar**: the source/PDF columns' bottom accessory, with no ground of its own. Each
+  pane draws SwiftUI's hard scroll edge under it (`StatusBarEdge`, `StatusBarGround`): the
+  editors' colour, the system hairline and a ghost of what scrolls beneath, as Xcode's bar.
+  The accessory's own edge is `.soft`, which draws nothing over these panes. The PDF,
+  Quick Look and empty states sit in a SwiftUI scroll view that doesn't scroll to get it.
+- **Build panel**: below the columns, so the status bar rides up as it opens (Xcode's
+  arrangement), with AppKit's collapse animation. Its controls are a bar at its foot
+  (`BuildPanelBar`, the panel's own `safeAreaBar`), as Xcode's console bar: a pop-up for
+  Issues, Build Log and TeXpresso, then Warnings or Copy Log, then a filter.
+- **Issues**: Compile › Go to Next/Previous Issue (⌘' and ⇧⌘') step round the issues that
+  name a file; the editor's gutter marks the open file's issue lines until it's edited.
+- **One background** for source and PDF: the system text background, resolved per
+  appearance for PDFKit, which would tint a system colour with the wallpaper.
+- **The PDF hidden at launch** is collapsed in `viewDidAppear`, not as the columns load:
+  collapsed for the first layout, the source never gets the toolbar's scroll edge (27.2).
+- **TeXpresso live preview**: a build with `tools/texpresso/underleaf-pdf.patch` writes the
+  document and its SyncTeX for the PDF pane (Settings › Live Preview In can choose its own
+  window instead). For 3 s after an edit the app asks for the document every 15 ms; SyncTeX
+  works on live pages through the session's token. See `docs/texpresso.md`.
 
-No Objective-C source files were added or found. Swift AppKit selectors remain
-where Apple APIs require them. Existing project-file serialization changes were
-preserved.
+Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
-## Validation and installed build
+## Validation, 6 October
 
-- 6 October, branch `swiftui-shell`: 102 native tests in 18 suites, one failing:
-  `livePagesAreNeverTakenForABuilds` (ProjectTests.swift), stale against the TeXpresso
-  work in progress and left for that review. The layout tests that pinned the old
-  shell's frames and the menu-structure, pixel and AppKit re-tests were deleted.
-- Shipping Release build passed: `/private/tmp/underleaf-handoff-release-build.log`.
-- Installed app: `/Applications/TeXLocal.app`. Signature verification passed; its
-  binary matches the built product. SHA-256:
-  `d66547cf88dc1a2e84fe976555d30dc0fa0f722f4323a10bd7664acd80f80cd6`.
-- Final light-mode visual check: minimum 960 × 600 window, both build tabs, readable
-  translucent header, clear folded status and solid expanded status. File Outline
-  collapse/expansion kept the window at 1920 × 1200 screenshot pixels. A 580 × 250
-  source crop was byte-identical before/after a panel toggle (435,000 RGB bytes).
-- Cropped evidence: `/private/tmp/underleaf-verified-header-20261004.png` and
-  `/private/tmp/underleaf-verified-status-20261004.png`.
-- The generated project was moved to Trash. Its original source remains at
-  `/private/tmp/Underleaf-Visual-Verification/main.tex` for reproduction. Test apps
-  are closed, original window/divider frames restored, and personal theme, font,
-  paper, auto-compile and pane preferences verified unchanged.
-- Caffeine remains active under `com.underleaf.codex-awake-01a10252` until approximately
-  14:18 AEDT on 4 October. The requested 12-hour interval is preserved.
+- Native: 102 tests in 18 suites pass (`-skip-testing:TeXLocalUITests`; that target is an
+  empty stub).
+- `npm test`: 148, including the TeXpresso installer's 5. Rust: 197, with rustfmt and
+  clippy `-D warnings` clean.
+- Checked on a dev copy: the status bar's hairline runs across both halves with and without
+  a PDF and with the panel open; the PDF's last page and a 16,455-line source's last line end
+  above the bar; wheel-scrolling that source keeps the main thread mostly idle.
 
-Against the previous tip `c28e122`, production code is **34 lines smaller**
-(+332/−366); tests and shared fixtures are +284 (+337/−53). Project serialization
-is +6. Documentation is accounted for separately; total diff size is not a
-production-code growth measurement.
-
-Previously completed, unchanged web/Rust checks:
-
-- 123 web tests: `/private/tmp/underleaf-deflation-web-tests.log`.
-- Web production build: `/private/tmp/underleaf-deflation-web-build.log`.
-- 187 Rust tests plus doc tests: `/private/tmp/underleaf-core-full.log`.
-
-The native test suite shares application defaults. Quit the installed app before
-running it; restore only test-modified settings afterward. Earlier runs had
-intermittent divider-restoration failures. Do not treat zero selected tests as a pass.
+The native tests run a host app that shares the app's defaults unless built with another
+bundle identifier: build with `PRODUCT_BUNDLE_IDENTIFIER=com.texlocal.mac.dev`, or quit the
+installed app first.
 
 ## Build and install
 
-Requires Xcode 27, Rust stable and installed npm dependencies. Only root used
-accessibility and computer access. Read-only Codex workers used GPT-6.1 Sol and
-were instructed not to delegate, launch apps, build or inspect the screen.
+Requires Xcode 27, Rust stable and installed npm dependencies.
 
 ```sh
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
-  -configuration Release -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/underleaf-native-build \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO ENABLE_TESTABILITY=YES test
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Debug \
+  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-dd \
+  PRODUCT_BUNDLE_IDENTIFIER=com.texlocal.mac.dev CODE_SIGNING_ALLOWED=NO \
+  -skip-testing:TeXLocalUITests test
 
-# Rebuild without testability before installing the shipping app.
-xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal \
-  -configuration Release -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/underleaf-native-build CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project apps/macos/TeXLocal.xcodeproj -scheme TeXLocal -configuration Release \
+  -destination 'platform=macOS' -derivedDataPath /private/tmp/underleaf-release \
+  CODE_SIGNING_ALLOWED=NO build
 ```
 
-Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`,
-verify its signature, and compare installed/product binary hashes before visual QA.
+Quit TeXLocal, ad-hoc sign the Release product, replace `/Applications/TeXLocal.app`, verify
+its signature, and compare the installed and built binaries.
 
-## Focus for Claude review and refinement
+## Open
 
-- Validate the final header/status appearance in dark mode and Reduce Transparency;
-  live light-mode source/preview and pane geometry have been the primary focus.
-- Broader typing/scroll performance is not proven fixed. Read-only investigation
-  identified repeated math-context scans on unchanged caret notifications, spelling
-  prefix scans, serialized completion-symbol work, and dark-PDF drawing as candidates
-  for profiling. Do not rewrite these on suspicion alone. The idle sample was mostly
-  waiting and does not establish interactive performance.
-- Preserve SyncTeX UTF-16 occurrence context, PDFKit shownDestination/margins, no-op
-  compile PDFDocument identity, IME committed-text handling, and ordered persistence.
-- Physical trackpad gestures and interactive IME remain manual-validation limits.
-  ZIP import still has per-entry limits without a total extraction budget.
+- CI's macOS job still checks that the Aa UI test ran (`.github/workflows/macos-app.yml`),
+  but that test was deleted with the audit's others and the UI target is an empty stub:
+  either the step or the target (and the step) should go before `main` is pushed.
+- Physical trackpad gestures and interactive IME remain manual checks. ZIP import has
+  per-entry limits but no total extraction budget.
 
-Official API references used: [AppKit scroll effects and split accessories](https://developer.apple.com/videos/play/wwdc2025/310/),
-[SwiftUI toolbar material](https://developer.apple.com/documentation/swiftui/material/bar),
+API references: [AppKit scroll edges and split accessories](https://developer.apple.com/videos/play/wwdc2025/310/),
 [TextKit rendering attributes](https://developer.apple.com/documentation/appkit/nstextlayoutmanager/renderingattributesvalidator).

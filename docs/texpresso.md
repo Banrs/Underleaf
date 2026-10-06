@@ -28,12 +28,15 @@ build dependencies installed:
 tools/texpresso/build.sh            # checks out into tools/texpresso/source
 ```
 
-then choose `tools/texpresso/source/build` in the Mac app's Settings. The patch
+then `tools/texpresso/install.sh tools/texpresso/source/build`, which installs it where the
+Mac app finds it on its own (or choose `tools/texpresso/source/build` in Settings). The patch
 (`tools/texpresso/underleaf-pdf.patch`, MIT like TeXpresso) only acts when
 `TEXPRESSO_PDF_OUTPUT` is set: TeXpresso then runs the document to its end,
 writes every page there with MuPDF's PDF writer (to a `.part` file, renamed when
-complete), reports `["pdf", path, pages]` on its editor protocol, and opens no
-window. The Mac app asks for this; the browser client doesn't.
+complete), with TeX's Type 1 fonts as CFF copies so PDFKit draws them, writes its
+SyncTeX beside it (`live.synctex`), reports `["pdf", path, pages]` on its editor
+protocol, opens no window, and quits when its input closes. The Mac app asks for
+this unless Settings › Live Preview In is TeXpresso Window; the browser client doesn't.
 
 Point the app at the executable without changing your system installation:
 
@@ -50,8 +53,8 @@ terminal's environment.
 
 TeXpresso support is experimental. On Mac, choose TeXpresso's folder under
 Compiling in Settings if it isn't in /opt/homebrew/bin or /usr/local/bin, then
-turn on **TeXpresso Live Preview** in the Compile menu; its log has its own tab
-in the build panel, and files changed by other apps are rescanned on their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
+turn on **TeXpresso Live Preview** in the Compile menu or the inspector; its log is
+TeXpresso in the build panel's pop-up, and files changed by other apps are rescanned on their own. In the browser workspace, use **Start TeXpresso**, and Rescan for
 files and assets changed externally. Edits to the open source, including
 included files, reach the live preview.
 Host validation failures, such as a file exceeding 8 MB, remain visible until
@@ -84,8 +87,8 @@ For a prebuilt server, run `node scripts/verify-texpresso.mjs` with
 - Live preview uses TeXpresso's XeTeX engine regardless of the normal build's
   pdfLaTeX/XeLaTeX/LuaLaTeX setting. Engine-specific documents can differ.
 - Upstream TeXpresso's editor protocol has no PDF/bitmap preview endpoint;
-  Underleaf's patch adds the PDF output above. SyncTeX describes the last
-  normal build, so PDF↔source navigation is off while the live document shows.
+  Underleaf's patch adds the PDF output above. While the live document shows,
+  PDF↔source navigation uses its own SyncTeX, through the client's session.
 - The live document is written after TeXpresso runs to the end, so a long
   document updates the pane less often than TeXpresso's own window, which
   renders only the page in view.
