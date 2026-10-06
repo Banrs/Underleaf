@@ -66,6 +66,7 @@ final class WorkspaceController: RestoredSplitViewController {
     private(set) var inspectorItem: NSSplitViewItem!
     /// Source and PDF over the build panel and status bar.
     private var areaItem: NSSplitViewItem!
+    private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     /// The File Outline's header at the files' foot, and its height: as the outline's
     /// first row's room when open, the status bar's when folded.
     private var outlineBar: NSSplitViewItemAccessoryViewController!
@@ -74,6 +75,7 @@ final class WorkspaceController: RestoredSplitViewController {
     /// Content there only while it shows (`Mount`): the panes that hide (`host(mounted:)`) and
     /// the PDF find bar's.
     private var mounts: [ObjectIdentifier: Mount] = [:]
+    private let searchField = FieldHandle()
 
     /// The panel's height as it was hidden, or its first (`setPanelShown`).
     private var panelHeight: CGFloat = 0
@@ -168,8 +170,8 @@ final class WorkspaceController: RestoredSplitViewController {
 
     // ---------- layout ----------
 
-    /// The files over the File Outline; Search is the toolbar's, over them. A pane's size is its
-    /// view's frame as it's added: the split opens it there, and a collapsed one shows there first.
+    /// Search over the files over the File Outline. A pane's size is its view's frame
+    /// as it's added: the split opens it there, and a collapsed one shows there first.
     private func buildSidebar(height: CGFloat) {
         sidebar.splitView.isVertical = false
         sidebar.splitView.autosaveName = "Sidebar"
@@ -193,6 +195,8 @@ final class WorkspaceController: RestoredSplitViewController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = ColumnMetrics.sidebarMinimum
         sidebarItem.isCollapsed = !app.sidebarVisible
+        sidebarSearch = accessory(SearchField(text: Bindable(project).searchQuery, prompt: "Search Project", handle: searchField))
+        sidebarItem.addTopAlignedAccessoryViewController(sidebarSearch)
         addSplitViewItem(sidebarItem)
     }
 
@@ -236,14 +240,14 @@ final class WorkspaceController: RestoredSplitViewController {
         let columnsItem = NSSplitViewItem(viewController: columns)
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
-        // The editors' own bar, at their foot, opaque under its hairline as Xcode's (measured
-        // 2026-10-06: solid, nothing of the text through it), whether the panel shows below them
-        // or not. It rides up with them as the panel opens, as Xcode's does over its debug area,
-        // so it never changes its look.
+        // The editors' own bar, at their foot: their text and the PDF's pages scroll on beneath
+        // it under the system's edge, whether the panel shows below them or not. It rides up
+        // with them as the panel opens, as Xcode's does over its debug area, so nothing under
+        // it changes and it never changes its look.
         let statusBar = accessory(StatusBar(project: project))
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`).
         statusBar.automaticallyAppliesContentInsets = false
-        statusBar.preferredScrollEdgeEffectStyle = .hard
+        statusBar.preferredScrollEdgeEffectStyle = .automatic
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
@@ -504,10 +508,10 @@ final class WorkspaceController: RestoredSplitViewController {
         field.focus()
     }
 
-    /// The sidebar shows for the results as the toolbar's field takes the keyboard.
+    /// The field takes the keyboard at once, so typing during the sidebar's animation lands in it.
     private func focusSearch() {
         setCollapsed(sidebarItem, false)
-        toolbar.beginSearch()
+        focusField(searchField, in: sidebarSearch)
     }
 
     func hostsFindField(_ field: NSTextField) -> Bool {

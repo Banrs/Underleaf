@@ -5,38 +5,32 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
-/// The build panel below the editors and their status bar: the build's issues or its whole
-/// log, with the tabs and filter in a bar at its foot, as Xcode's navigator and console filters,
-/// that they scroll under. No close button: the status bar's toggle and View › Hide Build Panel close it.
+/// The build panel below the editors and their status bar: its tabs, then the build's issues
+/// or its whole log. No close button: the status bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
     @State private var filter = ""
     @State private var showWarnings = true
 
     var body: some View {
-        Group {
-            switch project.panelTab {
-            case .issues: issues
-            case .log: log
-            case .texpresso:
-                if project.texpresso.log.isEmpty {
-                    ContentUnavailableView {
-                        Label { Text(project.texpresso.title) } icon: { EmptyView() }
-                    } description: {
-                        Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
-                             : "TeXpresso shows the document in its own window. Compile to update the PDF here.")
+        VStack(spacing: 0) {
+            BuildPanelHeader(project: project, filter: $filter, showWarnings: $showWarnings)
+            Divider()
+            Group {
+                switch project.panelTab {
+                case .issues: issues
+                case .log: log
+                case .texpresso:
+                    if project.texpresso.log.isEmpty {
+                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                               description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
+                                                                 : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
+                    } else {
+                        LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                     }
-                } else {
-                    LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
                 }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A click on the empty panel ends the filter's editing, as one in Xcode's console does.
-        .contentShape(.rect)
-        .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
-        .safeAreaBar(edge: .bottom, spacing: 0) {
-            BuildPanelBar(project: project, filter: $filter, showWarnings: $showWarnings)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -45,8 +39,7 @@ struct BuildPanel: View {
             || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
     }
 
-    /// "No Issues" before any build too: the status bar says whether one has run. Words only, as
-    /// Xcode's navigators: a symbol's room would push them off the panel's centre when it's short.
+    /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
@@ -55,14 +48,14 @@ struct BuildPanel: View {
             IssueList(items: items, project: project)
         } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
-                Label { Text("Warnings Hidden") } icon: { EmptyView() }
+                Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
                 Button("Show Warnings") { showWarnings = true }
             }
         } else if !filter.isEmpty {
-            ContentUnavailableView { Label { Text("No Results for “\(filter)”") } icon: { EmptyView() } }
+            ContentUnavailableView.search(text: filter)
         } else {
-            ContentUnavailableView { Label { Text("No Issues") } icon: { EmptyView() } }
+            ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
     }
 
@@ -71,14 +64,15 @@ struct BuildPanel: View {
         if let text = project.result?.log, !text.isEmpty {
             LogTextView(text: text)
         } else {
-            ContentUnavailableView { Label { Text("No Log") } icon: { EmptyView() } } description: { Text("Compile to see the log here.") }
+            ContentUnavailableView("No Log", systemImage: "text.page",
+                                   description: Text("Compile to see the log here."))
         }
     }
 }
 
 /// The panel's tabs and its tab's controls. The log has the text view's own find bar, so only
 /// the issues have a filter.
-private struct BuildPanelBar: View {
+private struct BuildPanelHeader: View {
     @Bindable var project: ProjectModel
     @Binding var filter: String
     @Binding var showWarnings: Bool
@@ -90,9 +84,6 @@ private struct BuildPanelBar: View {
                 ForEach(PanelTab.allCases.filter { $0 != .texpresso || project.texpresso.used }, id: \.self) { Text($0.rawValue) }
             }
             .pickerStyle(.tabs)
-            .buttonBorderShape(.capsule)
-            // The tabs slide on glass, as the bar's buttons are glass: on their own they're clear.
-            .glassEffect(in: .capsule)
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
@@ -103,8 +94,6 @@ private struct BuildPanelBar: View {
                         Label("Warnings", systemImage: "exclamationmark.triangle")
                     }
                     .toggleStyle(.button)
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
                     .help(showWarnings ? "Hide Warnings" : "Show Warnings")
                 }
                 SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
@@ -115,18 +104,16 @@ private struct BuildPanelBar: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
                 .help("Copy Log")
                 .disabled(text.isEmpty)
             }
         }
         .lineLimit(1)
+        .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The status bar's height whichever tab's controls show, and Xcode's filter bar's edges
-        // (measured 2026-10-06): its capsules 8 pt from either edge, their own margins doing the rest.
+        // The status bar's height, whichever tab's controls show: one bar height in the window.
         .frame(height: StatusBar.height)
-        .padding(.horizontal, 8)
+        .padding(.horizontal)
     }
 }
 
@@ -140,7 +127,6 @@ private struct IssueList: View {
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
         ScrollViewReader { proxy in
-            let reveal = { if let place = project.chosenIssue { proxy.scrollTo(place, anchor: .center) } }
             List(items, id: \.offset, selection: selection) { IssueRow(item: $0.element) }
                 .listStyle(.inset)
                 .accessibilityLabel("Issues")
@@ -160,10 +146,13 @@ private struct IssueList: View {
                 // Edit › Copy copies the selected issue.
                 .copyable(project.chosenIssue.flatMap(item).map { [$0.message] } ?? [])
                 // The menus' choice may be out of sight, and the panel closed: a hidden list
-                // scrolls by its rows' estimated heights, so again as it comes up. Centred: the
-                // list's own scroll stops under the bar at its foot.
-                .onChange(of: project.issueReveals) { reveal() }
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in reveal() }
+                // scrolls by its rows' estimated heights, so again as it comes up.
+                .onChange(of: project.chosenIssue) { _, place in
+                    if let place { proxy.scrollTo(place) }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
+                    if let place = project.chosenIssue { proxy.scrollTo(place) }
+                }
         }
     }
 

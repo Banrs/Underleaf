@@ -37,8 +37,6 @@ final class ProjectModel {
     var result: CompileResult?
     /// The issue chosen in the list or by Go to Next Issue, a place in `issues`; a new build starts with none.
     private(set) var chosenIssue: Int?
-    /// Counts the menus' choices, which the list brings into view; its own clicks are in view already.
-    private(set) var issueReveals = 0
     /// The PDF the viewer shows; nil until one loads.
     var pdfURL: URL?
     /// The PDF pane shows TeXpresso's live document, not the last build's.
@@ -83,7 +81,6 @@ final class ProjectModel {
         }
         showBuildPanel()
         chooseIssue(place, focus: true)
-        issueReveals += 1
     }
 
     /// The open file's lines with issues, for the editor's gutter.

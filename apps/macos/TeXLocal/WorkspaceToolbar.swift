@@ -3,7 +3,6 @@ import SwiftUI
 
 extension NSToolbarItem.Identifier {
     static let back = Self("back")
-    static let search = Self("search")
     static let undo = Self("undo")
     static let redo = Self("redo")
     static let format = Self("sectionLevel")
@@ -30,10 +29,9 @@ extension NSToolbarItem.Identifier {
 /// (equal priorities leave from the right). Back, Compile and the toggles stay (HIG, Toolbars).
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate,
                               NSToolbarItemValidation, NSMenuItemValidation {
-    /// Renamed as the defaults change: a layout saved under "Workspace" has Share, one under
-    /// "Workspace 2" the toggles' former group, and one under "Workspace 3" no Search, which
-    /// would come back or go missing.
-    let toolbar = NSToolbar(identifier: "Workspace 4")
+    /// Renamed as the defaults change: a layout saved under "Workspace" has Share, and one
+    /// under "Workspace 2" the toggles' former group, which would come back or go missing.
+    let toolbar = NSToolbar(identifier: "Workspace 3")
     private let app: AppModel
     private let project: ProjectModel
     private var pdf: PDFController { project.pdf }
@@ -66,12 +64,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .back, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .zoom, .flexibleSpace, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector, .search]
+         .inspectorTrackingSeparator, .flexibleSpace, .togglePDF, .toggleInspector]
     }
 
     /// Share is here only: File › Share has it.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .undo, .redo, .format, .bold, .italic, .underline, .math, .insert]
+        [.undo, .redo, .format, .bold, .italic, .underline, .math, .insert]
             + Self.buttonTemplates.map(NSToolbarItem.Identifier.template)
             + [.zoom, .share, .space, .flexibleSpace]
             + toolbarImmovableItemIdentifiers(toolbar)
@@ -102,19 +100,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             // Back leads the title; there is no forward history.
             item.isNavigational = true
             item.visibilityPriority = .high
-        case .search:
-            // At the trailing end, as Mail's, Notes' and Finder's: the sidebar's section, with the
-            // window's buttons and toggle, has no room for a field. The system's item is a button
-            // until clicked or Find in Project, then its field.
-            let search = NSSearchToolbarItem(itemIdentifier: id)
-            search.label = "Search Project"
-            search.toolTip = search.label
-            search.searchField.placeholderString = search.label
-            search.searchField.sendsSearchStringImmediately = true
-            search.searchField.target = self
-            search.searchField.action = #selector(searched(_:))
-            search.searchField.stringValue = project.searchQuery
-            item = search
         case .undo:
             item = button(id, "Undo", "arrow.uturn.backward", Selector(("undo:")))
             // Whatever has the keyboard, as the menu's Undo: it validates them too.
@@ -287,7 +272,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let compiling: Bool
         let canCompile: Bool
         let pdfTitle: String
-        let searchQuery: String
     }
 
     private var state: State {
@@ -295,7 +279,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
               hasPDF: project.hasPDF, showsPDF: app.showPDF,
               zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
               compiling: project.compiling, canCompile: canCompile,
-              pdfTitle: app.title(.viewTogglePdf, on: project), searchQuery: project.searchQuery)
+              pdfTitle: app.title(.viewTogglePdf, on: project))
     }
 
     /// Applies the state as it changes, in the same pass. A column resizing refits the PDF
@@ -349,12 +333,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             }
         case .togglePDF:
             if changed(\.pdfTitle) { item.toolTip = state.pdfTitle }
-        case .search:
-            // Cleared by the sidebar's results; not while an input method is composing in it.
-            if changed(\.searchQuery), let field = (item as? NSSearchToolbarItem)?.searchField, field.stringValue != state.searchQuery,
-               (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
-                field.stringValue = state.searchQuery
-            }
         default:
             break
         }
@@ -378,17 +356,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     @objc private func back() { perform(.projectClose) }
-
-    /// The results are the sidebar's.
-    @objc private func searched(_ field: NSSearchField) {
-        project.searchQuery = field.stringValue
-        if !field.stringValue.isEmpty { app.sidebarVisible = true }
-    }
-
-    /// Find in Project: the field, unfolded, takes the keyboard.
-    func beginSearch() {
-        (toolbar.items.first { $0.itemIdentifier == .search } as? NSSearchToolbarItem)?.beginSearchInteraction()
-    }
 
     @objc private func showFormat(_ sender: Any?) {
         guard let item = sender as? NSToolbarItem ?? toolbar.items.first(where: { $0.itemIdentifier == .format }) else { return }

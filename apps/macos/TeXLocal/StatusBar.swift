@@ -28,8 +28,6 @@ struct StatusBar: View {
         .controlSize(.small)
         .lineLimit(1)
         .buttonStyle(.borderless)
-        // Opaque in the editors' colour, as Xcode's: the system's edge is a material the text shows through.
-        .background(Color(nsColor: .untintedTextBackground))
         .contextMenu {
             Button(app.title(.viewToggleWordCount, on: project)) { app.perform(.viewToggleWordCount, on: project) }
         }
