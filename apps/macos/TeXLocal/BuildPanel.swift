@@ -14,8 +14,9 @@ struct BuildPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // No line under it: the split's line over it is the panel's, as Xcode's debug area has
+            // one line at its top and none at its console bar (measured 2026-10-06).
             BuildPanelHeader(project: project, filter: $filter, showWarnings: $showWarnings)
-            Divider()
             Group {
                 switch project.panelTab {
                 case .issues: issues
