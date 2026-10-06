@@ -21,7 +21,13 @@ branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is 
   pane draws SwiftUI's hard scroll edge under it (`StatusBarEdge`, `StatusBarGround`): the
   editors' colour, the system hairline and a ghost of what scrolls beneath, as Xcode's bar.
   The accessory's own edge is `.soft`, which draws nothing over these panes. The PDF,
-  Quick Look and empty states sit in a SwiftUI scroll view that doesn't scroll to get it.
+  Quick Look and empty states sit in a SwiftUI scroll view that doesn't scroll to get it;
+  the PDF view runs under the bar, so its pages scroll through as the source does (over a
+  white page in Dark the edge's ground is the page dimmed, 64, and the hairline is lost in it).
+- **File Outline header**: the files' bottom accessory, with its line drawn the same way:
+  the files list's hard edge (`StatusBarEdge` at the pane's bottom safe area, which follows
+  the header as it folds), the same 1 px hairline as the status bar's, on the same row when
+  folded. `Divider()` is kept for separators inside stacks and menus.
 - **Build panel**: below the columns, so the status bar rides up as it opens (Xcode's
   arrangement), with AppKit's collapse animation. Its controls are a bar at its foot
   (`BuildPanelBar`, the panel's own `safeAreaBar`), as Xcode's console bar: a pop-up for
@@ -50,7 +56,8 @@ tests and fails a run in which none passed.
 - `npm test`: 148, including the TeXpresso installer's 5. Rust: 197, with rustfmt and
   clippy `-D warnings` clean.
 - Checked on a dev copy: the status bar's hairline runs across both halves with and without
-  a PDF and with the panel open; the PDF's last page and a 16,455-line source's last line end
+  a PDF and with the panel open, and the folded outline header's meets it on one pixel row;
+  the PDF's last page and a 16,455-line source's last line end
   above the bar; wheel-scrolling that source keeps the main thread mostly idle.
 
 The native tests run a host app that shares the app's defaults unless built with another

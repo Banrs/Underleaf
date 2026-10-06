@@ -55,16 +55,20 @@ struct StatusBarGround<Content: View>: View {
     }
 }
 
-/// The status bar's edge on a scroll view: the hard edge where the bar is, the bar's region its
-/// own, in place of the one the status bar's accessory gives the pane, which would double it.
+/// A pane bar's edge on a scroll view: the hard edge where the bar is, the bar's region its
+/// own, in place of the one the bar's accessory gives the pane, which would double it.
 /// The bar here is a blank the accessory's content sits over; SwiftUI draws the edge only under a
 /// bar that draws something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a
 /// hidden view, and only after a later layout, if at all), so the blank is a fill the eye can't see.
 struct StatusBarEdge: ViewModifier {
+    /// The bar's; none, no edge.
+    var height = StatusBar.height
+
     func body(content: Content) -> some View {
         content
-            .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: StatusBar.height) }
+            .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
             .scrollEdgeEffectStyle(.hard, for: .bottom)
+            .scrollEdgeEffectHidden(height == 0, for: .bottom)
             .ignoresSafeArea(.container, edges: .bottom)
     }
 }

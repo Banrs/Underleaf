@@ -307,39 +307,32 @@ final class WorkspaceController: RestoredSplitViewController {
         if shown { controller.view.layoutSubtreeIfNeeded() }
     }
 
-    /// The header under the system separator, which stands for the sidebar split's divider
-    /// (`SidebarSplitViewController`). Its content keeps one place under the line as the
+    /// The header under the files' scroll edge, whose hairline stands for the sidebar split's
+    /// divider (`SidebarSplitViewController`). Its content keeps one place under the line as the
     /// bar's height animates with the split, so folded it lines up with the status bar.
     private func buildOutlineBar() {
         let bar = NSView()
-        // The status bar's line, so the two meet as one across the window.
-        let line = NSHostingView(rootView: Divider())
         let header = NSHostingView(rootView: OutlineHeader().environment(app))
-        line.sizingOptions = [.intrinsicContentSize]
         header.sizingOptions = [.intrinsicContentSize]
-        for view in [line, header] as [NSView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            bar.addSubview(view)
-        }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(header)
         outlineBarHeight = bar.heightAnchor.constraint(equalToConstant: outlineBarHeight(folded: app.outlineCollapsed))
         NSLayoutConstraint.activate([
             outlineBarHeight,
-            line.topAnchor.constraint(equalTo: bar.topAnchor),
-            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            header.topAnchor.constraint(equalTo: line.bottomAnchor),
+            header.topAnchor.constraint(equalTo: bar.topAnchor),
             header.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
         ])
         outlineBar = NSSplitViewItemAccessoryViewController()
         outlineBar.view = bar
         outlineBar.automaticallyAppliesContentInsets = false
-        // The separator is the line; the sidebar's automatic edge would draw another.
+        // The files draw the edge, as the panes do under the status bar (`StatusBarEdge`); the
+        // accessory's own would lay AppKit's glass over them.
         outlineBar.preferredScrollEdgeEffectStyle = .soft
     }
 
     private func outlineBarHeight(folded: Bool) -> CGFloat {
-        (folded ? StatusBar.height : OutlineHeader.openHeight) + sidebar.splitView.dividerThickness
+        folded ? StatusBar.height : OutlineHeader.openHeight
     }
 
     /// A pane bar sized to its content, inside AppKit's standard accessory insets.
@@ -643,9 +636,9 @@ class RestoredSplitViewController: NSSplitViewController {
     }
 }
 
-/// Files over the File Outline. The separator over the outline's header, at the foot of
-/// the files, stands for the divider: AppKit has no thin divider that draws no line, so
-/// the divider's own, under the header, isn't drawn, and it takes drags at the separator.
+/// Files over the File Outline. The files' scroll-edge hairline over the outline's header
+/// stands for the divider: AppKit has no thin divider that draws no line, so the divider's
+/// own, under the header, isn't drawn, and it takes drags at the hairline.
 private final class SidebarSplitViewController: RestoredSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 

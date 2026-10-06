@@ -13,8 +13,14 @@ struct FilesList: View {
     @State private var expanded: Set<String> = []
 
     var body: some View {
-        // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
-        Group { if project.isSearching { results } else { files } }
+        // The File Outline's header is the files' bottom bar, as the status bar is the editors':
+        // they scroll on beneath it, under SwiftUI's hard edge and its hairline. Its height
+        // is the pane's bottom safe area, which follows the header's as it folds.
+        GeometryReader { geometry in
+            // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
+            Group { if project.isSearching { results } else { files } }
+                .modifier(StatusBarEdge(height: geometry.safeAreaInsets.bottom))
+        }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.searchQuery) {
                 if project.isSearching { try? await Task.sleep(for: .milliseconds(200)) }
