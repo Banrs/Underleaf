@@ -269,7 +269,7 @@ private struct TreeRows<Node: Identifiable, Row: View>: View {
     @ViewBuilder let row: (Node) -> Row
 
     var body: some View {
-        ForEach(nodes) { node in
+        let rows = ForEach(nodes) { node in
             if let kids = children(node) {
                 DisclosureGroup(isExpanded: isExpanded(node)) {
                     TreeRows(nodes: kids, children: children, isExpanded: isExpanded, row: row)
@@ -280,17 +280,14 @@ private struct TreeRows<Node: Identifiable, Row: View>: View {
                 row(node)
             }
         }
-        .onInsert(of: insert == nil ? [] : [.fileURL]) { _, providers in
-            Task {
-                var urls: [URL] = []
-                for provider in providers {
-                    let url = await withCheckedContinuation { done in
-                        _ = provider.loadTransferable(type: URL.self) { done.resume(returning: try? $0.get()) }
-                    }
-                    if let url { urls.append(url) }
-                }
-                if !urls.isEmpty { insert?(urls) }
+        // Only the top rows take drops between them: the nested ones pass none.
+        if let insert {
+            rows.dropDestination(for: URL.self) { urls, _ in
+                let files = urls.filter(\.isFileURL)
+                if !files.isEmpty { insert(files) }
             }
+        } else {
+            rows
         }
     }
 }

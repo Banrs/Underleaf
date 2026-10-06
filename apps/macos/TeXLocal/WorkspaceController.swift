@@ -84,7 +84,7 @@ final class WorkspaceController: RestoredSplitViewController {
     private var paneFrames: CADisplayLink?
     private var watches: [Task<Void, Never>] = []
     private var collapses: [NSKeyValueObservation] = []
-    private var resizes: (any NSObjectProtocol)?
+    private var resizes: NotificationCenter.ObservationToken?
     /// The sidebar folded as the window narrowed, rather than hidden (`fitColumnsToToolbar`).
     private var sidebarFoldedByWindow = false
 
@@ -128,9 +128,8 @@ final class WorkspaceController: RestoredSplitViewController {
                 if app.inspectorVisible != visible { app.inspectorVisible = visible }
             },
         ]
-        resizes = NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification,
-                                                         object: splitView, queue: nil) { [weak self] _ in
-            MainActor.assumeIsolated { self?.fitColumnsToToolbar() }
+        resizes = NotificationCenter.default.addObserver(of: splitView, for: .didResizeSubviews) { [weak self] _ in
+            self?.fitColumnsToToolbar()
         }
     }
 
@@ -524,7 +523,7 @@ final class WorkspaceController: RestoredSplitViewController {
         paneFrames = nil
         watches.forEach { $0.cancel() }
         collapses = []
-        resizes.map(NotificationCenter.default.removeObserver)
+        if let resizes { NotificationCenter.default.removeObserver(resizes) }
         resizes = nil
         toolbar.close()
     }

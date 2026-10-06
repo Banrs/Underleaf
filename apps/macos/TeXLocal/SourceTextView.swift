@@ -132,7 +132,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         follow(changed ?? old, delta)
         if lineCountDigits != digits(document.lineCount) {
             // After the edit: a layout change mid-edit would lay out stale text.
-            DispatchQueue.main.async { self.updateGutterWidth() }
+            Task { self.updateGutterWidth() }
         }
     }
 
@@ -544,7 +544,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
 
     override func becomeFirstResponder() -> Bool {
         // Once the window has made it first responder.
-        defer { DispatchQueue.main.async { self.previewMath() } }
+        defer { Task { self.previewMath() } }
         return super.becomeFirstResponder()
     }
 
@@ -556,18 +556,26 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
         return super.resignFirstResponder()
     }
 
+    /// Its window's key changes (`keyChanged`).
+    private var keyWatches: [NotificationCenter.ObservationToken] = []
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
-        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        keyWatches.forEach { NotificationCenter.default.removeObserver($0) }
+        keyWatches = []
         guard let window else { return }
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: window)
-        }
+        keyWatches = [
+            NotificationCenter.default.addObserver(of: window, for: .didBecomeKey) { [weak self] _ in self?.keyChanged() },
+            NotificationCenter.default.addObserver(of: window, for: .didResignKey) { [weak self] _ in self?.keyChanged() },
+        ]
+    }
+
+    deinit {
+        keyWatches.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     /// The background draws the same with and without the keyboard: only these follow it.
-    @objc private func keyChanged() {
+    private func keyChanged() {
         if !hasKeyboard { closeCompletions() }
         previewMath()
     }

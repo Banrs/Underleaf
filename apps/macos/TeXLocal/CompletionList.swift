@@ -47,7 +47,7 @@ final class CompletionList {
         rows.measured = { [weak self] in
             guard let self, !fitPending else { return }
             fitPending = true
-            DispatchQueue.main.async { [weak self] in
+            Task { [weak self] in
                 self?.fitPending = false
                 self?.fit()
             }
@@ -90,9 +90,9 @@ final class CompletionList {
         guard rows.items.indices.contains(selection) else { return }
         let item = rows.items[selection]
         let position = String(localized: "\(selection + 1) of \(rows.items.count)")
-        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
-            .announcement: [item.label, item.badge.name, position].formatted(.list(type: .and, width: .narrow)),
-            .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        var announcement = AttributedString([item.label, item.badge.name, position].formatted(.list(type: .and, width: .narrow)))
+        announcement.accessibilitySpeechAnnouncementPriority = .high
+        AccessibilityNotification.Announcement(announcement).post()
     }
 
     /// Selected as the list that has the keyboard, though the document has it: a table

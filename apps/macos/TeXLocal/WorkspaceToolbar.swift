@@ -433,7 +433,7 @@ private final class ZoomControl: NSSegmentedControl {
     private func reserveWidth() {
         guard !reserving else { return }
         reserving = true
-        DispatchQueue.main.async { [weak self] in
+        Task { [weak self] in
             self?.reserving = false
             self?.measure()
         }

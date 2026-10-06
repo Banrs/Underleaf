@@ -49,6 +49,16 @@ branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is 
 
 Platform quirks met on the way (27.2) are in the code's comments where they're handled.
 
+**SwiftUI vs AppKit** (checked 6 October against WWDC26: State of the Union, "Use SwiftUI with
+AppKit and UIKit", "Modernize your AppKit app"): Apple calls SwiftUI the best way to build
+apps, doesn't call AppKit legacy, and endorses hosting each in the other. What stays AppKit
+has no SwiftUI equivalent in the 27 SDK: the tracking separators, split-item accessories,
+`PDFView`, inline `QLPreviewView`, a code editor (`TextEditor` has no gutter or custom layout),
+a standalone search field, writing the pasteboard from code, the find pasteboard, caret-anchored
+panels and popovers, Finder reveal, page setup. AppKit notifications go through the 27 SDK's
+typed main-actor messages (`addObserver(of:for:)`, tokens removed by hand), deferred work through
+`Task`, VoiceOver announcements through `AccessibilityNotification.Announcement`.
+
 ## Validation, 6 October
 
 CI: `ci.yml` runs the web tests and bundle and the Rust core's rustfmt, clippy and tests on

@@ -38,7 +38,9 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
     private var focusWhenShown = false
 
-    private var scrolling: NSObjectProtocol?
+    private var scrolling: NotificationCenter.ObservationToken?
+    /// Counts edits and selection changes, for views that follow the selection's styles.
+    let changes = EditorChanges()
 
     override init() {
         super.init()
@@ -79,9 +81,11 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         scrolling = nil
         guard let clip = textView.enclosingScrollView?.contentView else { return }
         clip.postsBoundsChangedNotifications = true
-        scrolling = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) {
-            [weak self] _ in MainActor.assumeIsolated { self?.scrolled() }
-        }
+        scrolling = NotificationCenter.default.addObserver(of: clip, for: .boundsDidChange) { [weak self] _ in self?.scrolled() }
+    }
+
+    deinit {
+        if let scrolling { NotificationCenter.default.removeObserver(scrolling) }
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
@@ -167,7 +171,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         let shown = word ?? NSRange(location: start, length: end - start)
         if shown.length > 0 {
             // Once the scroll's layout is done.
-            DispatchQueue.main.async { self.textView.showFindIndicator(for: shown) }
+            Task { self.textView.showFindIndicator(for: shown) }
         }
     }
 
@@ -198,6 +202,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
+        changes.count += 1
         onChanged()
     }
 
@@ -223,6 +228,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
+        changes.count += 1
         guard !textView.loading else { return }
         reportCursor()
     }
@@ -263,7 +269,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
             let parts = ((argument ?? "") + "$0").components(separatedBy: "$0")
             wrap(parts[0], parts[1...].dropLast().joined(separator: "$0"), named: String(localized: "Insert"))
             // Empty braces: the labels or citations for them, once the menu has closed.
-            if selection.length == 0 { DispatchQueue.main.async { self.textView.complete(nil) } }
+            if selection.length == 0 { Task { self.textView.complete(nil) } }
         case .comment:
             textView.apply(document.toggleComment(textView.selectedRanges.map(\.rangeValue)), named: String(localized: "Comment"))
         case .moveLineUp, .moveLineDown:
@@ -396,6 +402,11 @@ enum EditorPrefs {
         get { UserDefaults.standard.object(forKey: spellCheckKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: spellCheckKey) }
     }
+}
+
+/// The text's edits and selection changes, counted.
+@Observable final class EditorChanges {
+    var count = 0
 }
 
 /// The text's height, which the text view reports as it lays out (`SourceTextView.heightChanged`).

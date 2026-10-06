@@ -99,11 +99,7 @@ struct FormatPanel: View {
             focused = project.headingLevel
             styles = project.editor.textStyles
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification, object: project.editor.textView)) { _ in
-            styles = project.editor.textStyles
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification,
-                                                        object: project.editor.textView)) { _ in
+        .onChange(of: project.editor.changes.count) {
             styles = project.editor.textStyles
         }
     }
