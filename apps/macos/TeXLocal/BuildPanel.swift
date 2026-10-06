@@ -23,7 +23,7 @@ struct BuildPanel: View {
                                            description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
                                                              : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
                 } else {
-                    LogPane(text: project.texpresso.log, title: "TeXpresso Log")
+                    log(project.texpresso.log, title: "TeXpresso Log")
                 }
             }
         }
@@ -62,10 +62,24 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            LogPane(text: text)
+            log(text, title: "Build Log")
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
+        }
+    }
+
+    /// The log's lines with the bar's filter in them, as Xcode's console filters its output.
+    @ViewBuilder
+    private func log(_ text: String, title: String) -> some View {
+        let filter = project.logFilter
+        let shown = filter.isEmpty ? text
+            : text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { $0.localizedCaseInsensitiveContains(filter) }.joined(separator: "\n")
+        if shown.isEmpty {
+            ContentUnavailableView.search(text: filter)
+        } else {
+            LogPane(text: shown, title: title)
         }
     }
 }
@@ -90,6 +104,8 @@ struct BuildPanelBar: View {
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
+            // The view's button before its filter, as Xcode's console bar's toggles before its
+            // filter: no icon on its own at the bar's end.
             if project.panelTab == .issues {
                 if project.warningCount > 0 {
                     Toggle(isOn: $project.showsWarnings) {
@@ -108,15 +124,18 @@ struct BuildPanelBar: View {
                 }
                 .help("Copy Log")
                 .disabled(text.isEmpty)
+                SearchField(text: $project.logFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+                    .frame(maxWidth: 180)
             }
         }
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The status bar's height and edges, whichever view's controls show: one bar in the window.
+        // The status bar's height; Xcode's console bar's edges (measured 2026-10-06): its pop-up's
+        // text 16 pt in, its last control's glyph 17 pt from the edge.
         .frame(height: StatusBar.height)
-        .padding(.leading, 14)
-        .padding(.trailing, 16.5)
+        .padding(.leading, 12)
+        .padding(.trailing, 17)
         .background(.textSurface)
     }
 }

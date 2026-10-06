@@ -45,8 +45,9 @@ final class ProjectModel {
     /// The PDF view's page, scale and find, for the menus and the window.
     let pdf = PDFController()
     var panelTab: PanelTab = .issues
-    /// The panel bar's filter over the issues, and whether warnings show among them.
+    /// The panel bar's filters over the issues and over the logs' lines, and whether warnings show.
     var issueFilter = ""
+    var logFilter = ""
     var showsWarnings = true
     /// A separate live window; the saved PDF and its usual build remain available.
     let texpresso: TeXpressoSession
