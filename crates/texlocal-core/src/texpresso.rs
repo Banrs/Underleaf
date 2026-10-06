@@ -245,7 +245,9 @@ impl Manager {
             .pdf
             .clone()
             .filter(|pdf| written && pdf.with_extension("synctex").is_file())
-            .ok_or_else(|| CoreError::not_found("TeXpresso hasn't written a document to sync with yet"))
+            .ok_or_else(|| {
+                CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
+            })
     }
     fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
         self.sessions
