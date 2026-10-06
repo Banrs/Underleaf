@@ -49,7 +49,7 @@ final class ProjectModel {
     var issueFilter = ""
     var logFilter = ""
     var showsWarnings = true
-    /// A separate live window; the saved PDF and its usual build remain available.
+    /// TeXpresso's live preview, in the PDF pane or its own window; the last build's PDF comes back after it.
     let texpresso: TeXpressoSession
     @ObservationIgnored private var liveRestartTask: Task<Void, Never>?
     @ObservationIgnored private var liveDiskTask: Task<Void, Never>?
@@ -829,8 +829,8 @@ final class ProjectModel {
 
     /// SyncTeX for the pages shown: TeXpresso's, through its session, or the last build's.
     private func syncArguments(_ arguments: [String: Any]) -> [String: Any] {
-        guard livePDF, let session = texpresso.session else { return arguments }
-        return arguments.merging(["live": true, "session": session]) { $1 }
+        guard livePDF, let owner = texpresso.owner else { return arguments }
+        return arguments.merging(["live": true, "session": owner]) { $1 }
     }
 
     /// `word`, the PDF's word clicked `offset` in, takes the caret to it on the line.

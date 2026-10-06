@@ -312,8 +312,9 @@ final class ProjectFlowTests {
         return script
     }
 
-    /// Live pages aren't a build's: a double-click in the source doesn't look them up in SyncTeX,
-    /// and stopping without a build's PDF empties the pane rather than leaving them as one.
+    /// Live pages aren't a build's: SyncTeX looks them up in TeXpresso's own (which the stand-in
+    /// doesn't write, so the core says so rather than answering from a build's), and stopping
+    /// without a build's PDF empties the pane rather than leaving them as one.
     @Test(.timeLimit(.minutes(1)))
     func livePagesAreNeverTakenForABuilds() async throws {
         setenv("TEXLOCAL_TEXPRESSO", try liveTeXpresso().path, 1)
@@ -323,7 +324,10 @@ final class ProjectFlowTests {
         try await waitUntil(timeout: .seconds(10)) { project.livePDF && project.pdf.pageCount == 1 } state: {
             "phase \(project.texpresso.phase), log \(project.texpresso.log)"
         }
-        #expect(project.editor.textView.forwardSync() == nil)
+        #expect(project.editor.textView.forwardSync() != nil)
+        await project.forwardSync()
+        #expect(app.alert?.message.contains("TeXpresso") == true, "Alert: \(String(describing: app.alert?.message))")
+        app.alert = nil
         project.stopTeXpresso()
         try await waitUntil(timeout: .seconds(10)) { !project.livePDF }
         #expect(!project.hasPDF && project.pdf.view.document == nil && project.pdf.pageCount == 0)

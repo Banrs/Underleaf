@@ -67,10 +67,10 @@ index e2f2105..fd3cba6 100644
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
 diff --git a/src/dvi/type1_cff.c b/src/dvi/type1_cff.c
 new file mode 100644
-index 0000000..42475d7
+index 0000000..e580acc
 --- /dev/null
 +++ b/src/dvi/type1_cff.c
-@@ -0,0 +1,377 @@
+@@ -0,0 +1,382 @@
 +/* Type 1 fonts as CFF, for the PDF written with TEXPRESSO_PDF_OUTPUT.
 + *
 + * MuPDF's PDF writer embeds a Type 1 font program as the descendant of a CID font, which PDF
@@ -304,7 +304,12 @@ index 0000000..42475d7
 +  size_t *string_ends = calloc(n, sizeof *string_ends);
 +  size_t *glyph_ends = calloc(n, sizeof *glyph_ends);
 +  cff_buf strings = {0}, glyphs = {0}, top = {0}, out = {0};
-+  int ncustom = 0, failed = !sids || !custom || !string_ends || !glyph_ends;
++  int ncustom = 0, failed = 0;
++  if (!sids || !custom || !string_ends || !glyph_ends)
++  {
++    free(sids); free(custom); free(string_ends); free(glyph_ends);
++    return NULL;
++  }
 +
 +  /* Names: standard strings by their SID, the others in the String INDEX. */
 +  for (int gid = 1; gid < n && !failed; gid++)

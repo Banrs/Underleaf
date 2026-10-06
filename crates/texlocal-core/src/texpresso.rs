@@ -120,6 +120,10 @@ struct Session {
     revision: Arc<AtomicU64>,
 }
 impl Session {
+    /// Where the document is, once TeXpresso has written it.
+    fn written_pdf(&self, state: &State) -> Option<&Path> {
+        self.pdf.as_deref().filter(|_| state.pdf_version > 0)
+    }
     fn bump(&self, state: &mut State) {
         state.revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
     }
@@ -157,9 +161,7 @@ impl Session {
             revision: state.revision,
             session: Some(self.token.clone()),
             pdf: self
-                .pdf
-                .as_ref()
-                .filter(|_| state.pdf_version > 0)
+                .written_pdf(&state)
                 .map(|pdf| pdf.to_string_lossy().into_owned()),
             pdf_version: state.pdf_version,
         }
@@ -230,9 +232,7 @@ impl Manager {
         Ok(PdfState {
             running: state.pid.is_some(),
             pdf: session
-                .pdf
-                .as_ref()
-                .filter(|_| state.pdf_version > 0)
+                .written_pdf(&state)
                 .map(|pdf| pdf.to_string_lossy().into_owned()),
             pdf_version: state.pdf_version,
         })
@@ -240,11 +240,11 @@ impl Manager {
     /// The live document the client's session last wrote, which has its SyncTeX beside it.
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
         let session = self.owned(&fs::canonicalize(root)?, token)?;
-        let written = session.state.lock().unwrap().pdf_version > 0;
+        let state = session.state.lock().unwrap();
         session
-            .pdf
-            .clone()
-            .filter(|pdf| written && pdf.with_extension("synctex").is_file())
+            .written_pdf(&state)
+            .filter(|pdf| pdf.with_extension("synctex").is_file())
+            .map(Path::to_path_buf)
             .ok_or_else(|| {
                 CoreError::not_found("TeXpresso hasn't written a document to sync with yet")
             })

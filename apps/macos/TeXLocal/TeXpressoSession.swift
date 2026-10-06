@@ -61,7 +61,8 @@ final class TeXpressoSession {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var lastReportedErrors: Set<String> = []
-    @ObservationIgnored private var owner: String?
+    /// The core's token for this client's session, which its other calls name.
+    @ObservationIgnored private(set) var owner: String?
     @ObservationIgnored private var queuedFiles: [TeXpressoFile]?
 
     init(id: String, call: @escaping Call) {
@@ -70,8 +71,6 @@ final class TeXpressoSession {
     }
 
     var active: Bool { phase == .starting || phase == .running }
-    /// The core's token for this client's session, which its other calls name.
-    var session: String? { owner }
     var canStart: Bool { !closed && phase == .stopped }
     private var requestErrors: [String] {
         [requestFailure].compactMap { $0 } + rejected.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }

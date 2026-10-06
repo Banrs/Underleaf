@@ -9,7 +9,6 @@ struct FilesList: View {
     @State private var hit: SearchHit.ID?
     @State private var rename = InPlaceRename<String>()
     @FocusState private var listFocused: Bool
-    /// The file Space shows in Quick Look.
     /// The open folders, by path.
     @State private var expanded: Set<String> = []
 

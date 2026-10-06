@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The build panel's tabs, by title.
+/// What the build panel shows, by title: its bar's pop-up.
 enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
@@ -85,9 +85,8 @@ struct BuildPanel: View {
 }
 
 /// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
-/// pop-up as Xcode's console chooses its output, then that view's controls. The log has the text
-/// view's own find bar, so only the issues have a filter. The panel's content scrolls beneath it
-/// (`BuildPanel`), and it paints the panel's surface.
+/// pop-up as Xcode's console chooses its output, then that view's controls and filter. The panel's
+/// content scrolls beneath it (`BuildPanel`), and it paints the panel's surface.
 struct BuildPanelBar: View {
     @Bindable var project: ProjectModel
 
@@ -255,8 +254,8 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
-    /// The text last shown: an update that leaves the log as it was (a tab or the filter
-    /// changing) compares the same storage, without passes over a megabyte log.
+    /// The text last shown: an update that leaves the log as it was (another view or the
+    /// filter chosen) compares the same storage, without passes over a megabyte log.
     final class Coordinator {
         var shown: String?
     }

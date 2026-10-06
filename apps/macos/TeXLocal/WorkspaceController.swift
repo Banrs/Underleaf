@@ -46,7 +46,7 @@ extension NSCursor {
     }
 }
 
-/// Sidebar | source | PDF over the build panel and status bar | inspector.
+/// Sidebar | source | PDF, with their status bar, over the build panel | inspector.
 /// Find bars belong to their columns; AppKit animates model-driven collapses
 /// and keeps each split's divider positions across launches (`autosaveName`).
 final class WorkspaceController: RestoredSplitViewController {
@@ -64,7 +64,7 @@ final class WorkspaceController: RestoredSplitViewController {
     private(set) var pdfItem: NSSplitViewItem!
     private(set) var panelItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
-    /// Source and PDF over the build panel and status bar.
+    /// Source and PDF, with their status bar, over the build panel.
     private var areaItem: NSSplitViewItem!
     private var sidebarSearch: NSSplitViewItemAccessoryViewController!
     /// The File Outline's header at the files' foot, and its height: as the outline's
@@ -241,10 +241,9 @@ final class WorkspaceController: RestoredSplitViewController {
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
         // The editors' own bar, at their foot, as Xcode's: their text and the PDF's pages scroll on
-        // beneath it, and their scrollers end at its top, as the accessory insets their scroll views
-        // by its height (measured 2026-10-06: the knobs stop 4 pt over the hairline, Xcode's 5). It
-        // rides up with them as the panel opens, as Xcode's does over its debug area, so nothing
-        // under it changes and it never changes its look.
+        // beneath it and their scrollers end at its top (`StatusBarEdge`). It rides up with them as
+        // the panel opens, as Xcode's does over its debug area, so nothing under it changes and it
+        // never changes its look.
         let statusBar = accessory(StatusBar(project: project))
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`), without
         // AppKit's standard 10 pt and 9 pt bar margins.
@@ -693,7 +692,7 @@ enum ColumnMetrics {
     static let pdfShare: CGFloat = 0.5
     /// Source and PDF over the build panel: a find bar and a few lines.
     static let columnsMinimum: CGFloat = 200
-    /// The build panel: its header and a few rows over the status bar; a quarter of the window at first.
+    /// The build panel: a few rows over its bar; a quarter of the window at first.
     static let panelMinimum: CGFloat = 140
     static let panelShare: CGFloat = 0.25
     /// The sidebar's panes: a few rows each; the outline nearly half at first.

@@ -4,8 +4,9 @@ Reference values come from **Apple's macOS 27 UI Kit** (Sketch, from
 [Apple Design Resources](https://developer.apple.com/design/resources/), kept
 locally in the gitignored `design/`). App-specific adjustments are marked below.
 This is the `web/styles.css` specification for the browser client. The
-native Mac app uses AppKit controls and metrics (`BarMetrics` and `Typography`);
-its accepted design and live verification are recorded in `HANDOFF.md`.
+native Mac app uses the system's own controls, colours and metrics (SwiftUI,
+with AppKit for the window, toolbar, splits, text and PDF); `HANDOFF.md` records
+its design decisions.
 
 ## Typography — SF Pro
 
@@ -233,4 +234,4 @@ AppKit owns native control metrics and materials, including scroll-edge effects.
 ## Hosts
 
 Browser tabs use opaque surfaces and `html.browser`: 14/20 controls and
-13/18 small text. The native macOS app uses AppKit metrics and materials.
+13/18 small text. The native macOS app uses the system's metrics and materials.
