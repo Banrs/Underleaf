@@ -8,8 +8,8 @@
 # /opt/homebrew stay where they are.
 #
 # The installation is prepared in a temporary folder beside the destination, checked by
-# running its launcher, and only then swapped in: a failure leaves what was installed
-# (and the /opt/homebrew/bin link) as it was.
+# running its launcher, and only then swapped in: a failure or an interruption leaves
+# what was installed (and the /opt/homebrew/bin link) as it was.
 set -euo pipefail
 fail() { echo "install.sh: $*" >&2; exit 1; }
 BUILD=$(CDPATH= cd -- "${1:?usage: install.sh <build folder> [destination]}" && pwd)
@@ -25,7 +25,13 @@ fi
 mkdir -p "$(dirname "$DEST")"
 STAGE=$(mktemp -d "$DEST.new.XXXXXX")
 OLD=
-trap 'rm -rf "$STAGE" ${OLD:+"$OLD"}' EXIT
+# On any exit, an installation stepped aside but not yet replaced is put back first.
+cleanup() {
+  if [ -n "$OLD" ] && [ -e "$OLD/previous" ] && [ ! -e "$DEST" ]; then mv "$OLD/previous" "$DEST"; fi
+  rm -rf "$STAGE" ${OLD:+"$OLD"}
+}
+trap cleanup EXIT
+shopt -s nullglob # lib/ stays empty when every library comes from Homebrew
 chmod 755 "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/libexec" "$STAGE/lib"
 cp "$BUILD/texpresso" "$BUILD/texpresso-xetex" "$STAGE/libexec/"
@@ -88,7 +94,7 @@ chmod +x "$STAGE/bin/texpresso"
 # Loading the libraries is the check: texpresso prints its usage for an unknown option.
 # It is given ten seconds, as a broken library can make it hang instead of fail.
 "$STAGE/bin/texpresso" --help >"$STAGE/check.log" 2>&1 </dev/null & pid=$!
-{ sleep 10; kill "$pid" 2>/dev/null; } & watchdog=$!
+{ sleep 10; kill "$pid"; } >/dev/null 2>&1 & watchdog=$!
 wait "$pid" || true
 { kill "$watchdog"; wait "$watchdog"; } 2>/dev/null || true
 grep -q "Usage: texpresso" "$STAGE/check.log" || fail "the staged texpresso does not run ($(head -c 300 "$STAGE/check.log")); $DEST is unchanged"
@@ -96,6 +102,6 @@ rm "$STAGE/check.log"
 
 # Swap: the old installation steps aside, the new one moves in, and only then is the old removed.
 if [ -e "$DEST" ]; then OLD=$(mktemp -d "$DEST.old.XXXXXX"); mv "$DEST" "$OLD/previous"; fi
-mv "$STAGE" "$DEST" || { [ -z "$OLD" ] || mv "$OLD/previous" "$DEST"; fail "could not move the installation into $DEST"; }
+mv "$STAGE" "$DEST" || fail "could not move the installation into $DEST"
 [ -n "${NO_LINK:-}" ] || ln -sf "$DEST/bin/texpresso" /opt/homebrew/bin/texpresso
 echo "Installed $DEST; /opt/homebrew/bin/texpresso links to it. Underleaf's Settings can stay on Automatic."
