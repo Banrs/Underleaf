@@ -28,6 +28,10 @@ branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is 
   the files list's hard edge (`StatusBarEdge` at the pane's bottom safe area, which follows
   the header as it folds), the same 1 px hairline as the status bar's, on the same row when
   folded. `Divider()` is kept for separators inside stacks and menus.
+- **Split dividers**: AppKit's thin divider at a device pixel (`HairlineSplitView`), the
+  weight of those scroll-edge lines (AppKit's own is a point, 2 px on Retina; Xcode keeps
+  1 pt). The source|PDF divider stops at the status bar's top (`ColumnsSplitView`), so the
+  bar runs across both panes as one. Drags still take a 4–5 pt band around the pixel.
 - **Build panel**: below the columns, so the status bar rides up as it opens (Xcode's
   arrangement), with AppKit's collapse animation. Its controls are a bar at its foot
   (`BuildPanelBar`, the panel's own `safeAreaBar`), as Xcode's console bar: a pop-up for

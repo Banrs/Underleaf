@@ -55,7 +55,7 @@ final class WorkspaceController: RestoredSplitViewController {
     var pdf: PDFController { project.pdf }
     private(set) var toolbar: WorkspaceToolbar!
 
-    let columns = RestoredSplitViewController()
+    let columns = RestoredSplitViewController(splitView: ColumnsSplitView())
     let area = RestoredSplitViewController()
     private let sidebar = SidebarSplitViewController()
     private(set) var sidebarItem: NSSplitViewItem!
@@ -621,7 +621,7 @@ class RestoredSplitViewController: NSSplitViewController {
     var loaded: () -> Void = {}
 
     /// NSSplitViewController's own: side by side, with the thin divider.
-    init(splitView: NSSplitView = NSSplitView()) {
+    init(splitView: NSSplitView = HairlineSplitView()) {
         super.init(nibName: nil, bundle: nil)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
@@ -636,13 +636,41 @@ class RestoredSplitViewController: NSSplitViewController {
     }
 }
 
+/// The thin divider at a device pixel: the weight of the window's other system lines, the
+/// scroll-edge lines under the sidebar's search and over the status bar and the outline's header,
+/// where AppKit's is a point, twice theirs on a Retina display. Drawn by AppKit in its colour;
+/// NSSplitView's thickness is there to override.
+class HairlineSplitView: NSSplitView {
+    override var dividerThickness: CGFloat {
+        guard dividerStyle == .thin else { return super.dividerThickness }
+        return 1 / (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
+    }
+
+    /// Moved to a display of another scale, the divider keeps its pixel.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsLayout = true
+    }
+}
+
+/// Source | PDF. The status bar spans both panes as one bar, as Xcode's spans its editor, so
+/// their divider stops at the bar's top, where the panes' scroll edges draw its line.
+private final class ColumnsSplitView: HairlineSplitView {
+    override func drawDivider(in rect: NSRect) {
+        var shown = rect
+        shown.size.height -= StatusBar.height
+        if isFlipped == false { shown.origin.y += StatusBar.height }
+        super.drawDivider(in: shown)
+    }
+}
+
 /// Files over the File Outline. The files' scroll-edge hairline over the outline's header
 /// stands for the divider: AppKit has no thin divider that draws no line, so the divider's
 /// own, under the header, isn't drawn, and it takes drags at the hairline.
 private final class SidebarSplitViewController: RestoredSplitViewController {
     weak var header: NSSplitViewItemAccessoryViewController?
 
-    private final class SplitView: NSSplitView {
+    private final class SplitView: HairlineSplitView {
         override func drawDivider(in rect: NSRect) {}
     }
 
@@ -692,7 +720,7 @@ enum ColumnMetrics {
     static let filesMinimum: CGFloat = 100
     static let outlineMinimum: CGFloat = 80
     static let outlineShare: CGFloat = 0.45
-    /// The splits' thin divider (`NSSplitView.DividerStyle.thin`).
+    /// The splits' thin divider at its widest, a point on a 1× display (`HairlineSplitView`).
     static let divider: CGFloat = 1
     /// The columns' trailing safe-area inset, for the last column's toolbar section
     /// (`buildArea`). That column's minimum counts it.
