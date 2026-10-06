@@ -113,6 +113,7 @@ final class PDFController: NSObject, @MainActor PDFDocumentDelegate {
     }
 
     @objc private func scaleChanged() {
+        view.fitPageEdges()
         guard view.document != nil, view.hasShownArea else { return }
         update(\.scale, view.scaleFactor)
         update(\.canZoomIn, view.canZoomIn)
@@ -484,6 +485,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
             pagesDark.store(darkPaper, ordering: .relaxed)
             pageShadowsEnabled = !darkPaper
             matchScroller()
+            fitPageEdges()
         }
     }
 
@@ -558,8 +560,22 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
         let overlay = PageOverlay()
+        overlay.dark = darkPaper
         overlays.setObject(overlay, forKey: page)
         return overlay
+    }
+
+    /// The pages' dark edges follow the paper, the zoom and the display's pixels.
+    func fitPageEdges() {
+        for case let overlay as PageOverlay in overlays.objectEnumerator()?.allObjects ?? [] {
+            overlay.dark = darkPaper
+            overlay.fitEdge()
+        }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        fitPageEdges()
     }
 
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
@@ -670,7 +686,38 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
 /// A page's overlay, which takes no clicks: the PDF view keeps them all.
 private final class PageOverlay: NSView {
+    /// On dark paper, a black edge a device pixel either side of the page's. PDFKit lays a white
+    /// layer under each page's tiles, and where the page's edge falls inside a pixel, both are
+    /// part of that pixel and the white shows through the inverted tile as a light line (27.2).
+    private let edge = CALayer()
+    var dark = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        edge.borderColor = .black
+        edge.isHidden = true
+        layer?.addSublayer(edge)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        fitEdge()
+    }
+
+    func fitEdge() {
+        let pixel = convertFromBacking(NSSize(width: 1, height: 1))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        edge.isHidden = !dark
+        edge.frame = bounds.insetBy(dx: -pixel.width, dy: -pixel.height)
+        edge.borderWidth = 2 * max(pixel.width, pixel.height)
+        CATransaction.commit()
+    }
 }
 
 /// The square annotation the mark once was, as PDFKit drew it: Find's colour as a fill

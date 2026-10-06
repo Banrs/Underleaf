@@ -17,21 +17,27 @@ branch it was built on) was fast-forwarded into it; `origin/codex/texpresso` is 
   text view reports its height (`heightChanged`), scrolls SwiftUI's clip itself for the caret
   and far ranges (`scrollToVisible`, `scrollRangeToVisible`), and notices its scroll view once
   SwiftUI places it (`attached`). Xcode's metrics for the font, gutter and current line.
-- **Status bar**: the source/PDF columns' bottom accessory, with no ground of its own. Each
-  pane draws SwiftUI's hard scroll edge under it (`StatusBarEdge`, `StatusBarGround`): the
-  editors' colour, the system hairline and a ghost of what scrolls beneath, as Xcode's bar.
-  The accessory's own edge is `.soft`, which draws nothing over these panes. The PDF,
-  Quick Look and empty states sit in a SwiftUI scroll view that doesn't scroll to get it;
-  the PDF view runs under the bar, so its pages scroll through as the source does (over a
-  white page in Dark the edge's ground is the page dimmed, 64, and the hairline is lost in it).
-- **File Outline header**: the files' bottom accessory, with its line drawn the same way:
-  the files list's hard edge (`StatusBarEdge` at the pane's bottom safe area, which follows
-  the header as it folds), the same 1 px hairline as the status bar's, on the same row when
-  folded. `Divider()` is kept for separators inside stacks and menus.
+- **Status bar**: the source/PDF columns' bottom accessory, with no ground of its own: AppKit's
+  own scroll edge lies under it (`.automatic`, the HIG's default), a frosted ground over both
+  panes with no hairline. SwiftUI's hard edge (the editors' colour and a 1 px hairline, as
+  Xcode's) draws only over a SwiftUI scroll view, and one around PDFKit's view takes its
+  rubber-banding and its insets (27.2), so the PDF view sits directly in its pane, as
+  Preview's: PDFKit insets its pages and scroller from the toolbar and the bar and bounces at
+  its ends. Quick Look and the empty states sit in the pane on the editors' colour.
+- **Dark paper**: PDFKit lays a white layer under each page's tiles, which shows as a light
+  line where a page's edge falls inside a pixel; each page's overlay draws a black edge a
+  device pixel either side of the page's (`PageOverlay`), kept to the zoom.
+- **File Outline header**: the files' bottom accessory, its line the files list's own hard
+  scroll edge (`HeaderEdge` at the pane's bottom safe area, which follows the header as it
+  folds): a 1 px hairline on the status bar's row when folded. `Divider()` is kept for
+  separators inside stacks and menus.
 - **Split dividers**: AppKit's thin divider at a device pixel (`HairlineSplitView`), the
   weight of those scroll-edge lines (AppKit's own is a point, 2 px on Retina; Xcode keeps
   1 pt). The source|PDF divider stops at the status bar's top (`ColumnsSplitView`), so the
   bar runs across both panes as one. Drags still take a 4–5 pt band around the pixel.
+- **Divider drags**: a width that changes faster than a frame can leave TextKit's viewport laid
+  out for a passing width and the editor blank; once widths settle the text view lays its
+  viewport out again (`layOutViewportOnceSettled`).
 - **Build panel**: below the columns, so the status bar rides up as it opens (Xcode's
   arrangement), with AppKit's collapse animation. Its controls are a bar at its foot
   (`BuildPanelBar`, the panel's own `safeAreaBar`), as Xcode's console bar: a pop-up for
@@ -69,10 +75,10 @@ tests and fails a run in which none passed.
   need to skip it.
 - `npm test`: 148, including the TeXpresso installer's 5. Rust: 197, with rustfmt and
   clippy `-D warnings` clean.
-- Checked on a dev copy: the status bar's hairline runs across both halves with and without
-  a PDF and with the panel open, and the folded outline header's meets it on one pixel row;
-  the PDF's last page and a 16,455-line source's last line end
-  above the bar; wheel-scrolling that source keeps the main thread mostly idle.
+- Checked on a QA copy: PDFKit's scroll view is the only one round the pages, with its own
+  insets (52 under the toolbar, 36 over the bar) and elasticity; the source keeps its text
+  through 40 divider moves in 0.1 s; dark paper's page edges are no lighter than the
+  background at four zooms. A real trackpad's bounce remains a manual check.
 
 The native tests run a host app that shares the app's defaults unless built with another
 bundle identifier: build with `TEXLOCAL_APP_IDENTIFIER=com.texlocal.mac.dev`, as CI does with

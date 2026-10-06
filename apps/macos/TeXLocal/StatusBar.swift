@@ -20,8 +20,7 @@ struct StatusBar: View {
         .padding(.leading, 14)
         .padding(.trailing, 16.5)
         .frame(height: Self.height)
-        // No ground or hairline of its own: the panes draw SwiftUI's hard scroll edge under it,
-        // the editors' colour with the system's hairline over it (`StatusBarGround`).
+        // No ground of its own: its accessory's scroll edge is under it (`buildArea`).
         .font(.subheadline)
         .monospacedDigit()
         .controlSize(.small)

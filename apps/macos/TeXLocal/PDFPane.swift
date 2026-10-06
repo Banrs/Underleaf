@@ -12,13 +12,15 @@ struct PDFPane: View {
 
     var body: some View {
         if project.hasPDF {
-            // Under the toolbar and the status bar, as the source; PDFKit insets its own scrolling.
-            StatusBarGround(edges: [.top, .bottom, .trailing]) {
-                PDFRepresentable(project: project, darkPaper: darkPaper)
-            }
+            // Under the toolbar and the status bar, as the source. Directly in the pane, not in another
+            // scroll view: PDFKit insets its own scrolling from the pane's safe area and rubber-bands
+            // at its ends, which a scroll view around it takes over (27.2).
+            PDFRepresentable(project: project, darkPaper: darkPaper)
+                .ignoresSafeArea(.container, edges: [.top, .bottom, .trailing])
         } else {
-            // The status bar's edge over this half too, as over the source's empty state.
-            StatusBarGround { emptyState }
+            emptyState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.textSurface)
         }
     }
 

@@ -239,19 +239,18 @@ final class WorkspaceController: RestoredSplitViewController {
         let columnsItem = NSSplitViewItem(viewController: columns)
         // The panel dragged up stops short of the find bar and a few lines.
         columnsItem.minimumThickness = ColumnMetrics.columnsMinimum
-        // The editors' own bar, at their foot, as Xcode's: their text and the PDF's pages scroll on
-        // beneath it and their scrollers end at its top (`StatusBarEdge`). It rides up with them as
-        // the panel opens, as Xcode's does over its debug area, so nothing under it changes and it
-        // never changes its look.
+        // The editors' own bar, at their foot: their text and the PDF's pages scroll on beneath it
+        // and their scrollers end at its top. It rides up with them as the panel opens, as Xcode's
+        // does over its debug area, so nothing under it changes and it never changes its look.
         let statusBar = accessory(StatusBar(project: project))
         // Its own height, which the folded File Outline's header shares (`StatusBar.height`), without
         // AppKit's standard 10 pt and 9 pt bar margins.
         statusBar.automaticallyAppliesContentInsets = false
-        // The panes draw the bar's ground themselves, SwiftUI's hard scroll edge in the editors'
-        // colour (`StatusBarGround`): the accessory's own edge would lay AppKit's glass over them
-        // instead (measured 2026-10-06: 38 over the source's 30 in Dark, 48 over the PDF pane,
-        // with `.hard` and `.automatic` alike), and `.soft` draws nothing over these panes.
-        statusBar.preferredScrollEdgeEffectStyle = .soft
+        // AppKit's own edge under the bar, over both panes (HIG, Scroll views: prefer the automatic
+        // style). The PDF is PDFKit's view directly in its pane, which scrolls and rubber-bands as
+        // Preview's; SwiftUI's edge draws only over a SwiftUI scroll view, and one around PDFKit's
+        // takes its rubber-banding (27.2). `.soft` draws nothing over these panes.
+        statusBar.preferredScrollEdgeEffectStyle = .automatic
         columnsItem.addBottomAlignedAccessoryViewController(statusBar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
@@ -325,8 +324,7 @@ final class WorkspaceController: RestoredSplitViewController {
         outlineBar = NSSplitViewItemAccessoryViewController()
         outlineBar.view = bar
         outlineBar.automaticallyAppliesContentInsets = false
-        // The files draw the edge, as the panes do under the status bar (`StatusBarEdge`); the
-        // accessory's own would lay AppKit's glass over them.
+        // The files draw the edge (`HeaderEdge`); the accessory's own would lay AppKit's glass over them.
         outlineBar.preferredScrollEdgeEffectStyle = .soft
     }
 
@@ -652,8 +650,7 @@ class HairlineSplitView: NSSplitView {
     }
 }
 
-/// Source | PDF. The status bar spans both panes as one bar, as Xcode's spans its editor, so
-/// their divider stops at the bar's top, where the panes' scroll edges draw its line.
+/// Source | PDF. The status bar spans both panes as one bar, so their divider stops at its top.
 private final class ColumnsSplitView: HairlineSplitView {
     override func drawDivider(in rect: NSRect) {
         var shown = rect

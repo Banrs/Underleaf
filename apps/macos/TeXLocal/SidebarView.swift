@@ -13,13 +13,13 @@ struct FilesList: View {
     @State private var expanded: Set<String> = []
 
     var body: some View {
-        // The File Outline's header is the files' bottom bar, as the status bar is the editors':
-        // they scroll on beneath it, under SwiftUI's hard edge and its hairline. Its height
-        // is the pane's bottom safe area, which follows the header's as it folds.
+        // The File Outline's header is the files' bottom bar: they scroll on beneath it, under
+        // SwiftUI's hard edge and its hairline. Its height is the pane's bottom safe area, which
+        // follows the header's as it folds.
         GeometryReader { geometry in
             // Two lists: one list diffed from the tree to grouped hits and back keeps stale rows.
             Group { if project.isSearching { results } else { files } }
-                .modifier(StatusBarEdge(height: geometry.safeAreaInsets.bottom))
+                .modifier(HeaderEdge(height: geometry.safeAreaInsets.bottom))
         }
             // Each search reads every file in the project; it waits for typing to pause.
             .task(id: project.searchQuery) {
@@ -475,5 +475,23 @@ private struct HeadingRow: View, Equatable {
             // For scrollTo, inside the row: on it, the list would take it for the row's
             // identity, and a heading that gains subheadings would keep a leaf's closed state.
             .id(item.id)
+    }
+}
+
+/// The File Outline header's edge on the files: the hard edge where the header is, the header's
+/// region the list's own, in place of the one its accessory gives the pane, which would double it.
+/// The bar here is a blank the accessory's content sits over; SwiftUI draws the edge only under a
+/// bar that draws something itself (measured 2026-10-06: not under `Color.clear`, a `Spacer` or a
+/// hidden view, and only after a later layout, if at all), so the blank is a fill the eye can't see.
+struct HeaderEdge: ViewModifier {
+    /// The header's; none, no edge.
+    let height: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaBar(edge: .bottom, spacing: 0) { Rectangle().fill(.white.opacity(0.001)).frame(height: height) }
+            .scrollEdgeEffectStyle(.hard, for: .bottom)
+            .scrollEdgeEffectHidden(height == 0, for: .bottom)
+            .ignoresSafeArea(.container, edges: .bottom)
     }
 }

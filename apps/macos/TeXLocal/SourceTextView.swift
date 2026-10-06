@@ -284,6 +284,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate {
             // As it goes: scrolled down, AppKit's tracking waits for a live resize's end (27.2).
             textContainer?.size.width = max(0, size.width - 2 * textContainerInset.width)
         }
+        layOutViewportOnceSettled()
+    }
+
+    private var viewportPending = false
+
+    /// Widths changing faster than a frame (a divider dragged quickly) can leave the viewport laid
+    /// out for one of the passing widths, its text gone until it next scrolls (27.2): once they
+    /// settle, TextKit lays the shown text out for the last.
+    private func layOutViewportOnceSettled() {
+        guard !viewportPending else { return }
+        viewportPending = true
+        Task { [weak self] in
+            self?.viewportPending = false
+            self?.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        }
     }
 
     private func keepingTopLine(_ change: () -> Void) {
