@@ -5,56 +5,55 @@ enum PanelTab: String, CaseIterable {
     case issues = "Issues", log = "Build Log", texpresso = "TeXpresso"
 }
 
-/// The build panel below the editors and their status bar: its tabs, then the build's issues
-/// or its whole log. No close button: the status bar's toggle and View › Hide Build Panel close it.
+/// The build panel below the editors and their status bar: the build's issues or its whole log,
+/// which scroll on beneath `BuildPanelBar` at the panel's foot, as Xcode's console under its bar.
+/// On the editors' surface, as Xcode's console is on its editor's. No close button: the status
+/// bar's toggle and View › Hide Build Panel close it.
 struct BuildPanel: View {
     let project: ProjectModel
-    @State private var filter = ""
-    @State private var showWarnings = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            // No line under it: the split's line over it is the panel's, as Xcode's debug area has
-            // one line at its top and none at its console bar (measured 2026-10-06).
-            BuildPanelHeader(project: project, filter: $filter, showWarnings: $showWarnings)
-            Group {
-                switch project.panelTab {
-                case .issues: issues
-                case .log: log
-                case .texpresso:
-                    if project.texpresso.log.isEmpty {
-                        ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
-                                               description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
-                                                                 : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
-                    } else {
-                        LogTextView(text: project.texpresso.log, title: "TeXpresso Log")
-                    }
+        Group {
+            switch project.panelTab {
+            case .issues: issues
+            case .log: log
+            case .texpresso:
+                if project.texpresso.log.isEmpty {
+                    ContentUnavailableView(project.texpresso.title, systemImage: "bolt",
+                                           description: Text(project.livePDF ? "The PDF pane shows TeXpresso’s live preview."
+                                                             : "TeXpresso shows the document in its own window. Compile to update the PDF here."))
+                } else {
+                    LogPane(text: project.texpresso.log, title: "TeXpresso Log")
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.textSurface)
+        // In the panel's own content, not a split-item accessory, so it rides the panel's edge as
+        // the panel opens: AppKit shows a bottom accessory only once the pane has its height (27.2).
+        .safeAreaBar(edge: .bottom, spacing: 0) { BuildPanelBar(project: project) }
     }
 
     private func matches(_ item: LogItem) -> Bool {
-        filter.isEmpty || item.message.localizedCaseInsensitiveContains(filter)
-            || (item.file?.localizedCaseInsensitiveContains(filter) ?? false)
+        project.issueFilter.isEmpty || item.message.localizedCaseInsensitiveContains(project.issueFilter)
+            || (item.file?.localizedCaseInsensitiveContains(project.issueFilter) ?? false)
     }
 
     /// "No Issues" before any build too: the status bar says whether one has run.
     @ViewBuilder
     private var issues: some View {
         // Enumerate before filtering: duplicate messages keep distinct, stable row IDs.
-        let items = project.issues.enumerated().filter { (showWarnings || $0.element.isError) && matches($0.element) }
+        let items = project.issues.enumerated().filter { (project.showsWarnings || $0.element.isError) && matches($0.element) }
         if !items.isEmpty {
             IssueList(items: items, project: project)
-        } else if !showWarnings, project.result?.warnings.contains(where: matches) == true {
+        } else if !project.showsWarnings, project.result?.warnings.contains(where: matches) == true {
             ContentUnavailableView {
                 Label("Warnings Hidden", systemImage: "exclamationmark.triangle")
             } actions: {
-                Button("Show Warnings") { showWarnings = true }
+                Button("Show Warnings") { project.showsWarnings = true }
             }
-        } else if !filter.isEmpty {
-            ContentUnavailableView.search(text: filter)
+        } else if !project.issueFilter.isEmpty {
+            ContentUnavailableView.search(text: project.issueFilter)
         } else {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
         }
@@ -63,7 +62,7 @@ struct BuildPanel: View {
     @ViewBuilder
     private var log: some View {
         if let text = project.result?.log, !text.isEmpty {
-            LogTextView(text: text)
+            LogPane(text: text)
         } else {
             ContentUnavailableView("No Log", systemImage: "text.page",
                                    description: Text("Compile to see the log here."))
@@ -71,33 +70,35 @@ struct BuildPanel: View {
     }
 }
 
-/// The panel's tabs and its tab's controls. The log has the text view's own find bar, so only
-/// the issues have a filter.
-private struct BuildPanelHeader: View {
+/// The bar at the panel's foot, as Xcode's console bar: what the panel shows, chosen from a
+/// pop-up as Xcode's console chooses its output, then that view's controls. The log has the text
+/// view's own find bar, so only the issues have a filter. The panel's content scrolls beneath it
+/// (`BuildPanel`), and it paints the panel's surface.
+struct BuildPanelBar: View {
     @Bindable var project: ProjectModel
-    @Binding var filter: String
-    @Binding var showWarnings: Bool
 
     var body: some View {
         HStack {
-            Picker("Build Panel", selection: $project.panelTab) {
+            Picker("Show", selection: $project.panelTab) {
                 // TeXpresso's only once it has been started: most never use it.
                 ForEach(PanelTab.allCases.filter { $0 != .texpresso || project.texpresso.used }, id: \.self) { Text($0.rawValue) }
             }
-            .pickerStyle(.tabs)
+            .pickerStyle(.menu)
+            // Borderless, as Xcode's console's output pop-up.
+            .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
             if project.panelTab == .issues {
                 if project.warningCount > 0 {
-                    Toggle(isOn: $showWarnings) {
+                    Toggle(isOn: $project.showsWarnings) {
                         Label("Warnings", systemImage: "exclamationmark.triangle")
                     }
                     .toggleStyle(.button)
-                    .help(showWarnings ? "Hide Warnings" : "Show Warnings")
+                    .help(project.showsWarnings ? "Hide Warnings" : "Show Warnings")
                 }
-                SearchField(text: $filter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
+                SearchField(text: $project.issueFilter, prompt: "Filter", symbol: "line.3.horizontal.decrease.circle")
                     .frame(maxWidth: 180)
             } else {
                 let text = project.panelTab == .texpresso ? project.texpresso.log : project.result?.log ?? ""
@@ -112,9 +113,11 @@ private struct BuildPanelHeader: View {
         .lineLimit(1)
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)
-        // The status bar's height, whichever tab's controls show: one bar height in the window.
+        // The status bar's height and edges, whichever view's controls show: one bar in the window.
         .frame(height: StatusBar.height)
-        .padding(.horizontal)
+        .padding(.leading, 14)
+        .padding(.trailing, 16.5)
+        .background(.textSurface)
     }
 }
 
@@ -196,11 +199,28 @@ private struct IssueRow: View {
     }
 }
 
+/// The log under the panel's bar: the text view runs on beneath the bar, inset by its height so
+/// its last line and its scroller end at the bar's top. The bar's safe area reaches SwiftUI but
+/// not an AppKit scroll view, which takes the inset itself.
+private struct LogPane: View {
+    let text: String
+    var title = "Build Log"
+
+    var body: some View {
+        GeometryReader { geometry in
+            LogTextView(text: text, title: title, bottomInset: geometry.safeAreaInsets.bottom)
+                .ignoresSafeArea(.container, edges: .bottom)
+        }
+    }
+}
+
 /// The build log in an NSTextView: a SwiftUI Text lays out megabyte logs whole on every change.
 /// It opens at its end, where the error usually is.
 struct LogTextView: NSViewRepresentable {
     let text: String
     var title = "Build Log"
+    /// The bar over the text view's foot (`LogPane`).
+    var bottomInset: CGFloat = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -227,6 +247,13 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        if scroll.contentInsets.bottom != bottomInset {
+            let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets.bottom = bottomInset
+            scroll.scrollerInsets.bottom = bottomInset
+            if atEnd { view.scrollToEndOfDocument(nil) }
+        }
         guard context.coordinator.shown != text else { return }
         updateText(in: scroll)
         context.coordinator.shown = text
