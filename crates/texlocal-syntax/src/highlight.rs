@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::{letter, space, Text};
+use crate::{ascii, letter, space, Text};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -84,10 +84,10 @@ impl Cache {
 }
 
 #[derive(Clone, Default)]
-struct State<C = Stack> {
+struct State {
     mode: Mode,
-    /// The commands whose arguments may follow, innermost last (stex's cmdState).
-    commands: C,
+    /// The commands whose arguments may follow (stex's cmdState).
+    commands: Stack,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -109,70 +109,43 @@ struct Command {
     brackets: usize,
 }
 
-/// The open commands, as the tokenizer uses them.
-trait Commands: Clone + Default {
-    fn push(&mut self, command: Command);
-    fn pop(&mut self);
-    fn is_empty(&self) -> bool;
-    /// The innermost command opened another argument.
-    fn open_argument(&mut self);
-    /// The innermost command with a rule.
-    fn styled(&self) -> Option<Command>;
-}
-
 /// The open commands as a shared persistent list, innermost first. Each
 /// line's kept state is one pointer into it, and each frame knows the
-/// innermost command with a rule from it down, so neither keeping a state
-/// nor styling a word costs more as unclosed groups pile up.
+/// innermost command with a rule below it, so neither keeping a state nor
+/// styling a word costs more as unclosed groups pile up.
 #[derive(Clone, Default)]
 struct Stack(Option<Arc<Frame>>);
 
+#[derive(Clone)]
 struct Frame {
     command: Command,
-    styled: Option<Command>,
+    styled_below: Option<Command>,
     below: Stack,
 }
 
-impl Commands for Stack {
+impl Stack {
     fn push(&mut self, command: Command) {
-        let styled = if command.styles.is_empty() {
-            self.styled()
-        } else {
-            Some(command)
-        };
         let below = std::mem::take(self);
+        let styled_below = below.styled();
         *self = Stack(Some(Arc::new(Frame {
             command,
-            styled,
+            styled_below,
             below,
         })));
     }
 
     fn pop(&mut self) {
-        let Some(frame) = self.0.take() else {
-            return;
-        };
-        *self = match Arc::try_unwrap(frame) {
-            Ok(mut frame) => std::mem::take(&mut frame.below),
-            Err(shared) => shared.below.clone(),
-        };
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_none()
-    }
-
-    fn open_argument(&mut self) {
-        if let Some(frame) = &self.0 {
-            let mut command = frame.command;
-            command.brackets += 1;
-            self.pop();
-            self.push(command);
+        if let Some(frame) = self.0.take() {
+            *self = frame.below.clone();
         }
     }
 
+    /// The innermost command with a rule.
     fn styled(&self) -> Option<Command> {
-        self.0.as_ref().and_then(|frame| frame.styled)
+        let frame = self.0.as_deref()?;
+        (!frame.command.styles.is_empty())
+            .then_some(frame.command)
+            .or(frame.styled_below)
     }
 }
 
@@ -184,49 +157,26 @@ impl Drop for Stack {
         while let Some(frame) = next {
             next = Arc::try_unwrap(frame)
                 .ok()
-                .and_then(|mut frame| frame.below.0.take());
+                .and_then(|mut f| f.below.0.take());
         }
     }
 }
 
 use HighlightKind::*;
 
-/// Whether UTF-16 `units` are the ASCII `name`.
-fn named(units: &[u16], name: &str) -> bool {
-    units.len() == name.len() && units.iter().zip(name.bytes()).all(|(&u, b)| u == b as u16)
-}
-
 fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
-    let is = |candidates: &[&str]| candidates.iter().any(|c| named(name, c));
-    if is(&["importmodule"]) {
-        &[Some(StringLiteral), Some(Builtin)]
-    } else if is(&["documentclass"]) {
-        &[None, Some(Argument)]
-    } else if is(&[
-        "usepackage",
-        "begin",
-        "end",
-        "label",
-        "ref",
-        "eqref",
-        "cite",
-        "bibitem",
-        "Bibitem",
-        "RBibitem",
-    ]) {
-        &[Some(Argument)]
-    } else {
-        &[]
+    match ascii(name, &mut [0; 16]) {
+        "importmodule" => &[Some(StringLiteral), Some(Builtin)],
+        "documentclass" => &[None, Some(Argument)],
+        "usepackage" | "begin" | "end" | "label" | "ref" | "eqref" | "cite" | "bibitem"
+        | "Bibitem" | "RBibitem" => &[Some(Argument)],
+        _ => &[],
     }
 }
 
 /// A line's runs, given the state it starts in, which it leaves as the next
 /// line's. An empty line ends everything open (stex's blankLine).
-fn tokenize<C: Commands>(
-    line: &[u16],
-    state: &mut State<C>,
-    mut run: impl FnMut(usize, usize, HighlightKind),
-) {
+fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {
     if line.is_empty() {
         *state = State::default();
         return;
@@ -245,7 +195,7 @@ fn tokenize<C: Commands>(
     }
 }
 
-fn normal<C: Commands>(s: &mut Stream, state: &mut State<C>) -> Option<HighlightKind> {
+fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     if s.peek() == Some(b'\\' as u16) {
         if s.at(1).is_some_and(command_letter) {
             s.pos += 1;
@@ -280,7 +230,7 @@ fn normal<C: Commands>(s: &mut Stream, state: &mut State<C>) -> Option<Highlight
         s.pos = s.text.len();
         Some(Comment)
     } else if one_of(c, "}]") {
-        if state.commands.is_empty() {
+        if state.commands.0.is_none() {
             return Some(Invalid);
         }
         state.mode = Mode::Arguments;
@@ -305,11 +255,7 @@ fn normal<C: Commands>(s: &mut Stream, state: &mut State<C>) -> Option<Highlight
     }
 }
 
-fn math<C: Commands>(
-    s: &mut Stream,
-    state: &mut State<C>,
-    end: &'static str,
-) -> Option<HighlightKind> {
+fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<HighlightKind> {
     if s.eat_while(space) {
         return None;
     }
@@ -360,10 +306,12 @@ fn math<C: Commands>(
     }
 }
 
-fn arguments<C: Commands>(s: &mut Stream, state: &mut State<C>) -> Option<HighlightKind> {
+fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     let c = s.peek()?;
     if one_of(c, "{[") {
-        state.commands.open_argument();
+        if let Some(frame) = &mut state.commands.0 {
+            Arc::make_mut(frame).command.brackets += 1;
+        }
         s.pos += 1;
         state.mode = Mode::Normal;
         return None;
@@ -438,9 +386,9 @@ fn command_letter(u: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::Highlight;
     use super::HighlightKind::*;
-    use super::{tokenize, Command, Commands, Highlight, State};
-    use crate::{utf16, SourceDocument, Text};
+    use crate::{utf16, SourceDocument};
 
     /// The runs as "text Kind" pairs.
     fn runs(source: &str) -> Vec<String> {
@@ -536,52 +484,10 @@ mod tests {
         assert_eq!((runs[0].start, runs[0].length), (3, 2));
     }
 
-    /// The open commands as a plain vector, searched from the top: the
-    /// reading `Stack` must give, token for token.
-    impl Commands for Vec<Command> {
-        fn push(&mut self, command: Command) {
-            Vec::push(self, command);
-        }
-
-        fn pop(&mut self) {
-            Vec::pop(self);
-        }
-
-        fn is_empty(&self) -> bool {
-            <[Command]>::is_empty(self)
-        }
-
-        fn open_argument(&mut self) {
-            if let Some(command) = self.last_mut() {
-                command.brackets += 1;
-            }
-        }
-
-        fn styled(&self) -> Option<Command> {
-            self.iter().rev().find(|c| !c.styles.is_empty()).copied()
-        }
-    }
-
-    /// Every line from the top, the open commands in a vector.
-    fn plainly(source: &str) -> Vec<Highlight> {
-        let text = Text::new(source);
-        let mut state = State::<Vec<Command>>::default();
-        let mut runs = Vec::new();
-        for index in 0..text.lines.len() {
-            let base = text.lines[index];
-            tokenize(text.line(index), &mut state, |from, to, kind| {
-                runs.push(Highlight {
-                    start: base + from as u32,
-                    length: (to - from) as u32,
-                    kind,
-                })
-            });
-        }
-        runs
-    }
-
-    #[test]
-    fn the_shared_command_stack_reads_as_a_plain_one() {
+    /// The runs of 300 seeded documents of braces, commands, maths and
+    /// line breaks, each read whole and again after an edit part way, as one
+    /// FNV-1a hash.
+    fn seeded_runs_fingerprint() -> u64 {
         const PIECES: [&str; 26] = [
             "{",
             "{",
@@ -615,22 +521,31 @@ mod tests {
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             (seed >> 16) as usize % n
         };
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut add = |runs: Vec<Highlight>| {
+            for run in runs {
+                for value in [run.start, run.length, run.kind as u32] {
+                    hash = (hash ^ u64::from(value)).wrapping_mul(0x100_0000_01b3);
+                }
+            }
+        };
         for _ in 0..300 {
             let pieces = 1 + next(120);
             let source: String = (0..pieces).map(|_| PIECES[next(PIECES.len())]).collect();
-            let len = utf16(&source) as u32;
             let mut doc = SourceDocument::new(&source);
-            assert_eq!(doc.highlights(0, len), plainly(&source), "{source:?}");
-            // And from the kept states, after an edit part way.
-            let at = next(len as usize + 1) as u32;
+            add(doc.highlights(0, utf16(&source) as u32));
+            let at = next(utf16(&source) + 1) as u32;
             doc.edit(at, 0, "{\\label{");
-            let edited = doc.text();
-            assert_eq!(
-                doc.highlights(0, utf16(&edited) as u32),
-                plainly(&edited),
-                "{edited:?}"
-            );
+            add(doc.highlights(0, utf16(&doc.text()) as u32));
         }
+        hash
+    }
+
+    #[test]
+    fn runs_are_as_the_plain_command_stack_gave_them() {
+        // The fingerprint of the runs when the open commands were a vector,
+        // cloned for each line and searched for each word.
+        assert_eq!(seeded_runs_fingerprint(), 572_227_848_898_975_436);
     }
 
     #[test]

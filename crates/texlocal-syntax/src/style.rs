@@ -3,8 +3,8 @@
 
 use serde::Serialize;
 
-use crate::maths::{scan_groups, Group};
-use crate::{edit, Text, TextEdit, TextRange};
+use crate::maths::{Group, Scans, Visit};
+use crate::{ascii, edit, Text, TextEdit, TextRange};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing
@@ -26,33 +26,56 @@ enum Shape {
     Italic(usize),
 }
 
-pub(crate) fn text_styles(text: &Text, selection: TextRange) -> TextStyles {
+/// The groups open at the selection's ends, and how the scan saw them close.
+struct Found {
+    start: usize,
+    end: usize,
+    open: Vec<Vec<Group>>,
+    /// Where each group that may hold the selection closes, by where it opens.
+    closes: Vec<(usize, usize)>,
+    /// A command the selection is exactly, from its backslash to its brace.
+    whole: Option<Group>,
+}
+
+impl Visit for Found {
+    fn at(&mut self, groups: &[Group]) {
+        self.open.push(groups.to_vec());
+    }
+
+    fn closed(&mut self, group: &Group, close: usize) {
+        let Some((command, _)) = group.command else {
+            return;
+        };
+        if close >= self.end && group.open < self.start {
+            self.closes.push((group.open, close));
+        } else if command == self.start && close + 1 == self.end {
+            self.closes.push((group.open, close));
+            self.whole = Some(group.clone());
+        }
+    }
+}
+
+/// The scan resumes from a kept point before the selection, and stops once
+/// the groups open at its end have closed.
+pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) -> TextStyles {
     let src = &text.units;
     let start = selection.start as usize;
     let end = start + selection.length as usize;
-    let mut open: Vec<Vec<Group>> = Vec::new();
-    // Where each group that may hold the selection closes, by where it opens.
-    let mut closes: Vec<(usize, usize)> = Vec::new();
-    // A command the selection is exactly, from its backslash to its brace.
-    let mut whole: Option<Group> = None;
-    scan_groups(
-        src,
-        &[start, end],
-        |_, _| {},
-        |_, _, _| {},
-        |groups| open.push(groups.to_vec()),
-        |group, close| {
-            let Some((command, _)) = group.command else {
-                return;
-            };
-            if close >= end && group.open < start {
-                closes.push((group.open, close));
-            } else if command == start && close + 1 == end {
-                closes.push((group.open, close));
-                whole = Some(group.clone());
-            }
-        },
-    );
+    let mut found = Found {
+        start,
+        end,
+        open: Vec::new(),
+        closes: Vec::new(),
+        whole: None,
+    };
+    let mut scanner = scans.resume(src, start, src.len()).scanner;
+    scanner.run(src, src.len(), &[start, end], &mut found);
+    let Found {
+        open,
+        closes,
+        whole,
+        ..
+    } = found;
     let [at_start, at_end] = [&open[0], &open[1]];
     let mut groups: Vec<&Group> = at_start
         .iter()
@@ -68,7 +91,7 @@ pub(crate) fn text_styles(text: &Text, selection: TextRange) -> TextStyles {
         let Some((backslash, name_end)) = group.command else {
             continue;
         };
-        match String::from_utf16_lossy(&src[backslash + 1..name_end]).as_str() {
+        match ascii(&src[backslash + 1..name_end], &mut [0; 16]) {
             "textbf" => bold = Some(k),
             "textmd" => bold = None,
             "textnormal" => (bold, shape) = (None, Shape::Upright),
@@ -126,6 +149,7 @@ mod tests {
         let end16 = source[..end].encode_utf16().count() as u32;
         let found = text_styles(
             &text,
+            &mut Scans::default(),
             TextRange {
                 start: start16,
                 length: end16 - start16,
@@ -192,6 +216,7 @@ mod tests {
         let nested = r"\textbf{a \textbf{b‸} c}";
         let found = text_styles(
             &Text::new(&nested.replace('‸', "")),
+            &mut Scans::default(),
             TextRange {
                 start: 19,
                 length: 0,

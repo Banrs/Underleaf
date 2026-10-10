@@ -6,7 +6,7 @@ use std::{borrow::Cow, sync::LazyLock};
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{catalog, is, letter, space, utf16, Text};
+use crate::{ascii, catalog, is, letter, space, utf16, Text};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
@@ -36,7 +36,9 @@ fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usize)> {
 /// unclosed $ or \[, as the paragraph it can't span. So `$|$` (an empty
 /// pair, the caret between) is maths.
 pub fn math_mode_at(src: &[u16]) -> bool {
-    scan(src, |_, _| {}, |_, _, _| {})
+    let mut scanner = Scanner::default();
+    scanner.run(src, src.len(), &[], &mut ());
+    scanner.in_math()
 }
 
 /// A group open at a point: whether it's maths, what closes it, where it
@@ -50,228 +52,319 @@ pub(crate) struct Group {
     pub command: Option<(usize, usize)>,
 }
 
-/// Read math/code ranges and commands outside them in one pass. Callers merge
-/// adjacent ranges; no range storage is needed when only the mode is wanted.
-pub(crate) fn scan(
-    src: &[u16],
-    range: impl FnMut(usize, usize),
-    command: impl FnMut(&str, usize, usize),
-) -> bool {
-    scan_groups(src, &[], range, command, |_| {}, |_, _| {})
+/// What a scan reports as it reads: maths and literal code as ranges, which
+/// callers merge; commands outside them, by name, backslash and name's end;
+/// the groups open at each probe; and each brace group as its `}` closes it.
+pub(crate) trait Visit {
+    fn range(&mut self, _from: usize, _to: usize) {}
+    fn command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
+    fn at(&mut self, _groups: &[Group]) {}
+    fn closed(&mut self, _group: &Group, _close: usize) {}
 }
 
-/// `scan`, which also hands `at` the groups open at each of `probes` (in
-/// order), and `closed` each brace group as its `}` closes it.
-pub(crate) fn scan_groups(
-    src: &[u16],
-    probes: &[usize],
-    mut range: impl FnMut(usize, usize),
-    mut command: impl FnMut(&str, usize, usize),
-    mut at: impl FnMut(&[Group]),
-    mut closed: impl FnMut(&Group, usize),
-) -> bool {
-    let catalog = &*catalog::CATALOG;
-    let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
-    // Open groups, innermost last.
-    let mut stack: Vec<Group> = Vec::new();
-    let group = |math: bool, end: Cow<'static, str>, open: usize| Group {
-        math,
-        end,
-        open,
-        command: None,
-    };
-    let math = |stack: &[Group]| stack.last().is_some_and(|g| g.math);
-    let close = |stack: &mut Vec<Group>, end: &str| {
-        if let Some(k) = stack.iter().rposition(|g| g.end == end) {
-            stack.truncate(k);
-        }
-    };
-    let mut text_argument = false; // The next { opens a text argument (\text{).
-    let mut math_run = false;
-    // The command just read, while only spaces, a line feed or a comment follow it.
-    let mut last_command: Option<(usize, usize)> = None;
-    let mut probe = 0;
-    let n = src.len();
-    let mut i = 0;
-    while i < n {
-        let token_start = i;
-        while probe < probes.len() && probes[probe] <= token_start {
-            at(&stack);
-            probe += 1;
-        }
-        let pending = last_command.take();
-        let c = char::from_u32(src[i] as u32).unwrap_or_default();
-        let mut code = false;
-        i += 1;
-        match c {
-            '%' => {
-                // Comments remain prose, including the following line feed.
-                math_run = false;
-                last_command = pending;
-                let Some(eol) = find(src, i, &['\n' as u16]) else {
-                    break;
-                };
-                i = eol;
-                continue;
+impl Visit for () {}
+
+/// The last maths or code run so far, adjacent ranges joined.
+impl Visit for Option<(usize, usize)> {
+    fn range(&mut self, from: usize, to: usize) {
+        *self = match *self {
+            Some((start, end)) if from <= end => Some((start, end.max(to))),
+            _ => Some((from, to)),
+        };
+    }
+}
+
+/// The scan between two tokens: all it carries from the text before.
+#[derive(Clone, Default)]
+pub(crate) struct Scanner {
+    /// Open groups, innermost last.
+    stack: Vec<Group>,
+    /// The next { opens a text argument (\text{).
+    text_argument: bool,
+    math_run: bool,
+    /// The command just read, while only spaces, a line feed or a comment follow it.
+    last_command: Option<(usize, usize)>,
+    /// Where the next token starts.
+    i: usize,
+    /// One past the last unit read: past the text's end once a token ran
+    /// into it, as a longer text could have read on.
+    reach: usize,
+}
+
+impl Scanner {
+    pub fn in_math(&self) -> bool {
+        self.stack.last().is_some_and(|g| g.math)
+    }
+
+    /// Read the tokens of `src` that start before `until`, telling `visit`.
+    /// Given probes, it stops once all are answered and no group is open,
+    /// as nothing later can close one open at them.
+    pub fn run(&mut self, src: &[u16], until: usize, probes: &[usize], visit: &mut impl Visit) {
+        let catalog = &*catalog::CATALOG;
+        let listed = |list: &[String], name: &str| list.iter().any(|n| n == name);
+        let group = |math: bool, end: Cow<'static, str>, open: usize| Group {
+            math,
+            end,
+            open,
+            command: None,
+        };
+        let close = |stack: &mut Vec<Group>, end: &str| {
+            if let Some(k) = stack.iter().rposition(|g| g.end == end) {
+                stack.truncate(k);
             }
-            '\n' => {
-                let j = i + src[i..]
-                    .iter()
-                    .take_while(|&&u| matches!(u, 9 | 13 | 32))
-                    .count();
-                if src.get(j).is_some_and(|&u| is(u, '\n')) {
-                    if let Some(k) = stack
+        };
+        let n = src.len();
+        let mut probe = 0;
+        while self.i < n.min(until) {
+            let token_start = self.i;
+            while probe < probes.len() && probes[probe] <= token_start {
+                visit.at(&self.stack);
+                probe += 1;
+            }
+            if !probes.is_empty() && probe == probes.len() && self.stack.is_empty() {
+                return;
+            }
+            let pending = self.last_command.take();
+            let c = char::from_u32(src[token_start] as u32).unwrap_or_default();
+            let mut code = false;
+            // Read past the token's end: where it ends is read below.
+            let mut read = 0;
+            let mut i = token_start + 1;
+            match c {
+                '%' => {
+                    // Comments remain prose, including the following line feed.
+                    self.math_run = false;
+                    self.last_command = pending;
+                    self.i = find(src, i, &['\n' as u16]).unwrap_or(n);
+                    self.reach = self.reach.max(self.i + 1);
+                    continue;
+                }
+                '\n' => {
+                    let j = i + src[i..]
                         .iter()
-                        .position(|g| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]"))
-                    {
-                        stack.truncate(k);
-                    }
-                    text_argument = false;
-                } else {
-                    last_command = pending;
-                }
-                if math_run {
-                    range(token_start, i);
-                }
-                math_run = math(&stack);
-                continue;
-            }
-            '$' => {
-                let double = src.get(i).is_some_and(|&u| is(u, '$'));
-                match stack.last().map(|g| g.end.as_ref()) {
-                    Some(end @ ("$" | "$$")) => {
-                        i += (end == "$$" && double) as usize;
-                        stack.pop();
-                    }
-                    _ if math(&stack) => {} // a stray $ in an environment's maths
-                    _ => {
-                        stack.push(group(
-                            true,
-                            if double { "$$" } else { "$" }.into(),
-                            token_start,
-                        ));
-                        i += double as usize;
-                    }
-                }
-                text_argument = false;
-            }
-            '{' => {
-                stack.push(Group {
-                    command: pending,
-                    ..group(!text_argument && math(&stack), "}".into(), token_start)
-                });
-                text_argument = false;
-            }
-            '}' => {
-                if let Some(k) = stack.iter().rposition(|g| g.end == "}") {
-                    closed(&stack[k], token_start);
-                    stack.truncate(k);
-                }
-            }
-            '\\' if i < n => {
-                let in_math = math(&stack);
-                text_argument = false;
-                if !letter(src[i]) {
-                    let d = char::from_u32(src[i] as u32).unwrap_or_default();
-                    match d {
-                        '(' | '[' if !in_math => stack.push(group(
-                            true,
-                            if d == '(' { "\\)" } else { "\\]" }.into(),
-                            token_start,
-                        )),
-                        ')' | ']' => close(&mut stack, if d == ')' { "\\)" } else { "\\]" }),
-                        _ => {}
-                    }
-                    i += 1;
-                } else {
-                    let name_start = i;
-                    while i < n && letter(src[i]) {
-                        i += 1;
-                    }
-                    let name = String::from_utf16_lossy(&src[name_start..i]);
-                    let name_end = i;
-                    let mut verb = false;
-                    let literal_end: Option<(Cow<'_, [u16]>, usize)> = match name.as_str() {
-                        "verb" => {
-                            code = true;
-                            verb = true;
-                            i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
-                            src.get(i).map(|_| (Cow::Borrowed(&src[i..i + 1]), i + 1))
+                        .take_while(|&&u| matches!(u, 9 | 13 | 32))
+                        .count();
+                    if src.get(j).is_some_and(|&u| is(u, '\n')) {
+                        if let Some(k) = self
+                            .stack
+                            .iter()
+                            .position(|g| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]"))
+                        {
+                            self.stack.truncate(k);
                         }
-                        "begin" | "end" => {
-                            if let Some((name_units, after)) = environment_name(src, i) {
-                                let environment = String::from_utf16_lossy(name_units);
-                                let environment = trim_js_space(&environment);
-                                i = after;
-                                if name == "end" {
-                                    close(&mut stack, &format!("env:{environment}"));
-                                    None
-                                } else if listed(&catalog.verbatim_environments, environment) {
-                                    code = true;
-                                    Some((
-                                        format!("\\end{{{environment}}}")
-                                            .encode_utf16()
-                                            .collect::<Vec<_>>()
-                                            .into(),
-                                        i,
-                                    ))
+                        self.text_argument = false;
+                    } else {
+                        self.last_command = pending;
+                    }
+                    if self.math_run {
+                        visit.range(token_start, i);
+                    }
+                    self.math_run = self.in_math();
+                    self.i = i;
+                    self.reach = self.reach.max(j + 1);
+                    continue;
+                }
+                '$' => {
+                    let double = src.get(i).is_some_and(|&u| is(u, '$'));
+                    match self.stack.last().map(|g| g.end.as_ref()) {
+                        Some(end @ ("$" | "$$")) => {
+                            i += (end == "$$" && double) as usize;
+                            self.stack.pop();
+                        }
+                        _ if self.in_math() => {} // a stray $ in an environment's maths
+                        _ => {
+                            self.stack.push(group(
+                                true,
+                                if double { "$$" } else { "$" }.into(),
+                                token_start,
+                            ));
+                            i += double as usize;
+                        }
+                    }
+                    self.text_argument = false;
+                }
+                '{' => {
+                    self.stack.push(Group {
+                        command: pending,
+                        ..group(
+                            !self.text_argument && self.in_math(),
+                            "}".into(),
+                            token_start,
+                        )
+                    });
+                    self.text_argument = false;
+                }
+                '}' => {
+                    if let Some(k) = self.stack.iter().rposition(|g| g.end == "}") {
+                        visit.closed(&self.stack[k], token_start);
+                        self.stack.truncate(k);
+                    }
+                }
+                '\\' if i < n => {
+                    let in_math = self.in_math();
+                    self.text_argument = false;
+                    if !letter(src[i]) {
+                        let d = char::from_u32(src[i] as u32).unwrap_or_default();
+                        match d {
+                            '(' | '[' if !in_math => self.stack.push(group(
+                                true,
+                                if d == '(' { "\\)" } else { "\\]" }.into(),
+                                token_start,
+                            )),
+                            ')' | ']' => {
+                                close(&mut self.stack, if d == ')' { "\\)" } else { "\\]" })
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    } else {
+                        let name_start = i;
+                        while i < n && letter(src[i]) {
+                            i += 1;
+                        }
+                        let name_end = i;
+                        let mut buf = [0; 64];
+                        let name = ascii(&src[name_start..name_end], &mut buf);
+                        let mut verb = false;
+                        let literal_end: Option<(Cow<'_, [u16]>, usize)> = match name {
+                            "verb" => {
+                                code = true;
+                                verb = true;
+                                i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
+                                src.get(i).map(|_| (Cow::Borrowed(&src[i..i + 1]), i + 1))
+                            }
+                            "begin" | "end" => {
+                                read = (i + 64).min(n + 1);
+                                if let Some((name_units, after)) = environment_name(src, i) {
+                                    let environment = String::from_utf16_lossy(name_units);
+                                    let environment = trim_js_space(&environment);
+                                    i = after;
+                                    if name == "end" {
+                                        close(&mut self.stack, &format!("env:{environment}"));
+                                        None
+                                    } else if listed(&catalog.verbatim_environments, environment) {
+                                        code = true;
+                                        Some((
+                                            format!("\\end{{{environment}}}")
+                                                .encode_utf16()
+                                                .collect::<Vec<_>>()
+                                                .into(),
+                                            i,
+                                        ))
+                                    } else {
+                                        let bare =
+                                            environment.strip_suffix('*').unwrap_or(environment);
+                                        self.stack.push(group(
+                                            listed(&catalog.math_environments, bare) || in_math,
+                                            format!("env:{environment}").into(),
+                                            token_start,
+                                        ));
+                                        None
+                                    }
                                 } else {
-                                    let bare = environment.strip_suffix('*').unwrap_or(environment);
-                                    stack.push(group(
-                                        listed(&catalog.math_environments, bare) || in_math,
-                                        format!("env:{environment}").into(),
-                                        token_start,
-                                    ));
                                     None
                                 }
-                            } else {
+                            }
+                            _ => {
+                                self.text_argument =
+                                    listed(&catalog.text_commands, name) && in_math;
+                                self.last_command = Some((token_start, name_end));
                                 None
                             }
-                        }
-                        _ => {
-                            text_argument = listed(&catalog.text_commands, &name) && in_math;
-                            last_command = Some((token_start, name_end));
-                            None
-                        }
-                    };
-                    if let Some((end, from)) = literal_end {
-                        // \verb can't cross a line: unclosed, it ends where
-                        // its line does (its delimiter may be that line feed).
-                        let line_end = verb.then(|| find(src, from - 1, &['\n' as u16])).flatten();
-                        let within = &src[..line_end.unwrap_or(n)];
-                        i = match (find(within, from, &end), line_end) {
-                            (Some(at), _) => at + end.len(),
-                            (None, Some(line_end)) => line_end,
-                            // Code to the end of the text, or the position
-                            // asked about is in it.
-                            (None, None) => {
-                                stack.clear();
-                                n
-                            }
                         };
+                        if let Some((end, from)) = literal_end {
+                            // \verb can't cross a line: unclosed, it ends where
+                            // its line does (its delimiter may be that line feed).
+                            let line_end =
+                                verb.then(|| find(src, from - 1, &['\n' as u16])).flatten();
+                            let limit = line_end.unwrap_or(n);
+                            if verb {
+                                read = limit + 1; // looking for the line's end
+                            }
+                            let within = &src[..limit];
+                            i = match (find(within, from, &end), line_end) {
+                                (Some(at), _) => at + end.len(),
+                                (None, Some(line_end)) => line_end,
+                                // Code to the end of the text, or the position
+                                // asked about is in it.
+                                (None, None) => {
+                                    self.stack.clear();
+                                    n
+                                }
+                            };
+                        }
+                        if !in_math && !code {
+                            visit.command(name, token_start, name_end);
+                        }
                     }
-                    if !in_math && !code {
-                        command(&name, token_start, name_end);
+                }
+                _ => {
+                    self.text_argument &= space(src[token_start]);
+                    if space(src[token_start]) {
+                        self.last_command = pending;
                     }
                 }
             }
-            _ => {
-                text_argument &= space(src[token_start]);
-                if space(src[token_start]) {
-                    last_command = pending;
-                }
+            let next_math = self.in_math();
+            if code || self.math_run || next_math {
+                visit.range(token_start, i);
+            }
+            self.math_run = next_math;
+            self.i = i;
+            self.reach = self.reach.max(read).max(i + 1);
+        }
+        for _ in &probes[probe..] {
+            visit.at(&self.stack);
+        }
+    }
+}
+
+/// Scanners kept through the text every few thousand units, so a question
+/// about one place reads from the nearest before it rather than from the
+/// start. An edit forgets those that read what it changed.
+pub(crate) struct Scans(Vec<Point>);
+
+/// A kept scanner, and the maths or code run that ranges after it may join.
+#[derive(Clone, Default)]
+pub(crate) struct Point {
+    pub scanner: Scanner,
+    pub run: Option<(usize, usize)>,
+}
+
+const SPACING: usize = 4096;
+/// A scanner with more open groups isn't kept: braces nobody closes would
+/// make every one as big as the text.
+const KEPT_GROUPS: usize = 64;
+
+impl Default for Scans {
+    fn default() -> Self {
+        Scans(vec![Point::default()])
+    }
+}
+
+impl Scans {
+    pub fn forget_from(&mut self, at: usize) {
+        // The first point has read nothing, so it's always kept.
+        let kept = self.0.partition_point(|p| p.scanner.reach <= at);
+        self.0.truncate(kept);
+    }
+
+    /// The last point at or before `before` that has read nothing at or past
+    /// `end`, from which reading `src[..end]` goes as it would from the start.
+    pub fn resume(&mut self, src: &[u16], before: usize, end: usize) -> Point {
+        let mut point = self.0[self.0.len() - 1].clone();
+        while point.scanner.i + SPACING <= before && point.scanner.i < src.len() {
+            let until = point.scanner.i + SPACING;
+            point.scanner.run(src, until, &[], &mut point.run);
+            if point.scanner.stack.len() <= KEPT_GROUPS {
+                self.0.push(point.clone());
             }
         }
-        let next_math = math(&stack);
-        if code || math_run || next_math {
-            range(token_start, i);
-        }
-        math_run = next_math;
+        let k = self
+            .0
+            .partition_point(|p| p.scanner.i <= before && p.scanner.reach <= end);
+        self.0[k - 1].clone()
     }
-    for _ in &probes[probe..] {
-        at(&stack);
-    }
-    math(&stack)
 }
 
 /// Maths to preview: where it starts, its TeX as KaTeX reads it, and

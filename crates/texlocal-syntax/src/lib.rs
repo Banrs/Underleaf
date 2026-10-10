@@ -12,6 +12,8 @@ mod maths;
 mod prose;
 mod style;
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use serde::{Deserialize, Serialize};
 
 pub use complete::{Completion, Completions, SnippetField};
@@ -119,6 +121,9 @@ impl Text {
 pub struct SourceDocument {
     text: Text,
     highlighter: highlight::Cache,
+    /// Kept for the questions that read the text from its start; behind a
+    /// lock as they ask through `&self`.
+    scans: Mutex<maths::Scans>,
 }
 
 impl SourceDocument {
@@ -126,6 +131,7 @@ impl SourceDocument {
         SourceDocument {
             text: Text::new(text),
             highlighter: highlight::Cache::default(),
+            scans: Mutex::default(),
         }
     }
 
@@ -137,6 +143,14 @@ impl SourceDocument {
         let units: Vec<u16> = text.encode_utf16().collect();
         let first = self.text.replace(start, length, &units);
         self.highlighter.forget_from(first);
+        self.scans
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .forget_from(start as usize);
+    }
+
+    fn scans(&self) -> MutexGuard<'_, maths::Scans> {
+        self.scans.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn text(&self) -> String {
@@ -169,7 +183,7 @@ impl SourceDocument {
     /// over, as it passes over what's highlighted but comments.
     pub fn not_prose(&self, start: u32, length: u32) -> Vec<TextRange> {
         let end = start.saturating_add(length).min(self.text.len());
-        prose::not_prose(&self.text, start.min(end), end)
+        prose::not_prose(&self.text, &mut self.scans(), start.min(end), end)
     }
 
     /// What to offer at the caret, if anything: commands after a backslash
@@ -210,7 +224,8 @@ impl SourceDocument {
     /// The bold, italic and underline the whole selection is in, each as the
     /// edits that unwrap the command giving it, in order.
     pub fn text_styles(&self, selection: TextRange) -> TextStyles {
-        style::text_styles(&self.text, clamp(selection, self.text.len()))
+        let selection = clamp(selection, self.text.len());
+        style::text_styles(&self.text, &mut self.scans(), selection)
     }
 
     /// The maths to preview at the caret, if it's in some.
@@ -230,7 +245,10 @@ impl SourceDocument {
     /// the build.
     pub fn insert_symbol(&self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
-        let text = if math_mode_at(&self.text.units[..selection.start as usize]) {
+        let at = selection.start as usize;
+        let mut scanner = self.scans().resume(&self.text.units, at, at).scanner;
+        scanner.run(&self.text.units[..at], at, &[], &mut ());
+        let text = if scanner.in_math() {
             command.to_string()
         } else {
             format!("${command}$")
@@ -246,6 +264,19 @@ impl SourceDocument {
 
 fn is(u: u16, c: char) -> bool {
     u == c as u16
+}
+
+/// A command name's UTF-16 units as the ASCII they are, without allocating:
+/// "" for one longer than `buf` or not ASCII, which no name it's matched
+/// against is.
+fn ascii<'a>(units: &[u16], buf: &'a mut [u8]) -> &'a str {
+    if units.len() > buf.len() || units.iter().any(|&u| u > 0x7f) {
+        return "";
+    }
+    for (b, &u) in buf.iter_mut().zip(units) {
+        *b = u as u8;
+    }
+    std::str::from_utf8(&buf[..units.len()]).unwrap_or_default()
 }
 
 fn letter(u: u16) -> bool {

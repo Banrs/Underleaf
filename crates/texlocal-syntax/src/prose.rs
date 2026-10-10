@@ -2,49 +2,32 @@
 //! Name arguments include cases that the highlighter leaves uncoloured when
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
-use crate::{blank, catalog::CATALOG, maths, merge_range, Text, TextRange};
+use crate::maths::{Point, Scans, Visit};
+use crate::{blank, catalog::CATALOG, merge_range, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments from commands in the paragraph.
 /// Name arguments are read from the paragraph's start as they cannot contain
-/// a blank line.
-pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
+/// a blank line; the scan resumes from a kept point before it.
+pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<TextRange> {
     let mut line = text.line_index(start);
     while line > 0 && !blank(text.line(line - 1)) {
         line -= 1;
     }
-    let units = &text.units;
-    let mut parsed_until = text.lines[line] as usize;
+    let paragraph = text.lines[line] as usize;
     let end_index = end as usize;
-    let mut ranges = Vec::new();
-    let mut names = Vec::new();
-    maths::scan(
-        &units[..end_index],
-        |from, to| {
-            merge_range(
-                &mut ranges,
-                TextRange {
-                    start: from as u32,
-                    length: (to - from) as u32,
-                },
-            );
-        },
-        |name, command_start, i| {
-            let catalog = &*CATALOG;
-            if command_start < parsed_until
-                || ![
-                    &catalog.name_commands,
-                    &catalog.cite_commands,
-                    &catalog.ref_commands,
-                ]
-                .iter()
-                .any(|list| list.iter().any(|n| n == name))
-            {
-                return;
-            }
-            parsed_until = argument_ranges(text, i, end_index, &mut names);
-        },
-    );
+    let Point { mut scanner, run } = scans.resume(&text.units, paragraph, end_index);
+    let mut found = Found {
+        text,
+        end: end_index,
+        parsed_until: paragraph,
+        ranges: run.map(|(from, to)| range(from, to)).into_iter().collect(),
+        names: Vec::new(),
+    };
+    scanner.run(&text.units[..end_index], end_index, &[], &mut found);
+    let Found {
+        mut ranges, names, ..
+    } = found;
     ranges.extend(names);
     ranges.retain(|r| {
         let range_end = r.start.saturating_add(r.length);
@@ -67,17 +50,50 @@ pub fn not_prose(text: &Text, start: u32, end: u32) -> Vec<TextRange> {
     ranges
 }
 
+fn range(from: usize, to: usize) -> TextRange {
+    TextRange {
+        start: from as u32,
+        length: (to - from) as u32,
+    }
+}
+
+/// What the scan finds: maths and code, and the name arguments of the
+/// commands from `parsed_until` on.
+struct Found<'a> {
+    text: &'a Text,
+    end: usize,
+    parsed_until: usize,
+    ranges: Vec<TextRange>,
+    names: Vec<TextRange>,
+}
+
+impl Visit for Found<'_> {
+    fn range(&mut self, from: usize, to: usize) {
+        merge_range(&mut self.ranges, range(from, to));
+    }
+
+    fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
+        let catalog = &*CATALOG;
+        if command_start >= self.parsed_until
+            && [
+                &catalog.name_commands,
+                &catalog.cite_commands,
+                &catalog.ref_commands,
+            ]
+            .iter()
+            .any(|list| list.iter().any(|n| n == name))
+        {
+            self.parsed_until = argument_ranges(self.text, name_end, self.end, &mut self.names);
+        }
+    }
+}
+
 /// Options and the first braced argument, stopping at a blank line or EOF.
 fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextRange>) -> usize {
     let at = |i| char::from_u32(text.units[i] as u32).unwrap_or_default();
     let paragraph_end =
         |i| at(i) == '\n' && i + 1 < end && blank(text.line(text.line_index(i as u32 + 1)));
-    let mut push = |from: usize, to: usize| {
-        ranges.push(TextRange {
-            start: from as u32,
-            length: (to - from) as u32,
-        })
-    };
+    let mut push = |from: usize, to: usize| ranges.push(range(from, to));
     let mut close = None;
     let (mut from, mut depth) = (0, 0);
     i += (i < end && at(i) == '*') as usize;
