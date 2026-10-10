@@ -1,10 +1,11 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -91,8 +92,29 @@ pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: crate::texpresso::Manager,
-    /// Serialize edits with symbol scans and settings read/modify/write.
-    edits: Mutex<()>,
+    /// One lock per project, keyed by its folder's identity (device and
+    /// inode), so a project's edits, settings read/modify/write, renames and
+    /// deletes run one at a time while other projects go on. The identity
+    /// follows the folder through a rename and does not depend on how an id
+    /// spells it on a case-insensitive volume.
+    edits: Mutex<HashMap<FolderId, Arc<Mutex<()>>>>,
+    /// Held by a project rename too, so two projects can't take one name.
+    library: Mutex<()>,
+}
+
+/// The guards protect no data, so a panic under one leaves nothing half-made:
+/// a poisoned lock is still good, and must not stop every later edit.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A folder's device and inode.
+type FolderId = (u64, u64);
+
+/// A project folder's identity, which a rename keeps.
+fn identity(root: &Path) -> Result<FolderId, CoreError> {
+    let meta = fs::metadata(root)?;
+    Ok((meta.dev(), meta.ino()))
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -116,7 +138,8 @@ impl Service {
             data_dir,
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
-            edits: Mutex::new(()),
+            edits: Mutex::default(),
+            library: Mutex::default(),
         }
     }
 
@@ -135,14 +158,31 @@ impl Service {
         self.texpresso.live_pdf(root, &token).map(Some)
     }
 
+    /// The lock for the project folder `key` names; locks no one holds are
+    /// dropped on the way.
+    fn project_lock(&self, key: FolderId) -> Arc<Mutex<()>> {
+        let mut locks = lock(&self.edits);
+        locks.retain(|_, held| Arc::strong_count(held) > 1);
+        Arc::clone(locks.entry(key).or_default())
+    }
+
+    /// Run `use_project` holding the project's lock.
     fn with_project<T>(
         &self,
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        let _edit = self.edits.lock().unwrap();
-        let root = self.project_root(id)?;
-        use_project(&root)
+        loop {
+            let root = self.project_root(id)?;
+            let key = identity(&root)?;
+            let project = self.project_lock(key);
+            let _edit = lock(&project);
+            // While this waited, the holder may have renamed or deleted the
+            // project, and another taken its name: look again.
+            if identity(&root).ok() == Some(key) {
+                return use_project(&root);
+            }
+        }
     }
 
     // ---------- status ----------
@@ -269,8 +309,11 @@ impl Service {
 
     // ---------- files ----------
 
+    /// Without the project's lock: every write replaces a file in one
+    /// rename, so a scan reads each file whole, old or new, and an autosave
+    /// need not wait for it.
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
-        self.with_project(id, projects::scan_symbols)
+        projects::scan_symbols(&self.project_root(id)?)
     }
 
     /// Validate the whole batch before writing, so a late unsafe or oversize
@@ -460,12 +503,17 @@ impl Service {
                     .as_deref()
                     .unwrap_or("article"),
             )?),
+            // A build or live preview left running would go on in the moved
+            // folder, and report back from the old path.
             "rename_project" => out(self.with_project(s("id")?, |root| {
+                let _library = lock(&self.library);
                 self.texpresso.stop(root)?;
+                self.compile.stop(root);
                 projects::rename_project(&self.data_dir, s("id")?, s("name")?)
             })?),
             "delete_project" => out(self.with_project(s("id")?, |root| {
                 self.texpresso.stop(root)?;
+                self.compile.stop(root);
                 projects::delete_project(&self.data_dir, s("id")?)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
@@ -584,4 +632,59 @@ pub fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> 
 
 fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
     serde_json::to_value(value).map_err(|err| CoreError::internal(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn service() -> (tempfile::TempDir, Service) {
+        let data = tempfile::tempdir().unwrap();
+        let service = Service::new(data.path().to_path_buf());
+        for name in ["P", "Q"] {
+            projects::create_project(data.path(), name, "blank").unwrap();
+        }
+        (data, service)
+    }
+
+    #[tokio::test]
+    async fn a_panic_during_an_edit_does_not_stop_later_edits() {
+        let (data, service) = service();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            service.with_project("P", |_| -> Result<(), CoreError> { panic!("a bug") })
+        }));
+        assert!(panicked.is_err());
+        let args = json!({ "id": "P", "path": "main.tex", "text": "saved" });
+        service.call("write_file", &args).await.unwrap();
+        let saved = fs::read_to_string(data.path().join("P/main.tex")).unwrap();
+        assert_eq!(saved, "saved");
+    }
+
+    #[test]
+    fn an_edit_waits_for_its_own_project_only_even_across_a_rename() {
+        let (data, service) = service();
+        let held = service.project_lock(identity(&data.path().join("P")).unwrap());
+        let guard = lock(&held);
+        std::thread::scope(|scope| {
+            // Another project's edit goes ahead.
+            service
+                .with_project("Q", |root| {
+                    projects::write_creating(&root.join("q.tex"), b"q")
+                })
+                .unwrap();
+            // This project's waits, under its new name too.
+            fs::rename(data.path().join("P"), data.path().join("R")).unwrap();
+            let edit = scope.spawn(|| {
+                service.with_project("R", |root| {
+                    projects::write_creating(&root.join("r.tex"), b"r")
+                })
+            });
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!data.path().join("R/r.tex").exists());
+            drop(guard);
+            edit.join().unwrap().unwrap();
+        });
+        assert!(data.path().join("R/r.tex").is_file());
+    }
 }

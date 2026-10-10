@@ -7,7 +7,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,13 @@ const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Set
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
+
+/// The sessions and their states are plain data that no panic leaves
+/// half-written, so a poisoned lock is still usable; and `Session::drop`
+/// locks, where a panic would abort the host.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
@@ -128,7 +135,7 @@ impl Session {
         state.revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
     }
     fn stop(&self, error: Option<String>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         if let Some(pid) = state.pid.take() {
             // The viewer starts an engine: stopping just its parent leaks it.
             unsafe {
@@ -143,7 +150,7 @@ impl Session {
         }
     }
     fn status(&self) -> Status {
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         let mut log = state.log.text();
         // stderr includes historical TeX diagnostics and echoed VFS commands.
         // The protocol buffers alone track the engine's current backtracking.
@@ -200,7 +207,7 @@ impl Drop for Manager {
 impl Manager {
     pub fn kill_all(&self) {
         self.shutdown.store(true, Ordering::Release);
-        for session in self.sessions.lock().unwrap().values() {
+        for session in lock(&self.sessions).values() {
             session.stop(None);
         }
     }
@@ -220,14 +227,14 @@ impl Manager {
         session.stop(None);
         // Explicit Stop ends ownership too; internal host invalidation
         // uses stop(root), retaining identity for a conditional restart.
-        self.sessions.lock().unwrap().remove(&root);
+        lock(&self.sessions).remove(&root);
         Ok(session.status())
     }
     /// The session's document alone, for a client waiting on it after an edit: no log, and
     /// no settings read, so it can ask often.
     pub fn pdf_state(&self, root: &Path, token: &str) -> Result<PdfState, CoreError> {
         let session = self.owned(&fs::canonicalize(root)?, token)?;
-        let mut state = session.state.lock().unwrap();
+        let mut state = lock(&session.state);
         state.last_used = Instant::now();
         Ok(PdfState {
             running: state.pid.is_some(),
@@ -240,7 +247,7 @@ impl Manager {
     /// The live document the client's session last wrote, which has its SyncTeX beside it.
     pub fn live_pdf(&self, root: &Path, token: &str) -> Result<PathBuf, CoreError> {
         let session = self.owned(&fs::canonicalize(root)?, token)?;
-        let state = session.state.lock().unwrap();
+        let state = lock(&session.state);
         session
             .written_pdf(&state)
             .filter(|pdf| pdf.with_extension("synctex").is_file())
@@ -250,9 +257,7 @@ impl Manager {
             })
     }
     fn owned(&self, root: &Path, token: &str) -> Result<Arc<Session>, CoreError> {
-        self.sessions
-            .lock()
-            .unwrap()
+        lock(&self.sessions)
             .get(root)
             .filter(|session| session.token == token)
             .cloned()
@@ -262,12 +267,12 @@ impl Manager {
     fn session(&self, root: &Path, token: Option<&str>) -> Result<Option<Arc<Session>>, CoreError> {
         match token {
             Some(token) => self.owned(root, token).map(Some),
-            None => Ok(self.sessions.lock().unwrap().get(root).cloned()),
+            None => Ok(lock(&self.sessions).get(root).cloned()),
         }
     }
     pub fn stop(&self, root: &Path) -> Result<(), CoreError> {
         let root = fs::canonicalize(root)?;
-        let session = self.sessions.lock().unwrap().get(&root).cloned();
+        let session = lock(&self.sessions).get(&root).cloned();
         if let Some(session) = session {
             session.stop(None);
         }
@@ -300,7 +305,7 @@ impl Manager {
             return Ok(self.idle(path_env));
         };
         if token.is_some() {
-            session.state.lock().unwrap().last_used = Instant::now();
+            lock(&session.state).last_used = Instant::now();
             if settings::read_settings(&root).main_file != session.main {
                 session.stop(Some("The main file changed. Start TeXpresso again.".into()));
             }
@@ -432,7 +437,7 @@ impl Manager {
             }),
         });
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = lock(&self.sessions);
             if self.shutdown.load(Ordering::Acquire) {
                 session.stop(None);
             }
@@ -466,7 +471,7 @@ impl Manager {
                     }
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {
                         let Some(session) = weak.upgrade() else { break; };
-                        let expired = session.state.lock().unwrap().last_used.elapsed() >= LEASE;
+                        let expired = lock(&session.state).last_used.elapsed() >= LEASE;
                         if expired { session.stop(Some("The TeXpresso session expired. Start TeXpresso again.".into())); }
                     }
                 }
@@ -519,7 +524,7 @@ impl Manager {
             session.stop(Some(unsent(err)));
         } else {
             input.files.insert(path, text.to_string());
-            session.bump(&mut session.state.lock().unwrap());
+            session.bump(&mut lock(&session.state));
         }
         Ok(session.status())
     }
@@ -653,7 +658,7 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
             Ok(n) => n,
         };
         if !protocol {
-            let mut state = session.state.lock().unwrap();
+            let mut state = lock(&session.state);
             let end = state.stderr.base + state.stderr.bytes.len() as u64;
             state.stderr.append(end, &chunk[..count]);
             session.bump(&mut state);
@@ -682,7 +687,7 @@ async fn read_output(mut reader: impl AsyncRead + Unpin, session: Arc<Session>, 
     }
 }
 fn apply_message(session: &Session, message: &Value) {
-    let mut guard = session.state.lock().unwrap();
+    let mut guard = lock(&session.state);
     let state = &mut *guard;
     // [pdf, path, pages]: the document written to the path it was given.
     if message[0] == "pdf" {
