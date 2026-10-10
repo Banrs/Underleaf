@@ -4,7 +4,7 @@
 //! `Service::call`, which the browser server exposes. Both block on the
 //! disk; hosts call them off their UI thread, as they do every `tl_call`.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use zip::ZipArchive;
 
-use crate::paths::{rel_key, sanitize_name};
+use crate::paths::{normalize_segments, rel_key, sanitize_name};
 use crate::projects::{self, ProjectInfo};
 use crate::service::{keep_both, too_large, Clash, Service, UploadSpec, UPLOAD_MAX_BYTES};
 use crate::{templates, CoreError, BUILD_DIR};
@@ -200,27 +200,6 @@ enum Source {
     Zip(usize),
 }
 
-/// A zip entry's name as path segments, or None for one that is absolute,
-/// leads out of the archive or holds a NUL. A backslash separates as a slash
-/// does: the zip format allows only '/', but Windows tools have written '\'.
-/// "." drops out and ".." goes back a folder.
-fn zip_segments(name: &str) -> Option<Vec<&str>> {
-    if name.contains('\0') || name.starts_with(['/', '\\']) {
-        return None;
-    }
-    let mut segments = Vec::new();
-    for segment in name.split(['/', '\\']) {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop()?;
-            }
-            segment => segments.push(segment),
-        }
-    }
-    (!segments.is_empty()).then_some(segments)
-}
-
 /// A zip's visible files; the contents of its one top folder if it has one,
 /// as a zipped project folder unpacks.
 fn zip_files(
@@ -234,9 +213,13 @@ fn zip_files(
     for i in 0..archive.len() {
         // Its name and size only: nothing is decompressed yet.
         let entry = archive.by_index_raw(i)?;
-        // No folders or links, and no name that would leave the project.
-        let Some(segments) = zip_segments(entry.name()).filter(|_| entry.is_file()) else {
-            continue;
+        // No folders, links or NULs, and no name that would leave the project,
+        // read as a project path is ("./a" is "a"); a backslash separates, as
+        // Windows tools have written it where the format allows only '/'.
+        let name = entry.name().replace('\\', "/");
+        let segments = match normalize_segments(&name, "") {
+            Ok(s) if entry.is_file() && !s.is_empty() && !name.contains('\0') => s,
+            _ => continue,
         };
         if !segments.iter().any(|s| hidden(s)) {
             allowance.file(entry.size())?;
@@ -275,20 +258,6 @@ fn folder_files(
         .into_iter()
         .map(|(s, p)| (s, Source::File(p)))
         .collect())
-}
-
-/// A file of a project being made, at a path `validate_uploads` has passed.
-/// The folder is new and holds only what the import wrote, so there is no
-/// clash to look for or file to replace, and a failed import removes it
-/// whole: the file is written in place, with no temporary file or sync of
-/// its own, and gets a new file's usual mode.
-fn create_new(root: &Path, rel: &str) -> Result<BufWriter<File>, CoreError> {
-    let abs = root.join(rel_key(rel)?);
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = OpenOptions::new().write(true).create_new(true).open(abs)?;
-    Ok(BufWriter::with_capacity(64 * 1024, file))
 }
 
 /// File › Open: a folder, a .zip or a single file from anywhere, copied into
@@ -353,7 +322,13 @@ fn import_project_within(
         let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
         service.validate_uploads(&id, "", &specs)?;
         for (spec, source) in specs.iter().zip(sources) {
-            let mut dest = create_new(&root, &spec.path)?;
+            // The folder is new and holds only what the import wrote, so there
+            // is no clash or file to replace, and a failed import removes it
+            // whole: each file is written in place, with no temporary file or
+            // sync of its own, and gets a new file's usual mode.
+            let abs = root.join(rel_key(&spec.path)?);
+            fs::create_dir_all(abs.parent().unwrap_or(&root))?;
+            let mut dest = BufWriter::new(File::create_new(abs)?);
             match source {
                 Source::File(path) => allowance.copy(File::open(path)?, &mut dest)?,
                 Source::Zip(i) => {
@@ -361,7 +336,7 @@ fn import_project_within(
                     allowance.copy(entry, &mut dest)?;
                 }
             }
-            dest.into_inner().map_err(io::IntoInnerError::into_error)?;
+            dest.flush()?;
         }
         let main = if let Some(main) = tex {
             main
@@ -487,15 +462,29 @@ mod tests {
     }
 
     #[test]
-    fn zip_names_are_read_as_paths_whatever_their_separators() {
-        assert_eq!(zip_segments("./main.tex"), Some(vec!["main.tex"]));
-        assert_eq!(
-            zip_segments("paper\\figs\\a.png"),
-            Some(vec!["paper", "figs", "a.png"])
-        );
-        assert_eq!(zip_segments("a/./b/../c.tex"), Some(vec!["a", "c.tex"]));
-        for outside in ["/etc/passwd", "\\x", "../x", "a/../../x", "a\0b", "./", ""] {
-            assert_eq!(zip_segments(outside), None, "{outside:?}");
-        }
+    fn zip_names_are_read_as_paths_and_none_leaves_the_project() {
+        let (dir, service) = library();
+        let src = dir.path().join("names.zip");
+        let mut names = vec!["./main.tex", "a\\b.tex", "a/./c/../d.tex"];
+        names.extend([
+            "/etc/x.tex",
+            "\\y.tex",
+            "../z.tex",
+            "a/../../w.tex",
+            "./",
+            "n\0.tex",
+        ]);
+        let files: Vec<_> = names.iter().map(|name| (*name, "x")).collect();
+        zip_of(&src, &files);
+        let info = import_project_within(&service, &src, IMPORT).unwrap();
+        let root = service.data_dir.join(&info.id);
+        let mut found = Vec::new();
+        projects::visit_files(&root, &mut |_, rel| {
+            found.push(rel.to_owned());
+            Ok(true)
+        })
+        .unwrap();
+        found.sort();
+        assert_eq!(found, ["a/b.tex", "a/d.tex", "main.tex"]);
     }
 }

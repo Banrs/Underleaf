@@ -12,7 +12,10 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 /// Split a relative path into normalized segments.
 /// `.` segments drop out; `..` pops — popping past the start is an escape.
 /// Returns an empty vec for inputs that normalize to the base itself.
-fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>, CoreError> {
+pub(crate) fn normalize_segments<'a>(
+    rel: &'a str,
+    escape_err: &str,
+) -> Result<Vec<&'a str>, CoreError> {
     let mut segments = Vec::new();
     for component in Path::new(rel).components() {
         match component {

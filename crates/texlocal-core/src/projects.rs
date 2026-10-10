@@ -145,7 +145,7 @@ fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
 
 /// Every content file in the project, depth-first, with its project-relative
 /// path. The visitor returns false to stop the walk.
-fn visit_files(
+pub(crate) fn visit_files(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
