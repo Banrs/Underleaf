@@ -125,10 +125,11 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 const MATH_ENVS = PREVIEW_ENVIRONMENTS.join('|');
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
 // Display math: a math environment, $$…$$ or \[…\], each with how to read it.
+// Each with its opening delimiter: a block holding the cursor opens before it.
 const BLOCKS = [
-  [ENV_RE, (m) => texForPreview(m[1], m[3])],
-  [/\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
-  [/\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
+  ['\\begin{', ENV_RE, (m) => texForPreview(m[1], m[3])],
+  ['$$', /\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
+  ['\\[', /\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
 ];
 
 // KaTeX-friendly cleanup: drop labels/numbering, map env content to aligned/cases.
@@ -151,7 +152,10 @@ export function mathAt(doc, pos) {
   const text = doc.sliceString(from, Math.min(doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
-  for (const [re, tex] of BLOCKS) {
+  for (const [opener, re, tex] of BLOCKS) {
+    // No opener before the cursor, no block around it: skip the regex scan
+    // (most cursor moves, in prose).
+    if (text.lastIndexOf(opener, rel) === -1) continue;
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
       if (rel >= m.index && rel <= m.index + m[0].length) {

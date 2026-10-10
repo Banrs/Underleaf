@@ -65,6 +65,31 @@ test('uppercase TeX files retain the source toolbar', () => {
   }
 });
 
+test('the location row is rebuilt only when what it shows changes', (t) => {
+  t.after(() => { state.outline = []; state.cursorLine = 1; });
+  state.editor = {};
+  state.openPath = 'main.tex';
+  state.outline = [{ depth: 2, title: 'Intro', line: 1 }, { depth: 2, title: 'Method', line: 20 }];
+  state.cursorLine = 2;
+  const bar = buildSourceBar({ commandButton: (id) => el('button', {}, id), openFile() {}, reveal() {}, afterHeading() {} });
+  bar.update();
+  const section = bar.location.querySelector('.location-section');
+  assert.equal(section.textContent, 'Intro');
+  state.cursorLine = 5;
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section'), section, 'same section: untouched');
+  state.outline = state.outline.map((o) => ({ ...o }));   // re-analysed, unchanged
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section'), section);
+  state.cursorLine = 25;
+  bar.update();
+  assert.equal(bar.location.querySelector('.location-section').textContent, 'Method');
+  // Its menu, read when opened, checks the current section.
+  bar.location.querySelector('.location-section').click();
+  const checked = [...document.querySelectorAll('.menu-item[aria-checked="true"]')].map((b) => b.textContent);
+  assert.deepEqual(checked, ['✓Method']);
+});
+
 test('context menu coordinates and viewport bounds use the body zoom', () => {
   for (const zoom of [0.8, 1, 1.3]) {
     document.body.style.zoom = String(zoom);

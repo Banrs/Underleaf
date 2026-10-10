@@ -185,7 +185,14 @@ export function buildSourceBar({ commandButton, openFile, reveal, afterHeading }
     const shown = foldCount(widths, room);
     groups.forEach((g, i) => { g.element.hidden = i >= shown; });
   };
-  new ResizeObserver(fold).observe(toolbar);
+  // Measuring forces layout: once a frame, and only when the width changed.
+  let frame = 0, foldedWidth = -1;
+  new ResizeObserver(() => {
+    frame ||= requestAnimationFrame(() => {
+      frame = 0;
+      if (toolbar.clientWidth !== foldedWidth) { foldedWidth = toolbar.clientWidth; fold(); }
+    });
+  }).observe(toolbar);
 
   const location = el('nav', { class: 'location-bar', 'aria-label': 'Location' });
 
@@ -260,8 +267,14 @@ function textFilesIn(nodes, folder) {
     : TEXT_FILE.test(n.path) && n.path.slice(0, Math.max(0, n.path.lastIndexOf('/'))) === folder ? [n.path] : []));
 }
 
+// Rebuilt only when what it shows changes: the caret moving within a section
+// leaves it alone. Its menus read the state when opened.
 function renderLocation(row, { openFile, reveal }) {
   const path = state.openPath;
+  const here = state.outline.length ? outlineChain(state.cursorLine).at(-1) ?? null : undefined;
+  const key = JSON.stringify([path, state.settings?.title || state.projectId, here && [here.title, here.line]]);
+  if (row.dataset.key === key) return;
+  row.dataset.key = key;
   if (!path) { row.replaceChildren(); return; }
   const parts = path.split('/');
   const name = parts.pop();
@@ -282,18 +295,20 @@ function renderLocation(row, { openFile, reveal }) {
     ...parts.flatMap((f) => [chevron(), crumb('folder', f, 'location-folder')]),
     chevron(), file,
   ];
-  if (state.outline.length) {
-    const here = outlineChain(state.cursorLine).at(-1);
+  if (here !== undefined) {
     const title = here?.title ?? 'Top of File';
-    const minDepth = Math.min(...state.outline.map((o) => o.depth));
     const section = el('button', {
       class: `location-crumb location-menu location-section ${here ? '' : 'secondary'}`,
       title: 'Go to a Section', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
       'aria-label': `Section: ${title}`,
     }, icon('list-indent'), el('span', { class: 'location-text' }, title));
-    section.addEventListener('click', opensMenu(section, () => state.outline.map((o) => ({
-      label: `${'\u2003'.repeat(o.depth - minDepth)}${o.title}`, checked: o === here, action: () => reveal(o.line),
-    }))));
+    section.addEventListener('click', opensMenu(section, () => {
+      const current = outlineChain(state.cursorLine).at(-1);
+      const minDepth = Math.min(...state.outline.map((o) => o.depth));
+      return state.outline.map((o) => ({
+        label: `${'\u2003'.repeat(o.depth - minDepth)}${o.title}`, checked: o === current, action: () => reveal(o.line),
+      }));
+    }));
     out.push(chevron(), section);
   }
   row.replaceChildren(...out);

@@ -379,15 +379,19 @@ function iconButton(commandId, glyph, size = '') {
   }, icon(glyph));
 }
 
+// Runs on every layout change (each frame of a divider drag), so it writes
+// only what changed.
 export function syncToolbarState() {
+  const set = (b, name, value) => { if (b.getAttribute(name) !== value) b.setAttribute(name, value); };
   for (const b of document.querySelectorAll('[data-command]')) {
     const id = b.dataset.command;
     const cmd = getCommand(id);
     if (!cmd) continue;
-    b.disabled = cmd.enabled ? !cmd.enabled() : false;
-    b.title = tooltip(id);
-    b.setAttribute('aria-label', commandTitle(id));
-    if (cmd.checked) b.setAttribute('aria-pressed', String(!!cmd.checked()));
+    const disabled = cmd.enabled ? !cmd.enabled() : false;
+    if (b.disabled !== disabled) b.disabled = disabled;
+    set(b, 'title', tooltip(id));
+    set(b, 'aria-label', commandTitle(id));
+    if (cmd.checked) set(b, 'aria-pressed', String(!!cmd.checked()));
   }
 }
 

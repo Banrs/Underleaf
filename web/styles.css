@@ -623,11 +623,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   overflow: hidden;
 }
 .tree-row:hover, .search-hit:hover { background: var(--fill-4); }
-.tree-row[aria-current="true"] { background: var(--fill-2); }
+.tree-row[aria-selected="true"] { background: var(--fill-2); }
 .tree-row[aria-expanded] .row-label { font-weight: 500; }   /* folders: kit uses Medium */
 .row-icon { display: inline-flex; justify-content: center; width: 24px; flex: none; color: var(--label-2); }
 .row-icon svg { width: 17px; height: 17px; }
-.tree-row[aria-current="true"] .row-icon { color: var(--accent); }
+.tree-row[aria-selected="true"] .row-icon { color: var(--accent); }
 .row-label { overflow: hidden; text-overflow: ellipsis; }
 .row-badge { margin-left: auto; display: inline-flex; color: var(--yellow); }
 .row-badge svg { width: 14px; height: 14px; }
@@ -1114,7 +1114,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .folder-roots { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-4); }
 .folder-root { height: var(--h-control); padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--fill-3); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 .folder-root:hover { background: var(--fill-2); }
-.folder-root.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.folder-root[aria-current="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .folder-path { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--h-control); margin: var(--sp-2) 0; }
 .folder-path-text { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--fs-small); line-height: var(--lh-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-user-select: text; user-select: text; }
 .folder-badge { flex: none; padding: 2px var(--sp-2); border-radius: var(--r-pill); background: color-mix(in srgb, var(--green) 16%, transparent); color: color-mix(in srgb, var(--green) 70%, var(--label)); font-size: var(--fs-small); line-height: var(--lh-small); font-weight: 500; }
