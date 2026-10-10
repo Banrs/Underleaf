@@ -47,7 +47,8 @@ uint32_t tl_source_line_count(const TlSource *source);
 
 /* The highlighted runs of the lines a range touches: start, length and kind
  * (HighlightKind's order) for each; *count is the number of values. Free
- * them with tl_source_free_runs. count may be NULL. */
+ * them with tl_source_free_runs, which takes NULL as nothing. A NULL count
+ * gets NULL, so there is nothing to free. */
 uint32_t *tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *count);
 void tl_source_free_runs(uint32_t *runs, size_t count);
 

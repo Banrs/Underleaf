@@ -258,7 +258,8 @@ pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
 
 /// The highlighted runs of the lines a range touches, as start, length and
 /// kind (`HighlightKind`'s order) for each; `count` is the number of values.
-/// Free them with `tl_source_free_runs`.
+/// Free them with `tl_source_free_runs`. A null `count` gets null, as runs
+/// could not be freed without their count.
 ///
 /// # Safety
 /// As `tl_source_edit`; `count` is null or valid for a write.
@@ -269,24 +270,28 @@ pub unsafe extern "C" fn tl_source_highlights(
     length: u32,
     count: *mut usize,
 ) -> *mut u32 {
+    let Some(count) = count.as_mut() else {
+        return std::ptr::null_mut();
+    };
     let runs: Box<[u32]> = on_source(source, Box::default(), |doc| {
         let runs = doc.highlights(start, length).into_iter();
         runs.flat_map(|h| [h.start, h.length, h.kind as u32])
             .collect()
     });
-    if let Some(count) = count.as_mut() {
-        *count = runs.len();
-    }
+    *count = runs.len();
     Box::into_raw(runs).cast()
 }
 
 /// # Safety
-/// `runs` and `count` came from one `tl_source_highlights`, freed once.
+/// `runs` is null (nothing to free) or, with `count`, came from one
+/// `tl_source_highlights`, freed once.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
-    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-        runs, count,
-    )));
+    if !runs.is_null() {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            runs, count,
+        )));
+    }
 }
 
 /// The arguments the source's commands take, each what it needs.

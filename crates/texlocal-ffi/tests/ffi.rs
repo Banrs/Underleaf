@@ -364,9 +364,9 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         let runs = tl_source_highlights(source, 99, 99, &mut count);
         assert_eq!(count, 0);
         tl_source_free_runs(runs, count);
-        // A null count is no place to write: the runs still come back.
-        let runs = tl_source_highlights(source, 0, 9, ptr::null_mut());
-        tl_source_free_runs(runs, 0);
+        // Runs can't be freed without their count, so a null count gets none.
+        assert!(tl_source_highlights(source, 0, 9, ptr::null_mut()).is_null());
+        tl_source_free_runs(ptr::null_mut(), 0);
 
         // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
         // edit still lands, keeping the mirror in step with the editor.
