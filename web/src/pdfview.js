@@ -7,12 +7,20 @@
 // otherwise deadlock pdf.js). Canvases paint first for responsiveness; the
 // transparent text layer is a second pass built from each page's text items.
 
-import * as pdfjs from 'pdfjs-dist';
 import { el } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
-pdfjs.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
+// pdf.js is most of the workspace's code, and only a loaded PDF needs it, so
+// it arrives with the first one rather than with the editor.
+let pdfjs = null;
+function loadPdfjs() {
+  pdfjs ??= import('pdfjs-dist').then((lib) => {
+    lib.GlobalWorkerOptions.workerSrc = '/dist/pdf.worker.min.mjs';
+    return lib;
+  }).catch((err) => { pdfjs = null; throw err; });
+  return pdfjs;
+}
 
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 4;
@@ -166,12 +174,14 @@ export class PdfViewer {
 
   // `httpHeaders` go with every request pdf.js makes for the file.
   async load(url, httpHeaders) {
-    const task = pdfjs.getDocument({ url: new URL(url, window.location.origin).href, httpHeaders });
     const generation = ++this._loadGeneration;
     // Every await below can be overtaken by a newer load. Failing and being
     // superseded need the same cleanup, so the task is destroyed unless this
     // call is the one that adopts it.
     const superseded = () => generation !== this._loadGeneration;
+    const lib = await loadPdfjs();
+    if (superseded()) return false;
+    const task = lib.getDocument({ url: new URL(url, window.location.origin).href, httpHeaders });
     let adopted = false;
     try {
       const doc = await task.promise;

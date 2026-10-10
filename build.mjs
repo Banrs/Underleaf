@@ -36,9 +36,10 @@ const common = {
   sourcemap: watch,
   logLevel: 'info',
 };
-// Splitting puts the dynamically imported workspace (CodeMirror, KaTeX,
-// pdf.js) in chunks/, so the home screen never parses it. Hashed names: clear
-// the previous build's.
+// Splitting puts each dynamic import in chunks/: the workspace (CodeMirror)
+// on the first project open, pdf.js with the first PDF and KaTeX (whose
+// katex.min.css editor.js links then) with the first equation preview, so
+// the home screen parses none of them. Hashed names: clear the previous build's.
 fs.rmSync(at('web/dist/chunks'), { recursive: true, force: true });
 // Remove bundles from the retired WinUI embedded pages in existing checkouts.
 for (const name of ['embed-editor.js', 'embed-pdf.js']) {

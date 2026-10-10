@@ -38,8 +38,9 @@ installMenuBridge();
 
 // ---------- workspace ----------
 
-// The workspace carries CodeMirror, KaTeX and pdf.js — most of the code — so it
-// loads on the first project open instead of in front of the home screen.
+// The workspace carries CodeMirror — most of the code once pdf.js and KaTeX,
+// which it loads as it needs them, are left out — so it loads on the first
+// project open instead of in front of the home screen.
 let workspace = null;
 
 async function loadWorkspace() {

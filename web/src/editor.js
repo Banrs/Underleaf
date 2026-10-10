@@ -1,8 +1,7 @@
 // CodeMirror 6 editor wired for LaTeX: stex highlighting, command/citation/ref
 // autocomplete, native OS spellcheck, light/dark themes.
 
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, showTooltip } from '@codemirror/view';
-import katex from 'katex';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, showTooltip, repositionTooltips } from '@codemirror/view';
 import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
 import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
@@ -179,6 +178,25 @@ export function mathAt(doc, pos) {
   return null;
 }
 
+// KaTeX and its stylesheet load with the first preview: most sessions never
+// show one, and the home screen never does.
+let katex = null;
+let katexLoading = null;
+function loadKatex() {
+  katexLoading ??= Promise.all([
+    import('katex'),
+    new Promise((resolve) => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/dist/katex.min.css';
+      // A missing stylesheet still leaves KaTeX's markup readable.
+      link.onload = link.onerror = resolve;
+      document.head.append(link);
+    }),
+  ]).then(([module]) => { katex = module.default; }, (err) => { katexLoading = null; throw err; });
+  return katexLoading;
+}
+
 function mathTooltip(state, prev = null) {
   const m = mathAt(state.doc, state.selection.main.head);
   if (!m?.tex) return null;
@@ -191,14 +209,20 @@ function mathTooltip(state, prev = null) {
     display: m.display,
     above: true,
     arrow: false,
-    create() {
+    create(view) {
       const dom = document.createElement('div');
       dom.className = 'cm-math-preview';
-      try {
-        katex.render(m.tex, dom, { displayMode: m.display, throwOnError: false, strict: false });
-      } catch {
-        return { dom: document.createElement('div') };
-      }
+      // Hidden until KaTeX has drawn into it; a failed render stays hidden.
+      dom.hidden = true;
+      const draw = () => {
+        try {
+          katex.render(m.tex, dom, { displayMode: m.display, throwOnError: false, strict: false });
+        } catch { return; }
+        dom.hidden = false;
+        if (view.dom.isConnected) repositionTooltips(view);
+      };
+      if (katex) draw();
+      else loadKatex().then(draw, (err) => console.error('The equation preview could not load:', err));
       return { dom };
     },
   };
