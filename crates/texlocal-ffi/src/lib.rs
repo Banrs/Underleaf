@@ -76,7 +76,8 @@ fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
 ///
 /// # Safety
 /// `source` is null or came from `tl_source_new` and is not freed, and no
-/// two calls on it overlap (the host's `const` marks those that leave the
+/// two calls on it overlap: one thread at a time, `const` queries included,
+/// as `body` gets `&mut` (the host's `const` only marks those that leave the
 /// text as it is).
 unsafe fn on_source<T>(
     source: *const TlSource,
@@ -218,7 +219,8 @@ pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSo
 /// a source answers as for a null source if it fails: nothing, 0, no runs.
 ///
 /// # Safety
-/// `source` came from `tl_source_new` and is not freed; `text` is null
+/// `source` came from `tl_source_new` and is not freed, and no other call
+/// on it (`const` queries included) overlaps this one; `text` is null
 /// (nothing) or `len` bytes of UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_edit(
