@@ -6,7 +6,9 @@ use std::{borrow::Cow, sync::LazyLock};
 use regex::Regex;
 use serde::Serialize;
 
-use crate::{ascii, catalog, is, letter, space, utf16, Text};
+use crate::prose::Names;
+use crate::stack::Stack;
+use crate::{ascii, catalog, is, letter, space, utf16, Text, TextRange, NAME};
 
 fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
     (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
@@ -58,7 +60,7 @@ pub(crate) struct Group {
 pub(crate) trait Visit {
     fn range(&mut self, _from: usize, _to: usize) {}
     fn command(&mut self, _name: &str, _start: usize, _name_end: usize) {}
-    fn at(&mut self, _groups: &[Group]) {}
+    fn at(&mut self, _groups: Vec<Group>) {}
     fn closed(&mut self, _group: &Group, _close: usize) {}
 }
 
@@ -77,8 +79,8 @@ impl Visit for Option<(usize, usize)> {
 /// The scan between two tokens: all it carries from the text before.
 #[derive(Clone, Default)]
 pub(crate) struct Scanner {
-    /// Open groups, innermost last.
-    stack: Vec<Group>,
+    /// Open groups, shared with the scanners kept before.
+    stack: Stack<Group>,
     /// The next { opens a text argument (\text{).
     text_argument: bool,
     math_run: bool,
@@ -93,7 +95,7 @@ pub(crate) struct Scanner {
 
 impl Scanner {
     pub fn in_math(&self) -> bool {
-        self.stack.last().is_some_and(|g| g.math)
+        self.stack.top().is_some_and(|g| g.math)
     }
 
     /// Read the tokens of `src` that start before `until`, telling `visit`.
@@ -108,11 +110,14 @@ impl Scanner {
             open,
             command: None,
         };
-        let math = |stack: &[Group]| stack.last().is_some_and(|g| g.math);
-        let close = |stack: &mut Vec<Group>, end: &str| {
-            if let Some(k) = stack.iter().rposition(|g| g.end == end) {
-                stack.truncate(k);
-            }
+        let math = |stack: &Stack<Group>| stack.top().is_some_and(|g| g.math);
+        let close =
+            |stack: &mut Stack<Group>, end: &str| stack.pop_to(false, |g| g.end == end, |_| {});
+        // Outermost first, for a caller that asked about a probe.
+        let groups = |stack: &Stack<Group>| {
+            let mut groups: Vec<Group> = stack.iter().cloned().collect();
+            groups.reverse();
+            groups
         };
         let Scanner {
             mut stack,
@@ -127,10 +132,10 @@ impl Scanner {
         while i < n.min(until) {
             let token_start = i;
             while probe < probes.len() && probes[probe] <= token_start {
-                visit.at(&stack);
+                visit.at(groups(&stack));
                 probe += 1;
             }
-            if !probes.is_empty() && probe == probes.len() && stack.is_empty() {
+            if !probes.is_empty() && probe == probes.len() && stack.top().is_none() {
                 break;
             }
             let pending = last_command.take();
@@ -155,12 +160,9 @@ impl Scanner {
                         .count();
                     reach = reach.max(j + 1);
                     if src.get(j).is_some_and(|&u| is(u, '\n')) {
-                        if let Some(k) = stack
-                            .iter()
-                            .position(|g| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]"))
-                        {
-                            stack.truncate(k);
-                        }
+                        let delimited =
+                            |g: &Group| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]");
+                        stack.pop_to(true, delimited, |_| {});
                         text_argument = false;
                     } else {
                         last_command = pending;
@@ -173,7 +175,7 @@ impl Scanner {
                 }
                 '$' => {
                     let double = src.get(i).is_some_and(|&u| is(u, '$'));
-                    match stack.last().map(|g| g.end.as_ref()) {
+                    match stack.top().map(|g| g.end.as_ref()) {
                         Some(end @ ("$" | "$$")) => {
                             i += (end == "$$" && double) as usize;
                             stack.pop();
@@ -198,10 +200,7 @@ impl Scanner {
                     text_argument = false;
                 }
                 '}' => {
-                    if let Some(k) = stack.iter().rposition(|g| g.end == "}") {
-                        visit.closed(&stack[k], token_start);
-                        stack.truncate(k);
-                    }
+                    stack.pop_to(false, |g| g.end == "}", |g| visit.closed(g, token_start));
                 }
                 '\\' if i < n => {
                     let in_math = math(&stack);
@@ -224,7 +223,7 @@ impl Scanner {
                             i += 1;
                         }
                         let name_end = i;
-                        let mut buf = [0; 64];
+                        let mut buf = [0; NAME];
                         let name = ascii(&src[name_start..name_end], &mut buf);
                         let mut verb = false;
                         let literal_end: Option<(Cow<'_, [u16]>, usize)> = match name {
@@ -287,7 +286,7 @@ impl Scanner {
                                 // Code to the end of the text, or the position
                                 // asked about is in it.
                                 (None, None) => {
-                                    stack.clear();
+                                    stack = Stack::default();
                                     n
                                 }
                             };
@@ -312,7 +311,7 @@ impl Scanner {
             reach = reach.max(read).max(i + 1);
         }
         for _ in &probes[probe..] {
-            visit.at(&stack);
+            visit.at(groups(&stack));
         }
         *self = Scanner {
             stack,
@@ -330,17 +329,38 @@ impl Scanner {
 /// start. An edit forgets those that read what it changed.
 pub(crate) struct Scans(Vec<Point>);
 
-/// A kept scanner, and the maths or code run that ranges after it may join.
+/// A kept scanner, the maths or code run that ranges after it may join, and
+/// how far name arguments have been read.
 #[derive(Clone, Default)]
 pub(crate) struct Point {
     pub scanner: Scanner,
     pub run: Option<(usize, usize)>,
+    pub names: Names,
+}
+
+/// What a point is kept with, read through the whole text.
+struct Keeping<'a> {
+    text: &'a Text,
+    run: &'a mut Option<(usize, usize)>,
+    names: &'a mut Names,
+    scratch: Vec<TextRange>,
+}
+
+impl Visit for Keeping<'_> {
+    fn range(&mut self, from: usize, to: usize) {
+        self.run.range(from, to);
+    }
+
+    fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
+        let end = self.text.units.len();
+        let command = (name, command_start, name_end);
+        self.names
+            .command(self.text, command, end, &mut self.scratch);
+        self.scratch.clear();
+    }
 }
 
 const SPACING: usize = 4096;
-/// A scanner with more open groups isn't kept: braces nobody closes would
-/// make every one as big as the text.
-const KEPT_GROUPS: usize = 64;
 
 impl Default for Scans {
     fn default() -> Self {
@@ -356,15 +376,21 @@ impl Scans {
     }
 
     /// The last point at or before `before` that has read nothing at or past
-    /// `end`, from which reading `src[..end]` goes as it would from the start.
-    pub fn resume(&mut self, src: &[u16], before: usize, end: usize) -> Point {
+    /// `end`, from which reading the text up to `end` goes as it would from
+    /// the start. Points are kept as far as `before` first, each a few
+    /// pointers whatever the groups open.
+    pub fn resume(&mut self, text: &Text, before: usize, end: usize) -> Point {
         let mut point = self.0[self.0.len() - 1].clone();
-        while point.scanner.i + SPACING <= before && point.scanner.i < src.len() {
+        while point.scanner.i + SPACING <= before && point.scanner.i < text.units.len() {
             let until = point.scanner.i + SPACING;
-            point.scanner.run(src, until, &[], &mut point.run);
-            if point.scanner.stack.len() <= KEPT_GROUPS {
-                self.0.push(point.clone());
-            }
+            let mut keeping = Keeping {
+                text,
+                run: &mut point.run,
+                names: &mut point.names,
+                scratch: Vec::new(),
+            };
+            point.scanner.run(&text.units, until, &[], &mut keeping);
+            self.0.push(point.clone());
         }
         let k = self
             .0

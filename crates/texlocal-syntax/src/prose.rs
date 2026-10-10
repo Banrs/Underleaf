@@ -6,24 +6,23 @@ use crate::maths::{Point, Scans, Visit};
 use crate::{blank, catalog::CATALOG, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
-/// the shared math scan, plus name arguments from commands in the paragraph.
-/// Name arguments are read from the paragraph's start as they cannot contain
-/// a blank line; the scan resumes from a kept point before it.
+/// the shared math scan, plus name arguments. The scan resumes from a kept
+/// point before `start`, which carries how far names have been read.
 pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<TextRange> {
-    let mut line = text.line_index(start);
-    while line > 0 && !blank(text.line(line - 1)) {
-        line -= 1;
-    }
-    let paragraph = text.lines[line] as usize;
     let end_index = end as usize;
-    let Point { mut scanner, run } = scans.resume(&text.units, paragraph, end_index);
+    let Point {
+        mut scanner,
+        run,
+        names,
+    } = scans.resume(text, start as usize, end_index);
     let mut found = Found {
         text,
         end: end_index,
-        parsed_until: paragraph,
         ranges: run.map(|(from, to)| range(from, to)).into_iter().collect(),
         names: Vec::new(),
+        reading: names,
     };
+    found.reading.resume(text, end_index, &mut found.names);
     scanner.run(&text.units[..end_index], end_index, &[], &mut found);
     let Found {
         mut ranges, names, ..
@@ -63,14 +62,51 @@ fn range(from: usize, to: usize) -> TextRange {
     }
 }
 
-/// What the scan finds: maths and code, and the name arguments of the
-/// commands from `parsed_until` on.
+/// Where name arguments have been read to, and where the last command that
+/// takes them starts its: a reading resumed after it reads that again, as it
+/// may run on past where it resumes. A command inside another's names is
+/// none, and none is read across a blank line, so a paragraph's start needs
+/// nothing from before it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Names {
+    from: Option<usize>,
+    parsed_until: usize,
+}
+
+impl Names {
+    pub fn command(
+        &mut self,
+        text: &Text,
+        (name, command_start, name_end): (&str, usize, usize),
+        end: usize,
+        ranges: &mut Vec<TextRange>,
+    ) {
+        let catalog = &*CATALOG;
+        let lists = [
+            &catalog.name_commands,
+            &catalog.cite_commands,
+            &catalog.ref_commands,
+        ];
+        if command_start >= self.parsed_until && lists.iter().any(|l| l.iter().any(|n| n == name)) {
+            self.from = Some(name_end);
+            self.parsed_until = argument_ranges(text, name_end, end, ranges);
+        }
+    }
+
+    fn resume(&mut self, text: &Text, end: usize, ranges: &mut Vec<TextRange>) {
+        if let Some(from) = self.from {
+            self.parsed_until = argument_ranges(text, from, end, ranges);
+        }
+    }
+}
+
+/// What the scan finds: maths and code, and name arguments.
 struct Found<'a> {
     text: &'a Text,
     end: usize,
-    parsed_until: usize,
     ranges: Vec<TextRange>,
     names: Vec<TextRange>,
+    reading: Names,
 }
 
 impl Visit for Found<'_> {
@@ -79,18 +115,9 @@ impl Visit for Found<'_> {
     }
 
     fn command(&mut self, name: &str, command_start: usize, name_end: usize) {
-        let catalog = &*CATALOG;
-        if command_start >= self.parsed_until
-            && [
-                &catalog.name_commands,
-                &catalog.cite_commands,
-                &catalog.ref_commands,
-            ]
-            .iter()
-            .any(|list| list.iter().any(|n| n == name))
-        {
-            self.parsed_until = argument_ranges(self.text, name_end, self.end, &mut self.names);
-        }
+        let command = (name, command_start, name_end);
+        self.reading
+            .command(self.text, command, self.end, &mut self.names);
     }
 }
 
@@ -117,8 +144,9 @@ fn argument_ranges(text: &Text, mut i: usize, end: usize, ranges: &mut Vec<TextR
         }
         if let Some(delimiter) = close {
             match c {
-                '\\' => {
-                    i = (i + 2).min(end);
+                // An escape, but not of a line feed: that may end the paragraph.
+                '\\' if i + 1 < end && at(i + 1) != '\n' => {
+                    i += 2;
                     continue;
                 }
                 '{' => depth += 1,
@@ -192,6 +220,8 @@ mod tests {
         );
         // Not in a comment, nor past a blank line.
         assert_eq!(names("% \\cite{x}\n\\input{a\n\nprose}"), ["a"]);
+        // Not even after a backslash at the end of a line.
+        assert_eq!(names("\\cite{a\\\n\nprose}"), ["a\\"]);
     }
 
     #[test]

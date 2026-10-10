@@ -4,9 +4,8 @@
 //! before left; those states are kept, so an edit re-reads only from its
 //! line, and only as far as asked.
 
-use std::sync::Arc;
-
-use crate::{ascii, letter, space, Text};
+use crate::stack::Stack;
+use crate::{ascii, letter, space, Text, NAME};
 
 /// What a run of text is, by the stex mode's token names. Plain text and
 /// brackets have none. The C ABI numbers them in this order, from 0.
@@ -86,8 +85,9 @@ impl Cache {
 #[derive(Clone, Default)]
 struct State {
     mode: Mode,
-    /// The commands whose arguments may follow (stex's cmdState).
-    commands: Stack,
+    /// The commands whose arguments may follow (stex's cmdState), shared
+    /// with the states kept for the lines before.
+    commands: Stack<Open>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -109,63 +109,34 @@ struct Command {
     brackets: usize,
 }
 
-/// The open commands as a shared persistent list, innermost first. Each
-/// line's kept state is one pointer into it, and each frame knows the
-/// innermost command with a rule below it, so neither keeping a state nor
-/// styling a word costs more as unclosed groups pile up.
-#[derive(Clone, Default)]
-struct Stack(Option<Arc<Frame>>);
-
-#[derive(Clone)]
-struct Frame {
+/// An open command, and the innermost command with a rule below it, so
+/// styling a word looks no further than the top however deep it is.
+#[derive(Clone, Copy)]
+struct Open {
     command: Command,
     styled_below: Option<Command>,
-    below: Stack,
 }
 
-impl Stack {
-    fn push(&mut self, command: Command) {
-        let below = std::mem::take(self);
-        let styled_below = below.styled();
-        *self = Stack(Some(Arc::new(Frame {
-            command,
-            styled_below,
-            below,
-        })));
-    }
-
-    fn pop(&mut self) {
-        if let Some(frame) = self.0.take() {
-            *self = frame.below.clone();
-        }
-    }
-
-    /// The innermost command with a rule.
-    fn styled(&self) -> Option<Command> {
-        let frame = self.0.as_deref()?;
-        (!frame.command.styles.is_empty())
-            .then_some(frame.command)
-            .or(frame.styled_below)
-    }
+fn open(commands: &mut Stack<Open>, command: Command) {
+    let styled_below = styled(commands);
+    commands.push(Open {
+        command,
+        styled_below,
+    });
 }
 
-/// Unlinked a frame at a time: dropping a deep list recursively would
-/// overflow the stack.
-impl Drop for Stack {
-    fn drop(&mut self) {
-        let mut next = self.0.take();
-        while let Some(frame) = next {
-            next = Arc::try_unwrap(frame)
-                .ok()
-                .and_then(|mut f| f.below.0.take());
-        }
-    }
+/// The innermost command with a rule.
+fn styled(commands: &Stack<Open>) -> Option<Command> {
+    let top = commands.top()?;
+    (!top.command.styles.is_empty())
+        .then_some(top.command)
+        .or(top.styled_below)
 }
 
 use HighlightKind::*;
 
 fn styles(name: &[u16]) -> &'static [Option<HighlightKind>] {
-    match ascii(name, &mut [0; 16]) {
+    match ascii(name, &mut [0; NAME]) {
         "importmodule" => &[Some(StringLiteral), Some(Builtin)],
         "documentclass" => &[None, Some(Argument)],
         "usepackage" | "begin" | "end" | "label" | "ref" | "eqref" | "cite" | "bibitem"
@@ -201,10 +172,13 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
             s.pos += 1;
             let name = s.pos;
             s.eat_while(command_letter);
-            state.commands.push(Command {
-                styles: styles(&s.text[name..s.pos]),
-                brackets: 0,
-            });
+            open(
+                &mut state.commands,
+                Command {
+                    styles: styles(&s.text[name..s.pos]),
+                    brackets: 0,
+                },
+            );
             state.mode = Mode::Arguments;
             return Some(Command);
         }
@@ -230,16 +204,19 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         s.pos = s.text.len();
         Some(Comment)
     } else if one_of(c, "}]") {
-        if state.commands.0.is_none() {
+        if state.commands.top().is_none() {
             return Some(Invalid);
         }
         state.mode = Mode::Arguments;
         None
     } else if one_of(c, "{[") {
-        state.commands.push(Command {
-            styles: &[],
-            brackets: 0,
-        });
+        open(
+            &mut state.commands,
+            Command {
+                styles: &[],
+                brackets: 0,
+            },
+        );
         None
     } else if is_digit(c) {
         s.eat_while(|u| word(u) || one_of(u, ".%"));
@@ -247,7 +224,7 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     } else {
         s.eat_while(|u| word(u) || u == b'-' as u16);
         // The innermost command with a rule styles what's in its arguments.
-        let command = state.commands.styled()?;
+        let command = styled(&state.commands)?;
         command
             .brackets
             .checked_sub(1)
@@ -309,8 +286,8 @@ fn math(s: &mut Stream, state: &mut State, end: &'static str) -> Option<Highligh
 fn arguments(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
     let c = s.peek()?;
     if one_of(c, "{[") {
-        if let Some(frame) = &mut state.commands.0 {
-            Arc::make_mut(frame).command.brackets += 1;
+        if let Some(top) = state.commands.top_mut() {
+            top.command.brackets += 1;
         }
         s.pos += 1;
         state.mode = Mode::Normal;

@@ -32,8 +32,8 @@ void tl_close(TlHandle *handle);
 typedef struct TlSource TlSource;
 
 /* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
- * read as U+FFFD. No call into the core lets a Rust panic unwind into the
- * caller: each answers as the comments here say for bad input. */
+ * read as U+FFFD. Never NULL. A call on a NULL source, or one that fails
+ * inside, answers nothing, 0, no runs or NULL. */
 TlSource *tl_source_new(const uint8_t *text, size_t len);
 
 /* The editor replaced length units at start with text. */
@@ -45,14 +45,14 @@ uint32_t tl_source_line_count(const TlSource *source);
 
 /* The highlighted runs of the lines a range touches: start, length and kind
  * (HighlightKind's order) for each; *count is the number of values. Free
- * them with tl_source_free_runs. None (*count 0) for a NULL source. */
+ * them with tl_source_free_runs. count may be NULL. */
 uint32_t *tl_source_highlights(TlSource *source, uint32_t start, uint32_t length, size_t *count);
 void tl_source_free_runs(uint32_t *runs, size_t count);
 
 /* "completions", "toggle_comment", "indent", "set_heading", "insert_block",
  * "insert_symbol", "math_at", "text_styles", "not_prose" or "text", with a
  * JSON object of arguments. Returns the result's JSON, or NULL for an unknown
- * command or arguments (or an internal error); free it with tl_free. */
+ * command or arguments; free it with tl_free. */
 char *tl_source_call(const TlSource *source, const char *command, const char *args_json);
 
 void tl_source_free(TlSource *source);

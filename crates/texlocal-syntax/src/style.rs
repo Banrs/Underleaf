@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::maths::{Group, Scans, Visit};
-use crate::{ascii, edit, Text, TextEdit, TextRange};
+use crate::{ascii, edit, Text, TextEdit, TextRange, NAME};
 
 /// The styles the whole selection has, each as the edits that unwrap the
 /// innermost command giving it: its name and opening brace, then its closing
@@ -38,8 +38,8 @@ struct Found {
 }
 
 impl Visit for Found {
-    fn at(&mut self, groups: &[Group]) {
-        self.open.push(groups.to_vec());
+    fn at(&mut self, groups: Vec<Group>) {
+        self.open.push(groups);
     }
 
     fn closed(&mut self, group: &Group, close: usize) {
@@ -68,7 +68,7 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
         closes: Vec::new(),
         whole: None,
     };
-    let mut scanner = scans.resume(src, start, src.len()).scanner;
+    let mut scanner = scans.resume(text, start, src.len()).scanner;
     scanner.run(src, src.len(), &[start, end], &mut found);
     let Found {
         open,
@@ -91,7 +91,7 @@ pub(crate) fn text_styles(text: &Text, scans: &mut Scans, selection: TextRange) 
         let Some((backslash, name_end)) = group.command else {
             continue;
         };
-        match ascii(&src[backslash + 1..name_end], &mut [0; 16]) {
+        match ascii(&src[backslash + 1..name_end], &mut [0; NAME]) {
             "textbf" => bold = Some(k),
             "textmd" => bold = None,
             "textnormal" => (bold, shape) = (None, Shape::Upright),

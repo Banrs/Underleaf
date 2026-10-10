@@ -14,7 +14,6 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
 use tokio_io_timeout::TimeoutStream;
 
 const MAX_HEAD: usize = 64 * 1024;
@@ -23,9 +22,6 @@ const HEAD_TIME: Duration = Duration::from_secs(10);
 const BODY_TIME: Duration = Duration::from_secs(60);
 const LINGER: Duration = Duration::from_secs(2);
 const LINGER_BYTES: usize = 16 * 1024 * 1024;
-/// Connections served at once; more wait to be accepted. A browser opens
-/// about six per host, so this only stops a runaway local client.
-const MAX_CONNECTIONS: usize = 256;
 
 pub struct Request {
     pub method: String,
@@ -100,33 +96,29 @@ impl Response {
 }
 
 /// Accept connections until shutdown. The guard sees the head before the
-/// application reads any body bytes.
-pub async fn serve<H, F, C>(
+/// application reads any body bytes, and hands the handler what it decided
+/// (the request's route), or refuses it.
+pub async fn serve<H, F, C, R>(
     listener: TcpListener,
     handler: Arc<H>,
     check: Arc<C>,
     max_body: usize,
     shutdown: impl Future<Output = ()>,
 ) where
-    H: Fn(Request) -> F + Send + Sync + 'static,
+    H: Fn(Request, R) -> F + Send + Sync + 'static,
     F: Future<Output = Response> + Send + 'static,
-    C: Fn(&Request) -> Option<Response> + Send + Sync + 'static,
+    C: Fn(&Request) -> Result<R, Response> + Send + Sync + 'static,
+    R: Send + 'static,
 {
     tokio::pin!(shutdown);
-    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
-        let accept = async {
-            let permit = Arc::clone(&connections).acquire_owned().await;
-            (permit, listener.accept().await)
-        };
         tokio::select! {
             _ = &mut shutdown => return,
-            (permit, accepted) = accept => match accepted {
+            accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
                     let handler = Arc::clone(&handler);
                     let check = Arc::clone(&check);
                     tokio::spawn(async move {
-                        let _permit = permit;
                         let mut stream = TimeoutStream::new(stream);
                         stream.set_write_timeout(Some(BODY_TIME));
                         let service = service_fn(|incoming| async {
@@ -152,11 +144,9 @@ pub async fn serve<H, F, C>(
 
 fn response(response: Response, head_only: bool) -> hyper::Response<Full<Bytes>> {
     let response = response.secured();
-    let mut builder = hyper::Response::builder().status(response.status);
-    // A 304 has no content, so no length of its own to give.
-    if response.status != 304 {
-        builder = builder.header("Content-Length", response.body.len());
-    }
+    let mut builder = hyper::Response::builder()
+        .status(response.status)
+        .header("Content-Length", response.body.len());
     for (name, value) in response.headers {
         builder = builder.header(name, value);
     }
@@ -173,16 +163,16 @@ fn response(response: Response, head_only: bool) -> hyper::Response<Full<Bytes>>
     })
 }
 
-async fn request<H, F, C>(
+async fn request<H, F, C, R>(
     incoming: hyper::Request<Incoming>,
     handler: &H,
     check: &C,
     max_body: usize,
 ) -> hyper::Response<Full<Bytes>>
 where
-    H: Fn(Request) -> F,
+    H: Fn(Request, R) -> F,
     F: Future<Output = Response>,
-    C: Fn(&Request) -> Option<Response>,
+    C: Fn(&Request) -> Result<R, Response>,
 {
     let (head, body) = incoming.into_parts();
     let head_only = head.method == hyper::Method::HEAD;
@@ -219,13 +209,14 @@ where
     }) {
         return response(Response::text(413, "Body too large"), head_only);
     }
-    if let Some(refused) = check(&req) {
-        return response(refused, head_only);
-    }
+    let decided = match check(&req) {
+        Ok(decided) => decided,
+        Err(refused) => return response(refused, head_only),
+    };
     match tokio::time::timeout(BODY_TIME, Limited::new(body, max_body).collect()).await {
         Ok(Ok(body)) => {
             req.body = body.to_bytes();
-            response(handler(req).await, head_only)
+            response(handler(req, decided).await, head_only)
         }
         Ok(Err(_)) => response(Response::text(400, "Incomplete request body"), head_only),
         Err(_) => response(Response::text(408, "Request body timed out"), head_only),

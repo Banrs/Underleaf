@@ -1,13 +1,14 @@
 //! The answers that read the text from its start (maths and code to skip,
-//! text styles, maths at a point) are the same however they're reached:
-//! resumed from kept points, after edits that forget some of them.
+//! name arguments, text styles, maths at a point) are the same however
+//! they're reached: resumed from kept points, after edits that forget some
+//! of them, as on a document read fresh.
 
-use texlocal_syntax::{SourceDocument, TextRange};
+use std::time::{Duration, Instant};
 
-const PIECES: [&str; 32] = [
+use texlocal_syntax::{math_mode_at, SourceDocument, TextRange};
+
+const PIECES: &[&str] = &[
     "\\cite{",
-    "}",
-    "}",
     "}",
     "}",
     "}",
@@ -25,18 +26,24 @@ const PIECES: [&str; 32] = [
     "\\textbf{",
     "\\emph{",
     "\\text{",
+    "\\textit{",
     "% c",
     "\n",
     "\n",
     "\n\n",
     " word ",
     " prose ",
-    "\\usepackage[opt]{pkg}",
-    "\\label{x}",
-    "\\textit{",
     "x^2",
+    "\\usepackage[opt]{pkg}",
+    "\\usepackage\n[a]\n{b}",
+    "\\label{x}",
+    "\\ref{",
+    "\\input{a",
+    "[",
+    "]",
     "\\\\",
     "\\",
+    " \n",
 ];
 
 struct Seeded(u32);
@@ -48,25 +55,26 @@ impl Seeded {
     }
 }
 
-/// FNV-1a over each answer's JSON, for documents of 3,000 seeded pieces
-/// (several kept points' worth), asked about at seeded places between
-/// seeded edits.
-fn seeded_answers_fingerprint() -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    let mut add = |json: String| {
-        for byte in json.bytes() {
-            hash = (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
-        }
-    };
+fn range(start: u32, length: u32) -> TextRange {
+    TextRange { start, length }
+}
+
+#[test]
+fn answers_after_edits_are_a_fresh_reading_s() {
     let mut seed = Seeded(5);
-    for _ in 0..4 {
-        let pieces = 3_000;
-        let source: String = (0..pieces)
-            .map(|_| PIECES[seed.next(PIECES.len())])
+    for document in 0..12 {
+        // Several kept points' worth; every third with no blank line at all.
+        let source: String = (0..3_000)
+            .map(|_| loop {
+                let piece = PIECES[seed.next(PIECES.len())];
+                if document % 3 != 0 || !piece.contains("\n\n") {
+                    break piece;
+                }
+            })
             .collect();
         let mut doc = SourceDocument::new(&source);
         let mut len = source.encode_utf16().count();
-        for round in 0..60 {
+        for round in 0..40 {
             if round % 3 == 0 {
                 let at = seed.next(len + 1);
                 let cut = seed.next(8).min(len - at);
@@ -75,31 +83,27 @@ fn seeded_answers_fingerprint() -> u64 {
                 len = len - cut + piece.encode_utf16().count();
             }
             let start = seed.next(len + 1);
-            let length = seed.next(400).min(len - start);
-            let selection = TextRange {
-                start: start as u32,
-                length: length as u32,
-            };
-            let json = |value| serde_json::to_string(&value).unwrap();
-            add(json(serde_json::json!([
+            let length = [0, 1, seed.next(400)][seed.next(3)].min(len - start);
+            let selection = range(start as u32, length as u32);
+            let text = doc.text();
+            let fresh = SourceDocument::new(&text);
+            let at = format!("document {document}, round {round}, {start}+{length}");
+            assert_eq!(
                 doc.not_prose(selection.start, selection.length),
+                fresh.not_prose(selection.start, selection.length),
+                "{at}"
+            );
+            assert_eq!(
                 doc.text_styles(selection),
-                doc.insert_symbol("\\alpha", selection),
-            ])));
+                fresh.text_styles(selection),
+                "{at}"
+            );
+            // And against one reading from the start, kept points aside.
+            let units: Vec<u16> = text.encode_utf16().collect();
+            let symbol = doc.insert_symbol("\\alpha", selection).edit.text;
+            assert_eq!(symbol == "\\alpha", math_mode_at(&units[..start]), "{at}");
         }
-        add(doc.text());
     }
-    hash
-}
-
-#[test]
-fn answers_are_as_reading_from_the_start_gave_them() {
-    // The fingerprint when every answer read the text from its start.
-    assert_eq!(seeded_answers_fingerprint(), 17_598_375_653_573_153_450);
-}
-
-fn range(start: u32, length: u32) -> TextRange {
-    TextRange { start, length }
 }
 
 #[test]
@@ -115,33 +119,63 @@ fn a_point_that_read_past_the_question_is_not_resumed_from() {
 }
 
 #[test]
-fn maths_running_over_a_kept_point_keeps_its_start() {
+fn what_runs_over_a_kept_point_keeps_its_start() {
     let maths = "x = 1 \\\\\n\n".repeat(1_000);
     let source = format!("Text \\begin{{equation}}\n{maths}\\end{{equation}} prose");
+    let found = SourceDocument::new(&source).not_prose(9_000, 5);
+    assert_eq!(
+        found,
+        [range(5, 9_000)],
+        "from the maths' start to the question's end"
+    );
+
+    // A name argument, the same: and what's in it is no command.
+    let names = "key, \\label{inside} ".repeat(500);
+    let source = format!("See \\cite{{{names}}} and \\ref{{fig}}.");
     let doc = SourceDocument::new(&source);
     let found = doc.not_prose(9_000, 5);
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].start, 5);
+    assert_eq!(
+        found,
+        [range(10, 8_995)],
+        "from the argument's start to the question's end"
+    );
+    let after = source.find("fig").unwrap() as u32;
+    assert_eq!(doc.not_prose(after, 3), [range(after, 3)]);
 }
 
-#[test]
-fn questions_about_a_long_text_read_only_near_them() {
-    // 2.8 million units, with no braces left open: each question had read
-    // it all from the start, some 15 ms each in a release build.
-    let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(50_000);
+/// 200 spelling and style questions near the end of a long text, between
+/// edits, then the time they took.
+fn questions_near_the_end(source: &str) -> Duration {
     let len = source.encode_utf16().count() as u32;
-    let mut doc = SourceDocument::new(&source);
-    let started = std::time::Instant::now();
+    let mut doc = SourceDocument::new(source);
+    let started = Instant::now();
     for k in 0..200 {
         let at = len - 1_000 - k * 37;
         doc.not_prose(at, 40);
         doc.text_styles(range(at, 3));
+        doc.insert_symbol("\\alpha", range(at, 0));
         if k % 20 == 0 {
             doc.edit(at + 500, 0, "x");
         }
     }
-    let elapsed = started.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
-    let at = doc.text().rfind("words").unwrap() as u32;
-    assert!(doc.text_styles(range(at, 5)).bold.is_some());
+    started.elapsed()
+}
+
+#[test]
+fn questions_about_a_long_text_read_only_near_them() {
+    // 2.8 million units, braces closed and paragraphs short: each question
+    // had read it all from the start, 52 s in a test build for these.
+    let source = "A paragraph with $x^2$ and \\textbf{bold \\emph{words}}.\n\n".repeat(50_000);
+    let elapsed = questions_near_the_end(&source);
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
+}
+
+#[test]
+fn braces_nobody_closes_cost_no_more_as_they_pile_up() {
+    // 20,000 lines, a brace left open on each and no blank line: kept points
+    // had been dropped above 64 open groups, and each question read the
+    // whole text from the start, twice.
+    let source: String = (0..20_000).map(|n| format!("{{ line {n} word\n")).collect();
+    let elapsed = questions_near_the_end(&source);
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
 }

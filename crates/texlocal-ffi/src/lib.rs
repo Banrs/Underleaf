@@ -67,9 +67,26 @@ impl TlHandle {
 
 /// `body`'s result, or none if it panicked: no panic may unwind into the
 /// host, which would abort the app and lose the user's unsaved text. Only
-/// the entry points that only free memory go without it.
+/// the entry points that can't panic (making a source, freeing) go without.
 fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
     catch_unwind(AssertUnwindSafe(body)).ok()
+}
+
+/// What a call on a source answers: `none` for a null source or a panic.
+///
+/// # Safety
+/// `source` is null or came from `tl_source_new` and is not freed, and no
+/// two calls on it overlap (the host's `const` marks those that leave the
+/// text as it is).
+unsafe fn on_source<T>(
+    source: *const TlSource,
+    none: T,
+    body: impl FnOnce(&mut SourceDocument) -> T,
+) -> T {
+    match source.cast_mut().as_mut() {
+        Some(source) => caught(|| body(&mut source.0)).unwrap_or(none),
+        None => none,
+    }
 }
 
 fn json_string(value: impl Serialize) -> *mut c_char {
@@ -97,7 +114,7 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
         None if data_dir.is_null() => texlocal_core::default_data_dir(),
         None => return std::ptr::null_mut(),
     };
-    catch_unwind(|| {
+    caught(|| {
         std::fs::create_dir_all(&dir).ok()?;
         let runtime = tokio::runtime::Runtime::new().ok()?;
         Some(Box::new(TlHandle {
@@ -105,7 +122,7 @@ pub unsafe extern "C" fn tl_open(data_dir: *const c_char) -> *mut TlHandle {
             service: Service::new(dir),
         }))
     })
-    .unwrap_or_default()
+    .flatten()
     .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
@@ -122,7 +139,7 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    let result = caught(|| {
         let handle = handle
             .as_ref()
             .ok_or_else(|| CoreError::bad_request("No handle"))?;
@@ -134,8 +151,8 @@ pub unsafe extern "C" fn tl_call(
             None => return Err(CoreError::bad_request("Arguments are not UTF-8")),
         };
         handle.call(command, &args)
-    }))
-    .unwrap_or_else(|_| Err(CoreError::internal("The command panicked")));
+    })
+    .unwrap_or_else(|| Err(CoreError::internal("The command panicked")));
     json_string(match result {
         Ok(value) => json!({ "ok": value }),
         Err(err) => json!({ "error": err.message, "status": err.status }),
@@ -165,9 +182,11 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     }
     let handle = Box::from_raw(handle);
     // Compiles run in their own process groups, so nothing else stops them.
-    caught(|| {
+    // Dropping the runtime and the service is guarded too.
+    caught(move || {
         handle.service.compile.kill_all();
         handle.service.texpresso.kill_all();
+        drop(handle);
     });
 }
 
@@ -184,16 +203,15 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len))
 }
 
-/// Null if it fails.
+/// Never null: reading the text into lines can't fail.
 ///
 /// # Safety
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    caught(|| TlSource(SourceDocument::new(&text_arg(text, len))))
-        .map_or(std::ptr::null_mut(), |source| {
-            Box::into_raw(Box::new(source))
-        })
+    Box::into_raw(Box::new(TlSource(SourceDocument::new(&text_arg(
+        text, len,
+    )))))
 }
 
 /// The editor replaced `length` units at `start` with `text`. Each call on
@@ -210,39 +228,30 @@ pub unsafe extern "C" fn tl_source_edit(
     text: *const u8,
     len: usize,
 ) {
-    if let Some(source) = source.as_mut() {
-        caught(|| source.0.edit(start, length, &text_arg(text, len)));
-    }
+    on_source(source, (), |doc| {
+        doc.edit(start, length, &text_arg(text, len))
+    });
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
-    source
-        .as_ref()
-        .and_then(|source| caught(|| source.0.line_at(offset)))
-        .unwrap_or(0)
+    on_source(source, 0, |doc| doc.line_at(offset))
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
-    source
-        .as_ref()
-        .and_then(|source| caught(|| source.0.line_start(line)))
-        .unwrap_or(0)
+    on_source(source, 0, |doc| doc.line_start(line))
 }
 
 /// # Safety
 /// As `tl_source_edit`.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
-    source
-        .as_ref()
-        .and_then(|source| caught(|| source.0.line_count()))
-        .unwrap_or(0)
+    on_source(source, 0, |doc| doc.line_count())
 }
 
 /// The highlighted runs of the lines a range touches, as start, length and
@@ -250,7 +259,7 @@ pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
 /// Free them with `tl_source_free_runs`.
 ///
 /// # Safety
-/// As `tl_source_edit`; `count` is valid for a write.
+/// As `tl_source_edit`; `count` is null or valid for a write.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_highlights(
     source: *mut TlSource,
@@ -258,17 +267,14 @@ pub unsafe extern "C" fn tl_source_highlights(
     length: u32,
     count: *mut usize,
 ) -> *mut u32 {
-    let runs: Box<[u32]> = source
-        .as_mut()
-        .and_then(|source| {
-            caught(|| {
-                let runs = source.0.highlights(start, length).into_iter();
-                runs.flat_map(|h| [h.start, h.length, h.kind as u32])
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
-    *count = runs.len();
+    let runs: Box<[u32]> = on_source(source, Box::default(), |doc| {
+        let runs = doc.highlights(start, length).into_iter();
+        runs.flat_map(|h| [h.start, h.length, h.kind as u32])
+            .collect()
+    });
+    if let Some(count) = count.as_mut() {
+        *count = runs.len();
+    }
     Box::into_raw(runs).cast()
 }
 
@@ -310,7 +316,7 @@ pub unsafe extern "C" fn tl_source_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let call = |doc: &SourceDocument| {
+    let call = |doc: &mut SourceDocument| {
         let a: SourceArgs = serde_json::from_str(str_arg(args_json)?).ok()?;
         Some(match str_arg(command)? {
             "completions" => {
@@ -328,10 +334,7 @@ pub unsafe extern "C" fn tl_source_call(
             _ => return None,
         })
     };
-    source
-        .as_ref()
-        .and_then(|source| caught(|| call(&source.0)).flatten())
-        .unwrap_or(std::ptr::null_mut())
+    on_source(source, None, call).unwrap_or(std::ptr::null_mut())
 }
 
 /// Null is ignored.
