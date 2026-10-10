@@ -175,3 +175,51 @@ fn excluded_build_output_does_not_count_towards_the_tex_folder_limit() {
         ["chapter.tex", "main.tex"]
     );
 }
+
+#[test]
+fn a_zip_that_fails_part_way_leaves_no_half_made_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Service::new(dir.path().join("data"));
+    let src = dir.path().join("broken.zip");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&src).unwrap());
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (path, text) in [("a.tex", "fine"), ("b.tex", "CORRUPTED-LATER")] {
+        zip.start_file(path, stored).unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    // The second file's bytes no longer match its checksum.
+    let mut bytes = fs::read(&src).unwrap();
+    let at = bytes
+        .windows(15)
+        .position(|w| w == b"CORRUPTED-LATER")
+        .unwrap();
+    bytes[at] = b'X';
+    fs::write(&src, bytes).unwrap();
+
+    assert!(import_project(&service, &src).is_err());
+    assert_eq!(fs::read_dir(&service.data_dir).unwrap().count(), 0);
+}
+
+#[test]
+fn zip_entries_named_from_the_current_folder_or_with_backslashes_arrive() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Service::new(dir.path().join("data"));
+    let dotted = dir.path().join("dotted.zip");
+    let windows = dir.path().join("windows.zip");
+    for (src, files) in [
+        (&dotted, ["./main.tex", "./figs/a.png"]),
+        (&windows, ["paper\\main.tex", "paper\\figs\\a.png"]),
+    ] {
+        let mut zip = zip::ZipWriter::new(fs::File::create(src).unwrap());
+        for path in files {
+            zip.start_file(path, SimpleFileOptions::default()).unwrap();
+            zip.write_all(b"\\documentclass{article}").unwrap();
+        }
+        zip.finish().unwrap();
+        let info = import_project(&service, src).unwrap();
+        assert_eq!(info.main_file, "main.tex");
+        let root = service.data_dir.join(&info.id);
+        assert_eq!(names(&root), ["figs/a.png", "main.tex"]);
+    }
+}

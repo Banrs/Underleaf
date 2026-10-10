@@ -125,7 +125,7 @@ fn upload_rel(dir: &str, name: &str) -> String {
     }
 }
 
-fn too_large() -> CoreError {
+pub(crate) fn too_large() -> CoreError {
     CoreError::bad_request(format!(
         "File exceeds the {} MB upload limit",
         UPLOAD_MAX_BYTES / 1024 / 1024
