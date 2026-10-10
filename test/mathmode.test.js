@@ -23,6 +23,16 @@ test('\\verb|…| (its delimiter is the marker)', () => {
   assert.equal(mathModeAt(verb, '\\verb|$'.length), false, 'inside \\verb');
 });
 
+test('an unterminated \\verb ends with its line, as the core\'s does', () => {
+  const doc = '\\verb|open\n$x';
+  assert.equal(mathModeAt(doc), true, 'math after the line');
+  assert.equal(mathModeAt(doc, '\\verb|op'.length), false, 'still inside on its own line');
+  assert.equal(mathModeAt('a \\verb+$\n\nb $c'), true);
+  assert.equal(mathModeAt('\\verb\n$x'), true, 'a \\verb with no delimiter at all');
+  // A closed one on the line is unchanged.
+  assert.equal(mathModeAt('\\verb|$| $x'), true);
+});
+
 test('works at any position of a longer text', () => {
   const doc = 'a $b$ c \\[ d \\] e';
   assert.equal(mathModeAt(doc, 4), true);

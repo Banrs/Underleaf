@@ -226,7 +226,7 @@ const mathPreviewFocus = EditorView.focusChangeEffect.of((_state, focusing) => e
 // reads the text before the position as TeX would: $…$, $$…$$, \(…\), \[…\]
 // and the math environments (starred too) open math; \text{…} and its kin
 // return to text inside it; escapes (\$, \%, \\) are not delimiters; comments
-// and verbatim are skipped; and a blank line ends an unclosed $ or \[, as
+// and verbatim are skipped (an unclosed \verb to the end of its line); and a blank line ends an unclosed $ or \[, as
 // the paragraph it cannot span. Only the text before the position counts,
 // so `$|$` (an empty pair, the caret between) is math.
 
@@ -317,7 +317,12 @@ export function mathModeAt(text, pos = text.length) {
       if (src[i] === '*') i += 1;
       const delim = src[i];
       if (delim === undefined) break;
+      // \verb cannot span lines: one left open ends with its line (TeX stops
+      // there with an error), rather than reading the rest of the file as code.
+      if (delim === '\n') continue;
       const close = src.indexOf(delim, i + 1);
+      const eol = src.indexOf('\n', i + 1);
+      if (eol !== -1 && (close === -1 || close > eol)) { i = eol; continue; }
       if (close === -1) return false; // inside \verb|…
       i = close + 1;
       continue;
