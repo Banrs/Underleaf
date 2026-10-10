@@ -15,7 +15,7 @@ globalThis.ResizeObserver = class {
 };
 const { PdfViewer } = await import('../web/src/pdfview.js');
 
-const dom = new Window();
+const dom = new Window({ url: 'http://127.0.0.1:7878/' });
 const window = dom;
 // pdfview.js RESIZE_SETTLE_MS: a resize re-renders once the pane has held still this long.
 const RESIZE_SETTLE = 150;
@@ -184,7 +184,7 @@ test('closing PDF find rejects text extraction that finishes afterward', async (
 
 // A three-page document whose pages lay out in a column, 1000 px apart, only
 // while the scroller is showing; hidden, everything measures zero.
-function threePages(t) {
+function threePages(t, options = {}) {
   const scroll = document.createElement('div');
   let shown = false;
   Object.defineProperties(scroll, {
@@ -193,7 +193,7 @@ function threePages(t) {
     scrollHeight: { get: () => (shown ? 3000 : 0) },
   });
   document.body.append(scroll);
-  const viewer = new PdfViewer(scroll);
+  const viewer = new PdfViewer(scroll, options);
   t.after(() => { viewer.destroy(); scroll.remove(); });
   const measured = (get) => ({ configurable: true, get() { return shown && this.dataset?.page ? get(Number(this.dataset.page)) : 0; } });
   const proto = window.HTMLElement.prototype;
@@ -212,7 +212,9 @@ function threePages(t) {
   });
   viewer.doc = { numPages: 3 };
   viewer.pageProxies = [page(1), page(2), page(3)];
-  return { viewer, scroll, paints, show: () => { shown = true; observed(); } };
+  // A document as pdf.js's getDocument gives it.
+  const pdf = (numPages) => ({ numPages, getPage: async (n) => page(n) });
+  return { viewer, scroll, paints, pdf, show: () => { shown = true; observed(); } };
 }
 
 test('a PDF rendered while its pane is hidden opens at the reading position, not the last page', async (t) => {
@@ -255,4 +257,52 @@ test('a page canvas never holds more pixels than a browser can draw', async (t) 
   assert.ok(p.canvas.width * p.canvas.height <= 4096 * 4096, `${p.canvas.width} x ${p.canvas.height}`);
   assert.ok(Math.abs(p.canvas.width / p.canvas.height - 2448 / 3168) < 0.001);
   assert.ok(p.canvas.width > 2448, 'still sharper than 1x');
+});
+
+// pdf.js as PdfViewer.load uses it, serving `docs` by URL.
+function library(docs, opened = []) {
+  return {
+    getDocument: ({ url }) => {
+      opened.push(url);
+      return { promise: Promise.resolve(docs[url]), destroy: async () => {} };
+    },
+  };
+}
+const settle = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('loads while hidden report nothing, and the newest lays out once shown with its forward search', async (t) => {
+  const zooms = [], pages = [];
+  let lib;
+  const { viewer, paints, pdf, show } = threePages(t, {
+    loadLibrary: async () => lib,
+    onZoomChange: (pct) => zooms.push(pct),
+    onPageChange: (n, total) => pages.push([n, total]),
+  });
+  lib = library({ 'http://pdf/a': pdf(3), 'http://pdf/b': pdf(2) });
+  assert.equal(await viewer.load('http://pdf/a'), true);
+  // A second pass while still hidden (an interface-size change) stays deferred.
+  await viewer.render();
+  assert.equal(await viewer.load('http://pdf/b'), true);
+  viewer.highlight({ page: 2, h: 10, v: 100 });
+  assert.deepEqual([zooms, pages, paints], [[], [], []], 'a hidden pane reports and paints nothing');
+  show();
+  await settle(20);
+  assert.equal(viewer.pages.length, 2, 'the newer document');
+  assert.deepEqual(viewer.pages.map((p) => p.top), [0, 1000]);
+  assert.deepEqual(zooms, [100], 'the zoom of the real width, once');
+  assert.deepEqual(pages.at(-1), [1, 2]);
+  assert.ok(viewer.pages[1].wrap.querySelector('.sync-flash'), 'the forward search flashes once laid out');
+});
+
+test('a load overtaken during the pdf.js import never opens its document', async (t) => {
+  const importing = Promise.withResolvers();
+  const opened = [];
+  const { viewer, pdf } = threePages(t, { loadLibrary: () => importing.promise });
+  const first = viewer.load('http://pdf/old');
+  const second = viewer.load('http://pdf/new');
+  importing.resolve(library({ 'http://pdf/old': pdf(3), 'http://pdf/new': pdf(1) }, opened));
+  assert.equal(await first, false);
+  assert.equal(await second, true);
+  assert.deepEqual(opened, ['http://pdf/new']);
+  assert.equal(viewer.numPages, 1);
 });

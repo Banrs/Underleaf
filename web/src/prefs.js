@@ -23,18 +23,20 @@ const DEFS = {
   openDirs: { key: 'opendirs', def: [], type: 'json' },
 };
 
-// The one store: each key is read from localStorage once, then served from
-// memory (layout reads a score per frame); writes go through. With site data
-// blocked, touching localStorage throws, and the memory alone serves the page.
+// Each key is read from localStorage once, then served from memory (layout
+// reads a score per frame). Blocked site data throws: memory alone serves.
 const cache = new Map();   // storage key → raw string, or null when unset
-let cachedFrom;            // the storage the cache mirrors (tests swap it)
+let store;                 // localStorage, or null when blocked; found once
 
 function storage() {
-  let store = null;
-  try { store = globalThis.localStorage ?? null; } catch { /* blocked */ }
-  if (store !== cachedFrom) { cache.clear(); cachedFrom = store; }
+  if (store === undefined) {
+    try { store = globalThis.localStorage ?? null; } catch { store = null; }
+  }
   return store;
 }
+
+// For tests, which swap localStorage.
+export function resetPrefsStore() { store = undefined; cache.clear(); }
 
 function getRaw(key) {
   const store = storage();
@@ -52,7 +54,7 @@ function setRaw(key, raw) {
 
 // Another tab's change applies here too, as when every read went to storage.
 globalThis.addEventListener?.('storage', (e) => {
-  if (e.storageArea === cachedFrom) { if (e.key === null) cache.clear(); else cache.delete(e.key); }
+  if (e.storageArea === store) { if (e.key === null) cache.clear(); else cache.delete(e.key); }
 });
 
 function read(name) {

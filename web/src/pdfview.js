@@ -11,7 +11,6 @@ import { el, bodyZoom } from './dom.js';
 import { pageText, matchRanges } from './pdftext.js';
 import { FindSession, MAX_FIND_MATCHES, indexMatchesBySpan } from './findsession.js';
 
-// pdf.js arrives with the first PDF, not with the editor.
 let pdfjs = null;
 function loadPdfjs() {
   pdfjs ??= import('pdfjs-dist').then((lib) => {
@@ -30,8 +29,7 @@ const PINCH_MIN = 0.4;
 const PINCH_MAX = 2.5;
 // How long the pane's fitted dimension must hold still before a resize re-renders.
 const RESIZE_SETTLE_MS = 150;
-// iOS Safari's canvas area limit, past which a canvas draws blank; CSS
-// stretches a page zoomed further.
+// iOS Safari's canvas area limit; CSS stretches a page zoomed further.
 const MAX_CANVAS_PIXELS = 4096 * 4096;
 
 // A forward search's flash: a line's height when SyncTeX gives none, in PDF
@@ -42,8 +40,7 @@ const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// Device pixels per CSS pixel: devicePixelRatio leaves out the interface-scale
-// `zoom`, so a canvas sized from it alone renders soft.
+// devicePixelRatio leaves out the interface zoom, so alone it renders soft.
 const pixelRatio = () => (window.devicePixelRatio || 1) * bodyZoom();
 
 // A text-layer span's natural width, measured on a canvas rather than read back
@@ -57,7 +54,9 @@ function textWidth(str, size, family) {
 }
 
 export class PdfViewer {
-  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange, onDocument } = {}) {
+  // `loadLibrary` resolves to pdf.js (tests pass a stand-in).
+  constructor(scrollEl, { onSyncClick, onPageChange, onZoomChange, onDocument, loadLibrary = loadPdfjs } = {}) {
+    this.loadLibrary = loadLibrary;
     this.scrollEl = scrollEl;
     this.onSyncClick = onSyncClick;
     this.onPageChange = onPageChange;
@@ -90,6 +89,7 @@ export class PdfViewer {
     this._resizePreview = null;   // { anchor, y } while the pane resizes, see #previewResize
     this._view = null;            // the reading position, see #viewRatios
     this._deferred = null;        // a pass made while hidden, see #renderPass
+    this._pendingHighlight = null; // a forward search waiting for that layout
     this._padL = this._padT = this._padR = this._padB = 0;   // scroller padding, cached by #metrics
 
     // Scrolling drives painting, since only the pages near the viewport hold
@@ -146,7 +146,6 @@ export class PdfViewer {
     // superseding any pass in flight. The stable scrollbar gutter (styles.css)
     // keeps the pages from changing the scroller's width, so nothing loops.
     this.ro = new ResizeObserver(() => {
-      // A pass deferred while hidden (#renderPass) lays out once shown.
       if (this._deferred) {
         if (this.doc && !this.#hidden()) void this.render();
         return;
@@ -177,7 +176,7 @@ export class PdfViewer {
     // superseded need the same cleanup, so the task is destroyed unless this
     // call is the one that adopts it.
     const superseded = () => generation !== this._loadGeneration;
-    const lib = await loadPdfjs();
+    const lib = await this.loadLibrary();
     if (superseded()) return false;
     const task = lib.getDocument({ url: new URL(url, window.location.origin).href, httpHeaders });
     let adopted = false;
@@ -193,6 +192,7 @@ export class PdfViewer {
       const prev = this.loadingTask;
       adopted = true;
       this.cancelFind();
+      this._pendingHighlight = null;
       this._pageText = new Array(doc.numPages);
       this.loadingTask = task;
       this.doc = doc;
@@ -260,7 +260,6 @@ export class PdfViewer {
     return !this.scrollEl.clientWidth && !this.scrollEl.clientHeight;
   }
 
-  // The reading position as fractions of the content: down, and across.
   #viewRatios() {
     const el = this.scrollEl;
     return {
@@ -292,10 +291,9 @@ export class PdfViewer {
 
   async #renderPass(seq, pinchGeneration) {
     this.#metrics();   // refresh the cached padding; a fixed zoom never calls #fitScale
-    // With the pane hidden (a build behind the compact editor, a collapsed
-    // PDF) the new pages go in unmeasured, as every offset would read zero:
-    // the pass is deferred, keeping the reading position, until the resize
-    // observer sees the pane again.
+    // With the pane hidden every offset would read zero: the new pages go in
+    // unmeasured, keeping the reading position, until the observer sees the
+    // pane again.
     const hidden = this.#hidden();
     const { ratio, centerRatioX } = this._deferred ?? (hidden ? this._view : null) ?? this.#viewRatios();
     const anchor = hidden || this._deferred ? null : this._anchor;
@@ -360,7 +358,6 @@ export class PdfViewer {
       // shows again before the observer saw it hide.
       this.ro.unobserve(this.scrollEl);
       this.ro.observe(this.scrollEl);
-      this.onZoomChange?.(Math.round(scale * 100), this.scale === null ? this.fitMode : null);
       return;
     }
     this._deferred = null;
@@ -373,6 +370,9 @@ export class PdfViewer {
     this._view = this.#viewRatios();
     this.onZoomChange?.(Math.round(scale * 100), this.scale === null ? this.fitMode : null);
     this.#reportPage();
+    const pending = this._pendingHighlight;
+    this._pendingHighlight = null;
+    if (pending) this.highlight(pending);
 
     await this.#paintNear(seq);
     this.#reportPage();
@@ -930,7 +930,7 @@ export class PdfViewer {
   }
 
   #reportPage() {
-    if (this.pages.length) this.onPageChange?.(this.currentPage(), this.numPages);
+    if (this.pages.length && !this._deferred) this.onPageChange?.(this.currentPage(), this.numPages);
   }
 
   // ---------- SyncTeX ----------
@@ -978,11 +978,10 @@ export class PdfViewer {
 
   // loc: { page, h, v, width, height } in TeX points, origin top-left, v = baseline
   highlight(loc) {
-    // Just shown after a deferred pass: lay out first.
+    // Deferred pages have no positions yet: flash once they are laid out.
     if (this._deferred) {
-      if (this.#hidden()) return;
-      const doc = this.doc;
-      void this.render().then(() => { if (this.doc === doc && !this._deferred) this.highlight(loc); });
+      this._pendingHighlight = loc;
+      if (!this.#hidden()) void this.render();
       return;
     }
     const p = this.pages[loc.page - 1];
@@ -1022,7 +1021,7 @@ export class PdfViewer {
     this.pages = [];
     this.pageProxies = [];
     this.pagesEl = null;
-    this._deferred = null;
+    this._deferred = this._pendingHighlight = null;
     this.scrollEl.replaceChildren();
   }
 }

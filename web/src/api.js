@@ -28,7 +28,6 @@ export const api = ipc && {
   // A URL an <img> can show the file from: a blob: one in a browser, whose
   // server wants a header no <img> sends; revoke it once the image has loaded.
   rawFileUrl: (id, p) => ipc.objectUrl(ipc.fileUrl(['__raw', id, ...p.split('/')])),
-  // `options.keepalive` lets the write outlive the page (main.js's unload flush).
   writeFile: (id, p, text, options) => ipc.invoke('write_file', { id, path: p, text }, options),
   createEntry: (id, p, dir) => ipc.invoke('create_entry', { id, path: p, dir }),
   renameEntry: (id, from, to) => ipc.invoke('rename_entry', { id, from, to }),
