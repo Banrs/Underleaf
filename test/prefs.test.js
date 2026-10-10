@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { prefs, migratePrefs, resetPrefsStore } = await import('../web/src/prefs.js');
+// Each test loads its own copy of the module, which finds the storage it set up.
+let copies = 0;
+const freshPrefs = () => import(`../web/src/prefs.js?copy=${++copies}`);
 
 // A Storage stand-in that counts its reads.
 function memoryStorage(initial = {}) {
@@ -18,13 +20,13 @@ function memoryStorage(initial = {}) {
 
 function useStorage(t, value) {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get: value });
-  resetPrefsStore();
   t.after(() => { delete globalThis.localStorage; });
+  return freshPrefs();
 }
 
-test('blocked site data leaves the preferences working for the page', (t) => {
+test('blocked site data leaves the preferences working for the page', async (t) => {
   let touched = 0;
-  useStorage(t, () => { touched++; throw new Error('SecurityError: access is denied'); });
+  const { prefs, migratePrefs } = await useStorage(t, () => { touched++; throw new Error('SecurityError: access is denied'); });
   assert.doesNotThrow(() => migratePrefs());
   assert.equal(prefs.autoCompile, true);
   prefs.autoCompile = false;
@@ -35,17 +37,17 @@ test('blocked site data leaves the preferences working for the page', (t) => {
   assert.equal(touched, 1, 'the blocked storage is found blocked once');
 });
 
-test('a storage that refuses writes keeps the value in memory', (t) => {
+test('a storage that refuses writes keeps the value in memory', async (t) => {
   const store = memoryStorage();
   store.setItem = () => { throw new Error('QuotaExceededError'); };
-  useStorage(t, () => store);
+  const { prefs } = await useStorage(t, () => store);
   prefs.sidebarWidth = 300;
   assert.equal(prefs.sidebarWidth, 300);
 });
 
-test('each preference is read from storage once, and writes go through', (t) => {
+test('each preference is read from storage once, and writes go through', async (t) => {
   const store = memoryStorage({ 'texlocal-w-side': '310' });
-  useStorage(t, () => store);
+  const { prefs } = await useStorage(t, () => store);
   for (let i = 0; i < 20; i++) assert.equal(prefs.sidebarWidth, 310);
   assert.equal(store.reads, 1);
   prefs.sidebarWidth = 320;
@@ -54,9 +56,9 @@ test('each preference is read from storage once, and writes go through', (t) => 
   assert.equal(store.reads, 1);
 });
 
-test('pre-1.0 keys still migrate', (t) => {
+test('pre-1.0 keys still migrate', async (t) => {
   const store = memoryStorage({ 'texlocal-sidebar': 'collapsed', 'texlocal-pdfdark': 'on' });
-  useStorage(t, () => store);
+  const { prefs, migratePrefs } = await useStorage(t, () => store);
   migratePrefs();
   assert.equal(store.data.get('texlocal-sidebar-collapsed'), '1');
   assert.equal(store.data.has('texlocal-sidebar'), false);

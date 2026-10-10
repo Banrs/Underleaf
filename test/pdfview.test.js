@@ -294,6 +294,19 @@ test('loads while hidden report nothing, and the newest lays out once shown with
   assert.ok(viewer.pages[1].wrap.querySelector('.sync-flash'), 'the forward search flashes once laid out');
 });
 
+test('a forward search made while hidden lapses if the pane stays hidden too long', async (t) => {
+  const { viewer, show } = threePages(t);
+  await viewer.render();
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  viewer.highlight({ page: 2, h: 10, v: 100 });
+  now += 60_000;
+  show();
+  await settle(20);
+  assert.equal(viewer.pages.length, 3, 'laid out');
+  assert.equal(viewer.pagesEl.querySelector('.sync-flash'), null, 'a minute-old request does not flash');
+});
+
 test('a load overtaken during the pdf.js import never opens its document', async (t) => {
   const importing = Promise.withResolvers();
   const opened = [];
