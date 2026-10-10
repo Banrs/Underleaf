@@ -115,15 +115,13 @@ pub async fn serve<H, F, C>(
     tokio::pin!(shutdown);
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
-        let permit = tokio::select! {
-            _ = &mut shutdown => return,
-            permit = Arc::clone(&connections).acquire_owned() => {
-                permit.expect("the semaphore is never closed")
-            }
+        let accept = async {
+            let permit = Arc::clone(&connections).acquire_owned().await;
+            (permit, listener.accept().await)
         };
         tokio::select! {
             _ = &mut shutdown => return,
-            accepted = listener.accept() => match accepted {
+            (permit, accepted) = accept => match accepted {
                 Ok((stream, _)) => {
                     let handler = Arc::clone(&handler);
                     let check = Arc::clone(&check);
@@ -152,22 +150,15 @@ pub async fn serve<H, F, C>(
     }
 }
 
-/// A response without a body (to a HEAD, or a 304) may give the length the
-/// whole one would have in its own Content-Length; otherwise it is the body's.
 fn response(response: Response, head_only: bool) -> hyper::Response<Full<Bytes>> {
     let response = response.secured();
-    let named = response
-        .header("Content-Length")
-        .filter(|_| response.body.is_empty())
-        .map(str::to_owned);
-    let mut builder = hyper::Response::builder().status(response.status).header(
-        "Content-Length",
-        named.unwrap_or_else(|| response.body.len().to_string()),
-    );
+    let mut builder = hyper::Response::builder().status(response.status);
+    // A 304 has no content, so no length of its own to give.
+    if response.status != 304 {
+        builder = builder.header("Content-Length", response.body.len());
+    }
     for (name, value) in response.headers {
-        if !name.eq_ignore_ascii_case("Content-Length") {
-            builder = builder.header(name, value);
-        }
+        builder = builder.header(name, value);
     }
     let body = if head_only {
         Bytes::new()

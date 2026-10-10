@@ -63,25 +63,14 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Ctrl-C, or on Unix the SIGTERM a `kill` or a process supervisor sends:
-/// either ends the server the same way, so the compiles' process groups are
-/// stopped rather than left running. (SIGHUP keeps its default, so `nohup`
-/// still works.)
+/// Ctrl-C, or the SIGTERM of a `kill` or a supervisor: either stops the
+/// server, and with it the compiles. (SIGHUP keeps its default, for `nohup`.)
 async fn stopped() {
     #[cfg(unix)]
-    let terminated = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        match signal(SignalKind::terminate()) {
-            Ok(mut stream) => {
-                stream.recv().await;
-            }
-            Err(_) => std::future::pending().await,
-        }
-    };
-    #[cfg(not(unix))]
-    let terminated = std::future::pending::<()>();
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        () = terminated => {}
+    if let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
+        return;
     }
+    let _ = tokio::signal::ctrl_c().await;
 }

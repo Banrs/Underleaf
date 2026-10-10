@@ -108,35 +108,44 @@ impl Scanner {
             open,
             command: None,
         };
+        let math = |stack: &[Group]| stack.last().is_some_and(|g| g.math);
         let close = |stack: &mut Vec<Group>, end: &str| {
             if let Some(k) = stack.iter().rposition(|g| g.end == end) {
                 stack.truncate(k);
             }
         };
-        let n = src.len();
+        let Scanner {
+            mut stack,
+            mut text_argument,
+            mut math_run,
+            mut last_command,
+            mut i,
+            mut reach,
+        } = std::mem::take(self);
         let mut probe = 0;
-        while self.i < n.min(until) {
-            let token_start = self.i;
+        let n = src.len();
+        while i < n.min(until) {
+            let token_start = i;
             while probe < probes.len() && probes[probe] <= token_start {
-                visit.at(&self.stack);
+                visit.at(&stack);
                 probe += 1;
             }
-            if !probes.is_empty() && probe == probes.len() && self.stack.is_empty() {
-                return;
+            if !probes.is_empty() && probe == probes.len() && stack.is_empty() {
+                break;
             }
-            let pending = self.last_command.take();
-            let c = char::from_u32(src[token_start] as u32).unwrap_or_default();
+            let pending = last_command.take();
+            let c = char::from_u32(src[i] as u32).unwrap_or_default();
             let mut code = false;
-            // Read past the token's end: where it ends is read below.
-            let mut read = 0;
-            let mut i = token_start + 1;
+            i += 1;
+            // One past what the token read beyond its end.
+            let mut read = i + 1;
             match c {
                 '%' => {
                     // Comments remain prose, including the following line feed.
-                    self.math_run = false;
-                    self.last_command = pending;
-                    self.i = find(src, i, &['\n' as u16]).unwrap_or(n);
-                    self.reach = self.reach.max(self.i + 1);
+                    math_run = false;
+                    last_command = pending;
+                    i = find(src, i, &['\n' as u16]).unwrap_or(n);
+                    reach = reach.max(i + 1);
                     continue;
                 }
                 '\n' => {
@@ -144,36 +153,34 @@ impl Scanner {
                         .iter()
                         .take_while(|&&u| matches!(u, 9 | 13 | 32))
                         .count();
+                    reach = reach.max(j + 1);
                     if src.get(j).is_some_and(|&u| is(u, '\n')) {
-                        if let Some(k) = self
-                            .stack
+                        if let Some(k) = stack
                             .iter()
                             .position(|g| matches!(g.end.as_ref(), "$" | "$$" | "\\)" | "\\]"))
                         {
-                            self.stack.truncate(k);
+                            stack.truncate(k);
                         }
-                        self.text_argument = false;
+                        text_argument = false;
                     } else {
-                        self.last_command = pending;
+                        last_command = pending;
                     }
-                    if self.math_run {
+                    if math_run {
                         visit.range(token_start, i);
                     }
-                    self.math_run = self.in_math();
-                    self.i = i;
-                    self.reach = self.reach.max(j + 1);
+                    math_run = math(&stack);
                     continue;
                 }
                 '$' => {
                     let double = src.get(i).is_some_and(|&u| is(u, '$'));
-                    match self.stack.last().map(|g| g.end.as_ref()) {
+                    match stack.last().map(|g| g.end.as_ref()) {
                         Some(end @ ("$" | "$$")) => {
                             i += (end == "$$" && double) as usize;
-                            self.stack.pop();
+                            stack.pop();
                         }
-                        _ if self.in_math() => {} // a stray $ in an environment's maths
+                        _ if math(&stack) => {} // a stray $ in an environment's maths
                         _ => {
-                            self.stack.push(group(
+                            stack.push(group(
                                 true,
                                 if double { "$$" } else { "$" }.into(),
                                 token_start,
@@ -181,39 +188,33 @@ impl Scanner {
                             i += double as usize;
                         }
                     }
-                    self.text_argument = false;
+                    text_argument = false;
                 }
                 '{' => {
-                    self.stack.push(Group {
+                    stack.push(Group {
                         command: pending,
-                        ..group(
-                            !self.text_argument && self.in_math(),
-                            "}".into(),
-                            token_start,
-                        )
+                        ..group(!text_argument && math(&stack), "}".into(), token_start)
                     });
-                    self.text_argument = false;
+                    text_argument = false;
                 }
                 '}' => {
-                    if let Some(k) = self.stack.iter().rposition(|g| g.end == "}") {
-                        visit.closed(&self.stack[k], token_start);
-                        self.stack.truncate(k);
+                    if let Some(k) = stack.iter().rposition(|g| g.end == "}") {
+                        visit.closed(&stack[k], token_start);
+                        stack.truncate(k);
                     }
                 }
                 '\\' if i < n => {
-                    let in_math = self.in_math();
-                    self.text_argument = false;
+                    let in_math = math(&stack);
+                    text_argument = false;
                     if !letter(src[i]) {
                         let d = char::from_u32(src[i] as u32).unwrap_or_default();
                         match d {
-                            '(' | '[' if !in_math => self.stack.push(group(
+                            '(' | '[' if !in_math => stack.push(group(
                                 true,
                                 if d == '(' { "\\)" } else { "\\]" }.into(),
                                 token_start,
                             )),
-                            ')' | ']' => {
-                                close(&mut self.stack, if d == ')' { "\\)" } else { "\\]" })
-                            }
+                            ')' | ']' => close(&mut stack, if d == ')' { "\\)" } else { "\\]" }),
                             _ => {}
                         }
                         i += 1;
@@ -240,7 +241,7 @@ impl Scanner {
                                     let environment = trim_js_space(&environment);
                                     i = after;
                                     if name == "end" {
-                                        close(&mut self.stack, &format!("env:{environment}"));
+                                        close(&mut stack, &format!("env:{environment}"));
                                         None
                                     } else if listed(&catalog.verbatim_environments, environment) {
                                         code = true;
@@ -254,7 +255,7 @@ impl Scanner {
                                     } else {
                                         let bare =
                                             environment.strip_suffix('*').unwrap_or(environment);
-                                        self.stack.push(group(
+                                        stack.push(group(
                                             listed(&catalog.math_environments, bare) || in_math,
                                             format!("env:{environment}").into(),
                                             token_start,
@@ -266,9 +267,8 @@ impl Scanner {
                                 }
                             }
                             _ => {
-                                self.text_argument =
-                                    listed(&catalog.text_commands, name) && in_math;
-                                self.last_command = Some((token_start, name_end));
+                                text_argument = listed(&catalog.text_commands, name) && in_math;
+                                last_command = Some((token_start, name_end));
                                 None
                             }
                         };
@@ -281,14 +281,13 @@ impl Scanner {
                             if verb {
                                 read = limit + 1; // looking for the line's end
                             }
-                            let within = &src[..limit];
-                            i = match (find(within, from, &end), line_end) {
+                            i = match (find(&src[..limit], from, &end), line_end) {
                                 (Some(at), _) => at + end.len(),
                                 (None, Some(line_end)) => line_end,
                                 // Code to the end of the text, or the position
                                 // asked about is in it.
                                 (None, None) => {
-                                    self.stack.clear();
+                                    stack.clear();
                                     n
                                 }
                             };
@@ -299,23 +298,30 @@ impl Scanner {
                     }
                 }
                 _ => {
-                    self.text_argument &= space(src[token_start]);
+                    text_argument &= space(src[token_start]);
                     if space(src[token_start]) {
-                        self.last_command = pending;
+                        last_command = pending;
                     }
                 }
             }
-            let next_math = self.in_math();
-            if code || self.math_run || next_math {
+            let next_math = math(&stack);
+            if code || math_run || next_math {
                 visit.range(token_start, i);
             }
-            self.math_run = next_math;
-            self.i = i;
-            self.reach = self.reach.max(read).max(i + 1);
+            math_run = next_math;
+            reach = reach.max(read).max(i + 1);
         }
         for _ in &probes[probe..] {
-            visit.at(&self.stack);
+            visit.at(&stack);
         }
+        *self = Scanner {
+            stack,
+            text_argument,
+            math_run,
+            last_command,
+            i,
+            reach,
+        };
     }
 }
 

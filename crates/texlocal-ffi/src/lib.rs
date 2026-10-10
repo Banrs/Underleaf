@@ -65,11 +65,11 @@ impl TlHandle {
     }
 }
 
-/// Run an entry point's body, answering `fallback` if it panics: a panic
-/// must not unwind into the host, where it would abort the app and lose the
-/// user's unsaved text.
-fn guarded<T>(fallback: T, body: impl FnOnce() -> T) -> T {
-    catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+/// `body`'s result, or none if it panicked: no panic may unwind into the
+/// host, which would abort the app and lose the user's unsaved text. Only
+/// the entry points that only free memory go without it.
+fn caught<T>(body: impl FnOnce() -> T) -> Option<T> {
+    catch_unwind(AssertUnwindSafe(body)).ok()
 }
 
 fn json_string(value: impl Serialize) -> *mut c_char {
@@ -122,18 +122,6 @@ pub unsafe extern "C" fn tl_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    guarded(std::ptr::null_mut(), || {
-        call_json(handle, command, args_json)
-    })
-}
-
-/// # Safety
-/// As `tl_call`.
-unsafe fn call_json(
-    handle: *const TlHandle,
-    command: *const c_char,
-    args_json: *const c_char,
-) -> *mut c_char {
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = handle
             .as_ref()
@@ -161,7 +149,7 @@ unsafe fn call_json(
 #[no_mangle]
 pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     if !text.is_null() {
-        guarded((), || drop(CString::from_raw(text)));
+        drop(CString::from_raw(text));
     }
 }
 
@@ -175,9 +163,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
     if handle.is_null() {
         return;
     }
-    guarded((), || {
-        let handle = Box::from_raw(handle);
-        // Compiles run in their own process groups, so nothing else stops them.
+    let handle = Box::from_raw(handle);
+    // Compiles run in their own process groups, so nothing else stops them.
+    caught(|| {
         handle.service.compile.kill_all();
         handle.service.texpresso.kill_all();
     });
@@ -186,10 +174,9 @@ pub unsafe extern "C" fn tl_close(handle: *mut TlHandle) {
 /// A file's text as the editor has it (`texlocal_syntax::SourceDocument`).
 pub struct TlSource(SourceDocument);
 
-/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches the
-/// mirror. Bytes that aren't UTF-8 become U+FFFD, as a Swift `String`
-/// decoding them has them, so the mirror keeps the editor's text and length
-/// where dropping the text would leave it out of step with every later edit.
+/// UTF-8 text by its byte count, so a U+0000 in the editor's text reaches
+/// the mirror. Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes
+/// them, so an edit still lands with the length the editor has.
 unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     if ptr.is_null() {
         return Cow::Borrowed("");
@@ -197,20 +184,20 @@ unsafe fn text_arg<'a>(ptr: *const u8, len: usize) -> Cow<'a, str> {
     String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len))
 }
 
-/// Null if it panics.
+/// Null if it fails.
 ///
 /// # Safety
 /// `text` is null (empty) or `len` bytes of UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
-    guarded(std::ptr::null_mut(), || {
-        Box::into_raw(Box::new(TlSource(SourceDocument::new(&text_arg(
-            text, len,
-        )))))
-    })
+    caught(|| TlSource(SourceDocument::new(&text_arg(text, len))))
+        .map_or(std::ptr::null_mut(), |source| {
+            Box::into_raw(Box::new(source))
+        })
 }
 
-/// The editor replaced `length` units at `start` with `text`.
+/// The editor replaced `length` units at `start` with `text`. Each call on
+/// a source answers as for a null source if it fails: nothing, 0, no runs.
 ///
 /// # Safety
 /// `source` came from `tl_source_new` and is not freed; `text` is null
@@ -224,7 +211,7 @@ pub unsafe extern "C" fn tl_source_edit(
     len: usize,
 ) {
     if let Some(source) = source.as_mut() {
-        guarded((), || source.0.edit(start, length, &text_arg(text, len)));
+        caught(|| source.0.edit(start, length, &text_arg(text, len)));
     }
 }
 
@@ -234,7 +221,8 @@ pub unsafe extern "C" fn tl_source_edit(
 pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32) -> u32 {
     source
         .as_ref()
-        .map_or(0, |source| guarded(0, || source.0.line_at(offset)))
+        .and_then(|source| caught(|| source.0.line_at(offset)))
+        .unwrap_or(0)
 }
 
 /// # Safety
@@ -243,7 +231,8 @@ pub unsafe extern "C" fn tl_source_line_at(source: *const TlSource, offset: u32)
 pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32) -> u32 {
     source
         .as_ref()
-        .map_or(0, |source| guarded(0, || source.0.line_start(line)))
+        .and_then(|source| caught(|| source.0.line_start(line)))
+        .unwrap_or(0)
 }
 
 /// # Safety
@@ -252,16 +241,16 @@ pub unsafe extern "C" fn tl_source_line_start(source: *const TlSource, line: u32
 pub unsafe extern "C" fn tl_source_line_count(source: *const TlSource) -> u32 {
     source
         .as_ref()
-        .map_or(0, |source| guarded(0, || source.0.line_count()))
+        .and_then(|source| caught(|| source.0.line_count()))
+        .unwrap_or(0)
 }
 
 /// The highlighted runs of the lines a range touches, as start, length and
 /// kind (`HighlightKind`'s order) for each; `count` is the number of values.
-/// Free them with `tl_source_free_runs`. Null, with a count of 0, for a null
-/// source or if it panics.
+/// Free them with `tl_source_free_runs`.
 ///
 /// # Safety
-/// As `tl_source_edit`; `count` is null or valid for a write.
+/// As `tl_source_edit`; `count` is valid for a write.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_highlights(
     source: *mut TlSource,
@@ -269,36 +258,27 @@ pub unsafe extern "C" fn tl_source_highlights(
     length: u32,
     count: *mut usize,
 ) -> *mut u32 {
-    let runs = source.as_mut().and_then(|source| {
-        guarded(None, || {
-            let runs: Box<[u32]> = source
-                .0
-                .highlights(start, length)
-                .into_iter()
-                .flat_map(|h| [h.start, h.length, h.kind as u32])
-                .collect();
-            Some(runs)
+    let runs: Box<[u32]> = source
+        .as_mut()
+        .and_then(|source| {
+            caught(|| {
+                let runs = source.0.highlights(start, length).into_iter();
+                runs.flat_map(|h| [h.start, h.length, h.kind as u32])
+                    .collect()
+            })
         })
-    });
-    if let Some(count) = count.as_mut() {
-        *count = runs.as_ref().map_or(0, |runs| runs.len());
-    }
-    runs.map_or(std::ptr::null_mut(), |runs| Box::into_raw(runs).cast())
+        .unwrap_or_default();
+    *count = runs.len();
+    Box::into_raw(runs).cast()
 }
 
-/// Null is ignored.
-///
 /// # Safety
 /// `runs` and `count` came from one `tl_source_highlights`, freed once.
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_free_runs(runs: *mut u32, count: usize) {
-    if !runs.is_null() {
-        guarded((), || {
-            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                runs, count,
-            )))
-        });
-    }
+    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+        runs, count,
+    )));
 }
 
 /// The arguments the source's commands take, each what it needs.
@@ -318,9 +298,9 @@ struct SourceArgs {
 
 /// The editing commands, as `texlocal_syntax::SourceDocument` has them:
 /// "completions", "toggle_comment", "indent", "set_heading", "insert_block",
-/// "insert_symbol", "math_at", "text_styles", "not_prose" (the `selection`'s)
-/// and "text". Returns the result's JSON (free it with `tl_free`), or null
-/// for a null source, an unknown command or arguments, or a panic.
+/// "insert_symbol", "math_at", "text_styles", "not_prose" (the
+/// `selection`'s) and "text". Returns the result's JSON (free it with
+/// `tl_free`), or null for an unknown command or arguments.
 ///
 /// # Safety
 /// As `tl_source_edit`; the strings are null or NUL-terminated.
@@ -330,38 +310,28 @@ pub unsafe extern "C" fn tl_source_call(
     command: *const c_char,
     args_json: *const c_char,
 ) -> *mut c_char {
-    let Some(source) = source.as_ref() else {
-        return std::ptr::null_mut();
+    let call = |doc: &SourceDocument| {
+        let a: SourceArgs = serde_json::from_str(str_arg(args_json)?).ok()?;
+        Some(match str_arg(command)? {
+            "completions" => {
+                json_string(doc.completions(a.caret, a.explicit, &a.labels, &a.citations))
+            }
+            "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
+            "indent" => json_string(doc.indent(&a.selections, a.more)),
+            "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
+            "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
+            "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
+            "math_at" => json_string(doc.math_at(a.caret)),
+            "text_styles" => json_string(doc.text_styles(a.selection)),
+            "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
+            "text" => json_string(doc.text()),
+            _ => return None,
+        })
     };
-    guarded(std::ptr::null_mut(), || {
-        source_call(&source.0, command, args_json)
-    })
-}
-
-/// # Safety
-/// As `tl_source_call`.
-unsafe fn source_call(
-    doc: &SourceDocument,
-    command: *const c_char,
-    args_json: *const c_char,
-) -> *mut c_char {
-    let Some(a) = str_arg(args_json).and_then(|a| serde_json::from_str::<SourceArgs>(a).ok())
-    else {
-        return std::ptr::null_mut();
-    };
-    match str_arg(command).unwrap_or_default() {
-        "completions" => json_string(doc.completions(a.caret, a.explicit, &a.labels, &a.citations)),
-        "toggle_comment" => json_string(doc.toggle_comment(&a.selections)),
-        "indent" => json_string(doc.indent(&a.selections, a.more)),
-        "set_heading" => json_string(doc.set_heading(a.caret, &a.command)),
-        "insert_block" => json_string(doc.insert_block(&a.id, a.selection)),
-        "insert_symbol" => json_string(doc.insert_symbol(&a.command, a.selection)),
-        "math_at" => json_string(doc.math_at(a.caret)),
-        "text_styles" => json_string(doc.text_styles(a.selection)),
-        "not_prose" => json_string(doc.not_prose(a.selection.start, a.selection.length)),
-        "text" => json_string(doc.text()),
-        _ => std::ptr::null_mut(),
-    }
+    source
+        .as_ref()
+        .and_then(|source| caught(|| call(&source.0)).flatten())
+        .unwrap_or(std::ptr::null_mut())
 }
 
 /// Null is ignored.
@@ -371,6 +341,6 @@ unsafe fn source_call(
 #[no_mangle]
 pub unsafe extern "C" fn tl_source_free(source: *mut TlSource) {
     if !source.is_null() {
-        guarded((), || drop(Box::from_raw(source)));
+        drop(Box::from_raw(source));
     }
 }

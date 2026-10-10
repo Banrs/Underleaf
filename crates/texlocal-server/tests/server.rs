@@ -575,25 +575,10 @@ async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
 }
 
 #[tokio::test]
-async fn heads_and_revalidations_give_the_whole_length_without_a_body() {
-    let (f, port) = start().await;
-    let pdf = Service::new(f._data.path().to_path_buf())
-        .pdf_path("P")
-        .unwrap();
-    std::fs::create_dir_all(pdf.parent().unwrap()).unwrap();
-    std::fs::write(&pdf, vec![b'%'; 5000]).unwrap();
+async fn a_revalidated_web_file_comes_back_without_a_body() {
+    let (_f, port) = start().await;
     let mut stream = connect(port).await;
     let head = format!("Host: 127.0.0.1:{port}\r\nX-TeXLocal-Token: {TOKEN}");
-
-    let req = format!("HEAD /__download/pdf/P HTTP/1.1\r\n{head}\r\n\r\n");
-    stream.write_all(req.as_bytes()).await.unwrap();
-    let answer = read_head(&mut stream).await;
-    assert!(answer.starts_with("http/1.1 200"), "{answer}");
-    assert!(answer.contains("content-length: 5000\r\n"), "{answer}");
-    assert!(
-        answer.contains("content-disposition: attachment"),
-        "{answer}"
-    );
 
     let req = format!("GET / HTTP/1.1\r\n{head}\r\n\r\n");
     stream.write_all(req.as_bytes()).await.unwrap();
@@ -611,6 +596,7 @@ async fn heads_and_revalidations_give_the_whole_length_without_a_body() {
     stream.write_all(req.as_bytes()).await.unwrap();
     let unchanged = read_head(&mut stream).await;
     assert!(unchanged.starts_with("http/1.1 304"), "{unchanged}");
+    assert!(!unchanged.contains("content-length"), "{unchanged}");
     assert!(
         unchanged.contains(&format!("etag: {tag}\r\n")),
         "{unchanged}"

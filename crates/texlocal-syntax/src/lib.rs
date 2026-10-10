@@ -305,18 +305,6 @@ fn clamp(range: TextRange, len: u32) -> TextRange {
     }
 }
 
-/// Append a range to an ordered list, joining overlap and adjacency.
-fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
-    if let Some(last) = ranges
-        .last_mut()
-        .filter(|last| range.start <= last.start + last.length)
-    {
-        last.length = last.length.max(range.start + range.length - last.start);
-    } else {
-        ranges.push(range);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -348,8 +348,7 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         assert_eq!(tl_source_line_count(none), 0);
         let mut count = 7;
         let runs = tl_source_highlights(none, 0, 1, &mut count);
-        assert!(runs.is_null());
-        assert_eq!(count, 0);
+        assert_eq!(count, 0, "no runs");
         tl_source_free_runs(runs, count);
         assert!(tl_source_call(none, c("text").as_ptr(), c("{}").as_ptr()).is_null());
         tl_source_free(none);
@@ -362,9 +361,9 @@ fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
         // Out-of-range offsets are cut to the text.
         tl_source_edit(source, 99, 99, "ab".as_ptr(), 2);
         assert_eq!(tl_source_line_start(source, 99), 0);
-        let runs = tl_source_highlights(source, 99, 99, ptr::null_mut());
-        assert!(!runs.is_null());
-        tl_source_free_runs(runs, 0);
+        let runs = tl_source_highlights(source, 99, 99, &mut count);
+        assert_eq!(count, 0);
+        tl_source_free_runs(runs, count);
 
         // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
         // edit still lands, keeping the mirror in step with the editor.

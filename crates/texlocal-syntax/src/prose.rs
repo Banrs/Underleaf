@@ -3,7 +3,7 @@
 //! options come first, as in `\usepackage[utf8]{inputenc}`.
 
 use crate::maths::{Point, Scans, Visit};
-use crate::{blank, catalog::CATALOG, merge_range, Text, TextRange};
+use crate::{blank, catalog::CATALOG, Text, TextRange};
 
 /// Absolute UTF-16 ranges to skip in `start..end`: math and literal code from
 /// the shared math scan, plus name arguments from commands in the paragraph.
@@ -38,16 +38,22 @@ pub fn not_prose(text: &Text, scans: &mut Scans, start: u32, end: u32) -> Vec<Te
         }
     });
     ranges.sort_unstable_by_key(|r| (r.start, r.start.saturating_add(r.length)));
-    ranges.dedup_by(|range, previous| {
-        if range.start > previous.start + previous.length {
-            return false;
-        }
-        previous.length = previous
-            .length
-            .max(range.start + range.length - previous.start);
-        true
-    });
-    ranges
+    ranges.into_iter().fold(Vec::new(), |mut merged, range| {
+        merge_range(&mut merged, range);
+        merged
+    })
+}
+
+/// Append a range to an ordered list, joining overlap and adjacency.
+fn merge_range(ranges: &mut Vec<TextRange>, range: TextRange) {
+    if let Some(last) = ranges
+        .last_mut()
+        .filter(|last| range.start <= last.start + last.length)
+    {
+        last.length = last.length.max(range.start + range.length - last.start);
+    } else {
+        ranges.push(range);
+    }
 }
 
 fn range(from: usize, to: usize) -> TextRange {
