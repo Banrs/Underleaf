@@ -230,7 +230,8 @@ pub fn create_project(
     for (file, content) in templates::files(template) {
         fs::write(root.join(file), content)?;
     }
-    finish_project(clean, &root, &json!({}))
+    let main_file = write_settings(&root, &json!({}))?.main_file;
+    finish_project(clean, &root, main_file)
 }
 
 /// A new, empty project folder for `name`, or "name 2" and so on when that
@@ -255,15 +256,18 @@ pub(crate) fn new_project_dir(data_dir: &Path, name: &str) -> Result<(String, Pa
     unreachable!("a free name")
 }
 
+/// A project just made, dated by its folder: its settings, written last,
+/// date the folder after every file in it.
 pub(crate) fn finish_project(
     name: String,
     root: &Path,
-    settings: &serde_json::Value,
+    main_file: String,
 ) -> Result<ProjectInfo, CoreError> {
-    let settings = write_settings(root, settings)?;
-    // Written last, the settings date the new folder after every file in it.
-    let mtime = mtime_ms(&fs::metadata(root)?);
-    Ok(project_info(name, mtime, settings.main_file))
+    Ok(project_info(
+        name,
+        mtime_ms(&fs::metadata(root)?),
+        main_file,
+    ))
 }
 
 /// The likely main file among a project's top-level .tex files: main.tex,
@@ -291,7 +295,14 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         .cloned())
 }
 
-pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<ProjectInfo, CoreError> {
+/// Rename a project, calling `before_move` once the rename is sure to go
+/// ahead and before its folder moves.
+pub fn rename_project(
+    data_dir: &Path,
+    id: &str,
+    new_name: &str,
+    before_move: impl FnOnce(&Path) -> Result<(), CoreError>,
+) -> Result<ProjectInfo, CoreError> {
     let root = project_root(data_dir, id)?;
     let clean = sanitize_name(new_name)?;
     let dest = data_dir.join(&clean);
@@ -300,6 +311,7 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
             "A project with that name already exists",
         ));
     }
+    before_move(&root)?;
     fs::rename(&root, &dest)?;
     let main_file = read_settings(&dest).main_file;
     Ok(project_info(

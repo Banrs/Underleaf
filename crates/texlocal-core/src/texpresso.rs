@@ -2,12 +2,12 @@
 //! ordinary latexmk build and PDF continue to use saved project files.
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
 
-use crate::{paths, settings, tail, CoreError, BUILD_DIR};
+use crate::{lock, paths, settings, tail, CoreError, BUILD_DIR, SETTINGS_FILE};
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
@@ -27,13 +27,6 @@ const MISSING: &str = "TeXpresso wasn't found. Choose the folder it's in, in Set
 const REPLACED: &str =
     "Another window started TeXpresso for this project. Start TeXpresso again to preview here.";
 const TOO_MANY: &str = "Too many files for TeXpresso (limit 256 files / 64 MB).";
-
-/// The sessions and their states are plain data that no panic leaves
-/// half-written, so a poisoned lock is still usable; and `Session::drop`
-/// locks, where a panic would abort the host.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 #[derive(Debug, Deserialize)]
 pub struct FileBuffer {
@@ -111,10 +104,15 @@ struct State {
     error: Option<String>,
     revision: u64,
     pdf_version: u64,
+    /// The settings file as last seen, by `settings_stamp`.
+    settings: Stamp,
 }
 struct Input {
     stdin: ChildStdin,
     files: HashMap<PathBuf, String>,
+    /// Where the paths clients send lead, found once: a session's files
+    /// don't move under it, as a rename or delete stops it.
+    paths: HashMap<String, PathBuf>,
 }
 struct Session {
     token: String,
@@ -137,8 +135,13 @@ impl Session {
     /// For its owner: renew the lease, and stop if the main file has changed
     /// since the start. Whether it still runs.
     fn renew(&self, root: &Path) -> bool {
-        lock(&self.state).last_used = Instant::now();
-        if settings::read_settings(root).main_file != self.main {
+        let stamp = settings_stamp(root);
+        let seen = {
+            let mut state = lock(&self.state);
+            state.last_used = Instant::now();
+            std::mem::replace(&mut state.settings, stamp)
+        };
+        if seen != stamp && settings::read_settings(root).main_file != self.main {
             self.stop(Some("The main file changed. Start TeXpresso again.".into()));
         }
         lock(&self.state).pid.is_some()
@@ -166,7 +169,9 @@ impl Session {
         if !state.protocol_seen || state.error.is_some() {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
-        let log = tail(&log, MAX_OUTPUT).to_owned();
+        if log.len() > MAX_OUTPUT {
+            log = tail(&log, MAX_OUTPUT).to_owned();
+        }
         Status {
             available: executable_file(&self.executable),
             running: state.pid.is_some(),
@@ -333,14 +338,16 @@ impl Manager {
         if let Some(token) = expected {
             self.owned(&root, token)?;
         }
+        let stamp = settings_stamp(&root);
         let main = settings::read_settings(&root).main_file;
-        let main_path = validate_buffer(&root, &main, "")?;
+        let (mut buffers, mut paths) = (HashMap::new(), HashMap::new());
+        let main_path = validate_buffer(&root, &main, "", &paths)?;
         if !main_path.is_file() {
             return Err(CoreError::bad_request("The main file does not exist."));
         }
-        let mut buffers = HashMap::new();
         for file in files {
-            let path = validate_buffer(&root, &file.path, &file.text)?;
+            let path = validate_buffer(&root, &file.path, &file.text, &paths)?;
+            paths.insert(file.path.clone(), path.clone());
             if buffers.insert(path, file.text.clone()).is_some() {
                 return Err(CoreError::bad_request(
                     "Files sent to TeXpresso repeat a path.",
@@ -428,6 +435,7 @@ impl Manager {
             input: tokio::sync::Mutex::new(Input {
                 stdin: child.stdin.take().unwrap(),
                 files: buffers,
+                paths,
             }),
             revision: Arc::clone(&self.revision),
             state: Mutex::new(State {
@@ -440,6 +448,7 @@ impl Manager {
                 error: None,
                 revision: self.revision.fetch_add(1, Ordering::Relaxed) + 1,
                 pdf_version: 0,
+                settings: stamp,
             }),
         });
         {
@@ -501,39 +510,42 @@ impl Manager {
     pub async fn update(
         &self,
         root: &Path,
-        path: &str,
+        rel: &str,
         text: &str,
         token: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        let path = validate_buffer(&root, path, text)?;
         if !session.renew(&root) {
             return Ok(session.status());
         }
         let mut input = session.input.lock().await;
-        let Input { stdin, files } = &mut *input;
-        let others = files.iter().filter(|(p, _)| *p != &path);
+        let input = &mut *input;
+        let path = validate_buffer(&root, rel, text, &input.paths)?;
+        let others = input.files.iter().filter(|(p, _)| *p != &path);
         check_limits(
             others.clone().count() + 1,
             others.map(|(_, t)| t.len()).sum::<usize>() + text.len(),
         )?;
-        let previous = files.get_mut(&path);
+        let previous = input.files.get_mut(&path);
         let change = previous.as_deref().map(|previous| delta(previous, text));
         let message = match change {
             Some((_, 0, "")) => return Ok(session.status()),
             Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
             None => json!(["open", path, text]),
         };
-        if let Err(err) = write_messages(stdin, &[message]).await {
+        if let Err(err) = write_messages(&mut input.stdin, &[message]).await {
             session.stop(Some(unsent(err)));
         } else {
             match (previous, change) {
                 (Some(previous), Some((offset, remove, inserted))) => {
                     previous.replace_range(offset..offset + remove, inserted)
                 }
-                _ => drop(files.insert(path, text.to_owned())),
+                _ => {
+                    input.paths.insert(rel.to_owned(), path.clone());
+                    input.files.insert(path, text.to_owned());
+                }
             }
             session.bump(&mut lock(&session.state));
         }
@@ -566,8 +578,13 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
         .and_then(|p| fs::canonicalize(p).ok())
 }
 /// A buffer's path as TeXpresso opens it: through any link, from the
-/// resolved `root`.
-fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreError> {
+/// resolved `root`; found once per session, as `known` keeps it.
+fn validate_buffer(
+    root: &Path,
+    path: &str,
+    text: &str,
+    known: &HashMap<String, PathBuf>,
+) -> Result<PathBuf, CoreError> {
     if text.len() > MAX_FILE {
         return Err(CoreError::bad_request(
             "TeXpresso takes files of up to 8 MB.",
@@ -578,13 +595,24 @@ fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreE
             "A file sent to TeXpresso has an invalid path or text.",
         ));
     }
-    let path = root.join(paths::physical_write_path(root, path)?);
+    if let Some(known) = known.get(path) {
+        return Ok(known.clone());
+    }
+    let path = root.join(paths::write_paths(root, path)?.1);
     if path.is_dir() {
         return Err(CoreError::bad_request(
             "TeXpresso opens files, not folders.",
         ));
     }
     Ok(path)
+}
+/// The settings file's identity, size and date, or None while it is
+/// missing: every write the app makes replaces it, so a changed main file
+/// shows here for one stat, where reading and parsing it would take more.
+type Stamp = Option<(u64, i64, i64, u64)>;
+fn settings_stamp(root: &Path) -> Stamp {
+    let meta = fs::metadata(root.join(SETTINGS_FILE)).ok()?;
+    Some((meta.ino(), meta.mtime(), meta.mtime_nsec(), meta.len()))
 }
 fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
     if files > MAX_FILES || bytes > MAX_TOTAL {

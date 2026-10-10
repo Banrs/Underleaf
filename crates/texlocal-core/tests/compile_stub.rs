@@ -523,6 +523,15 @@ async fn renaming_a_project_stops_its_build() {
     });
     tokio::time::sleep(Duration::from_millis(400)).await;
 
+    // A rename refused leaves the build running.
+    create_project(tmp.path(), "taken", "blank").unwrap();
+    let refused = service
+        .call("rename_project", &json!({ "id": "one", "name": "taken" }))
+        .await;
+    assert_eq!(refused.unwrap_err().status, 409);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!build.is_finished());
+
     let started = Instant::now();
     service
         .call("rename_project", &json!({ "id": "one", "name": "uno" }))

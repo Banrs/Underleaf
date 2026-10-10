@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ use crate::error::CoreError;
 use crate::logparse::{latexmk_errors, parse_blg, parse_log, LogItem};
 use crate::paths::safe_rel_file;
 use crate::settings::{main_base_name, read_settings};
-use crate::BUILD_DIR;
+use crate::{lock, BUILD_DIR};
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(180);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -333,7 +333,7 @@ impl Registration<'_> {
 
 impl Drop for Registration<'_> {
     fn drop(&mut self) {
-        let mut running = self.manager.running();
+        let mut running = lock(&self.manager.running);
         let entry = running.get_mut(self.root).expect("registered project");
         if entry
             .latest
@@ -421,15 +421,8 @@ fn user_latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<String> {
 }
 
 impl CompileManager {
-    /// The registry holds plain data that no panic leaves half-written, so a
-    /// poisoned lock is still usable — and kill_all runs at quit, from
-    /// `tl_close` too, where a panic would abort the host.
-    fn running(&self) -> MutexGuard<'_, Registry> {
-        self.running.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     pub fn kill_all(&self) {
-        let mut running = self.running();
+        let mut running = lock(&self.running);
         for entry in running.values_mut() {
             entry.latest = None;
             if let Some(pid) = entry.pid {
@@ -443,7 +436,7 @@ impl CompileManager {
     /// the run reports itself stopped; one that hasn't started latexmk yet
     /// doesn't start it.
     pub fn stop(&self, root: &Path) -> bool {
-        let mut running = self.running();
+        let mut running = lock(&self.running);
         let Some(entry) = running.get_mut(root).filter(|entry| entry.latest.is_some()) else {
             return false;
         };
@@ -455,7 +448,7 @@ impl CompileManager {
     }
 
     fn register<'a>(&'a self, root: &'a Path) -> Registration<'a> {
-        let mut running = self.running();
+        let mut running = lock(&self.running);
         let entry = running.entry(root.to_path_buf()).or_default();
         let request = Arc::new(());
         entry.latest = Some(Arc::clone(&request));
@@ -558,7 +551,7 @@ impl CompileManager {
         // Cancelling the active future can only signal the tree, not await reap.
         registration.gate_guard = Some(Arc::clone(&registration.gate).lock_owned().await);
 
-        if registration.stopped(&self.running()) {
+        if registration.stopped(&lock(&self.running)) {
             return Ok(Self::stopped_early(request_started));
         }
 
@@ -585,7 +578,7 @@ impl CompileManager {
             // Hold the registry lock across synchronous spawn + PID publication.
             // A successor or Stop therefore sees either no child or the actual
             // PID, never an unkillable gap between the two.
-            let mut running = self.running();
+            let mut running = lock(&self.running);
             if registration.stopped(&running) {
                 None
             } else {
@@ -606,7 +599,7 @@ impl CompileManager {
                 let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
                 registration.child = None;
                 output.push_str(&stderr);
-                let mut running = self.running();
+                let mut running = lock(&self.running);
                 // Reaped: a Stop from here on must not signal its pid, which
                 // may already be another process's.
                 running.get_mut(root).expect("registered project").pid = None;
@@ -620,10 +613,22 @@ impl CompileManager {
                 (end, output)
             }
         };
-        // Reading and parsing the logs blocks, so not on a runtime worker.
-        tokio::task::spawn_blocking(move || finish(run, end, output))
+        let record = run.output("fdb_latexmk");
+        // Reading and parsing the logs blocks, so not on a runtime worker. It
+        // only reads: a build cancelled meanwhile, its gate released, leaves
+        // it nothing to change under the next build.
+        let result = tokio::task::spawn_blocking(move || finish(run, end, output))
             .await
-            .map_err(|err| CoreError::internal(err.to_string()))
+            .map_err(|err| CoreError::internal(err.to_string()))?;
+        if !result.ok {
+            // latexmk's record of the run. After a fatal TeX error it holds the
+            // truncated .aux's state, so bibtex fails on it ("no \citation") and
+            // every later run stops at "gave an error in previous invocation",
+            // even with -g and the source fixed. Without it the next run starts
+            // afresh.
+            let _ = std::fs::remove_file(record);
+        }
+        Ok(result)
     }
 }
 
@@ -664,15 +669,6 @@ fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
         }
         _ => {}
     }
-    if !ok {
-        // latexmk's record of the run. After a fatal TeX error it holds the
-        // truncated .aux's state, so bibtex fails on it ("no \citation") and
-        // every later run stops at "gave an error in previous invocation",
-        // even with -g and the source fixed. Without it the next run starts
-        // afresh.
-        let _ = std::fs::remove_file(run.output("fdb_latexmk"));
-    }
-
     let log = joined_log(engine_log.as_deref(), output);
     CompileResult {
         ok,
