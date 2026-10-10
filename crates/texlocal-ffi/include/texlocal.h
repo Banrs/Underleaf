@@ -26,9 +26,11 @@ void tl_free(char *text);
 /* Stops running compiles. No call may be in flight. */
 void tl_close(TlHandle *handle);
 
-/* The source editor's mirror of a file's text (crates/texlocal-syntax), on
- * the editor's thread. Offsets and lengths count UTF-16 units; lines count
- * from 1. */
+/* The source editor's mirror of a file's text (crates/texlocal-syntax).
+ * Calls on one TlSource must not overlap: one thread at a time, as the Swift
+ * main actor guarantees. That holds for the const queries too: the Rust
+ * side takes the source mutably in every call. Offsets and lengths count UTF-16
+ * units; lines count from 1. */
 typedef struct TlSource TlSource;
 
 /* Text is len bytes of UTF-8, so it may hold U+0000; bytes that aren't UTF-8
