@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use texlocal_ffi::{
     tl_call, tl_close, tl_free, tl_open, tl_source_call, tl_source_edit, tl_source_free,
     tl_source_free_runs, tl_source_highlights, tl_source_line_at, tl_source_line_count,
-    tl_source_new, TlHandle, TlSource,
+    tl_source_line_start, tl_source_new, TlHandle, TlSource,
 };
 
 fn call(handle: *const TlHandle, command: &str, args: Option<Value>) -> Value {
@@ -333,6 +333,47 @@ fn the_source_mirror_round_trips_through_the_c_abi() {
         assert_eq!(tl_source_line_count(source), 2);
         tl_source_edit(source, 4, 0, "\0c".as_ptr(), 2);
         assert_eq!(call_on(source, "text"), Some(json!("a\u{0}\nb\u{0}c")));
+        tl_source_free(source);
+    }
+}
+
+#[test]
+fn the_source_mirror_answers_null_and_garbage_without_unwinding() {
+    let c = |s: &str| CString::new(s).unwrap();
+    unsafe {
+        let none: *mut TlSource = ptr::null_mut();
+        tl_source_edit(none, 0, 0, "x".as_ptr(), 1);
+        assert_eq!(tl_source_line_at(none, 0), 0);
+        assert_eq!(tl_source_line_start(none, 1), 0);
+        assert_eq!(tl_source_line_count(none), 0);
+        let mut count = 7;
+        let runs = tl_source_highlights(none, 0, 1, &mut count);
+        assert!(runs.is_null());
+        assert_eq!(count, 0);
+        tl_source_free_runs(runs, count);
+        assert!(tl_source_call(none, c("text").as_ptr(), c("{}").as_ptr()).is_null());
+        tl_source_free(none);
+
+        let source = tl_source_new(ptr::null(), 0);
+        assert!(!source.is_null());
+        assert!(tl_source_call(source, c("text").as_ptr(), c("{not json").as_ptr()).is_null());
+        assert!(tl_source_call(source, ptr::null(), c("{}").as_ptr()).is_null());
+        assert!(tl_source_call(source, c("text").as_ptr(), ptr::null()).is_null());
+        // Out-of-range offsets are cut to the text.
+        tl_source_edit(source, 99, 99, "ab".as_ptr(), 2);
+        assert_eq!(tl_source_line_start(source, 99), 0);
+        let runs = tl_source_highlights(source, 99, 99, ptr::null_mut());
+        assert!(!runs.is_null());
+        tl_source_free_runs(runs, 0);
+
+        // Bytes that aren't UTF-8 read as U+FFFD, as Swift decodes them: the
+        // edit still lands, keeping the mirror in step with the editor.
+        tl_source_edit(source, 1, 0, b"\xff\n".as_ptr(), 2);
+        let out = tl_source_call(source, c("text").as_ptr(), c("{}").as_ptr());
+        let text: Value = serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        tl_free(out);
+        assert_eq!(text, json!("a\u{fffd}\nb"));
+        assert_eq!(tl_source_line_count(source), 2);
         tl_source_free(source);
     }
 }
