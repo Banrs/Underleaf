@@ -104,6 +104,34 @@ async fn a_failed_run_forgets_latexmks_record_so_the_next_starts_afresh() {
 }
 
 #[tokio::test]
+async fn a_cancelled_run_forgets_latexmks_record_before_the_next_can_start() {
+    let (_tmp, root, mgr) = setup(
+        "#!/bin/sh
+mkdir -p build
+printf 'record' > build/main.fdb_latexmk
+sleep 20
+",
+    );
+    let record = root.join("build/main.fdb_latexmk");
+    let mgr = Arc::new(mgr);
+    let task = tokio::spawn({
+        let mgr = Arc::clone(&mgr);
+        let root = root.clone();
+        async move { compile(&mgr, &root).await }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !record.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("latexmk did not write its record");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!record.exists());
+}
+
+#[tokio::test]
 async fn a_good_run_keeps_latexmks_record() {
     let (_tmp, root, mgr) = setup(
         "#!/bin/sh\nmkdir -p build\nprintf 'record' > build/main.fdb_latexmk\nprintf 'fake' > build/main.pdf\nexit 0\n",

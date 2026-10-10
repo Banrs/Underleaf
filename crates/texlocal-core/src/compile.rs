@@ -309,7 +309,8 @@ pub struct CompileManager {
 }
 
 /// Keeps the project's gate alive through waiting, running, and cancellation.
-/// Dropping a live child kills its whole tree before releasing the gate.
+/// Dropping a live child kills its whole tree, and a run that did not end ok
+/// loses latexmk's record, before the gate is released.
 struct Registration<'a> {
     manager: &'a CompileManager,
     root: &'a Path,
@@ -317,6 +318,12 @@ struct Registration<'a> {
     request: Arc<()>,
     gate_guard: Option<OwnedMutexGuard<()>>,
     child: Option<tokio::process::Child>,
+    /// latexmk's record of a run that has started and not yet ended ok. After
+    /// a fatal TeX error it holds the truncated .aux's state, so bibtex fails
+    /// on it ("no \citation") and every later run stops at "gave an error in
+    /// previous invocation", even with -g and the source fixed. Without it the
+    /// next run starts afresh.
+    record: Option<PathBuf>,
 }
 
 impl Registration<'_> {
@@ -349,6 +356,9 @@ impl Drop for Registration<'_> {
             entry.pid = None;
         }
         self.child = None;
+        if let Some(record) = self.record.take() {
+            let _ = std::fs::remove_file(record);
+        }
         // On cancellation, Tokio reaps the killed child after this guard releases.
         self.gate_guard = None;
         // Only the registry and this registration still own the idle gate.
@@ -465,6 +475,7 @@ impl CompileManager {
             request,
             gate_guard: None,
             child: None,
+            record: None,
         }
     }
 
@@ -590,10 +601,14 @@ impl CompileManager {
             }
         };
 
+        let Some(spawned) = spawned else {
+            return Ok(Self::stopped_early(request_started));
+        };
+        // Kept only if the run ends ok: a cancelled one drops it with the gate.
+        registration.record = Some(run.output("fdb_latexmk"));
         let (end, output) = match spawned {
-            None => return Ok(Self::stopped_early(request_started)),
-            Some(Err(err)) => (End::Unstarted(err.to_string()), err.to_string()),
-            Some(Ok(child)) => {
+            Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
+            Ok(child) => {
                 let child = registration.child.insert(child);
                 let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
                 let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
@@ -613,20 +628,14 @@ impl CompileManager {
                 (end, output)
             }
         };
-        let record = run.output("fdb_latexmk");
         // Reading and parsing the logs blocks, so not on a runtime worker. It
         // only reads: a build cancelled meanwhile, its gate released, leaves
         // it nothing to change under the next build.
         let result = tokio::task::spawn_blocking(move || finish(run, end, output))
             .await
             .map_err(|err| CoreError::internal(err.to_string()))?;
-        if !result.ok {
-            // latexmk's record of the run. After a fatal TeX error it holds the
-            // truncated .aux's state, so bibtex fails on it ("no \citation") and
-            // every later run stops at "gave an error in previous invocation",
-            // even with -g and the source fixed. Without it the next run starts
-            // afresh.
-            let _ = std::fs::remove_file(record);
+        if result.ok {
+            registration.record = None;
         }
         Ok(result)
     }
