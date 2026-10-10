@@ -1,8 +1,7 @@
 /* TeXLocal interface.
    Values come from Apple's macOS 27 UI Kit — see docs/design-tokens.md for the
-   extraction. The Tauri Mac window's chrome is gated on html.mac; a browser tab
-   gets html.browser, and vibrancy that needs a native window falls back to
-   opaque surfaces (html:not(.mac)). */
+   extraction. A browser tab gets html.browser; surfaces are opaque, as there is
+   no native window vibrancy behind the page. */
 
 /* ---------- fonts ---------- */
 
@@ -44,7 +43,6 @@
   --bg-content: #ffffff;
   --bg-recessed: #f2f2f4;
   --bg-raised: #ffffff;                    /* menus, toasts, dialogs */
-  --material: rgba(236, 236, 236, 0.63);   /* "regular" */
 
   /* Accent text and filled controls with a white label both need 4.5:1, which
      the kit's #0088ff (3.5:1) misses. The fill stays this blue in dark too,
@@ -135,7 +133,6 @@
   --bg-content: #1e1e1e;
   --bg-recessed: #171717;
   --bg-raised: #2b2b2b;
-  --material: rgba(44, 44, 44, 0.61);
 
   --accent: #0091ff;
   --red: #ff4245;
@@ -181,10 +178,6 @@ html, body {
 
 #app { height: 100%; overflow: hidden; display: flex; flex-direction: column; }
 
-/* On macOS the native window vibrancy shows through a transparent window; the
-   sidebar leaves its background translucent to reveal it. */
-.mac, .mac body { background: transparent; }
-
 h1, h2, h3, p { margin: 0; }
 
 /* Native controls keep the arrow cursor; the pointing hand is for links. */
@@ -212,11 +205,6 @@ input, textarea, .cm-content, .pdf-text-layer, .logs-raw, .log-message {
 
 /* ---------- window chrome ---------- */
 
-/* The traffic lights sit at x19/y19 in a 52px band (native insets), so the sidebar
-   band keeps its leading end clear of controls. */
-.mac .sidebar-titlebar { padding-left: 96px; }
-/* With the sidebar hidden, the lights move over the content title bar. */
-.mac .shell:has(.sidebar.collapsed) .titlebar { padding-left: 96px; }
 
 .titlebar {
   display: flex;
@@ -461,7 +449,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .home { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .home-titlebar { box-shadow: none; background: transparent; }
-.mac .home-titlebar { padding-left: 96px; }
 
 /* Two columns, as a welcome window has: brand and actions, then recents. */
 .home-body {
@@ -553,9 +540,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   background: var(--bg-recessed);
   transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease;
 }
-/* Native vibrancy already renders behind the transparent window on macOS, so
-   there the sidebar only needs to stay out of the way. */
-.mac .sidebar { background: transparent; }
 
 /* Section headers share the existing 4px rhythm and 28px action targets. */
 .section-header {
@@ -639,11 +623,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   overflow: hidden;
 }
 .tree-row:hover, .search-hit:hover { background: var(--fill-4); }
-.tree-row[aria-current="true"] { background: var(--fill-2); }
+.tree-row[aria-selected="true"] { background: var(--fill-2); }
 .tree-row[aria-expanded] .row-label { font-weight: 500; }   /* folders: kit uses Medium */
 .row-icon { display: inline-flex; justify-content: center; width: 24px; flex: none; color: var(--label-2); }
 .row-icon svg { width: 17px; height: 17px; }
-.tree-row[aria-current="true"] .row-icon { color: var(--accent); }
+.tree-row[aria-selected="true"] .row-icon { color: var(--accent); }
 .row-label { overflow: hidden; text-overflow: ellipsis; }
 .row-badge { margin-left: auto; display: inline-flex; color: var(--yellow); }
 .row-badge svg { width: 14px; height: 14px; }
@@ -927,6 +911,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    and fit-width re-renders in a feedback loop. Top padding = the toolbar + 12px,
    which pdfview.js reads from here (#metrics). */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
+/* The pane clips an outer ring. */
+.pdf-scroll:focus-visible { outline-offset: -2px; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
    are the true content extents the pinch gesture clamps against, and so the CSS
    centring below agrees with a zero offset.
@@ -1051,7 +1037,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .floating .divider:not(.divider-sync):hover { background: transparent; }
 .floating .divider:not(.divider-sync):hover::after { background: var(--label-3); }
 .floating .divider:not(.divider-sync).dragging::after { background: var(--accent); }
-.floating.mac .sidebar-titlebar { height: calc(var(--h-titlebar) - var(--sp-2)); }
 
 /* ---------- dialogs, menus, toasts ---------- */
 
@@ -1129,7 +1114,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .folder-roots { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-4); }
 .folder-root { height: var(--h-control); padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--fill-3); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 .folder-root:hover { background: var(--fill-2); }
-.folder-root.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.folder-root[aria-current="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .folder-path { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--h-control); margin: var(--sp-2) 0; }
 .folder-path-text { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--fs-small); line-height: var(--lh-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-user-select: text; user-select: text; }
 .folder-badge { flex: none; padding: 2px var(--sp-2); border-radius: var(--r-pill); background: color-mix(in srgb, var(--green) 16%, transparent); color: color-mix(in srgb, var(--green) 70%, var(--label)); font-size: var(--fs-small); line-height: var(--lh-small); font-weight: 500; }
@@ -1143,7 +1128,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .folder-error { margin-top: var(--sp-2); color: var(--red-text); font-size: var(--fs-small); line-height: var(--lh-small); }
 .folder-error:empty { display: none; }
 
-/* Menus use the vibrant material; rows are 28 (kit 24) with radius 6. */
+/* Rows are 28 (kit 24) with radius 6. */
 .menu {
   position: fixed;
   z-index: 200;
@@ -1152,8 +1137,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   overscroll-behavior: contain;
   padding: var(--sp-1);
   border-radius: var(--r-container);
-  background: var(--material);
-  backdrop-filter: blur(24px) saturate(180%);
+  background: var(--bg-raised);
   box-shadow: var(--shadow-menu);
   animation: pop-in 0.12s ease-out;
 }
@@ -1170,19 +1154,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   text-align: left;
   color: var(--label);
 }
-/* Rows highlight neutrally, as on the web and Windows; macOS fills the row
-   with the accent. */
+/* Rows highlight neutrally, as on the web and Windows. */
 .menu-item:hover, .menu-item:focus-visible { background: var(--fill-2); outline: none; }
-.mac .menu-item:not(:disabled):is(:hover, :focus-visible) { background: var(--accent-fill); color: var(--on-accent); }
 .menu-item.danger { color: var(--red-text); }
-.mac .menu-item.danger:not(:disabled):is(:hover, :focus-visible) { background: var(--red-fill); color: #fff; }
 .menu-check { width: var(--sp-4); flex: none; text-align: center; font-size: var(--fs-control); }
 .menu-label { min-width: 0; overflow-wrap: anywhere; }
 .menu hr { border: none; border-top: 0.5px solid var(--separator); margin: 5px var(--sp-2); }   /* kit separator block: 11px */
 .menu-item:disabled { color: var(--label-3); }
 .menu-item:disabled:hover { background: none; }
 .menu-hint { flex: none; margin-left: auto; padding-left: var(--sp-4); color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mac .menu-item:is(:hover, :focus-visible) .menu-hint { color: inherit; }
 
 /* In a browser no shell draws a menu bar, so the title bar carries one. */
 .menubar { display: flex; flex: none; gap: 2px; margin-right: var(--sp-1); }
@@ -1216,8 +1196,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .toast {
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-pill);
-  background: var(--material);
-  backdrop-filter: blur(24px) saturate(180%);
+  background: var(--bg-raised);
   box-shadow: var(--shadow-menu);
   color: var(--label);
   font-size: var(--fs-control);
@@ -1225,11 +1204,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-weight: 500;
   animation: toast-in 0.18s ease-out;
 }
-.toast.error { background: var(--red-fill); color: #fff; backdrop-filter: none; }   /* opaque: nothing to blur */
-
-/* Vibrancy needs the native window behind it; in a browser tab the page would
-   show through, so menus and toasts are opaque there (and the blur is skipped). */
-html:not(.mac) .menu, html:not(.mac) .toast:not(.error) { background: var(--bg-raised); backdrop-filter: none; }
+/* An error can be hovered (which holds it, dom.js toast) and its text copied. */
+.toast.error { background: var(--red-fill); color: #fff; pointer-events: auto; -webkit-user-select: text; user-select: text; }
 
 /* ---------- motion ---------- */
 

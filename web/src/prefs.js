@@ -23,9 +23,41 @@ const DEFS = {
   openDirs: { key: 'opendirs', def: [], type: 'json' },
 };
 
+// The one store: each key is read from localStorage once, then served from
+// memory (layout reads a score per frame); writes go through. With site data
+// blocked, touching localStorage throws, and the memory alone serves the page.
+const cache = new Map();   // storage key → raw string, or null when unset
+let cachedFrom;            // the storage the cache mirrors (tests swap it)
+
+function storage() {
+  let store = null;
+  try { store = globalThis.localStorage ?? null; } catch { /* blocked */ }
+  if (store !== cachedFrom) { cache.clear(); cachedFrom = store; }
+  return store;
+}
+
+function getRaw(key) {
+  const store = storage();
+  if (!cache.has(key)) {
+    try { cache.set(key, store?.getItem(key) ?? null); } catch { cache.set(key, null); }
+  }
+  return cache.get(key);
+}
+
+function setRaw(key, raw) {
+  const store = storage();
+  cache.set(key, raw);
+  try { if (raw === null) store?.removeItem(key); else store?.setItem(key, raw); } catch { /* memory keeps it */ }
+}
+
+// Another tab's change applies here too, as when every read went to storage.
+globalThis.addEventListener?.('storage', (e) => {
+  if (e.storageArea === cachedFrom) { if (e.key === null) cache.clear(); else cache.delete(e.key); }
+});
+
 function read(name) {
   const d = DEFS[name];
-  const raw = localStorage.getItem(KEY + d.key);
+  const raw = getRaw(KEY + d.key);
   if (raw === null) return d.def;
   if (d.type === 'bool') return raw === '1';
   if (d.type === 'num') { const n = Number(raw); return Number.isFinite(n) ? n : d.def; }
@@ -39,7 +71,7 @@ function write(name, value) {
   const raw = d.type === 'bool' ? (value ? '1' : '0')
     : d.type === 'json' ? JSON.stringify(value)
       : String(value);
-  localStorage.setItem(KEY + d.key, raw);
+  setRaw(KEY + d.key, raw);
 }
 
 // `prefs.autoCompile` reads; `prefs.autoCompile = false` persists.
@@ -61,16 +93,16 @@ export function migratePrefs() {
     ['texlocal-pdf', k('pdfCollapsed'), (v) => (v === 'collapsed' ? '1' : '0')],
   ];
   for (const [from, to, map] of moves) {
-    const v = localStorage.getItem(from);
-    if (v !== null && localStorage.getItem(to) === null) localStorage.setItem(to, map ? map(v) : v);
-    if (v !== null) localStorage.removeItem(from);
+    const v = getRaw(from);
+    if (v !== null && getRaw(to) === null) setRaw(to, map ? map(v) : v);
+    if (v !== null) setRaw(from, null);
   }
   // The old `pdfdark` carries over only an explicit "on"; its default (auto) becomes white.
-  const old = localStorage.getItem('texlocal-pdfdark');
-  if (old !== null && localStorage.getItem(k('pdfPaper')) === null) {
-    localStorage.setItem(k('pdfPaper'), old === 'on' ? 'dark' : 'white');
+  const old = getRaw('texlocal-pdfdark');
+  if (old !== null && getRaw(k('pdfPaper')) === null) {
+    setRaw(k('pdfPaper'), old === 'on' ? 'dark' : 'white');
   }
-  if (old !== null) localStorage.removeItem('texlocal-pdfdark');
+  if (old !== null) setRaw('texlocal-pdfdark', null);
 }
 
 // ---------- appearance ----------

@@ -116,3 +116,14 @@ test('named and punctuation keys map to physical keys', () => {
   // Option changes e.key on macOS; the physical key still decides.
   assert.ok(matchesAccel('CmdOrCtrl+Alt+F', key('KeyF', { metaKey: true, altKey: true }), true));
 });
+
+test('AltGr, which Windows reports as Ctrl+Alt, never matches a chord', () => {
+  const altGr = key('Digit0', { ctrlKey: true, altKey: true, key: '}', getModifierState: (m) => m === 'AltGraph' });
+  assert.ok(!matchesAccel('CmdOrCtrl+Alt+0', altGr, false));
+  // A Ctrl+Alt chord whose layout types a symbol is typing, AltGraph or not.
+  assert.ok(!matchesAccel('CmdOrCtrl+Alt+0', key('Digit0', { ctrlKey: true, altKey: true, key: '}' }), false));
+  assert.ok(matchesAccel('CmdOrCtrl+Alt+0', key('Digit0', { ctrlKey: true, altKey: true, key: '0' }), false));
+  // Option on the Mac is not AltGr (Firefox reports it as AltGraph).
+  const option = key('KeyF', { metaKey: true, altKey: true, key: 'ƒ', getModifierState: (m) => m === 'AltGraph' });
+  assert.ok(matchesAccel('CmdOrCtrl+Alt+F', option, true));
+});

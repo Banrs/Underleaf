@@ -9,7 +9,6 @@ import { renderHome, destroyHome } from './home.js';
 // ---------- platform ----------
 
 const root = document.documentElement;
-root.classList.remove('mac');
 root.classList.add('browser');
 
 // A file dropped outside the drop zones must never navigate the page.
@@ -38,8 +37,9 @@ installMenuBridge();
 
 // ---------- workspace ----------
 
-// The workspace carries CodeMirror, KaTeX and pdf.js — most of the code — so it
-// loads on the first project open instead of in front of the home screen.
+// The workspace carries CodeMirror — most of the code once pdf.js and KaTeX,
+// which it loads as it needs them, are left out — so it loads on the first
+// project open instead of in front of the home screen.
 let workspace = null;
 
 async function loadWorkspace() {
@@ -87,12 +87,21 @@ async function navigate() {
 }
 
 // In a browser, unload cancels asynchronous writes. The dialog buys the
-// autosave time; consume its rejection because doSave already reports it.
+// autosave time, and a keepalive write outlives the page if the reader leaves
+// anyway; a save already in flight is unconfirmed until it answers, so it
+// asks too. Consume rejections: doSave already reports them.
 addEventListener('beforeunload', (e) => {
-  if (!state.dirty) return;
-  workspace.saveCurrent({ triggerCompile: false }).catch(() => {});
+  if (!state.dirty && !state.saving) return;
+  if (state.dirty) workspace.saveCurrent({ triggerCompile: false, keepalive: true }).catch(() => {});
   e.preventDefault();
   e.returnValue = '';
+});
+// A hidden tab may be discarded or its process killed without an unload:
+// save what was typed since the last autosave as it goes.
+addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && state.dirty) {
+    workspace?.saveCurrent({ triggerCompile: false, keepalive: true }).catch(() => {});
+  }
 });
 // pagehide only fires when the page actually leaves (unlike a cancelled unload).
 addEventListener('pagehide', ({ persisted }) => workspace?.leaveTexPressoPage({ persisted }));

@@ -4,6 +4,7 @@ import { EditorState } from '@codemirror/state';
 import { CompletionContext, nextSnippetField } from '@codemirror/autocomplete';
 // Shared with the core's port (crates/texlocal-syntax/tests/editing.rs).
 import fixture from '../crates/texlocal-syntax/tests/fixtures/editing.json' with { type: 'json' };
+import { Window } from 'happy-dom';
 
 globalThis.addEventListener ??= () => {};
 const { latexCompletions, mathPreviewField, headingLine, placeBlock } = await import('../web/src/editor.js');
@@ -48,4 +49,30 @@ test('a block starts a line of its own, and Tab goes through its fields', () => 
     assert.deepEqual(found, fields, `${id} after ${JSON.stringify(before)}`);
   }
   assert.equal(placeBlock({ state: EditorState.create() }, 'nothing'), false);
+});
+
+test('KaTeX loads with the first preview, which shows once it has drawn', async () => {
+  const window = new Window({ settings: { disableCSSFileLoading: true } });
+  // KaTeX refuses quirks mode; Happy DOM doesn't report the standards mode.
+  Object.defineProperty(window.document, 'compatMode', { value: 'CSS1Compat' });
+  globalThis.document = window.document;
+  try {
+    const state = EditorState.create({ doc: 'x $a^2$ y', selection: { anchor: 4 }, extensions: [mathPreviewField] });
+    const { dom } = state.field(mathPreviewField).create({ dom: { isConnected: false } });
+    assert.equal(dom.hidden, true);
+    // The stylesheet is asked for alongside; the preview waits for it.
+    const link = document.head.querySelector('link[href="/dist/katex.min.css"]');
+    assert.ok(link);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(dom.hidden, true);
+    link.dispatchEvent(new window.Event('load'));
+    for (let i = 0; i < 200 && dom.hidden; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(dom.hidden, false);
+    assert.ok(dom.querySelector('.katex'));
+    // Later previews draw at once.
+    const next = EditorState.create({ doc: '$b$', selection: { anchor: 1 }, extensions: [mathPreviewField] });
+    assert.equal(next.field(mathPreviewField).create({ dom: { isConnected: false } }).dom.hidden, false);
+  } finally {
+    delete globalThis.document;
+  }
 });

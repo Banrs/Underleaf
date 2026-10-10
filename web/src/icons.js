@@ -61,9 +61,19 @@ const PATHS = {
   'list-indent': '<path d="M21 6H9"/><path d="M21 12h-8"/><path d="M21 18h-8"/><path d="M4 6v7a2 2 0 0 0 2 2h3"/>',
 };
 
+// Each glyph is parsed once per document and cloned after: the outline,
+// tree and location row ask for many.
+const parsed = new Map();
+let parsedFor = null;
+
 export function icon(name) {
-  const span = document.createElement('span');
-  span.className = 'icon';
-  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${PATHS[name] ?? PATHS.doc}</svg>`;
-  return span;
+  if (parsedFor !== document) { parsed.clear(); parsedFor = document; }
+  let span = parsed.get(name);
+  if (!span) {
+    span = document.createElement('span');
+    span.className = 'icon';
+    span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${PATHS[name] ?? PATHS.doc}</svg>`;
+    parsed.set(name, span);
+  }
+  return span.cloneNode(true);
 }

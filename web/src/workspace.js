@@ -70,6 +70,7 @@ export function destroyWorkspace() {
   clearTimeout(pdfFindTimer);
   pdfFindTimer = null;
   pdfMainFile = null;
+  lastBuildOutcome = null;
   clearTimeout(symbolsTimer);
   clearTimeout(docMetaTimer);
   clearTimeout(crumbTimer);
@@ -163,10 +164,13 @@ function buildChrome(id) {
     },
     beforeMainFileChange: captureTexPresso,
     beforeFilesReload: captureTexPresso,
+    // A new main file is a different document: built at once when builds are
+    // automatic, otherwise marked out of date until the next Compile.
     onMainFileChange: (liveBeforeMutation) => {
       refreshAnalysis();
       restartTexPresso(liveBeforeMutation);
-      compile({ auto: true });
+      if (prefs.autoCompile) compile({ auto: true });
+      else if (state.pdf?.doc) setPdfFreshness('Preview out of date');
     },
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
@@ -184,15 +188,16 @@ function buildChrome(id) {
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.id = 'workspace-sidebar';
 
-  const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
+  // Not a live region: it changes with every pause in typing. A failed save
+  // is announced by its alert.
+  const saveState = el('span', { class: 'save-state' }, 'Saved');
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
   // takes over once it's hidden, so the control never disappears with the pane.
   const sidebarToggleFallback = iconButton('view.toggleSidebar', 'sidebar-left');
   sidebarToggleFallback.classList.add('sidebar-toggle-fallback');
 
-  // Tauri's drag region (docs/web.md); it skips interactive elements itself.
-  const titlebar = el('header', { class: 'titlebar', 'data-tauri-drag-region': 'deep' },
+  const titlebar = el('header', { class: 'titlebar' },
     sidebarToggleFallback,
     iconButton('project.close', 'chevron-left'),
     menuBar(menuUnder),
@@ -237,7 +242,10 @@ function buildChrome(id) {
     onclick: () => (state.compiling ? stopCompile() : runCommand('compile.run')),
   }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
-  const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '-1' });
+  // A tab stop, so the keyboard can scroll the pages (arrows, Page Up/Down).
+  const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '0', role: 'region', 'aria-label': 'PDF preview' });
+  // Builds announce themselves: the button's label and the log badge don't.
+  const buildStatus = el('span', { class: 'visually-hidden', role: 'status' });
   const logsView = buildLogsView({
     onJump: (file, line) => {
       if (file == null || line == null) return;
@@ -259,7 +267,9 @@ function buildChrome(id) {
     el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
     el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
   );
-  findInput.addEventListener('input', () => {
+  // Search the PDF for the field's text after `delay` ms, superseding any
+  // search before it.
+  const searchPdf = (delay) => {
     clearTimeout(pdfFindTimer);
     const generation = ++pdfFindGeneration;
     const viewer = state.pdf;
@@ -272,8 +282,9 @@ function buildChrome(id) {
       if (generation === pdfFindGeneration && state.pdf === viewer && ui.findInput === findInput && !findBar.hidden) {
         showCount(result);
       }
-    }, 200);
-  });
+    }, delay);
+  };
+  findInput.addEventListener('input', () => searchPdf(200));
   findInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closePdfFind(); return; }
     if (e.key !== 'Enter') return;
@@ -298,6 +309,7 @@ function buildChrome(id) {
   const pdfPane = el('div', { class: 'pane pdf-pane', id: 'workspace-preview' },
     el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Document' },
       compileButton,
+      buildStatus,
       texpressoButton,
       logsButton,
       iconButton('pdf.save', 'download', 'small'),
@@ -336,7 +348,7 @@ function buildChrome(id) {
 
   ui = {
     sidebar, sourceBar, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
-    compileButton, workspace, findBar, findInput, stepFind, pdfFreshness,
+    compileButton, buildStatus, workspace, findBar, findInput, findCount, stepFind, searchPdf, pdfFreshness,
     texpressoButton, texpressoDetails, texpressoLabel, texpressoLog,
   };
 
@@ -367,15 +379,19 @@ function iconButton(commandId, glyph, size = '') {
   }, icon(glyph));
 }
 
+// Runs on every layout change (each frame of a divider drag), so it writes
+// only what changed.
 export function syncToolbarState() {
+  const set = (b, name, value) => { if (b.getAttribute(name) !== value) b.setAttribute(name, value); };
   for (const b of document.querySelectorAll('[data-command]')) {
     const id = b.dataset.command;
     const cmd = getCommand(id);
     if (!cmd) continue;
-    b.disabled = cmd.enabled ? !cmd.enabled() : false;
-    b.title = tooltip(id);
-    b.setAttribute('aria-label', commandTitle(id));
-    if (cmd.checked) b.setAttribute('aria-pressed', String(!!cmd.checked()));
+    const disabled = cmd.enabled ? !cmd.enabled() : false;
+    if (b.disabled !== disabled) b.disabled = disabled;
+    set(b, 'title', tooltip(id));
+    set(b, 'aria-label', commandTitle(id));
+    if (cmd.checked) set(b, 'aria-pressed', String(!!cmd.checked()));
   }
 }
 
@@ -398,55 +414,56 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
-// Their accelerators are the shared table's (shortcuts.json).
+// Their accelerators are the shared table's (shortcuts.json). `scope` limits
+// where a chord reaches them from (commands.js chordApplies); a menu item or
+// button runs them from anywhere.
 function commandDefs() {
   return [
-    { id: 'project.new', title: 'New Project…', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
-    { id: 'project.close', title: 'Close Project', run: () => { location.hash = '#/'; }, enabled: hasProject },
-    { id: 'project.export', title: 'Export Project as ZIP…', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
-    { id: 'project.search', title: 'Find in Project', run: () => { ui.layout?.showSidebar(); focusSearch(); }, enabled: hasProject },
+    { id: 'project.new', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
+    { id: 'project.close', run: () => { location.hash = '#/'; }, enabled: hasProject },
+    { id: 'project.export', run: () => Promise.resolve(api.exportProject(state.projectId)).catch((e) => toast(e.message, 'error')), enabled: hasProject },
+    { id: 'project.search', run: () => { ui.layout?.showSidebar(); focusSearch(); }, enabled: hasProject },
 
-    { id: 'file.new', title: 'New File…', run: newFileFlow, enabled: hasProject },
-    { id: 'file.newFolder', title: 'New Folder…', run: newFolderFlow, enabled: hasProject },
-    { id: 'file.upload', title: 'Add Files…', run: uploadFlow, enabled: hasProject },
-    { id: 'file.save', title: 'Save', run: () => saveCurrent(), enabled: hasEditor },
-    { id: 'pdf.save', title: 'Save PDF As…', run: savePdf, enabled: hasPdf },
+    { id: 'file.new', run: newFileFlow, enabled: hasProject },
+    { id: 'file.newFolder', run: newFolderFlow, enabled: hasProject },
+    { id: 'file.upload', run: uploadFlow, enabled: hasProject },
+    { id: 'file.save', run: () => saveCurrent(), enabled: hasEditor },
+    { id: 'pdf.save', run: savePdf, enabled: hasPdf },
 
-    { id: 'edit.undo', title: 'Undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
-    { id: 'edit.redo', title: 'Redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
-    { id: 'edit.find', title: 'Find & Replace', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
-    { id: 'edit.findNext', title: 'Find Next', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
-    { id: 'edit.findPrevious', title: 'Find Previous', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
-    { id: 'edit.bold', title: 'Bold', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
-    { id: 'edit.italic', title: 'Italic', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
-    { id: 'edit.math', title: 'Inline Math', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
-    { id: 'edit.comment', title: 'Toggle Comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
-    { id: 'edit.gotoLine', title: 'Go to Line…', run: gotoLineFlow, enabled: hasEditor },
-    { id: 'pdf.find', title: 'Find in PDF…', run: openPdfFind, enabled: hasPdf },
+    { id: 'edit.undo', nativeOnly: true, run: () => state.editor?.undo(), enabled: hasEditor },
+    { id: 'edit.redo', nativeOnly: true, run: () => state.editor?.redo(), enabled: hasEditor },
+    { id: 'edit.find', nativeOnly: true, run: () => state.editor?.openSearch(), enabled: hasEditor },
+    { id: 'edit.findNext', nativeOnly: true, run: () => findAgain(1), enabled: hasFindTarget },
+    { id: 'edit.findPrevious', nativeOnly: true, run: () => findAgain(-1), enabled: hasFindTarget },
+    { id: 'edit.bold', scope: 'editor', run: () => state.editor?.wrapSelection('\\textbf{', '}'), enabled: hasEditor },
+    { id: 'edit.italic', scope: 'editor', run: () => state.editor?.wrapSelection('\\textit{', '}'), enabled: hasEditor },
+    { id: 'edit.math', scope: 'editor', run: () => state.editor?.wrapSelection('$', '$'), enabled: hasEditor },
+    { id: 'edit.comment', nativeOnly: true, run: () => state.editor?.toggleComment(), enabled: hasEditor },
+    { id: 'edit.gotoLine', scope: 'editor', run: gotoLineFlow, enabled: hasEditor },
+    { id: 'pdf.find', run: openPdfFind, enabled: hasPdf },
 
     // Titles flip like native View-menu items; no checkmark, matching macOS.
     { id: 'view.toggleSidebar', title: () => (ui.layout?.sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'), run: toggleSidebar },
     { id: 'view.togglePdf', title: () => (ui.layout?.pdfVisible() ? 'Hide PDF' : 'Show PDF'), run: togglePdf, enabled: hasProject },
-    { id: 'view.toggleLogs', title: 'Compile Log', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
-    { id: 'view.zoomIn', title: 'Zoom In', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
-    { id: 'view.zoomOut', title: 'Zoom Out', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
-    { id: 'view.fitWidth', title: 'Fit Width', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
-    { id: 'view.fitHeight', title: 'Fit Height', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
-    { id: 'view.uiScaleUp', title: 'Increase Interface Size', run: () => stepUiScale(1) },
-    { id: 'view.uiScaleDown', title: 'Decrease Interface Size', run: () => stepUiScale(-1) },
+    { id: 'view.toggleLogs', run: toggleLogs, checked: () => state.logOpen, enabled: hasProject },
+    { id: 'view.zoomIn', scope: 'pdf', run: () => state.pdf?.zoomBy(1.15), enabled: hasPdf },
+    { id: 'view.zoomOut', scope: 'pdf', run: () => state.pdf?.zoomBy(1 / 1.15), enabled: hasPdf },
+    { id: 'view.fitWidth', scope: 'pdf', run: () => state.pdf?.fitWidth(), enabled: hasPdf },
+    { id: 'view.fitHeight', scope: 'pdf', run: () => state.pdf?.fitHeight(), enabled: hasPdf },
+    { id: 'view.uiScaleUp', run: () => stepUiScale(1) },
+    { id: 'view.uiScaleDown', run: () => stepUiScale(-1) },
 
-    { id: 'compile.run', title: 'Compile', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
-    { id: 'compile.toggleAuto', title: 'Compile Automatically', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
+    { id: 'compile.run', run: () => compile(), enabled: () => state.tex.available && !state.compiling },
+    { id: 'compile.toggleAuto', run: () => { prefs.autoCompile = !prefs.autoCompile; refreshCommands(); }, checked: () => prefs.autoCompile },
     { id: 'compile.texpresso', title: () => texpresso?.state.enabled || texpresso?.state.running
       ? 'Stop TeXpresso (Experimental)' : 'Start TeXpresso (Experimental)',
       run: toggleTexPresso, enabled: () => hasProject() && texpresso?.state.phase !== 'stopping' },
-    { id: 'compile.texpressoRescan', title: 'Rescan TeXpresso Files',
-      run: () => restartTexPresso(captureTexPresso()),
+    { id: 'compile.texpressoRescan', run: () => restartTexPresso(captureTexPresso()),
       enabled: () => !!texpresso?.state.enabled && texpresso?.state.phase === 'idle' },
-    { id: 'sync.forward', title: 'Go to PDF Position', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
-    { id: 'sync.inverse', title: 'Go to Source Position', run: inverseSync, enabled: hasPdf },
+    { id: 'sync.forward', run: forwardSync, enabled: () => hasEditor() && hasPdf() },
+    { id: 'sync.inverse', run: inverseSync, enabled: hasPdf },
 
-    { id: 'app.settings', title: 'Settings…', run: openProjectSettings },
+    { id: 'app.settings', run: openProjectSettings },
   ].map((d) => ({ accel: SHORTCUTS[d.id], ...d }));
 }
 
@@ -486,6 +503,20 @@ function closePdfFind() {
   refreshCommands();
 }
 
+// A new PDF invalidates the matches, not the search: the bar keeps its query
+// and focus, and refindPdf searches the new document once it has loaded.
+function invalidatePdfFind() {
+  if (!ui?.findBar) return;
+  clearTimeout(pdfFindTimer);
+  pdfFindTimer = null;
+  pdfFindGeneration++;
+  ui.findCount.textContent = '';
+}
+
+function refindPdf() {
+  if (ui?.findBar && !ui.findBar.hidden && ui.findInput.value.trim()) ui.searchPdf(0);
+}
+
 async function gotoLineFlow() {
   const answer = await promptModal({ title: 'Go to Line', label: 'Line number', confirm: 'Go' });
   const line = Number.parseInt(answer, 10);
@@ -494,14 +525,29 @@ async function gotoLineFlow() {
 
 // ---------- document lifecycle ----------
 
+// Both run on every keystroke; rewriting identical text would still make
+// assistive technology announce the status again.
 function setSaveState(text) {
-  if (ui.saveState) ui.saveState.textContent = text;
+  if (ui.saveState && ui.saveState.textContent !== text) ui.saveState.textContent = text;
 }
 
 function setPdfFreshness(message = '') {
-  if (!ui.pdfFreshness) return;
+  if (!ui.pdfFreshness || ui.pdfFreshness.textContent === message) return;
   ui.pdfFreshness.hidden = !message;
   ui.pdfFreshness.textContent = message;
+}
+
+// The build status for assistive technology (ui.buildStatus). Automatic
+// builds speak only when they fail, or first succeed after a failure.
+let lastBuildOutcome = null;
+function announceBuild(message, outcome, auto) {
+  if (!ui.buildStatus) return;
+  if (outcome) {
+    const changed = outcome !== lastBuildOutcome;
+    lastBuildOutcome = outcome;
+    if (auto && !changed && outcome !== 'failed') return;
+  } else if (auto) return;
+  ui.buildStatus.textContent = message;
 }
 
 function showEditorPlaceholder(message) {
@@ -534,8 +580,9 @@ export async function flushCurrent() {
 async function openFile(path) {
   if (!path) return;
   ui.layout?.revealEditor();
-  if (path === state.openPath) return;
+  // Choosing the open file again still supersedes a slower open in flight.
   const request = ++openGeneration;
+  if (path === state.openPath) return;
   const generation = workspaceGeneration;
   const host = ui.editorHost;
   if (!host) return;
@@ -544,7 +591,16 @@ async function openFile(path) {
   const prevEditor = state.editor;
   const stillCurrent = () => request === openGeneration && generation === workspaceGeneration
     && state.projectId === projectId && host === ui.editorHost;
-  const flushPrevious = () => flushWhile(stillCurrent, prevEditor, prevPath);
+  // A failed save has been reported (doSave's toast) and keeps the old file
+  // open; it is not this open's error to throw at a click handler.
+  const flushPrevious = async () => {
+    try {
+      return await flushWhile(stillCurrent, prevEditor, prevPath);
+    } catch (err) {
+      if (err.saveFailed) return false;
+      throw err;
+    }
+  };
 
   // Stabilise the old buffer before every kind of transition. This includes
   // image/binary previews: an edit may have arrived during the preceding save,
@@ -661,7 +717,10 @@ export function saveCurrent(options = {}) {
   });
 }
 
-async function doSave({ triggerCompile = true } = {}) {
+// A keepalive request outlives the page, within the browser's 64 KiB.
+const KEEPALIVE_MAX = 60_000;
+
+async function doSave({ triggerCompile = true, keepalive = false } = {}) {
   if (!state.dirty || !state.editor || !state.openPath) return;
   clearTimeout(state.saveTimer);
   const projectId = state.projectId;
@@ -672,7 +731,9 @@ async function doSave({ triggerCompile = true } = {}) {
   state.dirty = false;
   setSaveState('Saving…');
   try {
-    await api.writeFile(projectId, path, content);
+    const outlive = keepalive
+      && new TextEncoder().encode(JSON.stringify({ id: projectId, path, text: content })).length <= KEEPALIVE_MAX;
+    await api.writeFile(projectId, path, content, outlive ? { keepalive: true } : undefined);
     const current = state.projectId === projectId && state.openPath === path && state.editor === editor;
     if (current && !state.dirty) {
       setSaveState('Saved');
@@ -697,14 +758,18 @@ async function doSave({ triggerCompile = true } = {}) {
 
 let crumbTimer;
 let symbolsTimer;
+// Requests can overlap and answer out of order: only the latest one applies.
+let symbolsRequest = 0;
+let analysisRequest = 0;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
   const projectId = state.projectId;
   const generation = workspaceGeneration;
   symbolsTimer = setTimeout(async () => {
+    const request = ++symbolsRequest;
     try {
       const symbols = await api.symbols(projectId);
-      if (generation === workspaceGeneration && state.projectId === projectId) state.symbols = symbols;
+      if (request === symbolsRequest && generation === workspaceGeneration && state.projectId === projectId) state.symbols = symbols;
     } catch { /* own server: unlikely */ }
   }, 500);
 }
@@ -735,8 +800,9 @@ function updateDocMeta() {
 async function refreshAnalysis() {
   const { projectId, openPath: path } = state;
   const generation = workspaceGeneration;
+  const request = ++analysisRequest;
   const analysis = TEX_FILE.test(path) ? await api.analyze(projectId, path).catch(() => null) : null;
-  if (generation !== workspaceGeneration || state.openPath !== path) return;
+  if (request !== analysisRequest || generation !== workspaceGeneration || state.openPath !== path) return;
   state.projectOutline = analysis?.outline ?? [];
   state.words = analysis?.words ?? 0;
   updateDocMeta();
@@ -826,14 +892,8 @@ async function compile({ auto = false } = {}) {
   // Busy from the first moment, not only once the save has flushed: the
   // spinner is the only sign a compile (auto, menu, or engine switch) started.
   // Meanwhile the button stops it, so it leaves the command's enabled state.
-  if (btn) {
-    delete btn.dataset.command;
-    btn.disabled = false;
-    btn.classList.add('busy');
-    btn.setAttribute('aria-busy', 'true');
-    btn.title = 'Stop the build';
-    btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop');
-  }
+  setCompileButton(btn, true);
+  announceBuild('Compiling…', null, auto);
   refreshSidebarChrome();
 
   try {
@@ -852,9 +912,8 @@ async function compile({ auto = false } = {}) {
 
     if (result.pdf) {
       if (result.pdfChanged !== false || !viewer.doc || pdfMainFile !== mainFile) {
-        // A changed PDF invalidates matches and text positions. An unchanged
-        // build keeps the current document, scroll position, zoom and find state.
-        closePdfFind();
+        // An unchanged build keeps the document, scroll, zoom and find state.
+        invalidatePdfFind();
         reloadingPdf = true;
         pdfMainFile = null;
         const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
@@ -862,6 +921,7 @@ async function compile({ auto = false } = {}) {
         if (state.settings?.mainFile !== mainFile) return;
         if (loaded) pdfMainFile = mainFile;
         setPdfFreshness(loaded ? '' : 'Preview could not reload');
+        refindPdf();
       } else {
         setPdfFreshness('');
       }
@@ -873,33 +933,30 @@ async function compile({ auto = false } = {}) {
     }
 
     // Whoever stopped a build knows; it gets no toast, as on the Mac.
-    if (!auto && !result.stopped) {
-      if (result.ok) {
-        const warns = result.warnings.length;
-        toast(`Compiled in ${(result.durationMs / 1000).toFixed(1)}s${warns ? ` · ${warns} warning${warns === 1 ? '' : 's'}` : ''}`);
-      } else {
-        toast(`Compile failed — ${result.errors.length || 'see'} error${result.errors.length === 1 ? '' : 's'}`, 'error');
-      }
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    if (result.stopped) announceBuild('Build stopped', null, auto);
+    else if (result.ok) {
+      const warns = result.warnings.length;
+      announceBuild(`Compiled${warns ? `, ${plural(warns, 'warning')}` : ''}`, 'ok', auto);
+      if (!auto) toast(`Compiled in ${(result.durationMs / 1000).toFixed(1)}s${warns ? ` · ${plural(warns, 'warning')}` : ''}`);
+    } else {
+      const errors = result.errors.length;
+      announceBuild(`Build failed${errors ? `, ${plural(errors, 'error')}` : ''}${result.pdf ? '; the preview shows its PDF' : ''}`, 'failed', auto);
+      if (!auto) toast(`Compile failed — ${errors || 'see'} error${errors === 1 ? '' : 's'}`, 'error');
     }
   } catch (err) {
     if (!current()) return;
     saveFailed = !!err.saveFailed;
     if (reloadingPdf) setPdfFreshness('Preview could not reload');
     if (!saveFailed) {
+      announceBuild(`Build failed: ${err.message}`, 'failed', auto);
       if (!auto) toast(err.message, 'error');
       else console.error('Auto-compile failed:', err);
     }
   } finally {
     if (!current()) return;
     state.compiling = false;
-    if (btn) {
-      btn.dataset.command = 'compile.run';
-      btn.disabled = !state.tex.available;
-      btn.classList.remove('busy');
-      btn.removeAttribute('aria-busy');
-      btn.title = tooltip('compile.run');
-      btn.replaceChildren('Compile');
-    }
+    setCompileButton(btn, false);
     refreshSidebarChrome();
     refreshCommands();
     if (saveFailed) pendingCompile = false;
@@ -908,6 +965,17 @@ async function compile({ auto = false } = {}) {
       compile({ auto: true });
     }
   }
+}
+
+// While busy the button is Stop, outside the command's enabled state.
+function setCompileButton(btn, busy) {
+  if (!btn) return;
+  if (busy) delete btn.dataset.command; else btn.dataset.command = 'compile.run';
+  btn.disabled = !busy && !state.tex.available;
+  btn.classList.toggle('busy', busy);
+  if (busy) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+  btn.title = busy ? 'Stop the build' : tooltip('compile.run');
+  btn.replaceChildren(...(busy ? [el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop'] : ['Compile']));
 }
 
 // Stop this project's build (the core's stop_compile), and anything queued

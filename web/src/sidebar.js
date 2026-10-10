@@ -13,6 +13,7 @@ import { trashName, deleteLabel } from './bridge.js';
 let host = {};          // the mounted workspace's project and callbacks
 let nodes = {};         // elements of the mounted sidebar
 let outlineRequest = 0;
+let outlineShown = null;  // the outline the rows show, as JSON
 
 const active = (origin) => host === origin && state.projectId === origin.projectId;
 
@@ -44,8 +45,7 @@ function remapPath(candidate, from, to) {
 
 // ---------- construction ----------
 
-// `titlebarTrailing` is the sidebar toggle, at the band's trailing end: the
-// Tauri Mac window's traffic lights take the leading end.
+// `titlebarTrailing` is the sidebar toggle, at the band's trailing end.
 export function buildSidebar(callbacks, titlebarTrailing) {
   const origin = { ...callbacks, projectId: state.projectId };
   host = origin;
@@ -106,7 +106,7 @@ export function buildSidebar(callbacks, titlebarTrailing) {
   nodes = { search, tree, results, outline, outlineSplit, outlineToggle, fileInput, engineLabel, engineSpinner, engineStatus };
 
   return el('aside', { class: 'sidebar pane', 'aria-label': 'Project navigator' },
-    el('div', { class: 'sidebar-titlebar', 'data-tauri-drag-region': 'deep' },
+    el('div', { class: 'sidebar-titlebar' },
       el('span', { class: 'spacer' }), titlebarTrailing),
     el('search', { class: 'sidebar-search' }, el('span', { class: 'search-icon' }, icon('search')), search),
     el('div', { class: 'section-header' },
@@ -160,29 +160,35 @@ function fileIcon(name) {
   return icon('doc');
 }
 
+// A rebuild after a file operation keeps keyboard focus on the same path.
 export function renderTree() {
   if (!nodes.tree) return;
   const origin = host;
-  nodes.tree.replaceChildren(...state.tree.map((n) => renderNode(n, 1, origin)));
+  const focused = nodes.tree.contains(document.activeElement) ? document.activeElement.dataset.path : null;
+  nodes.tree.replaceChildren(...state.tree.map((n, i, all) => renderNode(n, 1, i, all.length, origin)));
   syncRovingFocus();
+  if (focused != null) rowFor(focused)?.focus();
 }
 
-// Move the selection highlight without rebuilding the tree. Structure hasn't
-// changed on a plain file open, so replacing every row just churns the DOM.
+const rowFor = (path) => nodes.tree?.querySelector(`.tree-row[data-path="${CSS.escape(path)}"]`);
+
+// Move the selection without rebuilding the tree: a plain file open doesn't
+// change its structure.
 export function updateTreeSelection() {
   if (!nodes.tree) return;
-  const prev = nodes.tree.querySelector('.tree-row[aria-current]');
-  const next = state.openPath
-    ? nodes.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.openPath)}"]`)
-    : null;
+  const prev = nodes.tree.querySelector('.tree-row[aria-selected="true"]');
+  const next = state.openPath ? rowFor(state.openPath) : null;
   if (prev !== next) {
-    prev?.removeAttribute('aria-current');
-    next?.setAttribute('aria-current', 'true');
+    prev?.removeAttribute('aria-selected');
+    next?.setAttribute('aria-selected', 'true');
   }
   syncRovingFocus();
 }
 
-function renderNode(node, level, origin) {
+// The rows are buttons, which cannot hold their children, so the tree is flat
+// to assistive technology: each row's level and place among its siblings say
+// where it sits, and the wrappers are presentational.
+function renderNode(node, level, index, siblings, origin) {
   const directory = node.type === 'dir';
   const isOpen = directory && openDirs.has(node.path);
   const row = el('button', {
@@ -190,7 +196,9 @@ function renderNode(node, level, origin) {
     role: 'treeitem',
     'aria-expanded': directory ? String(isOpen) : undefined,
     'aria-level': String(level),
-    'aria-current': !directory && node.path === state.openPath ? 'true' : undefined,
+    'aria-posinset': String(index + 1),
+    'aria-setsize': String(siblings),
+    'aria-selected': !directory && node.path === state.openPath ? 'true' : undefined,
     dataset: { path: node.path },
     onclick: () => {
       if (!active(origin)) return;
@@ -198,13 +206,16 @@ function renderNode(node, level, origin) {
       if (isOpen) openDirs.delete(node.path); else openDirs.add(node.path);
       persistOpenDirs();
       // Rebuild only this folder's subtree and put keyboard focus on its new row.
-      const fresh = renderNode(node, level, origin);
+      const fresh = renderNode(node, level, index, siblings, origin);
       group.replaceWith(fresh);
       syncRovingFocus();
       fresh.firstChild.focus();
     },
-    oncontextmenu: (e) => rowMenu(e, node, origin),
-    onkeydown: (e) => { if (active(origin)) treeKeys(e); },
+    oncontextmenu: (e) => {
+      e.preventDefault();
+      if (active(origin)) contextMenu(e.clientX, e.clientY, rowActions(node, origin));
+    },
+    onkeydown: (e) => { if (active(origin)) treeKeys(e, node, origin); },
   },
     el('span', { class: 'twisty' }, directory ? icon('chevron') : null),
     el('span', { class: 'row-icon' }, directory ? icon(isOpen ? 'folder-open' : 'folder') : fileIcon(node.name)),
@@ -213,9 +224,10 @@ function renderNode(node, level, origin) {
       ? el('span', { class: 'row-badge', title: 'Main file', 'aria-label': 'Main file' }, icon('star')) : null,
   );
   if (!directory) return row;
-  const group = el('div', { class: 'tree-group' }, row,
-    el('div', { class: 'tree-children', role: 'group' },
-      isOpen ? node.children.map((c) => renderNode(c, level + 1, origin)) : []));
+  const children = isOpen ? node.children : [];
+  const group = el('div', { class: 'tree-group', role: 'none' }, row,
+    el('div', { class: 'tree-children', role: 'none' },
+      children.map((c, i) => renderNode(c, level + 1, i, children.length, origin))));
   return group;
 }
 
@@ -223,30 +235,36 @@ function renderNode(node, level, origin) {
 // how a source list behaves natively (Tab through 200 files is not usable).
 function syncRovingFocus() {
   const rows = [...(nodes.tree?.querySelectorAll('.tree-row') ?? [])];
-  const current = rows.find((r) => r.hasAttribute('aria-current')) ?? rows[0];
+  const current = rows.find((r) => r.getAttribute('aria-selected') === 'true') ?? rows[0];
   for (const r of rows) r.tabIndex = r === current ? 0 : -1;
 }
 
-function treeKeys(e) {
+// Arrows, Home and End move; → and ← open and close a folder; a letter goes
+// to the next row starting with it; F2 renames and Delete deletes.
+function treeKeys(e, node, origin) {
   const rows = [...nodes.tree.querySelectorAll('.tree-row')];
-  const i = rows.indexOf(e.currentTarget);
-  const move = (to) => {
-    const next = rows[Math.max(0, Math.min(rows.length - 1, to))];
-    if (!next) return;
+  const row = e.currentTarget;
+  const i = rows.indexOf(row);
+  const letter = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey ? e.key.toLowerCase() : null;
+  const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[e.key]
+    ?? (letter && [...rows.slice(i + 1), ...rows.slice(0, i)].find((r) => r.textContent.trim().toLowerCase().startsWith(letter)));
+  const expanded = row.getAttribute('aria-expanded');
+  const action = { F2: 'Rename…', Delete: `${deleteLabel}…` }[e.key];
+  if (to != null) {
+    const next = typeof to === 'number' ? rows[Math.max(0, Math.min(rows.length - 1, to))] : to;
     e.preventDefault();
     for (const r of rows) r.tabIndex = -1;
     next.tabIndex = 0;
     next.focus();
-  };
-  if (e.key === 'ArrowDown') move(i + 1);
-  else if (e.key === 'ArrowUp') move(i - 1);
-  else if (e.key === 'ArrowRight' && e.currentTarget.getAttribute('aria-expanded') === 'false') e.currentTarget.click();
-  else if (e.key === 'ArrowLeft' && e.currentTarget.getAttribute('aria-expanded') === 'true') e.currentTarget.click();
+  } else if ((e.key === 'ArrowRight' && expanded === 'false') || (e.key === 'ArrowLeft' && expanded === 'true')) row.click();
+  else if (action) {
+    e.preventDefault();
+    rowActions(node, origin).find((it) => it.label === action)?.action();
+  }
 }
 
-function rowMenu(e, node, origin) {
-  e.preventDefault();
-  if (!active(origin)) return;
+// What can be done to a row: its context menu, and F2 and Delete.
+function rowActions(node, origin) {
   const { projectId } = origin;
   const items = [];
   if (node.type === 'file' && TEX_FILE.test(node.path) && node.path !== state.settings?.mainFile) {
@@ -326,7 +344,7 @@ function rowMenu(e, node, origin) {
       },
     },
   );
-  contextMenu(e.clientX, e.clientY, items);
+  return items;
 }
 
 // Never throws: callers await it inside their own try blocks, and a tree-fetch
@@ -477,11 +495,16 @@ export function renderOutline() {
   nodes.outlineSplit.hidden = box.hidden;
   if (box.hidden) return;
 
+  // Every pause in typing and every save analyses the document again; rows
+  // are rebuilt only when the outline itself changed.
+  const shown = JSON.stringify(state.projectOutline);
+  if (shown === outlineShown) { updateOutlineSelection(); return; }
+  outlineShown = shown;
   if (!state.projectOutline.length) {
     box.replaceChildren(el('p', { class: 'placeholder' }, 'No sections'));
     return;
   }
-  // A rebuild (every edit) keeps keyboard focus on the same row.
+  // A rebuild keeps keyboard focus on the same row.
   const focused = [...box.children].indexOf(document.activeElement);
   const minDepth = Math.min(...state.projectOutline.map((o) => o.depth));
   box.replaceChildren(...state.projectOutline.map((o, i) => {
@@ -678,5 +701,6 @@ export function destroySidebar() {
   searchTimer = undefined;
   host = {};
   nodes = {};
+  outlineShown = null;
   openDirs = new Set();
 }

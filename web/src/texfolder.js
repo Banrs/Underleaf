@@ -51,7 +51,8 @@ export function chooseTexFolder() {
       path.classList.toggle('has-tex', listing.hasLatexmk);
       use.disabled = false;
       roots.replaceChildren(...listing.roots.map((root) => el('button', {
-        class: `folder-root ${root === listing.path ? 'selected' : ''}`,
+        class: 'folder-root',
+        'aria-current': root === listing.path ? 'true' : null,
         onclick: () => load(root),
       }, root)));
       // Keep keyboard focus in the list as its rows are replaced.

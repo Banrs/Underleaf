@@ -49,8 +49,10 @@ const MENU = [
   },
 ];
 
-// Labels for menu items whose command no view has registered (they show disabled).
-const FALLBACK_TITLES = {
+// Every command's title, so a menu item shows it before a view registers the
+// command (disabled). A command declares `title` only when it is a function of
+// state ("Hide Sidebar" / "Show Sidebar").
+const TITLES = {
   'project.new': 'New Project…',
   'file.new': 'New File…',
   'file.newFolder': 'New Folder…',
@@ -86,6 +88,7 @@ const FALLBACK_TITLES = {
   'compile.texpressoRescan': 'Rescan TeXpresso Files',
   'sync.forward': 'Go to PDF Position',
   'sync.inverse': 'Go to Source Position',
+  'app.settings': 'Settings…',
 };
 
 let notifyHost = () => {};
@@ -107,7 +110,7 @@ export function getCommand(id) { return registry.get(id); }
 export function commandTitle(id) {
   const c = registry.get(id);
   if (!c) return '';
-  return typeof c.title === 'function' ? c.title() : c.title;
+  return typeof c.title === 'function' ? c.title() : c.title ?? TITLES[id] ?? id;
 }
 
 function commandEnabled(id) {
@@ -115,7 +118,7 @@ function commandEnabled(id) {
   return !!c && (!c.enabled || !!c.enabled());
 }
 
-const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (FALLBACK_TITLES[id] ?? id));
+const menuLabel = (id) => (registry.has(id) ? commandTitle(id) : (TITLES[id] ?? id));
 
 export function runCommand(id) {
   if (!commandEnabled(id)) return false;
@@ -192,13 +195,27 @@ export function tooltip(id) {
 // Browsers own page zoom, so a separate interface size would stack on it.
 const BROWSER_OWNS = new Set(['view.uiScaleUp', 'view.uiScaleDown']);
 
+const TEXT_FIELD = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+// Whether a chord pressed at `target` reaches command `c`: never past a modal
+// dialog; an editing command (`scope: 'editor'`) not from another text field;
+// a PDF zoom (`scope: 'pdf'`) only from the PDF pane, as elsewhere the chord
+// is the browser's page zoom (docs/web.md).
+export function chordApplies(c, target, doc = document) {
+  if (doc.querySelector('dialog[open]')) return false;
+  const at = typeof target?.closest === 'function' ? target : null;
+  if (c.scope === 'editor' && at?.closest(TEXT_FIELD) && !at.closest('.cm-content')) return false;
+  if (c.scope === 'pdf' && !at?.closest('.pdf-pane')) return false;
+  return true;
+}
+
 // Capture ahead of the editor keymap. `nativeOnly` commands belong to that
 // keymap: catching Ctrl+Z here in a search field would undo the source editor.
 export function installMenuBridge() {
   addEventListener('keydown', (e) => {
     for (const [id, c] of registry) {
       const accel = !c.nativeOnly && !BROWSER_OWNS.has(id) && accelOf(id);
-      if (accel && matchesAccel(accel, e, isMac) && runCommand(id)) {
+      if (accel && matchesAccel(accel, e, isMac) && chordApplies(c, e.target) && runCommand(id)) {
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -227,6 +244,11 @@ function codesFor(key) {
 // Whether a keydown is exactly this accelerator: the key, and the modifiers
 // it names, no more. `mac` decides what CmdOrCtrl means.
 export function matchesAccel(accel, e, mac) {
+  // Off the Mac, AltGr reports itself as Ctrl+Alt: on German or Nordic layouts
+  // AltGr+0 types }, so Ctrl+Alt+0 would swallow it. A Ctrl+Alt chord that
+  // types a character other than a letter or digit is that typing.
+  if (!mac && e.ctrlKey && e.altKey
+      && (e.getModifierState?.('AltGraph') || (e.key?.length === 1 && !/^[a-z0-9]$/i.test(e.key)))) return false;
   const parts = accel.split('+');
   const key = parts.pop();
   const want = { meta: false, ctrl: false, alt: false, shift: false };

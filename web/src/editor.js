@@ -1,8 +1,7 @@
 // CodeMirror 6 editor wired for LaTeX: stex highlighting, command/citation/ref
 // autocomplete, native OS spellcheck, light/dark themes.
 
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, showTooltip } from '@codemirror/view';
-import katex from 'katex';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration, showTooltip, repositionTooltips } from '@codemirror/view';
 import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
 import { StreamLanguage, syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
@@ -126,10 +125,11 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 const MATH_ENVS = PREVIEW_ENVIRONMENTS.join('|');
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
 // Display math: a math environment, $$…$$ or \[…\], each with how to read it.
+// Each with its opening delimiter: a block holding the cursor opens before it.
 const BLOCKS = [
-  [ENV_RE, (m) => texForPreview(m[1], m[3])],
-  [/\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
-  [/\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
+  ['\\begin{', ENV_RE, (m) => texForPreview(m[1], m[3])],
+  ['$$', /\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
+  ['\\[', /\\\[([\s\S]*?)\\\]/g, (m) => texForPreview(null, m[1])],
 ];
 
 // KaTeX-friendly cleanup: drop labels/numbering, map env content to aligned/cases.
@@ -152,7 +152,10 @@ export function mathAt(doc, pos) {
   const text = doc.sliceString(from, Math.min(doc.length, pos + WIN));
   const rel = pos - from; // cursor position within the window
 
-  for (const [re, tex] of BLOCKS) {
+  for (const [opener, re, tex] of BLOCKS) {
+    // No opener before the cursor, no block around it: skip the regex scan
+    // (most cursor moves, in prose).
+    if (text.lastIndexOf(opener, rel) === -1) continue;
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
       if (rel >= m.index && rel <= m.index + m[0].length) {
@@ -179,6 +182,23 @@ export function mathAt(doc, pos) {
   return null;
 }
 
+// KaTeX and its stylesheet load with the first preview.
+let katex = null;
+let katexLoading = null;
+function loadKatex() {
+  katexLoading ??= Promise.all([
+    import('katex'),
+    new Promise((resolve) => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = '/dist/katex.min.css';
+      link.onload = link.onerror = resolve;
+      document.head.append(link);
+    }),
+  ]).then(([module]) => { katex = module.default; }, (err) => { katexLoading = null; throw err; });
+  return katexLoading;
+}
+
 function mathTooltip(state, prev = null) {
   const m = mathAt(state.doc, state.selection.main.head);
   if (!m?.tex) return null;
@@ -191,14 +211,20 @@ function mathTooltip(state, prev = null) {
     display: m.display,
     above: true,
     arrow: false,
-    create() {
+    create(view) {
       const dom = document.createElement('div');
       dom.className = 'cm-math-preview';
-      try {
-        katex.render(m.tex, dom, { displayMode: m.display, throwOnError: false, strict: false });
-      } catch {
-        return { dom: document.createElement('div') };
-      }
+      // Hidden until KaTeX has drawn into it; a failed render stays hidden.
+      dom.hidden = true;
+      const draw = () => {
+        try {
+          katex.render(m.tex, dom, { displayMode: m.display, throwOnError: false, strict: false });
+        } catch { return; }
+        dom.hidden = false;
+        if (view.dom.isConnected) repositionTooltips(view);
+      };
+      if (katex) draw();
+      else loadKatex().then(draw, (err) => console.error('The equation preview could not load:', err));
       return { dom };
     },
   };
@@ -226,7 +252,7 @@ const mathPreviewFocus = EditorView.focusChangeEffect.of((_state, focusing) => e
 // reads the text before the position as TeX would: $…$, $$…$$, \(…\), \[…\]
 // and the math environments (starred too) open math; \text{…} and its kin
 // return to text inside it; escapes (\$, \%, \\) are not delimiters; comments
-// and verbatim are skipped; and a blank line ends an unclosed $ or \[, as
+// and verbatim are skipped (an unclosed \verb to the end of its line); and a blank line ends an unclosed $ or \[, as
 // the paragraph it cannot span. Only the text before the position counts,
 // so `$|$` (an empty pair, the caret between) is math.
 
@@ -317,7 +343,12 @@ export function mathModeAt(text, pos = text.length) {
       if (src[i] === '*') i += 1;
       const delim = src[i];
       if (delim === undefined) break;
+      // \verb cannot span lines: one left open ends with its line (TeX stops
+      // there with an error), rather than reading the rest of the file as code.
+      if (delim === '\n') continue;
       const close = src.indexOf(delim, i + 1);
+      const eol = src.indexOf('\n', i + 1);
+      if (eol !== -1 && (close === -1 || close > eol)) { i = eol; continue; }
       if (close === -1) return false; // inside \verb|…
       i = close + 1;
       continue;

@@ -4,6 +4,10 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
+// The body's interface-scale `zoom`, which window pixels (pointer and anchor
+// rects, devicePixelRatio) leave out.
+export const bodyZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
+
 // Unique DOM ids for label/control wiring.
 let uid = 0;
 export const nextId = (prefix) => `${prefix}-${++uid}`;
@@ -35,14 +39,26 @@ export function withTimeout(promise, ms) {
 // ---------- toasts ----------
 
 const MAX_TOASTS = 3;
+// An error stays long enough to read (and select, to copy), and while the
+// pointer or focus is on it; the rest pass as status.
+const TOAST_MS = 3200;
+const ERROR_TOAST_MS = 10_000;
 
 export function toast(msg, kind = '') {
   const root = $('#toast-root');
   if (!root) return;
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
-  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: 'status' }, msg));
+  const error = kind === 'error';
+  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: error ? 'alert' : 'status' }, msg));
   if (!root.matches(':popover-open')) root.showPopover();
-  setTimeout(() => t.remove(), 3200);
+  let timer;
+  const start = () => { clearTimeout(timer); timer = setTimeout(() => t.remove(), error ? ERROR_TOAST_MS : TOAST_MS); };
+  const hold = () => clearTimeout(timer);
+  t.addEventListener('pointerenter', hold);
+  t.addEventListener('pointerleave', start);
+  t.addEventListener('focusin', hold);
+  t.addEventListener('focusout', start);
+  start();
 }
 
 // ---------- dialogs ----------
@@ -139,7 +155,7 @@ let openMenu = null;
 // the body's interface zoom. Measure offset sizes so the pop-in transform
 // cannot shift the placement, and bound both menus and popovers before sizing.
 function placeMenu(menu, x, y) {
-  const zoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+  const zoom = bodyZoom();
   const width = Math.max(0, innerWidth - 16) / zoom;
   menu.style.minWidth = `${Math.min(160, width)}px`;
   menu.style.maxWidth = `${width}px`;

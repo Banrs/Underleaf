@@ -59,7 +59,7 @@ test('folder expansion keeps focus and file rows retain their open action and ma
   assert.equal(document.activeElement, folder());
   assert.equal(folder().getAttribute('aria-expanded'), 'true');
   const file = document.querySelector('[data-path="chapters/main.tex"]');
-  assert.equal(file.getAttribute('aria-current'), 'true');
+  assert.equal(file.getAttribute('aria-selected'), 'true');
   assert.equal(file.hasAttribute('aria-expanded'), false);
   assert.ok(file.querySelector('[aria-label="Main file"]'));
   file.click();
@@ -93,4 +93,68 @@ test('a slower outline click cannot override a later heading in the same file', 
   await new Promise(setImmediate);
   assert.deepEqual(revealed, [10]);
   assert.equal(state.topLine, 10);
+});
+
+function mountTree(t, tree, openPath = null) {
+  const window = new Window();
+  globalThis.document = window.document;
+  globalThis.CSS ??= window.CSS;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: window.localStorage });
+  t.after(() => { destroySidebar(); resetProjectState(); delete globalThis.document; delete globalThis.localStorage; });
+  state.projectId = 'keys';
+  state.openPath = openPath;
+  state.settings = { mainFile: 'main.tex' };
+  state.tree = tree;
+  document.body.append(buildSidebar({ openFile() {} }));
+  renderTree();
+  const key = (k) => document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  return { window, key, row: (path) => document.querySelector(`[data-path="${path}"]`) };
+}
+
+const file = (path) => ({ type: 'file', name: path.split('/').pop(), path });
+
+test('the file tree is a flat tree of levels and positions, walked with Home, End and letters', (t) => {
+  const { key, row } = mountTree(t, [
+    { type: 'dir', name: 'figs', path: 'figs', children: [file('figs/a.png')] },
+    file('main.tex'), file('macros.sty'), file('refs.bib'),
+  ], 'main.tex');
+  assert.equal(row('main.tex').getAttribute('aria-selected'), 'true');
+  assert.equal(row('main.tex').getAttribute('aria-posinset'), '2');
+  assert.equal(row('main.tex').getAttribute('aria-setsize'), '4');
+  assert.equal(document.querySelector('.tree-group').getAttribute('role'), 'none');
+  assert.equal(row('main.tex').tabIndex, 0);
+  row('main.tex').focus();
+  key('End');
+  assert.equal(document.activeElement, row('refs.bib'));
+  key('Home');
+  assert.equal(document.activeElement, row('figs'));
+  key('m');
+  assert.equal(document.activeElement, row('main.tex'));
+  key('m');
+  assert.equal(document.activeElement, row('macros.sty'), 'the next match, wrapping');
+  key('ArrowUp');
+  key('ArrowUp');
+  key('ArrowUp');
+  assert.equal(document.activeElement, row('figs'), 'held at the top');
+});
+
+test('rebuilding the tree keeps focus on the same row', (t) => {
+  const { row } = mountTree(t, [file('a.tex'), file('b.tex')]);
+  row('b.tex').focus();
+  state.tree = [file('a.tex'), file('new.tex'), file('b.tex')];
+  renderTree();
+  assert.equal(document.activeElement, row('b.tex'));
+});
+
+test('an unchanged outline keeps its rows', (t) => {
+  mountTree(t, []);
+  state.projectOutline = [{ file: 'main.tex', title: 'Intro', depth: 2, line: 1 }];
+  renderOutline();
+  const first = document.querySelector('.outline-row');
+  state.projectOutline = [{ file: 'main.tex', title: 'Intro', depth: 2, line: 1 }];
+  renderOutline();
+  assert.equal(document.querySelector('.outline-row'), first);
+  state.projectOutline = [{ file: 'main.tex', title: 'Introduction', depth: 2, line: 1 }];
+  renderOutline();
+  assert.equal(document.querySelector('.outline-row').textContent, 'Introduction');
 });

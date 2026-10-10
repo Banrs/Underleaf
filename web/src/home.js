@@ -117,7 +117,7 @@ export async function renderHome() {
 
   app.replaceChildren(
     el('div', { class: 'home' },
-      el('header', { class: 'titlebar home-titlebar', 'data-tauri-drag-region': 'deep' },
+      el('header', { class: 'titlebar home-titlebar' },
         menuBar(menuUnder),
         el('span', { class: 'spacer' }),
         el('button', {
