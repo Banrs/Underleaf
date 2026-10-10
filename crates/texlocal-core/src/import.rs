@@ -8,6 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -315,10 +316,12 @@ fn import_project_within(
 
     // Made in a hidden folder beside the projects, which no listing or scan
     // shows, then moved into place whole: a failure or panic, which drops
-    // the folder, leaves no project behind, and a crash a hidden folder only.
+    // the folder, leaves no project behind, and a crash a hidden folder only,
+    // which a later import sweeps away.
     fs::create_dir_all(&service.data_dir)?;
+    sweep_staging(&service.data_dir);
     let staging = tempfile::Builder::new()
-        .prefix(".texlocal-import-")
+        .prefix(STAGING)
         .permissions(fs::Permissions::from_mode(0o777))
         .tempdir_in(&service.data_dir)?;
     let (staged, staged_id) = (staging.path(), staging.path().file_name().unwrap());
@@ -360,6 +363,23 @@ fn import_project_within(
     projects::finish_project(id, &root, main_file)
 }
 
+const STAGING: &str = ".texlocal-import-";
+
+/// Removes the staging folders that crashed imports left behind. A folder
+/// untouched for a day is no running import's, whose allowance is minutes of
+/// writing.
+fn sweep_staging(data_dir: &Path) {
+    const STALE: Duration = Duration::from_secs(24 * 60 * 60);
+    for entry in fs::read_dir(data_dir).into_iter().flatten().flatten() {
+        let age = entry.metadata().and_then(|meta| meta.modified()).ok();
+        if entry.file_name().to_string_lossy().starts_with(STAGING)
+            && age.and_then(|time| time.elapsed().ok()) > Some(STALE)
+        {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +403,29 @@ mod tests {
 
     fn projects(service: &Service) -> usize {
         fs::read_dir(&service.data_dir).unwrap().count()
+    }
+
+    #[test]
+    fn an_import_sweeps_away_only_a_staging_folder_a_day_old() {
+        let (dir, service) = library();
+        let staged = |name: &str, age: u64| {
+            let folder = service.data_dir.join(name);
+            fs::create_dir_all(folder.join("sub")).unwrap();
+            fs::write(folder.join("sub/main.tex"), "x").unwrap();
+            let when = std::time::SystemTime::now() - Duration::from_secs(age);
+            File::open(&folder).unwrap().set_modified(when).unwrap();
+            folder
+        };
+        let crashed = staged(".texlocal-import-crashed", 25 * 60 * 60);
+        let running = staged(".texlocal-import-running", 23 * 60 * 60);
+        let other = staged(".hidden", 25 * 60 * 60);
+        let src = dir.path().join("paper.zip");
+        zip_of(&src, &[("main.tex", "x")]);
+
+        import_project(&service, &src).unwrap();
+        assert!(!crashed.exists());
+        assert!(running.exists() && other.exists());
+        assert!(service.data_dir.join("paper/main.tex").exists());
     }
 
     const SMALL: Allowance = Allowance {
