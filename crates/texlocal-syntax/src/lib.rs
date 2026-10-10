@@ -10,6 +10,7 @@ mod edit;
 mod highlight;
 mod maths;
 mod prose;
+mod stack;
 mod style;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -246,7 +247,7 @@ impl SourceDocument {
     pub fn insert_symbol(&self, command: &str, selection: TextRange) -> Insertion {
         let selection = clamp(selection, self.text.len());
         let at = selection.start as usize;
-        let mut scanner = self.scans().resume(&self.text.units, at, at).scanner;
+        let mut scanner = self.scans().resume(&self.text, at, at).scanner;
         scanner.run(&self.text.units[..at], at, &[], &mut ());
         let text = if scanner.in_math() {
             command.to_string()
@@ -266,10 +267,13 @@ fn is(u: u16, c: char) -> bool {
     u == c as u16
 }
 
+/// The longest command name `ascii` reads; longer than any in the catalog.
+const NAME: usize = 64;
+
 /// A command name's UTF-16 units as the ASCII they are, without allocating:
-/// "" for one longer than `buf` or not ASCII, which no name it's matched
+/// "" for one longer than `NAME` or not ASCII, which no name it's matched
 /// against is.
-fn ascii<'a>(units: &[u16], buf: &'a mut [u8]) -> &'a str {
+fn ascii<'a>(units: &[u16], buf: &'a mut [u8; NAME]) -> &'a str {
     if units.len() > buf.len() || units.iter().any(|&u| u > 0x7f) {
         return "";
     }
