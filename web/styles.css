@@ -927,6 +927,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
    and fit-width re-renders in a feedback loop. Top padding = the toolbar + 12px,
    which pdfview.js reads from here (#metrics). */
 .pdf-scroll { position: absolute; inset: 0; overflow: auto; padding: calc(var(--preview-toolbar-height, var(--h-toolbar)) + var(--sp-3)) 10px var(--sp-3); scrollbar-gutter: stable; }
+/* The pane clips an outer ring. */
+.pdf-scroll:focus-visible { outline-offset: -2px; }
 /* Sized to the widest page but never below the viewport, so offsetWidth/Height
    are the true content extents the pinch gesture clamps against, and so the CSS
    centring below agrees with a zero offset.
@@ -1226,6 +1228,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   animation: toast-in 0.18s ease-out;
 }
 .toast.error { background: var(--red-fill); color: #fff; backdrop-filter: none; }   /* opaque: nothing to blur */
+/* An error can be hovered (which holds it, dom.js toast) and its text copied. */
+.toast.error { pointer-events: auto; -webkit-user-select: text; user-select: text; }
 
 /* Vibrancy needs the native window behind it; in a browser tab the page would
    show through, so menus and toasts are opaque there (and the blur is skipped). */

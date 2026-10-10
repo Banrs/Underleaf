@@ -35,14 +35,26 @@ export function withTimeout(promise, ms) {
 // ---------- toasts ----------
 
 const MAX_TOASTS = 3;
+// An error stays long enough to read (and select, to copy), and while the
+// pointer or focus is on it; the rest pass as status.
+const TOAST_MS = 3200;
+const ERROR_TOAST_MS = 10_000;
 
 export function toast(msg, kind = '') {
   const root = $('#toast-root');
   if (!root) return;
   while (root.childElementCount >= MAX_TOASTS) root.firstElementChild.remove();
-  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: 'status' }, msg));
+  const error = kind === 'error';
+  const t = root.appendChild(el('div', { class: `toast ${kind}`, role: error ? 'alert' : 'status' }, msg));
   if (!root.matches(':popover-open')) root.showPopover();
-  setTimeout(() => t.remove(), 3200);
+  let timer;
+  const start = () => { clearTimeout(timer); timer = setTimeout(() => t.remove(), error ? ERROR_TOAST_MS : TOAST_MS); };
+  const hold = () => clearTimeout(timer);
+  t.addEventListener('pointerenter', hold);
+  t.addEventListener('pointerleave', start);
+  t.addEventListener('focusin', hold);
+  t.addEventListener('focusout', start);
+  start();
 }
 
 // ---------- dialogs ----------

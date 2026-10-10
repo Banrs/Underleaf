@@ -70,6 +70,7 @@ export function destroyWorkspace() {
   clearTimeout(pdfFindTimer);
   pdfFindTimer = null;
   pdfMainFile = null;
+  lastBuildOutcome = null;
   clearTimeout(symbolsTimer);
   clearTimeout(docMetaTimer);
   clearTimeout(crumbTimer);
@@ -163,10 +164,13 @@ function buildChrome(id) {
     },
     beforeMainFileChange: captureTexPresso,
     beforeFilesReload: captureTexPresso,
+    // A new main file is a different document: built at once when builds are
+    // automatic, otherwise marked out of date until the next Compile.
     onMainFileChange: (liveBeforeMutation) => {
       refreshAnalysis();
       restartTexPresso(liveBeforeMutation);
-      compile({ auto: true });
+      if (prefs.autoCompile) compile({ auto: true });
+      else if (state.pdf?.doc) setPdfFreshness('Preview out of date');
     },
     onOpenPathChange: renderCrumbs,
     beforePathMutation: async () => {
@@ -184,7 +188,9 @@ function buildChrome(id) {
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.id = 'workspace-sidebar';
 
-  const saveState = el('span', { class: 'save-state', role: 'status' }, 'Saved');
+  // Not a live region: it changes with every pause in typing. A failed save
+  // is announced by its alert.
+  const saveState = el('span', { class: 'save-state' }, 'Saved');
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
   // takes over once it's hidden, so the control never disappears with the pane.
@@ -237,7 +243,10 @@ function buildChrome(id) {
     onclick: () => (state.compiling ? stopCompile() : runCommand('compile.run')),
   }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
-  const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '-1' });
+  // A tab stop, so the keyboard can scroll the pages (arrows, Page Up/Down).
+  const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '0', role: 'region', 'aria-label': 'PDF preview' });
+  // Builds announce themselves: the button's label and the log badge don't.
+  const buildStatus = el('span', { class: 'visually-hidden', role: 'status' });
   const logsView = buildLogsView({
     onJump: (file, line) => {
       if (file == null || line == null) return;
@@ -259,7 +268,9 @@ function buildChrome(id) {
     el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
     el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
   );
-  findInput.addEventListener('input', () => {
+  // Search the PDF for the field's text after `delay` ms, superseding any
+  // search before it.
+  const searchPdf = (delay) => {
     clearTimeout(pdfFindTimer);
     const generation = ++pdfFindGeneration;
     const viewer = state.pdf;
@@ -272,8 +283,9 @@ function buildChrome(id) {
       if (generation === pdfFindGeneration && state.pdf === viewer && ui.findInput === findInput && !findBar.hidden) {
         showCount(result);
       }
-    }, 200);
-  });
+    }, delay);
+  };
+  findInput.addEventListener('input', () => searchPdf(200));
   findInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closePdfFind(); return; }
     if (e.key !== 'Enter') return;
@@ -298,6 +310,7 @@ function buildChrome(id) {
   const pdfPane = el('div', { class: 'pane pdf-pane', id: 'workspace-preview' },
     el('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Document' },
       compileButton,
+      buildStatus,
       texpressoButton,
       logsButton,
       iconButton('pdf.save', 'download', 'small'),
@@ -336,7 +349,7 @@ function buildChrome(id) {
 
   ui = {
     sidebar, sourceBar, saveState, editorHost, wordCountPill, pdfScroll, logsButton,
-    compileButton, workspace, findBar, findInput, stepFind, pdfFreshness,
+    compileButton, buildStatus, workspace, findBar, findInput, findCount, stepFind, searchPdf, pdfFreshness,
     texpressoButton, texpressoDetails, texpressoLabel, texpressoLog,
   };
 
@@ -488,6 +501,21 @@ function closePdfFind() {
   refreshCommands();
 }
 
+// A new document invalidates the matches and their text positions, but not
+// the search: the bar stays open, with the reader's query and focus, and
+// searches the new document once it has loaded (refindPdf).
+function invalidatePdfFind() {
+  if (!ui?.findBar) return;
+  clearTimeout(pdfFindTimer);
+  pdfFindTimer = null;
+  pdfFindGeneration++;
+  ui.findCount.textContent = '';
+}
+
+function refindPdf() {
+  if (ui?.findBar && !ui.findBar.hidden && ui.findInput.value.trim()) ui.searchPdf(0);
+}
+
 async function gotoLineFlow() {
   const answer = await promptModal({ title: 'Go to Line', label: 'Line number', confirm: 'Go' });
   const line = Number.parseInt(answer, 10);
@@ -496,14 +524,30 @@ async function gotoLineFlow() {
 
 // ---------- document lifecycle ----------
 
+// Both run on every keystroke; rewriting identical text would still make
+// assistive technology announce the status again.
 function setSaveState(text) {
-  if (ui.saveState) ui.saveState.textContent = text;
+  if (ui.saveState && ui.saveState.textContent !== text) ui.saveState.textContent = text;
 }
 
 function setPdfFreshness(message = '') {
-  if (!ui.pdfFreshness) return;
+  if (!ui.pdfFreshness || ui.pdfFreshness.textContent === message) return;
   ui.pdfFreshness.hidden = !message;
   ui.pdfFreshness.textContent = message;
+}
+
+// The build status for assistive technology (ui.buildStatus, a polite live
+// region). Automatic builds run at every pause in typing, so they speak only
+// when the outcome changes: a failure, or the first success after one.
+let lastBuildOutcome = null;
+function announceBuild(message, outcome, auto) {
+  if (!ui.buildStatus) return;
+  if (outcome) {
+    const changed = outcome !== lastBuildOutcome;
+    lastBuildOutcome = outcome;
+    if (auto && !changed && outcome !== 'failed') return;
+  } else if (auto) return;
+  ui.buildStatus.textContent = message;
 }
 
 function showEditorPlaceholder(message) {
@@ -536,8 +580,9 @@ export async function flushCurrent() {
 async function openFile(path) {
   if (!path) return;
   ui.layout?.revealEditor();
-  if (path === state.openPath) return;
+  // Choosing the open file again still supersedes a slower open in flight.
   const request = ++openGeneration;
+  if (path === state.openPath) return;
   const generation = workspaceGeneration;
   const host = ui.editorHost;
   if (!host) return;
@@ -546,7 +591,16 @@ async function openFile(path) {
   const prevEditor = state.editor;
   const stillCurrent = () => request === openGeneration && generation === workspaceGeneration
     && state.projectId === projectId && host === ui.editorHost;
-  const flushPrevious = () => flushWhile(stillCurrent, prevEditor, prevPath);
+  // A failed save has been reported (doSave's toast) and keeps the old file
+  // open; it is not this open's error to throw at a click handler.
+  const flushPrevious = async () => {
+    try {
+      return await flushWhile(stillCurrent, prevEditor, prevPath);
+    } catch (err) {
+      if (err.saveFailed) return false;
+      throw err;
+    }
+  };
 
   // Stabilise the old buffer before every kind of transition. This includes
   // image/binary previews: an edit may have arrived during the preceding save,
@@ -663,7 +717,11 @@ export function saveCurrent(options = {}) {
   });
 }
 
-async function doSave({ triggerCompile = true } = {}) {
+// A keepalive request outlives the page (a closed tab, a discarded one), up
+// to the browser's 64 KiB for such requests in flight.
+const KEEPALIVE_MAX = 60_000;
+
+async function doSave({ triggerCompile = true, keepalive = false } = {}) {
   if (!state.dirty || !state.editor || !state.openPath) return;
   clearTimeout(state.saveTimer);
   const projectId = state.projectId;
@@ -674,7 +732,9 @@ async function doSave({ triggerCompile = true } = {}) {
   state.dirty = false;
   setSaveState('Saving…');
   try {
-    await api.writeFile(projectId, path, content);
+    const outlive = keepalive
+      && new TextEncoder().encode(JSON.stringify({ id: projectId, path, text: content })).length <= KEEPALIVE_MAX;
+    await api.writeFile(projectId, path, content, outlive ? { keepalive: true } : undefined);
     const current = state.projectId === projectId && state.openPath === path && state.editor === editor;
     if (current && !state.dirty) {
       setSaveState('Saved');
@@ -699,14 +759,18 @@ async function doSave({ triggerCompile = true } = {}) {
 
 let crumbTimer;
 let symbolsTimer;
+// Requests can overlap and answer out of order: only the latest one applies.
+let symbolsRequest = 0;
+let analysisRequest = 0;
 function refreshSymbols() {
   clearTimeout(symbolsTimer);
   const projectId = state.projectId;
   const generation = workspaceGeneration;
   symbolsTimer = setTimeout(async () => {
+    const request = ++symbolsRequest;
     try {
       const symbols = await api.symbols(projectId);
-      if (generation === workspaceGeneration && state.projectId === projectId) state.symbols = symbols;
+      if (request === symbolsRequest && generation === workspaceGeneration && state.projectId === projectId) state.symbols = symbols;
     } catch { /* own server: unlikely */ }
   }, 500);
 }
@@ -737,8 +801,9 @@ function updateDocMeta() {
 async function refreshAnalysis() {
   const { projectId, openPath: path } = state;
   const generation = workspaceGeneration;
+  const request = ++analysisRequest;
   const analysis = TEX_FILE.test(path) ? await api.analyze(projectId, path).catch(() => null) : null;
-  if (generation !== workspaceGeneration || state.openPath !== path) return;
+  if (request !== analysisRequest || generation !== workspaceGeneration || state.openPath !== path) return;
   state.projectOutline = analysis?.outline ?? [];
   state.words = analysis?.words ?? 0;
   updateDocMeta();
@@ -836,6 +901,7 @@ async function compile({ auto = false } = {}) {
     btn.title = 'Stop the build';
     btn.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Stop');
   }
+  announceBuild('Compiling…', null, auto);
   refreshSidebarChrome();
 
   try {
@@ -854,9 +920,10 @@ async function compile({ auto = false } = {}) {
 
     if (result.pdf) {
       if (result.pdfChanged !== false || !viewer.doc || pdfMainFile !== mainFile) {
-        // A changed PDF invalidates matches and text positions. An unchanged
-        // build keeps the current document, scroll position, zoom and find state.
-        closePdfFind();
+        // A changed PDF invalidates matches and text positions; the search
+        // runs again on the new one. An unchanged build keeps the current
+        // document, scroll position, zoom and find state.
+        invalidatePdfFind();
         reloadingPdf = true;
         pdfMainFile = null;
         const loaded = await viewer.load(api.pdfUrl(projectId), api.fileHeaders);
@@ -864,6 +931,7 @@ async function compile({ auto = false } = {}) {
         if (state.settings?.mainFile !== mainFile) return;
         if (loaded) pdfMainFile = mainFile;
         setPdfFreshness(loaded ? '' : 'Preview could not reload');
+        refindPdf();
       } else {
         setPdfFreshness('');
       }
@@ -875,19 +943,23 @@ async function compile({ auto = false } = {}) {
     }
 
     // Whoever stopped a build knows; it gets no toast, as on the Mac.
-    if (!auto && !result.stopped) {
-      if (result.ok) {
-        const warns = result.warnings.length;
-        toast(`Compiled in ${(result.durationMs / 1000).toFixed(1)}s${warns ? ` · ${warns} warning${warns === 1 ? '' : 's'}` : ''}`);
-      } else {
-        toast(`Compile failed — ${result.errors.length || 'see'} error${result.errors.length === 1 ? '' : 's'}`, 'error');
-      }
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    if (result.stopped) announceBuild('Build stopped', null, auto);
+    else if (result.ok) {
+      const warns = result.warnings.length;
+      announceBuild(`Compiled${warns ? `, ${plural(warns, 'warning')}` : ''}`, 'ok', auto);
+      if (!auto) toast(`Compiled in ${(result.durationMs / 1000).toFixed(1)}s${warns ? ` · ${plural(warns, 'warning')}` : ''}`);
+    } else {
+      const errors = result.errors.length;
+      announceBuild(`Build failed${errors ? `, ${plural(errors, 'error')}` : ''}${result.pdf ? '; the preview shows its PDF' : ''}`, 'failed', auto);
+      if (!auto) toast(`Compile failed — ${errors || 'see'} error${errors === 1 ? '' : 's'}`, 'error');
     }
   } catch (err) {
     if (!current()) return;
     saveFailed = !!err.saveFailed;
     if (reloadingPdf) setPdfFreshness('Preview could not reload');
     if (!saveFailed) {
+      announceBuild(`Build failed: ${err.message}`, 'failed', auto);
       if (!auto) toast(err.message, 'error');
       else console.error('Auto-compile failed:', err);
     }

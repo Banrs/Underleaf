@@ -11,7 +11,7 @@ Object.assign(globalThis, {
   ResizeObserver: window.ResizeObserver,
 });
 globalThis.navigator ??= window.navigator;
-const { el, contextMenu, menuUnder, popoverUnder, showModal } = await import('../web/src/dom.js');
+const { el, contextMenu, menuUnder, popoverUnder, showModal, toast } = await import('../web/src/dom.js');
 const { buildSourceBar } = await import('../web/src/sourcebar.js');
 const { state } = await import('../web/src/state.js');
 
@@ -222,4 +222,26 @@ test('symbol keys follow current rendered rows after resize, then insert and dis
   trigger.click();
   key('Escape');
   assert.equal(document.activeElement, trigger);
+});
+
+test('an error toast is an alert that stays while it is hovered, and a status toast passes', (t) => {
+  window.HTMLElement.prototype.showPopover ??= function showPopover() {};
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  toast('Save failed: disk full', 'error');
+  const error = document.querySelector('.toast.error');
+  assert.equal(error.getAttribute('role'), 'alert');
+  t.mock.timers.tick(5000);
+  assert.ok(error.isConnected, 'outlasts a status toast');
+  error.dispatchEvent(new window.Event('pointerenter'));
+  t.mock.timers.tick(60_000);
+  assert.ok(error.isConnected, 'held while hovered');
+  error.dispatchEvent(new window.Event('pointerleave'));
+  t.mock.timers.tick(10_000);
+  assert.ok(!error.isConnected);
+
+  toast('Compiled in 1.0s');
+  const status = document.querySelector('.toast');
+  assert.equal(status.getAttribute('role'), 'status');
+  t.mock.timers.tick(3200);
+  assert.ok(!status.isConnected);
 });
