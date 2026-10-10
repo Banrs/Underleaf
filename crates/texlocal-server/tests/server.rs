@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_server::{serve, App, Request, Response};
+use texlocal_server::{serve, App, Bytes, Request, Response};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 const PORT: u16 = 7878;
@@ -47,7 +47,7 @@ fn request(method: &str, target: &str, headers: &[(&str, &str)], body: &[u8]) ->
             .iter()
             .map(|(n, v)| (n.to_ascii_lowercase(), v.to_string()))
             .collect(),
-        body: body.to_vec(),
+        body: Bytes::copy_from_slice(body),
     }
 }
 
@@ -106,6 +106,87 @@ async fn project_routes_need_the_token_header() {
         .handle(authed("POST", "/api/list_projects", &[], b""))
         .await;
     assert_eq!(signed.status, 200);
+}
+
+#[tokio::test]
+async fn only_the_web_ui_s_own_files_go_without_the_token() {
+    let f = fixture();
+    // Paths that only decode to a project route's prefix, and reads and
+    // writes no route takes: the token is asked for before anything else.
+    for (method, target) in [
+        ("GET", "/%5F%5Fraw/P/img/a.svg"),
+        ("GET", "/%5f%5Fpdf/P"),
+        ("GET", "//__raw/P/img/a.svg"),
+        ("GET", "/__anything"),
+        ("GET", "/api"),
+        ("GET", "/api/list_projects"),
+        ("GET", "/%61pi/list_projects"),
+        ("POST", "/"),
+        ("PUT", "/index.html"),
+        ("DELETE", "/__raw/P/img/a.svg"),
+        ("OPTIONS", "/api/list_projects"),
+    ] {
+        let bare = request(method, target, &[("host", HOST)], b"");
+        assert_eq!(f.app.handle(bare).await.status, 401, "{method} {target}");
+    }
+    // With it, they are what they were: no project file is served from a
+    // web path, and a write to a web file is not allowed.
+    let decoded = f
+        .app
+        .handle(authed("GET", "/%5F%5Fraw/P/img/a.svg", &[], b""))
+        .await;
+    assert_eq!(decoded.status, 404);
+    let put = f.app.handle(authed("PUT", "/index.html", &[], b"")).await;
+    assert_eq!(put.status, 405);
+    // The web UI's files, wherever they are, need none.
+    std::fs::create_dir(f._web.path().join("dist")).unwrap();
+    std::fs::write(f._web.path().join("dist/bundle.js"), "1").unwrap();
+    for target in ["/", "/index.html", "/dist/bundle.js", "/dist/%62undle.js"] {
+        let bare = request("GET", target, &[("host", HOST)], b"");
+        assert_eq!(f.app.handle(bare).await.status, 200, "{target}");
+    }
+}
+
+#[tokio::test]
+async fn web_files_revalidate_by_etag_and_project_files_are_never_cached() {
+    let f = fixture();
+    let first = f.app.handle(authed("GET", "/", &[], b"")).await;
+    assert_eq!(first.status, 200);
+    assert_eq!(first.header("cache-control"), Some("no-cache"));
+    let tag = first.header("etag").unwrap().to_owned();
+
+    // Unchanged: a 304 without the body.
+    for header in [tag.as_str(), &format!("\"x\", {tag}"), "*"] {
+        let again = f
+            .app
+            .handle(authed("GET", "/", &[("if-none-match", header)], b""))
+            .await;
+        assert_eq!(again.status, 304, "{header}");
+        assert!(again.body.is_empty());
+        assert_eq!(again.header("etag"), Some(tag.as_str()));
+    }
+    let other = f
+        .app
+        .handle(authed("GET", "/", &[("if-none-match", "\"x\"")], b""))
+        .await;
+    assert_eq!(other.status, 200);
+
+    // A rebuild shows on the next load.
+    std::fs::write(f._web.path().join("index.html"), "<!doctype html><p>new").unwrap();
+    let rebuilt = f
+        .app
+        .handle(authed("GET", "/", &[("if-none-match", &tag)], b""))
+        .await;
+    assert_eq!(rebuilt.status, 200);
+    assert_eq!(rebuilt.body, b"<!doctype html><p>new");
+    assert_ne!(rebuilt.header("etag"), Some(tag.as_str()));
+
+    let raw = f
+        .app
+        .handle(authed("GET", "/__raw/P/img/a.svg", &[], b""))
+        .await;
+    assert_eq!(raw.header("cache-control"), Some("no-store"));
+    assert!(raw.header("etag").is_none());
 }
 
 #[tokio::test]
@@ -476,6 +557,72 @@ async fn assert_closed(stream: &mut tokio::net::TcpStream) {
         .await
         .expect("the refused request kept its connection open");
     assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
+}
+
+/// A response's head alone, for one that has no body (to a HEAD, a 304).
+async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut byte))
+            .await
+            .expect("the head arrives")
+            .unwrap();
+        assert_eq!(n, 1, "closed mid-head: {}", String::from_utf8_lossy(&buf));
+        buf.push(byte[0]);
+    }
+    String::from_utf8(buf).unwrap().to_ascii_lowercase()
+}
+
+#[tokio::test]
+async fn heads_and_revalidations_give_the_whole_length_without_a_body() {
+    let (f, port) = start().await;
+    let pdf = Service::new(f._data.path().to_path_buf())
+        .pdf_path("P")
+        .unwrap();
+    std::fs::create_dir_all(pdf.parent().unwrap()).unwrap();
+    std::fs::write(&pdf, vec![b'%'; 5000]).unwrap();
+    let mut stream = connect(port).await;
+    let head = format!("Host: 127.0.0.1:{port}\r\nX-TeXLocal-Token: {TOKEN}");
+
+    let req = format!("HEAD /__download/pdf/P HTTP/1.1\r\n{head}\r\n\r\n");
+    stream.write_all(req.as_bytes()).await.unwrap();
+    let answer = read_head(&mut stream).await;
+    assert!(answer.starts_with("http/1.1 200"), "{answer}");
+    assert!(answer.contains("content-length: 5000\r\n"), "{answer}");
+    assert!(
+        answer.contains("content-disposition: attachment"),
+        "{answer}"
+    );
+
+    let req = format!("GET / HTTP/1.1\r\n{head}\r\n\r\n");
+    stream.write_all(req.as_bytes()).await.unwrap();
+    let page = read_response(&mut stream).await.to_ascii_lowercase();
+    let tag = page
+        .lines()
+        .find_map(|line| line.strip_prefix("etag: "))
+        .unwrap()
+        .to_owned();
+    // Header values keep their case on the wire; the tag is lowercase hex.
+    let req = format!(
+        "GET / HTTP/1.1\r\n{head}\r\nIf-None-Match: {}\r\n\r\n",
+        tag.replace('w', "W")
+    );
+    stream.write_all(req.as_bytes()).await.unwrap();
+    let unchanged = read_head(&mut stream).await;
+    assert!(unchanged.starts_with("http/1.1 304"), "{unchanged}");
+    assert!(
+        unchanged.contains(&format!("etag: {tag}\r\n")),
+        "{unchanged}"
+    );
+
+    // An absolute-form target is routed by its path. The connection is
+    // still in step after the bodiless answers.
+    let req = format!("GET http://127.0.0.1:{port}/__raw/P/img/a.svg HTTP/1.1\r\n{head}\r\n\r\n");
+    stream.write_all(req.as_bytes()).await.unwrap();
+    let raw = read_response(&mut stream).await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "{raw}");
+    assert!(raw.ends_with("0123456789"), "{raw}");
 }
 
 #[tokio::test]

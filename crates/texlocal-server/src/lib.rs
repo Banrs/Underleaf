@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use texlocal_core::service::{Service, UPLOAD_MAX_BYTES};
 use texlocal_core::{paths, serve, zipexport, CoreError};
 
-pub use http::{Request, Response};
+pub use http::{Bytes, Request, Response};
 use tokio::net::TcpListener;
 
 /// Uploads and whole documents travel in one body.
@@ -78,9 +78,10 @@ pub async fn serve(
         Arc::new(move |req: &Request| app.guard(req))
     };
     let service = Arc::clone(&app.service);
+    // The transport has run the guard and secures every response itself.
     let handler = Arc::new(move |req| {
         let app = Arc::clone(&app);
-        async move { app.handle(req).await }
+        async move { app.route(req).await }
     });
     http::serve(listener, handler, guard, max_body, shutdown).await;
     service.texpresso.kill_all();
@@ -97,30 +98,27 @@ impl App {
         }
     }
 
+    /// A whole request, guard and all. `serve` runs the guard on the head
+    /// before reading the body, then `route`.
     pub async fn handle(&self, req: Request) -> Response {
-        // `http::serve` has already run the guard on the head, before reading
-        // the body; it runs again for anyone handing a whole request in.
-        if let Some(refused) = self.guard(&req) {
-            return refused.secured();
+        match self.guard(&req) {
+            Some(refused) => refused,
+            None => self.route(req).await,
         }
-        let path = req.path();
-        let read = matches!(req.method.as_str(), "GET" | "HEAD");
-        let response = if req.method == "POST" && path == "/api/upload_file" {
-            self.upload(req).await
-        } else if let Some(command) = path.strip_prefix("/api/").filter(|_| req.method == "POST") {
-            self.api(decode(command), &req.body).await
-        } else if read && (path.starts_with("/__pdf/") || path.starts_with("/__raw/")) {
-            self.file(path, req.header("range")).await
-        } else if let Some(id) = path.strip_prefix("/__download/pdf/").filter(|_| read) {
-            self.download(decode(id), false).await
-        } else if let Some(id) = path.strip_prefix("/__download/zip/").filter(|_| read) {
-            self.download(decode(id), true).await
-        } else if read {
-            self.asset(path).await
-        } else {
-            Response::text(405, "Method not allowed")
-        };
-        response.secured()
+        .secured()
+    }
+
+    /// A request the guard has passed.
+    async fn route(&self, req: Request) -> Response {
+        let head = req.method == "HEAD";
+        match Route::of(&req.method, req.path()) {
+            Route::Upload => self.upload(req).await,
+            Route::Api(command) => self.api(decode(command), req.body).await,
+            Route::File(path) => self.file(path, req.header("range")).await,
+            Route::Download(id, zip) => self.download(decode(id), zip, head).await,
+            Route::Asset(path) => self.asset(path, req.header("if-none-match")).await,
+            Route::Refused => Response::text(405, "Method not allowed"),
+        }
     }
 
     /// Host, Origin and the token, from the request head alone: the server
@@ -144,11 +142,12 @@ impl App {
             }
         }
 
-        // Only the routes that reach projects need the token. The web UI's
-        // files are the same for everyone, and the page has to load before
-        // it can read the token from its URL.
-        let path = req.path();
-        if !(path.starts_with("/api/") || path.starts_with("/__")) {
+        // Only the web UI's own files go without the token: they are the
+        // same for everyone, and the page has to load before it can read the
+        // token from its URL. Everything else needs it, a route added later
+        // included, and so does any path that only decodes to a project
+        // route's prefix (`/%5F%5Fraw/…`, `//__raw/…`).
+        if Route::of(&req.method, req.path()).is_public() {
             return None;
         }
         if !req
@@ -174,21 +173,24 @@ impl App {
             .unwrap_or_else(|_| Err(CoreError::internal("The request panicked")))
     }
 
-    async fn api(&self, command: String, body: &[u8]) -> Response {
-        let args: Value = if body.is_empty() {
-            json!({})
-        } else {
-            match serde_json::from_slice(body) {
-                Ok(v) => v,
-                Err(e) => return error(CoreError::bad_request(format!("Invalid JSON: {e}"))),
-            }
-        };
+    /// The JSON is read and written on the blocking pool too: a whole
+    /// document's save or read can be tens of megabytes.
+    async fn api(&self, command: String, body: Bytes) -> Response {
         // A command may mix blocking file work with async process work, so
         // the blocking thread drives it to completion on the runtime's handle.
         let runtime = tokio::runtime::Handle::current();
-        self.blocking(move |service| runtime.block_on(service.call(&command, &args)))
-            .await
-            .map_or_else(error, |value| Response::json(200, &value))
+        self.blocking(move |service| {
+            let args: Value = if body.is_empty() {
+                json!({})
+            } else {
+                serde_json::from_slice(&body)
+                    .map_err(|e| CoreError::bad_request(format!("Invalid JSON: {e}")))?
+            };
+            let value = runtime.block_on(service.call(&command, &args))?;
+            Ok(value.to_string())
+        })
+        .await
+        .map_or_else(error, |json| Response::new(200, "application/json", json))
     }
 
     /// One file per request, body raw, metadata percent-encoded in headers —
@@ -226,22 +228,49 @@ impl App {
     }
 
     /// The web UI. Its files go through the same lexical boundary as project
-    /// files, so a crafted path cannot leave the web directory.
-    async fn asset(&self, path: &str) -> Response {
+    /// files, so a crafted path cannot leave the web directory. The browser
+    /// revalidates each one (`no-cache`) against an ETag of its length and
+    /// modification time: an unchanged file costs a stat and a 304, and a
+    /// rebuild shows on the next load.
+    async fn asset(&self, path: &str, if_none_match: Option<&str>) -> Response {
         let rel = segments(path).join("/");
         let web_dir = Arc::clone(&self.web_dir);
-        match self
+        let found = self
             .blocking(move |_| {
-                paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })
+                let abs =
+                    paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })?;
+                // Taken before the read, so the tag is never newer than the body.
+                let tag = std::fs::metadata(&abs).ok().and_then(|meta| etag(&meta));
+                Ok((abs, tag))
             })
-            .await
-        {
-            Ok(abs) => served(serve::respond(&abs, None, false).await),
-            Err(_) => Response::text(404, "Not found"),
+            .await;
+        let Ok((abs, tag)) = found else {
+            return Response::text(404, "Not found");
+        };
+        if let Some((tag, len)) = &tag {
+            if if_none_match.is_some_and(|header| matches_etag(header, tag)) {
+                return Response {
+                    status: 304,
+                    headers: vec![],
+                    body: vec![],
+                }
+                .with("ETag", tag.clone())
+                .with("Cache-Control", "no-cache")
+                .with("Content-Length", len.to_string());
+            }
         }
+        let mut response = served(serve::respond(&abs, None, false).await);
+        if let (200, Some((tag, _))) = (response.status, tag) {
+            response
+                .headers
+                .retain(|(name, _)| *name != "Cache-Control");
+            response = response.with("Cache-Control", "no-cache").with("ETag", tag);
+        }
+        response
     }
 
-    async fn download(&self, id: String, zip: bool) -> Response {
+    /// A HEAD for the PDF answers from its length, without reading it.
+    async fn download(&self, id: String, zip: bool, head: bool) -> Response {
         let (ext, mime) = if zip {
             ("zip", "application/zip")
         } else {
@@ -250,24 +279,93 @@ impl App {
         let name = format!("{id}.{ext}");
         self.blocking(move |service| {
             if !zip {
-                return std::fs::read(service.pdf_path(&id)?)
-                    .map_err(|_| CoreError::not_found("No compiled PDF yet"));
+                let path = service.pdf_path(&id)?;
+                let missing = |_| CoreError::not_found("No compiled PDF yet");
+                if head {
+                    let meta = std::fs::metadata(&path).map_err(missing)?;
+                    return Ok((Vec::new(), Some(meta.len())));
+                }
+                return Ok((std::fs::read(path).map_err(missing)?, None));
             }
             let root = service.project_root(&id)?;
             let dir = tempfile::tempdir()?;
             let dest = dir.path().join("export.zip");
             zipexport::export_zip(&root, &dest)?;
-            Ok(std::fs::read(dest)?)
+            Ok((std::fs::read(dest)?, None))
         })
         .await
-        .map_or_else(error, |bytes| {
+        .map_or_else(error, |(bytes, len)| {
             let encoded = utf8_percent_encode(&name, NON_ALPHANUMERIC);
-            Response::new(200, mime, bytes).with(
+            let response = Response::new(200, mime, bytes).with(
                 "Content-Disposition",
                 format!("attachment; filename*=UTF-8''{encoded}"),
-            )
+            );
+            match len {
+                Some(len) => response.with("Content-Length", len.to_string()),
+                None => response,
+            }
         })
     }
+}
+
+/// Where a request goes, by its method and still-encoded path.
+enum Route<'a> {
+    Upload,
+    Api(&'a str),
+    File(&'a str),
+    Download(&'a str, bool),
+    Asset(&'a str),
+    Refused,
+}
+
+impl<'a> Route<'a> {
+    fn of(method: &str, path: &'a str) -> Self {
+        let read = matches!(method, "GET" | "HEAD");
+        if method == "POST" && path == "/api/upload_file" {
+            Route::Upload
+        } else if let Some(command) = path.strip_prefix("/api/").filter(|_| method == "POST") {
+            Route::Api(command)
+        } else if read && (path.starts_with("/__pdf/") || path.starts_with("/__raw/")) {
+            Route::File(path)
+        } else if let Some(id) = path.strip_prefix("/__download/pdf/").filter(|_| read) {
+            Route::Download(id, false)
+        } else if let Some(id) = path.strip_prefix("/__download/zip/").filter(|_| read) {
+            Route::Download(id, true)
+        } else if read {
+            Route::Asset(path)
+        } else {
+            Route::Refused
+        }
+    }
+
+    /// The web UI's files, which need no token: a read that no project route
+    /// takes, whose decoded path doesn't start where one would.
+    fn is_public(&self) -> bool {
+        let Route::Asset(path) = self else {
+            return false;
+        };
+        segments(path)
+            .first()
+            .is_none_or(|first| first != "api" && !first.starts_with("__"))
+    }
+}
+
+/// A weak validator from a file's length and modification time, and the length.
+fn etag(meta: &std::fs::Metadata) -> Option<(String, u64)> {
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    let tag = format!("W/\"{:x}-{:x}\"", meta.len(), modified.as_nanos());
+    Some((tag, meta.len()))
+}
+
+/// Whether an If-None-Match header names `tag`, compared weakly as RFC 9110
+/// has it for GET.
+fn matches_etag(header: &str, tag: &str) -> bool {
+    let opaque = |t: &str| t.trim().trim_start_matches("W/").to_owned();
+    header.trim() == "*" || header.split(',').any(|t| opaque(t) == opaque(tag))
 }
 
 fn served(file: serve::Served) -> Response {

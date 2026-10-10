@@ -7,12 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, Limited};
-use hyper::body::{Bytes, Incoming};
+pub use hyper::body::Bytes;
+use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio_io_timeout::TimeoutStream;
 
 const MAX_HEAD: usize = 64 * 1024;
@@ -21,6 +23,9 @@ const HEAD_TIME: Duration = Duration::from_secs(10);
 const BODY_TIME: Duration = Duration::from_secs(60);
 const LINGER: Duration = Duration::from_secs(2);
 const LINGER_BYTES: usize = 16 * 1024 * 1024;
+/// Connections served at once; more wait to be accepted. A browser opens
+/// about six per host, so this only stops a runaway local client.
+const MAX_CONNECTIONS: usize = 256;
 
 pub struct Request {
     pub method: String,
@@ -28,7 +33,7 @@ pub struct Request {
     pub target: String,
     /// Names lowercased.
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl Request {
@@ -108,7 +113,14 @@ pub async fn serve<H, F, C>(
     C: Fn(&Request) -> Option<Response> + Send + Sync + 'static,
 {
     tokio::pin!(shutdown);
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
+        let permit = tokio::select! {
+            _ = &mut shutdown => return,
+            permit = Arc::clone(&connections).acquire_owned() => {
+                permit.expect("the semaphore is never closed")
+            }
+        };
         tokio::select! {
             _ = &mut shutdown => return,
             accepted = listener.accept() => match accepted {
@@ -116,6 +128,7 @@ pub async fn serve<H, F, C>(
                     let handler = Arc::clone(&handler);
                     let check = Arc::clone(&check);
                     tokio::spawn(async move {
+                        let _permit = permit;
                         let mut stream = TimeoutStream::new(stream);
                         stream.set_write_timeout(Some(BODY_TIME));
                         let service = service_fn(|incoming| async {
@@ -139,13 +152,22 @@ pub async fn serve<H, F, C>(
     }
 }
 
+/// A response without a body (to a HEAD, or a 304) may give the length the
+/// whole one would have in its own Content-Length; otherwise it is the body's.
 fn response(response: Response, head_only: bool) -> hyper::Response<Full<Bytes>> {
     let response = response.secured();
-    let mut builder = hyper::Response::builder()
-        .status(response.status)
-        .header("Content-Length", response.body.len());
+    let named = response
+        .header("Content-Length")
+        .filter(|_| response.body.is_empty())
+        .map(str::to_owned);
+    let mut builder = hyper::Response::builder().status(response.status).header(
+        "Content-Length",
+        named.unwrap_or_else(|| response.body.len().to_string()),
+    );
     for (name, value) in response.headers {
-        builder = builder.header(name, value);
+        if !name.eq_ignore_ascii_case("Content-Length") {
+            builder = builder.header(name, value);
+        }
     }
     let body = if head_only {
         Bytes::new()
@@ -175,7 +197,11 @@ where
     let head_only = head.method == hyper::Method::HEAD;
     let mut req = Request {
         method: head.method.to_string(),
-        target: head.uri.to_string(),
+        // An absolute-form target (`GET http://host/…`) is routed by its path.
+        target: head
+            .uri
+            .path_and_query()
+            .map_or_else(|| head.uri.path().to_owned(), |p| p.as_str().to_owned()),
         headers: head
             .headers
             .iter()
@@ -186,7 +212,7 @@ where
                 )
             })
             .collect(),
-        body: Vec::new(),
+        body: Bytes::new(),
     };
     // Browser requests use Content-Length. Do not accept a second framing mode.
     if req.header("transfer-encoding").is_some() {
@@ -207,7 +233,7 @@ where
     }
     match tokio::time::timeout(BODY_TIME, Limited::new(body, max_body).collect()).await {
         Ok(Ok(body)) => {
-            req.body = body.to_bytes().into();
+            req.body = body.to_bytes();
             response(handler(req).await, head_only)
         }
         Ok(Err(_)) => response(Response::text(400, "Incomplete request body"), head_only),

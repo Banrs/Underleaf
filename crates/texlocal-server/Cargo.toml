@@ -14,7 +14,7 @@ percent-encoding = "2"
 serde_json = "1"
 tempfile = "3"
 texlocal-core = { path = "../texlocal-core" }
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-io-timeout = "1"
 
 [dev-dependencies]
