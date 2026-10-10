@@ -190,9 +190,11 @@ pub(crate) fn scan_groups(
                     }
                     let name = String::from_utf16_lossy(&src[name_start..i]);
                     let name_end = i;
+                    let mut verb = false;
                     let literal_end: Option<(Cow<'_, [u16]>, usize)> = match name.as_str() {
                         "verb" => {
                             code = true;
+                            verb = true;
                             i += src.get(i).is_some_and(|&u| is(u, '*')) as usize;
                             src.get(i).map(|_| (Cow::Borrowed(&src[i..i + 1]), i + 1))
                         }
@@ -233,13 +235,20 @@ pub(crate) fn scan_groups(
                         }
                     };
                     if let Some((end, from)) = literal_end {
-                        i = find(src, from, &end).map_or_else(
-                            || {
+                        // \verb can't cross a line: unclosed, it ends where
+                        // its line does (its delimiter may be that line feed).
+                        let line_end = verb.then(|| find(src, from - 1, &['\n' as u16])).flatten();
+                        let within = &src[..line_end.unwrap_or(n)];
+                        i = match (find(within, from, &end), line_end) {
+                            (Some(at), _) => at + end.len(),
+                            (None, Some(line_end)) => line_end,
+                            // Code to the end of the text, or the position
+                            // asked about is in it.
+                            (None, None) => {
                                 stack.clear();
                                 n
-                            },
-                            |at| at + end.len(),
-                        );
+                            }
+                        };
                     }
                     if !in_math && !code {
                         command(&name, token_start, name_end);
@@ -366,4 +375,42 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
         Some(_) => "aligned",
     };
     format!("\\begin{{{environment}}}{clean}\\end{{{environment}}}")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::SourceDocument;
+
+    fn in_math(text: &str) -> bool {
+        super::math_mode_at(&text.encode_utf16().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn an_unclosed_verb_ends_with_its_line() {
+        // \verb can't cross a line, so what follows is read as ever.
+        assert!(in_math("a \\verb|x\n$y"));
+        assert!(!in_math("a \\verb|x\n$y$ z"));
+        assert!(in_math("$ \\verb|x\ny"), "the maths it was in goes on");
+        // A line feed straight after \verb ends it too.
+        assert!(in_math("\\verb\n$y"));
+        // Still on its line, the position is in the code, not maths.
+        assert!(!in_math("$ \\verb|x"));
+        // Closed, it's skipped as before, delimiters and all.
+        assert!(!in_math("\\verb|$| a"));
+        assert!(in_math("\\verb*+x+ $a"));
+
+        // A spelling checker skips the code on its line, and no more.
+        let text = "\\verb|Speling\nprose \\cite{key}";
+        let doc = SourceDocument::new(text);
+        let ranges = doc.not_prose(0, text.len() as u32);
+        let covered = |needle: &str| {
+            let at = text.find(needle).unwrap() as u32;
+            ranges
+                .iter()
+                .any(|r| r.start <= at && at < r.start + r.length)
+        };
+        assert!(covered("Speling"));
+        assert!(!covered("prose"));
+        assert!(covered("key"));
+    }
 }
