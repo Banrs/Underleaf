@@ -160,7 +160,6 @@ function fileIcon(name) {
   return icon('doc');
 }
 
-// A rebuild after a file operation keeps keyboard focus on the same path.
 export function renderTree() {
   if (!nodes.tree) return;
   const origin = host;
@@ -185,9 +184,8 @@ export function updateTreeSelection() {
   syncRovingFocus();
 }
 
-// The rows are buttons, which cannot hold their children, so the tree is flat
-// to assistive technology: each row's level and place among its siblings say
-// where it sits, and the wrappers are presentational.
+// Rows are buttons, which cannot hold their children: the tree is flat to
+// assistive technology, placed by level and position, wrappers presentational.
 function renderNode(node, level, index, siblings, origin) {
   const directory = node.type === 'dir';
   const isOpen = directory && openDirs.has(node.path);
@@ -263,7 +261,6 @@ function treeKeys(e, node, origin) {
   }
 }
 
-// What can be done to a row: its context menu, and F2 and Delete.
 function rowActions(node, origin) {
   const { projectId } = origin;
   const items = [];
@@ -495,8 +492,7 @@ export function renderOutline() {
   nodes.outlineSplit.hidden = box.hidden;
   if (box.hidden) return;
 
-  // Every pause in typing and every save analyses the document again; rows
-  // are rebuilt only when the outline itself changed.
+  // Analysis reruns at every pause in typing; rebuild only on a change.
   const shown = JSON.stringify(state.projectOutline);
   if (shown === outlineShown) { updateOutlineSelection(); return; }
   outlineShown = shown;

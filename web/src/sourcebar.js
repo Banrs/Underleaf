@@ -267,8 +267,7 @@ function textFilesIn(nodes, folder) {
     : TEXT_FILE.test(n.path) && n.path.slice(0, Math.max(0, n.path.lastIndexOf('/'))) === folder ? [n.path] : []));
 }
 
-// Rebuilt only when what it shows changes: the caret moving within a section
-// leaves it alone. Its menus read the state when opened.
+// Rebuilt only when what it shows changes; its menus read state when opened.
 function renderLocation(row, { openFile, reveal }) {
   const path = state.openPath;
   const here = state.outline.length ? outlineChain(state.cursorLine).at(-1) ?? null : undefined;

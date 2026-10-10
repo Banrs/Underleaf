@@ -37,9 +37,8 @@ installMenuBridge();
 
 // ---------- workspace ----------
 
-// The workspace carries CodeMirror — most of the code once pdf.js and KaTeX,
-// which it loads as it needs them, are left out — so it loads on the first
-// project open instead of in front of the home screen.
+// The workspace (CodeMirror; it loads pdf.js and KaTeX as it needs them) loads
+// on the first project open instead of in front of the home screen.
 let workspace = null;
 
 async function loadWorkspace() {
@@ -86,22 +85,18 @@ async function navigate() {
   else await renderHome();
 }
 
-// In a browser, unload cancels asynchronous writes. The dialog buys the
-// autosave time, and a keepalive write outlives the page if the reader leaves
-// anyway; a save already in flight is unconfirmed until it answers, so it
-// asks too. Consume rejections: doSave already reports them.
+// Unload cancels asynchronous writes, so these saves are keepalive requests. A
+// page leaving builds nothing and asks while a save is unconfirmed; a hidden
+// tab, which may be discarded without an unload, saves and builds as usual.
+const saveNow = (options) => workspace?.saveCurrent({ keepalive: true, ...options }).catch(() => {});
 addEventListener('beforeunload', (e) => {
   if (!state.dirty && !state.saving) return;
-  if (state.dirty) workspace.saveCurrent({ triggerCompile: false, keepalive: true }).catch(() => {});
+  if (state.dirty) saveNow({ triggerCompile: false });
   e.preventDefault();
   e.returnValue = '';
 });
-// A hidden tab may be discarded or its process killed without an unload:
-// save what was typed since the last autosave as it goes.
 addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && state.dirty) {
-    workspace?.saveCurrent({ triggerCompile: false, keepalive: true }).catch(() => {});
-  }
+  if (document.visibilityState === 'hidden' && state.dirty) saveNow();
 });
 // pagehide only fires when the page actually leaves (unlike a cancelled unload).
 addEventListener('pagehide', ({ persisted }) => workspace?.leaveTexPressoPage({ persisted }));

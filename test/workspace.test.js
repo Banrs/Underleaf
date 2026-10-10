@@ -228,3 +228,32 @@ test('the PDF preview is a named tab stop', async () => {
   assert.equal(scroll.getAttribute('role'), 'region');
   assert.equal(scroll.getAttribute('aria-label'), 'PDF preview');
 });
+
+test('a hidden tab saves and builds; a page leaving saves without building', async () => {
+  await mount();
+  prefs.autoCompile = true;
+  window.location.hash = '#/p/paper';
+  await import('../web/src/main.js');   // its unload and visibility handlers
+  await until(() => state.openPath === 'main.tex' && state.editor && sent('analyze_project').length > 1);
+  let visibility = 'visible';
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+
+  const compiles = sent('compile').length;
+  state.editor.insertText('a');
+  visibility = 'hidden';
+  document.dispatchEvent(new window.Event('visibilitychange', { bubbles: true }));
+  await until(() => sent('compile').length === compiles + 1);
+  assert.equal(sent('write_file').at(-1).init.keepalive, true);
+
+  await until(() => !state.compiling);
+  visibility = 'visible';
+  state.editor.insertText('b');
+  const unload = new window.Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(unload);
+  assert.equal(unload.defaultPrevented, true, 'unsaved: the page asks before leaving');
+  await until(() => !state.dirty && !state.saving);
+  assert.equal(sent('write_file').at(-1).init.keepalive, true);
+  // Past the autosave delay: the save it replaced is gone, and nothing built.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(sent('compile').length, compiles + 1);
+});

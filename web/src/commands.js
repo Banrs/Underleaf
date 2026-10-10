@@ -49,9 +49,8 @@ const MENU = [
   },
 ];
 
-// Every command's title, so a menu item shows it before a view registers the
-// command (disabled). A command declares `title` only when it is a function of
-// state ("Hide Sidebar" / "Show Sidebar").
+// Every command's title, shown before its command registers; a command declares
+// `title` only when it changes with state ("Hide Sidebar" / "Show Sidebar").
 const TITLES = {
   'project.new': 'New Project…',
   'file.new': 'New File…',
@@ -244,9 +243,8 @@ function codesFor(key) {
 // Whether a keydown is exactly this accelerator: the key, and the modifiers
 // it names, no more. `mac` decides what CmdOrCtrl means.
 export function matchesAccel(accel, e, mac) {
-  // Off the Mac, AltGr reports itself as Ctrl+Alt: on German or Nordic layouts
-  // AltGr+0 types }, so Ctrl+Alt+0 would swallow it. A Ctrl+Alt chord that
-  // types a character other than a letter or digit is that typing.
+  // Off the Mac, AltGr reports itself as Ctrl+Alt (German AltGr+0 types }): a
+  // Ctrl+Alt chord that types a symbol is typing.
   if (!mac && e.ctrlKey && e.altKey
       && (e.getModifierState?.('AltGraph') || (e.key?.length === 1 && !/^[a-z0-9]$/i.test(e.key)))) return false;
   const parts = accel.split('+');

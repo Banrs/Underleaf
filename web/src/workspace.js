@@ -164,8 +164,7 @@ function buildChrome(id) {
     },
     beforeMainFileChange: captureTexPresso,
     beforeFilesReload: captureTexPresso,
-    // A new main file is a different document: built at once when builds are
-    // automatic, otherwise marked out of date until the next Compile.
+    // Built now only when builds are automatic; otherwise out of date.
     onMainFileChange: (liveBeforeMutation) => {
       refreshAnalysis();
       restartTexPresso(liveBeforeMutation);
@@ -188,8 +187,7 @@ function buildChrome(id) {
   }, iconButton('view.toggleSidebar', 'sidebar-left'));
   sidebar.id = 'workspace-sidebar';
 
-  // Not a live region: it changes with every pause in typing. A failed save
-  // is announced by its alert.
+  // Not a live region: it changes at every pause in typing.
   const saveState = el('span', { class: 'save-state' }, 'Saved');
 
   // The sidebar band owns the toggle while the sidebar is showing; this copy
@@ -242,7 +240,6 @@ function buildChrome(id) {
     onclick: () => (state.compiling ? stopCompile() : runCommand('compile.run')),
   }, 'Compile');
   const logsButton = iconButton('view.toggleLogs', 'terminal', 'small');
-  // A tab stop, so the keyboard can scroll the pages (arrows, Page Up/Down).
   const pdfScroll = el('div', { class: 'pdf-scroll', tabindex: '0', role: 'region', 'aria-label': 'PDF preview' });
   // Builds announce themselves: the button's label and the log badge don't.
   const buildStatus = el('span', { class: 'visually-hidden', role: 'status' });
@@ -267,8 +264,6 @@ function buildChrome(id) {
     el('button', { class: 'icon-btn small', title: 'Next match', onclick: () => stepFind(1) }, icon('chevron-down')),
     el('button', { class: 'icon-btn small', title: 'Close', onclick: () => closePdfFind() }, icon('close')),
   );
-  // Search the PDF for the field's text after `delay` ms, superseding any
-  // search before it.
   const searchPdf = (delay) => {
     clearTimeout(pdfFindTimer);
     const generation = ++pdfFindGeneration;
@@ -379,8 +374,7 @@ function iconButton(commandId, glyph, size = '') {
   }, icon(glyph));
 }
 
-// Runs on every layout change (each frame of a divider drag), so it writes
-// only what changed.
+// Runs every frame of a divider drag: write only what changed.
 export function syncToolbarState() {
   const set = (b, name, value) => { if (b.getAttribute(name) !== value) b.setAttribute(name, value); };
   for (const b of document.querySelectorAll('[data-command]')) {
@@ -414,9 +408,8 @@ function findAgain(delta) {
   else state.editor?.findPrevious();
 }
 
-// Their accelerators are the shared table's (shortcuts.json). `scope` limits
-// where a chord reaches them from (commands.js chordApplies); a menu item or
-// button runs them from anywhere.
+// Accelerators from shortcuts.json; `scope` limits where a chord reaches them
+// (commands.js chordApplies), not menus or buttons.
 function commandDefs() {
   return [
     { id: 'project.new', run: () => import('./home.js').then((m) => m.newProjectFlow()) },
@@ -503,8 +496,7 @@ function closePdfFind() {
   refreshCommands();
 }
 
-// A new PDF invalidates the matches, not the search: the bar keeps its query
-// and focus, and refindPdf searches the new document once it has loaded.
+// A new PDF invalidates the matches, not the search the bar keeps.
 function invalidatePdfFind() {
   if (!ui?.findBar) return;
   clearTimeout(pdfFindTimer);
@@ -525,8 +517,7 @@ async function gotoLineFlow() {
 
 // ---------- document lifecycle ----------
 
-// Both run on every keystroke; rewriting identical text would still make
-// assistive technology announce the status again.
+// Rewriting identical text would be announced again, at every keystroke.
 function setSaveState(text) {
   if (ui.saveState && ui.saveState.textContent !== text) ui.saveState.textContent = text;
 }
@@ -591,8 +582,7 @@ async function openFile(path) {
   const prevEditor = state.editor;
   const stillCurrent = () => request === openGeneration && generation === workspaceGeneration
     && state.projectId === projectId && host === ui.editorHost;
-  // A failed save has been reported (doSave's toast) and keeps the old file
-  // open; it is not this open's error to throw at a click handler.
+  // A failed save (doSave reports it) keeps the old file open.
   const flushPrevious = async () => {
     try {
       return await flushWhile(stillCurrent, prevEditor, prevPath);

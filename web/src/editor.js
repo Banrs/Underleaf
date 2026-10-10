@@ -125,7 +125,6 @@ const themeFor = (dark) => (THEMES[prefs.editorTheme] ?? THEMES.onedark)[dark ? 
 const MATH_ENVS = PREVIEW_ENVIRONMENTS.join('|');
 const ENV_RE = new RegExp(`\\\\begin\\{(${MATH_ENVS})(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\1\\2\\}`, 'g');
 // Display math: a math environment, $$…$$ or \[…\], each with how to read it.
-// Each with its opening delimiter: a block holding the cursor opens before it.
 const BLOCKS = [
   ['\\begin{', ENV_RE, (m) => texForPreview(m[1], m[3])],
   ['$$', /\$\$([\s\S]*?)\$\$/g, (m) => texForPreview(null, m[1])],
@@ -153,8 +152,7 @@ export function mathAt(doc, pos) {
   const rel = pos - from; // cursor position within the window
 
   for (const [opener, re, tex] of BLOCKS) {
-    // No opener before the cursor, no block around it: skip the regex scan
-    // (most cursor moves, in prose).
+    // No opener before the cursor, so no block holds it: skip the scan.
     if (text.lastIndexOf(opener, rel) === -1) continue;
     re.lastIndex = 0;
     for (let m; (m = re.exec(text)); ) {
@@ -182,9 +180,11 @@ export function mathAt(doc, pos) {
   return null;
 }
 
-// KaTeX and its stylesheet load with the first preview.
+// KaTeX and its stylesheet load with the first preview. A failed load
+// (`katex` false) is not retried per caret move; opening a file retries once.
 let katex = null;
 let katexLoading = null;
+let katexRetries = 1;
 function loadKatex() {
   katexLoading ??= Promise.all([
     import('katex'),
@@ -195,7 +195,10 @@ function loadKatex() {
       link.onload = link.onerror = resolve;
       document.head.append(link);
     }),
-  ]).then(([module]) => { katex = module.default; }, (err) => { katexLoading = null; throw err; });
+  ]).then(([module]) => { katex = module.default; }, (err) => {
+    katex = false;
+    console.error('The equation preview could not load:', err);
+  });
   return katexLoading;
 }
 
@@ -224,7 +227,7 @@ function mathTooltip(state, prev = null) {
         if (view.dom.isConnected) repositionTooltips(view);
       };
       if (katex) draw();
-      else loadKatex().then(draw, (err) => console.error('The equation preview could not load:', err));
+      else if (katex === null) loadKatex().then(() => katex && draw());
       return { dom };
     },
   };
@@ -343,8 +346,7 @@ export function mathModeAt(text, pos = text.length) {
       if (src[i] === '*') i += 1;
       const delim = src[i];
       if (delim === undefined) break;
-      // \verb cannot span lines: one left open ends with its line (TeX stops
-      // there with an error), rather than reading the rest of the file as code.
+      // An unclosed \verb ends with its line, as TeX's error does.
       if (delim === '\n') continue;
       const close = src.indexOf(delim, i + 1);
       const eol = src.indexOf('\n', i + 1);
@@ -500,6 +502,7 @@ export function headingLine(line, command) {
 // earlier session with the same file. Its embedded listener closures only
 // touch stable module-level state, so reattaching them is safe.
 export function createEditor({ parent, content, restore, onChange, onCursor, onScroll, dark, getSymbols }) {
+  if (katex === false && katexRetries-- > 0) katex = katexLoading = null;
   const state = restore ?? EditorState.create({
     doc: content,
     extensions: [

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { prefs, migratePrefs } = await import('../web/src/prefs.js');
+const { prefs, migratePrefs, resetPrefsStore } = await import('../web/src/prefs.js');
 
 // A Storage stand-in that counts its reads.
 function memoryStorage(initial = {}) {
@@ -18,17 +18,21 @@ function memoryStorage(initial = {}) {
 
 function useStorage(t, value) {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get: value });
+  resetPrefsStore();
   t.after(() => { delete globalThis.localStorage; });
 }
 
 test('blocked site data leaves the preferences working for the page', (t) => {
-  useStorage(t, () => { throw new Error('SecurityError: access is denied'); });
+  let touched = 0;
+  useStorage(t, () => { touched++; throw new Error('SecurityError: access is denied'); });
   assert.doesNotThrow(() => migratePrefs());
   assert.equal(prefs.autoCompile, true);
   prefs.autoCompile = false;
   prefs.openDirs = { paper: ['figs'] };
   assert.equal(prefs.autoCompile, false);
   assert.deepEqual(prefs.openDirs, { paper: ['figs'] });
+  for (let i = 0; i < 20; i++) void prefs.sidebarWidth;
+  assert.equal(touched, 1, 'the blocked storage is found blocked once');
 });
 
 test('a storage that refuses writes keeps the value in memory', (t) => {

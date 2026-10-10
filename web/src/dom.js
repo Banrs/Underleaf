@@ -4,8 +4,7 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
-// The body's interface-scale `zoom`, which window pixels (pointer and anchor
-// rects, devicePixelRatio) leave out.
+// The body's interface-scale `zoom`, which window pixels leave out.
 export const bodyZoom = () => parseFloat(getComputedStyle(document.body).zoom) || 1;
 
 // Unique DOM ids for label/control wiring.
@@ -39,8 +38,7 @@ export function withTimeout(promise, ms) {
 // ---------- toasts ----------
 
 const MAX_TOASTS = 3;
-// An error stays long enough to read (and select, to copy), and while the
-// pointer or focus is on it; the rest pass as status.
+// An error stays long enough to read, and while hovered or focused.
 const TOAST_MS = 3200;
 const ERROR_TOAST_MS = 10_000;
 
