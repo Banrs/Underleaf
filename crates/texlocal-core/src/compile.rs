@@ -613,10 +613,22 @@ impl CompileManager {
                 (end, output)
             }
         };
-        // Reading and parsing the logs blocks, so not on a runtime worker.
-        tokio::task::spawn_blocking(move || finish(run, end, output))
+        let record = run.output("fdb_latexmk");
+        // Reading and parsing the logs blocks, so not on a runtime worker. It
+        // only reads: a build cancelled meanwhile, its gate released, leaves
+        // it nothing to change under the next build.
+        let result = tokio::task::spawn_blocking(move || finish(run, end, output))
             .await
-            .map_err(|err| CoreError::internal(err.to_string()))
+            .map_err(|err| CoreError::internal(err.to_string()))?;
+        if !result.ok {
+            // latexmk's record of the run. After a fatal TeX error it holds the
+            // truncated .aux's state, so bibtex fails on it ("no \citation") and
+            // every later run stops at "gave an error in previous invocation",
+            // even with -g and the source fixed. Without it the next run starts
+            // afresh.
+            let _ = std::fs::remove_file(record);
+        }
+        Ok(result)
     }
 }
 
@@ -657,15 +669,6 @@ fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
         }
         _ => {}
     }
-    if !ok {
-        // latexmk's record of the run. After a fatal TeX error it holds the
-        // truncated .aux's state, so bibtex fails on it ("no \citation") and
-        // every later run stops at "gave an error in previous invocation",
-        // even with -g and the source fixed. Without it the next run starts
-        // afresh.
-        let _ = std::fs::remove_file(run.output("fdb_latexmk"));
-    }
-
     let log = joined_log(engine_log.as_deref(), output);
     CompileResult {
         ok,
