@@ -96,7 +96,8 @@ export class PdfViewer {
     // pixels. Debounced so a flick doesn't queue a paint for every page it
     // passes over.
     scrollEl.addEventListener('scroll', () => {
-      this._view = this.#viewRatios();
+      // Hiding the pane scrolls it to 0, which is not the reader moving.
+      if (!this.#hidden()) this._view = this.#viewRatios();
       this.#reportPage();
       clearTimeout(this._paintTimer);
       this._paintTimer = setTimeout(() => { if (!this.rendering) this.#paintNear(this.seq); }, 90);
@@ -355,6 +356,10 @@ export class PdfViewer {
     this.pages = pages;
     if (hidden) {
       this._deferred = { ratio, centerRatioX };
+      // Observing afresh reports the pane's next non-zero size, even if it
+      // shows again before the observer saw it hide.
+      this.ro.unobserve(this.scrollEl);
+      this.ro.observe(this.scrollEl);
       this.onZoomChange?.(Math.round(scale * 100), this.scale === null ? this.fitMode : null);
       return;
     }

@@ -10,6 +10,7 @@ let observed = null;
 globalThis.ResizeObserver = class {
   constructor(callback) { observed = callback; }
   observe() {}
+  unobserve() {}
   disconnect() {}
 };
 const { PdfViewer } = await import('../web/src/pdfview.js');
