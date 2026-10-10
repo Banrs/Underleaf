@@ -37,6 +37,9 @@ const MAX_CANVAS_PIXELS = 4096 * 4096;
 // Mac takes the same values, all three in page points
 // (apps/macos/TeXLocal/SyncTeXGeometry.swift).
 const SYNC_FLASH = { lineHeight: 12, minimumWidth: 24, margin: 2 };
+// A forward search made while the pane is hidden flashes once laid out, if that
+// comes this soon; callers reveal the pane first, so later means a stale request.
+const PENDING_HIGHLIGHT_MS = 2000;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -89,7 +92,7 @@ export class PdfViewer {
     this._resizePreview = null;   // { anchor, y } while the pane resizes, see #previewResize
     this._view = null;            // the reading position, see #viewRatios
     this._deferred = null;        // a pass made while hidden, see #renderPass
-    this._pendingHighlight = null; // a forward search waiting for that layout
+    this._pendingHighlight = null; // { loc, until }: a forward search waiting for that layout
     this._padL = this._padT = this._padR = this._padB = 0;   // scroller padding, cached by #metrics
 
     // Scrolling drives painting, since only the pages near the viewport hold
@@ -372,7 +375,7 @@ export class PdfViewer {
     this.#reportPage();
     const pending = this._pendingHighlight;
     this._pendingHighlight = null;
-    if (pending) this.highlight(pending);
+    if (pending && Date.now() < pending.until) this.highlight(pending.loc);
 
     await this.#paintNear(seq);
     this.#reportPage();
@@ -980,7 +983,7 @@ export class PdfViewer {
   highlight(loc) {
     // Deferred pages have no positions yet: flash once they are laid out.
     if (this._deferred) {
-      this._pendingHighlight = loc;
+      this._pendingHighlight = { loc, until: Date.now() + PENDING_HIGHLIGHT_MS };
       if (!this.#hidden()) void this.render();
       return;
     }

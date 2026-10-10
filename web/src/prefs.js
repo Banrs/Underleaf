@@ -35,9 +35,6 @@ function storage() {
   return store;
 }
 
-// For tests, which swap localStorage.
-export function resetPrefsStore() { store = undefined; cache.clear(); }
-
 function getRaw(key) {
   const store = storage();
   if (!cache.has(key)) {
