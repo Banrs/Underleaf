@@ -359,6 +359,22 @@ fn zip_export_can_replace_a_destination_inside_the_project_without_archiving_its
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn files_the_app_makes_get_the_mode_any_new_file_gets() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = data_dir();
+    let root = project(data.path(), "modes");
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let usual = mode(&root.join("main.tex"));
+    create_file(&root, "notes.tex", false).unwrap();
+    assert_eq!(mode(&root.join("notes.tex")), usual);
+    assert_eq!(mode(&root.join(".texlocal.json")), usual);
+    let dest = data.path().join("export.zip");
+    export_zip(&root, &dest).unwrap();
+    assert_eq!(mode(&dest), usual);
+}
+
 #[test]
 fn zip_export_excludes_build_and_settings_but_keeps_nested_namesakes() {
     let data = data_dir();

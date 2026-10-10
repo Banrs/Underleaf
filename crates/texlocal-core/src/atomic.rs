@@ -3,18 +3,34 @@
 //! or a crash part-way leaves the old file as it was, where writing in place
 //! would leave it empty or cut short.
 
-use std::fs::{self, File};
+use std::fs::{self, File, Permissions};
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::TempPath;
 
-/// A new, empty temporary file beside `path`, removed if it is not persisted.
-pub(crate) fn create_temp(path: &Path) -> io::Result<(TempPath, File)> {
+/// A new, empty temporary file beside `path`, removed if it is not persisted,
+/// with the mode it should have once it takes `path`'s place: `existing`, a
+/// replaced file's own, else a new file's (0666 less the umask), as any other
+/// way of making a file gives it. tempfile's own 0600 would leave every file
+/// the app made unreadable to the accounts and tools a project is shared with.
+pub(crate) fn create_temp(
+    path: &Path,
+    existing: Option<Permissions>,
+) -> io::Result<(TempPath, File)> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    let temp = tempfile::Builder::new()
-        .prefix(".texlocal-")
-        .tempfile_in(parent.unwrap_or(Path::new(".")))?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".texlocal-");
+    if existing.is_none() {
+        builder.permissions(Permissions::from_mode(0o666));
+    }
+    let temp = builder.tempfile_in(parent.unwrap_or(Path::new(".")))?;
     let (file, path) = temp.into_parts();
+    // Before the contents, so a private file's text is never readable
+    // under the temporary file's default mode.
+    if let Some(permissions) = existing {
+        file.set_permissions(permissions)?;
+    }
     Ok((path, file))
 }
 
@@ -30,12 +46,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let (temp, mut file) = create_temp(&target)?;
-    // Before the contents, so a private file's text is never readable
-    // under the temporary file's default mode.
-    if let Some(permissions) = permissions {
-        file.set_permissions(permissions)?;
-    }
+    let (temp, mut file) = create_temp(&target, permissions)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     temp.persist(&target).map_err(|err| err.error)
@@ -99,6 +110,23 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let mode = fs::metadata(&target).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_gets_the_mode_any_new_file_gets() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let usual = dir.path().join("usual.tex");
+        fs::write(&usual, "").unwrap();
+        let file = dir.path().join("main.tex");
+        write(&file, b"new").unwrap();
+        let mode = |path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), mode(&usual));
+        // A private file stays private when it is saved again.
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        write(&file, b"again").unwrap();
+        assert_eq!(mode(&file), 0o600);
     }
 
     #[test]

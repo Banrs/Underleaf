@@ -88,10 +88,25 @@ fn skip_unreadable<T>(result: std::io::Result<T>) -> Result<Option<T>, CoreError
     }
 }
 
+/// An entry the project walks show, and its path from the project root.
+struct Entry {
+    path: PathBuf,
+    name: String,
+    dir: bool,
+}
+
+impl Entry {
+    fn rel<'a>(&'a self, root: &Path) -> std::borrow::Cow<'a, str> {
+        self.path.strip_prefix(root).unwrap().to_string_lossy()
+    }
+}
+
 /// Shared tree rules for file listing, search and symbols: hide dotfiles and
-/// top-level build output, and follow only links within the project. An
+/// top-level build output, and follow only links to files within the
+/// project. An entry that can't be read, or vanishes while the walk passes
+/// (a build's or an editor's temporary file), is left out, and so an
 /// unreadable subfolder is empty; the project root must be readable.
-fn entries(root: &Path, dir: &Path) -> Result<Vec<fs::DirEntry>, CoreError> {
+fn entries(root: &Path, dir: &Path) -> Result<Vec<Entry>, CoreError> {
     let read = if dir == root {
         fs::read_dir(dir)?
     } else {
@@ -102,51 +117,48 @@ fn entries(root: &Path, dir: &Path) -> Result<Vec<fs::DirEntry>, CoreError> {
     };
     let mut out = Vec::new();
     for entry in read {
-        let entry = entry?;
+        let Some(entry) = skip_unreadable(entry)? else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         // Only top-level build/ is output; a nested build belongs to the author.
         if name.starts_with('.') || (dir == root && name.eq_ignore_ascii_case(BUILD_DIR)) {
             continue;
         }
-        let kind = entry.file_type()?;
-        if kind.is_symlink() {
-            // Skip directory links (cycles) and links without a proven in-project target.
-            let Ok(target) = fs::canonicalize(entry.path()) else {
-                continue;
-            };
-            if !target.starts_with(root) || !fs::metadata(entry.path())?.is_file() {
-                continue;
-            }
-        } else if !kind.is_file() && !kind.is_dir() {
+        let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
+        };
+        let path = entry.path();
+        // No directory links (cycles), nor any without a proven in-project target.
+        let shown = if kind.is_symlink() {
+            fs::canonicalize(&path).is_ok_and(|t| t.starts_with(root) && t.is_file())
+        } else {
+            kind.is_file() || kind.is_dir()
+        };
+        if shown {
+            let dir = kind.is_dir();
+            out.push(Entry { path, name, dir });
         }
-        out.push(entry);
     }
     Ok(out)
 }
 
 /// Every content file in the project, depth-first, with its project-relative
 /// path. The visitor returns false to stop the walk.
-fn visit_files(
+pub(crate) fn visit_files(
     root: &Path,
-    visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
+    visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
 ) -> Result<(), CoreError> {
     fn walk(
         root: &Path,
         dir: &Path,
-        visit: &mut dyn FnMut(&Path, String) -> Result<bool, CoreError>,
+        visit: &mut dyn FnMut(&Path, &str) -> Result<bool, CoreError>,
     ) -> Result<bool, CoreError> {
         for entry in entries(root, dir)? {
-            let path = entry.path();
-            let go_on = if entry.file_type()?.is_dir() {
-                walk(root, &path, visit)?
+            let go_on = if entry.dir {
+                walk(root, &entry.path, visit)?
             } else {
-                let rel = path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
-                visit(&path, rel)?
+                visit(&entry.path, &entry.rel(root))?
             };
             if !go_on {
                 return Ok(false);
@@ -167,10 +179,19 @@ fn ext_of(rel: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A project as the library lists it. Its date is the newest of its folder's
-/// and its content files': a folder's own date moves only when entries come
+fn project_info(name: String, mtime: u64, main_file: String) -> ProjectInfo {
+    ProjectInfo {
+        id: name.clone(),
+        name,
+        mtime,
+        main_file,
+    }
+}
+
+/// A project's date as the library shows it: the newest of its folder's and
+/// its content files', as a folder's own date moves only when entries come
 /// or go directly in it, not when a file in it is saved or compiled.
-fn project_info(name: String, root: &Path, meta: &fs::Metadata, main_file: String) -> ProjectInfo {
+fn newest(root: &Path, meta: &fs::Metadata) -> u64 {
     let mut mtime = mtime_ms(meta);
     let _ = visit_files(root, &mut |abs, _| {
         if let Ok(meta) = fs::metadata(abs) {
@@ -178,12 +199,7 @@ fn project_info(name: String, root: &Path, meta: &fs::Metadata, main_file: Strin
         }
         Ok(true)
     });
-    ProjectInfo {
-        id: name.clone(),
-        name,
-        mtime,
-        main_file,
-    }
+    mtime
 }
 
 pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
@@ -199,7 +215,7 @@ pub fn list_projects(data_dir: &Path) -> Result<Vec<ProjectInfo>, CoreError> {
             continue;
         };
         let main_file = read_settings(&root).main_file;
-        projects.push(project_info(name, &root, &meta, main_file));
+        projects.push(project_info(name, newest(&root, &meta), main_file));
     }
     projects.sort_by_key(|p| Reverse(p.mtime));
     Ok(projects)
@@ -245,12 +261,9 @@ pub(crate) fn finish_project(
     settings: &serde_json::Value,
 ) -> Result<ProjectInfo, CoreError> {
     let settings = write_settings(root, settings)?;
-    Ok(project_info(
-        name,
-        root,
-        &fs::metadata(root)?,
-        settings.main_file,
-    ))
+    // Written last, the settings date the new folder after every file in it.
+    let mtime = mtime_ms(&fs::metadata(root)?);
+    Ok(project_info(name, mtime, settings.main_file))
 }
 
 /// The likely main file among a project's top-level .tex files: main.tex,
@@ -289,7 +302,11 @@ pub fn rename_project(data_dir: &Path, id: &str, new_name: &str) -> Result<Proje
     }
     fs::rename(&root, &dest)?;
     let main_file = read_settings(&dest).main_file;
-    Ok(project_info(clean, &dest, &fs::metadata(&dest)?, main_file))
+    Ok(project_info(
+        clean,
+        newest(&dest, &fs::metadata(&dest)?),
+        main_file,
+    ))
 }
 
 /// Whether a rename from `src` to `dest` would land on another entry. On a
@@ -325,20 +342,15 @@ pub fn file_tree(root: &Path) -> Result<Vec<TreeNode>, CoreError> {
     fn walk(root: &Path, dir: &Path) -> Result<Vec<TreeNode>, CoreError> {
         let mut nodes = Vec::new();
         for entry in entries(root, dir)? {
-            let path = entry.path();
-            let (kind, children) = if entry.file_type()?.is_dir() {
-                ("dir", Some(walk(root, &path)?))
+            let (kind, children) = if entry.dir {
+                ("dir", Some(walk(root, &entry.path)?))
             } else {
                 ("file", None)
             };
             nodes.push(TreeNode {
                 kind,
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned(),
+                path: entry.rel(root).into_owned(),
+                name: entry.name,
                 children,
             });
         }
@@ -381,11 +393,27 @@ pub(crate) fn write_creating(abs: &Path, contents: &[u8]) -> Result<(), CoreErro
     Ok(atomic::write(abs, contents)?)
 }
 
-/// Whether `path` lies strictly inside the folder `dir`; both are
-/// forward-slash project paths.
+/// What follows the entry `entry` in `path`, both forward-slash project
+/// paths, with names compared as the volume compares them: "" for the entry
+/// itself, "/…" for a path inside it, None for any other.
+fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
+    let mut rest = path;
+    for (i, name) in entry.split('/').enumerate() {
+        if i > 0 {
+            rest = rest.strip_prefix('/')?;
+        }
+        let end = rest.find('/').unwrap_or(rest.len());
+        if fold_case(&rest[..end]) != fold_case(name) {
+            return None;
+        }
+        rest = &rest[end..];
+    }
+    Some(rest)
+}
+
+/// Whether `path` lies strictly inside the folder `dir`.
 fn is_under(path: &str, dir: &str) -> bool {
-    path.strip_prefix(dir)
-        .is_some_and(|rest| rest.starts_with('/'))
+    after_entry(path, dir).is_some_and(|rest| !rest.is_empty())
 }
 
 pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, CoreError> {
@@ -410,15 +438,11 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         fs::create_dir_all(parent)?;
     }
 
-    let mut main_file = read_settings(root).main_file;
-    let updates_main = main_file == from_rel || is_under(&main_file, &from_rel);
-    if updates_main {
-        main_file = format!("{to_rel}{}", &main_file[from_rel.len()..]);
-    }
-
+    let main_file = read_settings(root).main_file;
+    let moved_main = after_entry(&main_file, &from_rel).map(|rest| format!("{to_rel}{rest}"));
     fs::rename(&src, &dest)?;
-    if updates_main {
-        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": &main_file })) {
+    if let Some(main_file) = &moved_main {
+        if let Err(settings_err) = write_settings(root, &json!({ "mainFile": main_file })) {
             if let Err(rollback_err) = fs::rename(&dest, &src) {
                 return Err(CoreError::internal(format!(
                     "{}; rename rollback failed: {}",
@@ -433,7 +457,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
         ok: true,
         from: from_rel,
         to: to_rel,
-        main_file,
+        main_file: moved_main.unwrap_or(main_file),
     })
 }
 
@@ -441,7 +465,7 @@ pub fn rename_entry(root: &Path, from: &str, to: &str) -> Result<RenameResult, C
 /// file may go, since the file taking its place keeps it valid; a folder
 /// holding it may not, however the upload spells its name.
 pub(crate) fn discard_replaced(root: &Path, rel: &str) -> Result<(), CoreError> {
-    if is_under(&fold_case(&read_settings(root).main_file), &fold_case(rel)) {
+    if is_under(&read_settings(root).main_file, rel) {
         return Err(CoreError::conflict(
             "Choose a different main file before replacing this folder",
         ));
@@ -468,9 +492,8 @@ fn delete_entry_using(
     move_to_trash: impl FnOnce(&Path) -> Result<(), CoreError>,
 ) -> Result<(), CoreError> {
     let abs = safe_path(root, rel)?;
-    let target = rel_key(rel)?;
-    let main_file = read_settings(root).main_file;
-    if main_file == target || is_under(&main_file, &target) {
+    // However the request spells the main file or a folder holding it.
+    if after_entry(&read_settings(root).main_file, &rel_key(rel)?).is_some() {
         return Err(CoreError::conflict(
             "Choose a different main file before deleting this entry",
         ));
@@ -498,7 +521,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
     let mut hits: Vec<SearchHit> = Vec::new();
     let mut lower = Vec::new();
     visit_files(root, &mut |abs, rel| {
-        if !TEXT_EXT.contains(&ext_of(&rel).as_str()) {
+        if !TEXT_EXT.contains(&ext_of(rel).as_str()) {
             return Ok(true);
         }
         let Some(bytes) = skip_unreadable(fs::read(abs))? else {
@@ -521,7 +544,7 @@ pub fn search_project(root: &Path, query: &str, limit: usize) -> Result<Vec<Sear
             let after_end = (col + q.len() + 60).min(chars.len());
             let after: String = chars[col + q.len()..after_end].iter().collect();
             hits.push(SearchHit {
-                file: rel.clone(),
+                file: rel.to_owned(),
                 line: (i + 1) as u32,
                 before: format!("{ellipsis}{before}").trim_start().to_string(),
                 matched,
@@ -581,10 +604,10 @@ fn parse_symbols(bytes: &[u8], ext: &str) -> Symbols {
 pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(root, &mut |abs, rel| {
-        let ext = ext_of(&rel);
+        let ext = ext_of(rel);
         if ext == "bib" || ext == "tex" {
             if let Some(bytes) = skip_unreadable(fs::read(abs))? {
-                files.insert(rel, parse_symbols(&bytes, &ext));
+                files.insert(rel.to_owned(), parse_symbols(&bytes, &ext));
             }
         }
         Ok(true)
@@ -606,7 +629,7 @@ pub fn scan_symbols(root: &Path) -> Result<Symbols, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_file, create_project, delete_entry_using};
+    use super::{after_entry, create_file, create_project, delete_entry_using};
     use crate::paths::project_root;
     use crate::settings::write_settings;
     use crate::CoreError;
@@ -646,6 +669,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!(trashed, Some(root.join("-notes")));
+    }
+
+    #[test]
+    fn main_file_guards_compare_names_as_the_volume_does() {
+        assert_eq!(
+            after_entry("chapters/main.tex", "chapters"),
+            Some("/main.tex")
+        );
+        assert_eq!(
+            after_entry("chapters/main.tex", "chapters/main.tex"),
+            Some("")
+        );
+        assert_eq!(after_entry("chapters2/main.tex", "chapters"), None);
+        assert_eq!(after_entry("chapters", "chapters/main.tex"), None);
+        // On a Mac's case-insensitive volume, Main.tex is main.tex.
+        let insensitive = cfg!(target_os = "macos");
+        assert_eq!(after_entry("main.tex", "Main.tex").is_some(), insensitive);
+        assert_eq!(
+            after_entry("Chapters/a.tex", "chapters"),
+            insensitive.then_some("/a.tex")
+        );
     }
 
     #[test]

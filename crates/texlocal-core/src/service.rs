@@ -1,10 +1,10 @@
 // Shared command surface: hosts forward here so path checks and edit
 // serialization have one implementation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -87,12 +87,29 @@ fn clash(base: &Path, rel: &str) -> Option<String> {
     }
 }
 
+/// The folders chosen for TeX and TeXpresso, and the PATH each runs with:
+/// TeXpresso's puts its folder ahead of TeX's.
+struct Tools {
+    tex_dir: Option<PathBuf>,
+    texpresso_dir: Option<PathBuf>,
+    tex_path: String,
+    texpresso_path: String,
+}
+
 pub struct Service {
     pub data_dir: PathBuf,
     pub compile: CompileManager,
     pub texpresso: crate::texpresso::Manager,
-    /// Serialize edits with symbol scans and settings read/modify/write.
-    edits: Mutex<()>,
+    /// One lock per project, by its name as the volume compares names: a
+    /// project's edits, settings read/modify/write, renames and deletes run
+    /// one at a time, while other projects' go on.
+    edits: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+/// The guards protect no data, so a panic under one leaves nothing half-made:
+/// a poisoned lock is still good, and must not stop every later edit.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn upload_rel(dir: &str, name: &str) -> String {
@@ -103,7 +120,7 @@ fn upload_rel(dir: &str, name: &str) -> String {
     }
 }
 
-fn too_large() -> CoreError {
+pub(crate) fn too_large() -> CoreError {
     CoreError::bad_request(format!(
         "File exceeds the {} MB upload limit",
         UPLOAD_MAX_BYTES / 1024 / 1024
@@ -116,7 +133,7 @@ impl Service {
             data_dir,
             compile: CompileManager::default(),
             texpresso: crate::texpresso::Manager::default(),
-            edits: Mutex::new(()),
+            edits: Mutex::default(),
         }
     }
 
@@ -135,28 +152,36 @@ impl Service {
         self.texpresso.live_pdf(root, &token).map(Some)
     }
 
+    /// The project's lock; locks no one holds are dropped on the way.
+    fn project_lock(&self, id: &str) -> Result<Arc<Mutex<()>>, CoreError> {
+        let mut locks = lock(&self.edits);
+        locks.retain(|_, held| Arc::strong_count(held) > 1);
+        let name = fold_case(paths::project_name(id)?);
+        Ok(Arc::clone(locks.entry(name).or_default()))
+    }
+
+    /// Run `use_project` holding the project's lock, finding the project
+    /// once it is held, so a rename or delete that held it first is seen.
     fn with_project<T>(
         &self,
         id: &str,
         use_project: impl FnOnce(&Path) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
-        let _edit = self.edits.lock().unwrap();
-        let root = self.project_root(id)?;
-        use_project(&root)
+        let project = self.project_lock(id)?;
+        let _edit = lock(&project);
+        use_project(&self.project_root(id)?)
     }
 
     // ---------- status ----------
 
     /// Probe the current TeX choice, including installs made while the app is open.
     pub async fn status(&self) -> TexStatus {
-        let tex_dir = self.tex_dir();
-        let mut found = compile::tex_available(&compile::tex_path(tex_dir.as_deref())).await;
-        found.tex_dir = tex_dir.map(|d| d.to_string_lossy().into_owned());
-        found.texpresso = crate::texpresso::discover(&self.texpresso_path())
-            .map(|p| p.to_string_lossy().into_owned());
-        found.texpresso_dir = self
-            .texpresso_dir()
-            .map(|d| d.to_string_lossy().into_owned());
+        let tools = self.tools();
+        let shown = |dir: Option<PathBuf>| dir.map(|d| d.to_string_lossy().into_owned());
+        let mut found = compile::tex_available(&tools.tex_path).await;
+        found.texpresso = shown(crate::texpresso::discover(&tools.texpresso_path));
+        found.tex_dir = shown(tools.tex_dir);
+        found.texpresso_dir = shown(tools.texpresso_dir);
         found
     }
 
@@ -165,24 +190,42 @@ impl Service {
     /// The TeX programs folder the user chose, or None to find TeX
     /// automatically. Read per use, so a choice made in another host applies.
     pub fn tex_dir(&self) -> Option<PathBuf> {
-        self.app_folder("texDir")
+        self.app_folders().0
     }
 
     /// The folder with TeXpresso the user chose, searched before the TeX path.
     pub fn texpresso_dir(&self) -> Option<PathBuf> {
-        self.app_folder("texpressoDir")
+        self.app_folders().1
     }
 
     fn app_settings(&self) -> serde_json::Map<String, Value> {
-        std::fs::read(self.data_dir.join(APP_SETTINGS_FILE))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+        settings::read_object(&self.data_dir.join(APP_SETTINGS_FILE))
     }
 
-    fn app_folder(&self, key: &str) -> Option<PathBuf> {
-        let dir = self.app_settings().get(key)?.as_str()?.to_owned();
-        (!dir.is_empty()).then(|| PathBuf::from(dir))
+    /// The TeX and TeXpresso folders chosen, from one read of the settings.
+    fn app_folders(&self) -> (Option<PathBuf>, Option<PathBuf>) {
+        let settings = self.app_settings();
+        let folder = |key| {
+            let dir = settings.get(key)?.as_str()?;
+            (!dir.is_empty()).then(|| PathBuf::from(dir))
+        };
+        (folder("texDir"), folder("texpressoDir"))
+    }
+
+    /// The chosen folders and the PATH each tool runs with.
+    fn tools(&self) -> Tools {
+        let (tex_dir, texpresso_dir) = self.app_folders();
+        let tex_path = compile::tex_path(tex_dir.as_deref());
+        let texpresso_path = match &texpresso_dir {
+            Some(dir) => format!("{}:{tex_path}", dir.to_string_lossy()),
+            None => tex_path.clone(),
+        };
+        Tools {
+            tex_dir,
+            texpresso_dir,
+            tex_path,
+            texpresso_path,
+        }
     }
 
     /// Writes one folder, keeping the other settings.
@@ -194,17 +237,6 @@ impl Service {
             Value::Object(settings).to_string().as_bytes(),
         )?;
         Ok(())
-    }
-
-    fn tex_path(&self) -> String {
-        compile::tex_path(self.tex_dir().as_deref())
-    }
-
-    fn texpresso_path(&self) -> String {
-        match self.texpresso_dir() {
-            Some(dir) => format!("{}:{}", dir.to_string_lossy(), self.tex_path()),
-            None => self.tex_path(),
-        }
     }
 
     /// Choose TeXpresso's folder; None or empty goes back to the TeX path.
@@ -243,7 +275,7 @@ impl Service {
             Some(path) => PathBuf::from(path),
             None => self
                 .tex_dir()
-                .or_else(|| compile::latexmk_dir(&self.tex_path()))
+                .or_else(|| compile::latexmk_dir(&compile::tex_path(None)))
                 .or_else(std::env::home_dir)
                 .unwrap_or_default(),
         };
@@ -269,8 +301,11 @@ impl Service {
 
     // ---------- files ----------
 
+    /// Without the project's lock: every write replaces a file in one
+    /// rename, so a scan reads each file whole, old or new, and an autosave
+    /// need not wait for it.
     pub fn scan_symbols(&self, id: &str) -> Result<Symbols, CoreError> {
-        self.with_project(id, projects::scan_symbols)
+        projects::scan_symbols(&self.project_root(id)?)
     }
 
     /// Validate the whole batch before writing, so a late unsafe or oversize
@@ -405,7 +440,7 @@ impl Service {
             "texpresso_status" => out(self.texpresso.status(
                 &root()?,
                 arg::<Option<String>>(args, "session")?.as_deref(),
-                &self.texpresso_path(),
+                &self.tools().texpresso_path,
             )?),
             "texpresso_pdf" => out(self.texpresso.pdf_state(&root()?, s("session")?)?),
             "texpresso_start" => out(self
@@ -415,20 +450,15 @@ impl Service {
                     &arg::<Option<Vec<crate::texpresso::FileBuffer>>>(args, "files")?
                         .unwrap_or_default(),
                     arg::<Option<String>>(args, "session")?.as_deref(),
-                    &self.texpresso_path(),
+                    &self.tools().texpresso_path,
                     // The Mac app shows the document in its PDF pane.
                     arg::<Option<bool>>(args, "pdf")?.unwrap_or(false),
                 )
                 .await?),
+            // Per keystroke: no settings or PATH to read.
             "texpresso_update" => out(self
                 .texpresso
-                .update(
-                    &root()?,
-                    s("path")?,
-                    s("text")?,
-                    s("session")?,
-                    &self.texpresso_path(),
-                )
+                .update(&root()?, s("path")?, s("text")?, s("session")?)
                 .await?),
             "texpresso_stop" => {
                 let token = if arg::<Option<bool>>(args, "global")?.unwrap_or(false) {
@@ -438,13 +468,10 @@ impl Service {
                 };
                 out(self
                     .texpresso
-                    .stop_request(&root()?, token, &self.texpresso_path())
+                    .stop_request(&root()?, token, &self.tools().texpresso_path)
                     .await?)
             }
-            "texpresso_rescan" => out(self
-                .texpresso
-                .rescan(&root()?, s("session")?, &self.texpresso_path())
-                .await?),
+            "texpresso_rescan" => out(self.texpresso.rescan(&root()?, s("session")?).await?),
             "set_texpresso_dir" => out(self
                 .set_texpresso_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),
@@ -460,12 +487,16 @@ impl Service {
                     .as_deref()
                     .unwrap_or("article"),
             )?),
+            // A build or live preview left running would go on in the moved
+            // folder, and report back from the old path.
             "rename_project" => out(self.with_project(s("id")?, |root| {
                 self.texpresso.stop(root)?;
+                self.compile.stop(root);
                 projects::rename_project(&self.data_dir, s("id")?, s("name")?)
             })?),
             "delete_project" => out(self.with_project(s("id")?, |root| {
                 self.texpresso.stop(root)?;
+                self.compile.stop(root);
                 projects::delete_project(&self.data_dir, s("id")?)
             })?),
             "get_settings" => out(settings::read_settings(&root()?)),
@@ -541,28 +572,34 @@ impl Service {
                 .await?),
             // Reports whether a build was running.
             "stop_compile" => out(self.compile.stop(&root()?)),
-            "synctex_forward" => out(synctex::synctex_forward_at(
-                &root()?,
-                s("file")?,
-                arg(args, "line")?,
-                arg(args, "column")?,
-                self.live_pdf(&root()?, args)?.as_deref(),
-                &self.tex_path(),
-            )
-            .await?),
-            "synctex_inverse" => out(synctex::synctex_inverse_with_context(
-                &root()?,
-                arg(args, "page")?,
-                arg(args, "x")?,
-                arg(args, "y")?,
-                arg::<Option<String>>(args, "word")?.as_deref(),
-                arg(args, "offset")?,
-                arg::<Option<String>>(args, "context")?.as_deref(),
-                arg(args, "contextOffset")?,
-                self.live_pdf(&root()?, args)?.as_deref(),
-                &self.tex_path(),
-            )
-            .await?),
+            "synctex_forward" => {
+                let root = root()?;
+                out(synctex::synctex_forward_at(
+                    &root,
+                    s("file")?,
+                    arg(args, "line")?,
+                    arg(args, "column")?,
+                    self.live_pdf(&root, args)?.as_deref(),
+                    &self.tools().tex_path,
+                )
+                .await?)
+            }
+            "synctex_inverse" => {
+                let root = root()?;
+                out(synctex::synctex_inverse_with_context(
+                    &root,
+                    arg(args, "page")?,
+                    arg(args, "x")?,
+                    arg(args, "y")?,
+                    arg::<Option<String>>(args, "word")?.as_deref(),
+                    arg(args, "offset")?,
+                    arg::<Option<String>>(args, "context")?.as_deref(),
+                    arg(args, "contextOffset")?,
+                    self.live_pdf(&root, args)?.as_deref(),
+                    &self.tools().tex_path,
+                )
+                .await?)
+            }
             _ => Err(CoreError::not_found(format!("Unknown command: {command}"))),
         }
     }
@@ -584,4 +621,58 @@ pub fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, CoreError> 
 
 fn out<T: Serialize>(value: T) -> Result<Value, CoreError> {
     serde_json::to_value(value).map_err(|err| CoreError::internal(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn service() -> (tempfile::TempDir, Service) {
+        let data = tempfile::tempdir().unwrap();
+        let service = Service::new(data.path().to_path_buf());
+        for name in ["P", "Q"] {
+            projects::create_project(data.path(), name, "blank").unwrap();
+        }
+        (data, service)
+    }
+
+    #[tokio::test]
+    async fn a_panic_during_an_edit_does_not_stop_later_edits() {
+        let (data, service) = service();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            service.with_project("P", |_| -> Result<(), CoreError> { panic!("a bug") })
+        }));
+        assert!(panicked.is_err());
+        let args = json!({ "id": "P", "path": "main.tex", "text": "saved" });
+        service.call("write_file", &args).await.unwrap();
+        let saved = fs::read_to_string(data.path().join("P/main.tex")).unwrap();
+        assert_eq!(saved, "saved");
+    }
+
+    #[test]
+    fn an_edit_waits_for_its_own_project_only() {
+        let (data, service) = service();
+        let held = service.project_lock("./P").unwrap();
+        let guard = lock(&held);
+        std::thread::scope(|scope| {
+            // Another project's edit goes ahead.
+            service
+                .with_project("Q", |root| {
+                    projects::write_creating(&root.join("q.tex"), b"q")
+                })
+                .unwrap();
+            // This project's waits, however its id is spelled.
+            let edit = scope.spawn(|| {
+                service.with_project("P", |root| {
+                    projects::write_creating(&root.join("p.tex"), b"p")
+                })
+            });
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!data.path().join("P/p.tex").exists());
+            drop(guard);
+            edit.join().unwrap().unwrap();
+        });
+        assert!(data.path().join("P/p.tex").is_file());
+    }
 }

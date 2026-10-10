@@ -39,6 +39,11 @@ pub fn default_data_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| "TeXLocal".into())
 }
 
+/// The end of `text`, at most `max` bytes, from a character boundary.
+pub(crate) fn tail(text: &str, max: usize) -> &str {
+    &text[text.ceil_char_boundary(text.len().saturating_sub(max))..]
+}
+
 /// Bytes as text, replacing invalid UTF-8. Valid input, the usual case,
 /// becomes the String without a second copy.
 pub(crate) fn lossy_string(bytes: Vec<u8>) -> String {

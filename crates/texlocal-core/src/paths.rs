@@ -12,7 +12,10 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 /// Split a relative path into normalized segments.
 /// `.` segments drop out; `..` pops — popping past the start is an escape.
 /// Returns an empty vec for inputs that normalize to the base itself.
-fn normalize_segments<'a>(rel: &'a str, escape_err: &str) -> Result<Vec<&'a str>, CoreError> {
+pub(crate) fn normalize_segments<'a>(
+    rel: &'a str,
+    escape_err: &str,
+) -> Result<Vec<&'a str>, CoreError> {
     let mut segments = Vec::new();
     for component in Path::new(rel).components() {
         match component {
@@ -65,7 +68,8 @@ fn ensure_existing_ancestor_within(
         return Err(CoreError::bad_request(escape_err));
     };
     let suffix = target.strip_prefix(existing).unwrap_or(Path::new(""));
-    Ok(inside.join(suffix))
+    // Collected, so a whole existing path keeps no trailing slash.
+    Ok(inside.join(suffix).components().collect())
 }
 
 /// Resolve a project id to its directory under `data_dir`, rejecting escapes,
@@ -74,17 +78,20 @@ fn ensure_existing_ancestor_within(
 /// nested id would let the project commands rename, trash or compile a folder
 /// inside another project, past delete_entry's main-file guard.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
-    let segments = normalize_segments(id, "Bad project id")?;
-    if segments.len() != 1 {
-        return Err(CoreError::bad_request("Bad project id"));
-    }
-    let mut root = data_dir.to_path_buf();
-    root.extend(&segments);
+    let root = data_dir.join(project_name(id)?);
     if !root.is_dir() {
         return Err(CoreError::not_found(format!("No such project: {id}")));
     }
     ensure_existing_ancestor_within(data_dir, &root, "Bad project id")?;
     Ok(root)
+}
+
+/// A project id's one folder name, read without the disk.
+pub(crate) fn project_name(id: &str) -> Result<&str, CoreError> {
+    match normalize_segments(id, "Bad project id")?[..] {
+        [name] => Ok(name),
+        _ => Err(CoreError::bad_request("Bad project id")),
+    }
 }
 
 /// Normalized project-relative segments for a user-supplied path, with the
@@ -128,19 +135,24 @@ fn physical_segments(path: &Path) -> Vec<&str> {
 
 /// `segments` joined onto `root`, provided no existing link leads out of it, nor to the
 /// settings file, nor, for a write, into the build folder: a link inside the project is
-/// held to the rules its target's own path is.
-fn join_within(root: &Path, segments: &[&str], write: bool) -> Result<PathBuf, CoreError> {
+/// held to the rules its target's own path is. Also where the path physically leads,
+/// relative to the resolved root.
+fn join_within(
+    root: &Path,
+    segments: &[&str],
+    write: bool,
+) -> Result<(PathBuf, PathBuf), CoreError> {
     let mut abs = root.to_path_buf();
     abs.extend(segments);
     let physical = ensure_existing_ancestor_within(root, &abs, "Path escapes project")?;
-    let physical = physical_segments(&physical);
-    if is_settings_file(&physical) {
+    let physical_segments = physical_segments(&physical);
+    if is_settings_file(&physical_segments) {
         return Err(CoreError::bad_request("Reserved file"));
     }
-    if write && is_in_build_dir(&physical) {
+    if write && is_in_build_dir(&physical_segments) {
         return Err(build_dir_err());
     }
-    Ok(abs)
+    Ok((abs, physical))
 }
 
 fn build_dir_err() -> CoreError {
@@ -149,7 +161,7 @@ fn build_dir_err() -> CoreError {
 
 /// Absolute path for a user-supplied relative path inside a project.
 pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
-    join_within(root, &safe_segments(rel)?, false)
+    Ok(join_within(root, &safe_segments(rel)?, false)?.0)
 }
 
 /// `safe_path` for a path about to be created or written. The project's
@@ -157,6 +169,16 @@ pub fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
 /// author's may take that name, in any case: on a case-insensitive volume
 /// `Build` is the same folder, and the tree hides it.
 pub fn safe_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+    Ok(write_paths(root, rel)?.0)
+}
+
+/// Where a write to `rel` physically lands, through any link on its way,
+/// relative to the resolved root; checked as `safe_write_path` checks it.
+pub(crate) fn physical_write_path(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
+    Ok(write_paths(root, rel)?.1)
+}
+
+fn write_paths(root: &Path, rel: &str) -> Result<(PathBuf, PathBuf), CoreError> {
     let segments = safe_segments(rel)?;
     if is_in_build_dir(&segments) {
         return Err(build_dir_err());

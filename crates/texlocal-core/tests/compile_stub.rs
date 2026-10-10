@@ -511,6 +511,29 @@ async fn stopping_a_build_ends_that_projects_build_only_and_says_so() {
 }
 
 #[tokio::test]
+async fn renaming_a_project_stops_its_build() {
+    let tmp = TempDir::new().unwrap();
+    let mut service = Service::new(tmp.path().to_path_buf());
+    service.compile.path_env = Some(stub_env(&tmp.path().join("bin"), "#!/bin/sh\nsleep 20\n"));
+    create_project(tmp.path(), "one", "blank").unwrap();
+    let service = Arc::new(service);
+    let build = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { service.call("compile", &json!({ "id": "one" })).await }
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let started = Instant::now();
+    service
+        .call("rename_project", &json!({ "id": "one", "name": "uno" }))
+        .await
+        .unwrap();
+    let result = build.await.unwrap().unwrap();
+    assert_eq!(result["stopped"], true);
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[tokio::test]
 async fn tex_available_reports_the_stub_version() {
     let tmp = TempDir::new().unwrap();
     let path = stub_env(
