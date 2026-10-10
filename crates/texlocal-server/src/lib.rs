@@ -16,7 +16,6 @@ pub mod http;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
 
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
@@ -80,9 +79,9 @@ pub async fn serve(
     };
     let service = Arc::clone(&app.service);
     // The transport has run the guard and secures every response itself.
-    let handler = Arc::new(move |req| {
+    let handler = Arc::new(move |req, route| {
         let app = Arc::clone(&app);
-        async move { app.route(req).await }
+        async move { app.route(req, route).await }
     });
     http::serve(listener, handler, guard, max_body, shutdown).await;
     service.texpresso.kill_all();
@@ -103,73 +102,56 @@ impl App {
     /// before reading the body, then `route`.
     pub async fn handle(&self, req: Request) -> Response {
         match self.guard(&req) {
-            Some(refused) => refused,
-            None => self.route(req).await,
+            Ok(route) => self.route(req, route).await,
+            Err(refused) => refused,
         }
         .secured()
     }
 
-    /// A request the guard has passed.
-    async fn route(&self, req: Request) -> Response {
-        let path = req.path();
-        let read = matches!(req.method.as_str(), "GET" | "HEAD");
-        if req.method == "POST" && path == "/api/upload_file" {
-            self.upload(req).await
-        } else if let Some(command) = path.strip_prefix("/api/").filter(|_| req.method == "POST") {
-            self.api(decode(command), req.body.clone()).await
-        } else if read && (path.starts_with("/__pdf/") || path.starts_with("/__raw/")) {
-            self.file(path, req.header("range")).await
-        } else if let Some(id) = path.strip_prefix("/__download/pdf/").filter(|_| read) {
-            self.download(decode(id), false).await
-        } else if let Some(id) = path.strip_prefix("/__download/zip/").filter(|_| read) {
-            self.download(decode(id), true).await
-        } else if read {
-            self.asset(path, req.header("if-none-match")).await
-        } else {
-            Response::text(405, "Method not allowed")
+    /// A request the guard has passed, where the guard found it goes.
+    async fn route(&self, req: Request, route: Route) -> Response {
+        match route {
+            Route::Upload => self.upload(req).await,
+            Route::Command(command) => self.api(command, req.body).await,
+            Route::File(segments) => self.file(segments, req.header("range")).await,
+            Route::Download(id, zip) => self.download(id, zip).await,
+            Route::Asset(rel) => self.asset(rel).await,
+            Route::NotFound => Response::text(404, "Not found"),
+            Route::NotAllowed => Response::text(405, "Method not allowed"),
         }
     }
 
     /// Host, Origin and the token, from the request head alone: the server
     /// runs this before reading a body, so nobody unauthenticated can make it
-    /// buffer one.
-    pub fn guard(&self, req: &Request) -> Option<Response> {
+    /// buffer one. A request let through comes with its route.
+    pub fn guard(&self, req: &Request) -> Result<Route, Response> {
         if !req
             .header("host")
             .is_some_and(|h| self.hosts.iter().any(|a| a == h))
         {
-            return Some(Response::text(403, "Forbidden host"));
+            return Err(Response::text(403, "Forbidden host"));
         }
-        let safe_method = matches!(req.method.as_str(), "GET" | "HEAD");
         // An Origin must be this server's own: http:// and one of its hosts.
         if let Some(origin) = req.header("origin") {
             let own = origin
                 .strip_prefix("http://")
                 .is_some_and(|host| self.hosts.iter().any(|a| a == host));
-            if !safe_method && !own {
-                return Some(Response::text(403, "Forbidden origin"));
+            if !matches!(req.method.as_str(), "GET" | "HEAD") && !own {
+                return Err(Response::text(403, "Forbidden origin"));
             }
         }
-
-        // Only reads of the web UI's own files go without the token: they
-        // are the same for everyone, and the page has to load before it can
-        // read the token from its URL. Every other method needs it, and so
-        // does every path whose first segment, decoded, is a project route's
-        // (`/%5F%5Fraw/…` and `//__raw/…` as much as `/__raw/…`).
-        let first = req.path().split('/').find(|s| !s.is_empty()).map(decode);
-        if safe_method && first.is_none_or(|first| first != "api" && !first.starts_with("__")) {
-            return None;
+        // Only the web UI's own files go without the token: they are the
+        // same for everyone, and the page has to load before it can read the
+        // token from its URL.
+        let route = Route::of(&req.method, req.path());
+        let token = req.header("x-texlocal-token");
+        if matches!(route, Route::Asset(_)) || token.is_some_and(|t| same(t, &self.token)) {
+            return Ok(route);
         }
-        if !req
-            .header("x-texlocal-token")
-            .is_some_and(|t| same(t, &self.token))
-        {
-            return Some(Response::text(
-                401,
-                "Open the URL texlocal-server printed at startup",
-            ));
-        }
-        None
+        Err(Response::text(
+            401,
+            "Open the URL texlocal-server printed at startup",
+        ))
     }
 
     /// Keep disk work off the async workers, including PDF range fetches.
@@ -226,8 +208,7 @@ impl App {
 
     /// Path resolution runs on the blocking pool with everything else that
     /// touches the disk.
-    async fn file(&self, path: &str, range: Option<&str>) -> Response {
-        let segments = segments(path);
+    async fn file(&self, segments: Vec<String>, range: Option<&str>) -> Response {
         match self
             .blocking(move |service| serve::resolve(service, &segments))
             .await
@@ -238,54 +219,18 @@ impl App {
     }
 
     /// The web UI. Its files go through the same lexical boundary as project
-    /// files, so a crafted path cannot leave the web directory. The browser
-    /// revalidates each (`no-cache`) by an ETag of its length and modified
-    /// time: an unchanged file costs a stat and a 304, and a rebuild shows
-    /// on the next load.
-    async fn asset(&self, path: &str, if_none_match: Option<&str>) -> Response {
-        let rel = segments(path).join("/");
+    /// files, so a crafted path cannot leave the web directory.
+    async fn asset(&self, rel: String) -> Response {
         let web_dir = Arc::clone(&self.web_dir);
-        let Ok((abs, tag)) = self
+        match self
             .blocking(move |_| {
-                let abs =
-                    paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })?;
-                // Taken before the read, so the tag is never newer than the body.
-                let meta = std::fs::metadata(&abs)?;
-                let modified = meta
-                    .modified()?
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default();
-                Ok((
-                    abs,
-                    format!("W/\"{:x}-{:x}\"", meta.len(), modified.as_nanos()),
-                ))
+                paths::safe_path(&web_dir, if rel.is_empty() { "index.html" } else { &rel })
             })
             .await
-        else {
-            return Response::text(404, "Not found");
-        };
-        // Weak comparison, as RFC 9110 has it for If-None-Match.
-        let opaque = |t: &str| t.trim().trim_start_matches("W/").to_owned();
-        if if_none_match
-            .is_some_and(|h| h.trim() == "*" || h.split(',').any(|t| opaque(t) == opaque(&tag)))
         {
-            let unchanged = Response {
-                status: 304,
-                headers: vec![("Cache-Control", "no-cache".into())],
-                body: vec![],
-            };
-            return unchanged.with("ETag", tag);
+            Ok(abs) => served(serve::respond(&abs, None, false).await),
+            Err(_) => Response::text(404, "Not found"),
         }
-        let mut response = served(serve::respond(&abs, None, false).await);
-        if response.status == 200 {
-            for (name, value) in &mut response.headers {
-                if *name == "Cache-Control" {
-                    *value = "no-cache".into();
-                }
-            }
-            response = response.with("ETag", tag);
-        }
-        response
     }
 
     async fn download(&self, id: String, zip: bool) -> Response {
@@ -314,6 +259,43 @@ impl App {
                 format!("attachment; filename*=UTF-8''{encoded}"),
             )
         })
+    }
+}
+
+/// Where a request goes, by its method and decoded path segments, so that
+/// no spelling of a path (`/%5F%5Fraw/…`, `//__raw/…`) reads differently to
+/// the guard and to the dispatch.
+pub enum Route {
+    Upload,
+    Command(String),
+    /// `__pdf/<id>` or `__raw/<id>/<rel…>`.
+    File(Vec<String>),
+    /// A project's id, and whether it's the zip (else the PDF).
+    Download(String, bool),
+    /// One of the web UI's files, by its path in the web directory.
+    Asset(String),
+    NotFound,
+    NotAllowed,
+}
+
+impl Route {
+    pub fn of(method: &str, path: &str) -> Self {
+        let segments = segments(path);
+        let read = matches!(method, "GET" | "HEAD");
+        let post = method == "POST";
+        let named = |i: usize| segments.get(i).map(String::as_str);
+        match (named(0), named(1), segments.len()) {
+            (Some("api"), Some("upload_file"), 2) if post => Route::Upload,
+            (Some("api"), Some(_), _) if post => Route::Command(segments[1..].join("/")),
+            (Some("__pdf" | "__raw"), Some(_), _) if read => Route::File(segments),
+            (Some("__download"), Some(kind @ ("pdf" | "zip")), 3) if read => {
+                Route::Download(segments[2].clone(), kind == "zip")
+            }
+            _ if !read => Route::NotAllowed,
+            // Project routes' names are never the web UI's.
+            (Some(first), _, _) if first == "api" || first.starts_with("__") => Route::NotFound,
+            _ => Route::Asset(segments.join("/")),
+        }
     }
 }
 
