@@ -455,15 +455,10 @@ impl Service {
                     arg::<Option<bool>>(args, "pdf")?.unwrap_or(false),
                 )
                 .await?),
+            // Per keystroke: no settings or PATH to read.
             "texpresso_update" => out(self
                 .texpresso
-                .update(
-                    &root()?,
-                    s("path")?,
-                    s("text")?,
-                    s("session")?,
-                    &self.tools().texpresso_path,
-                )
+                .update(&root()?, s("path")?, s("text")?, s("session")?)
                 .await?),
             "texpresso_stop" => {
                 let token = if arg::<Option<bool>>(args, "global")?.unwrap_or(false) {
@@ -476,10 +471,7 @@ impl Service {
                     .stop_request(&root()?, token, &self.tools().texpresso_path)
                     .await?)
             }
-            "texpresso_rescan" => out(self
-                .texpresso
-                .rescan(&root()?, s("session")?, &self.tools().texpresso_path)
-                .await?),
+            "texpresso_rescan" => out(self.texpresso.rescan(&root()?, s("session")?).await?),
             "set_texpresso_dir" => out(self
                 .set_texpresso_dir(arg::<Option<String>>(args, "dir")?.as_deref())
                 .await?),

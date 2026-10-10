@@ -2,7 +2,7 @@
 //! ordinary latexmk build and PDF continue to use saved project files.
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -133,6 +133,15 @@ impl Session {
     }
     fn bump(&self, state: &mut State) {
         state.revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+    }
+    /// For its owner: renew the lease, and stop if the main file has changed
+    /// since the start. Whether it still runs.
+    fn renew(&self, root: &Path) -> bool {
+        lock(&self.state).last_used = Instant::now();
+        if settings::read_settings(root).main_file != self.main {
+            self.stop(Some("The main file changed. Start TeXpresso again.".into()));
+        }
+        lock(&self.state).pid.is_some()
     }
     fn stop(&self, error: Option<String>) {
         let mut state = lock(&self.state);
@@ -305,10 +314,7 @@ impl Manager {
             return Ok(self.idle(path_env));
         };
         if token.is_some() {
-            lock(&session.state).last_used = Instant::now();
-            if settings::read_settings(&root).main_file != session.main {
-                session.stop(Some("The main file changed. Start TeXpresso again.".into()));
-            }
+            session.renew(&root);
         }
         Ok(session.status())
     }
@@ -367,7 +373,7 @@ impl Manager {
         let pdf = match pdf {
             true => {
                 let folder = std::env::temp_dir().join(format!("texlocal-texpresso-{token}"));
-                fs::create_dir_all(&folder)?;
+                fs::DirBuilder::new().mode(0o700).create(&folder)?;
                 Some(fs::canonicalize(folder)?.join("live.pdf"))
             }
             false => None,
@@ -490,59 +496,57 @@ impl Manager {
         session.send(&messages).await;
         Ok(session.status())
     }
+    /// An edit, sent as the change from the buffer TeXpresso has, which takes
+    /// it in place: once per keystroke, so no copy of the whole buffer.
     pub async fn update(
         &self,
         root: &Path,
         path: &str,
         text: &str,
         token: &str,
-        path_env: &str,
     ) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
         let session = self.owned(&root, token)?;
         let path = validate_buffer(&root, path, text)?;
-        let status = self.status(&root, Some(token), path_env)?;
-        if !status.running {
-            return Ok(status);
+        if !session.renew(&root) {
+            return Ok(session.status());
         }
         let mut input = session.input.lock().await;
-        let others = input.files.iter().filter(|(p, _)| *p != &path);
+        let Input { stdin, files } = &mut *input;
+        let others = files.iter().filter(|(p, _)| *p != &path);
         check_limits(
             others.clone().count() + 1,
             others.map(|(_, t)| t.len()).sum::<usize>() + text.len(),
         )?;
-        let message = match input.files.get(&path) {
-            Some(previous) if previous == text => return Ok(session.status()),
-            Some(previous) => {
-                let (offset, remove, inserted) = delta(previous, text);
-                json!(["change", path, offset, remove, inserted])
-            }
+        let previous = files.get_mut(&path);
+        let change = previous.as_deref().map(|previous| delta(previous, text));
+        let message = match change {
+            Some((_, 0, "")) => return Ok(session.status()),
+            Some((offset, remove, inserted)) => json!(["change", path, offset, remove, inserted]),
             None => json!(["open", path, text]),
         };
-        if let Err(err) = write_messages(&mut input.stdin, &[message]).await {
+        if let Err(err) = write_messages(stdin, &[message]).await {
             session.stop(Some(unsent(err)));
         } else {
-            input.files.insert(path, text.to_string());
+            match (previous, change) {
+                (Some(previous), Some((offset, remove, inserted))) => {
+                    previous.replace_range(offset..offset + remove, inserted)
+                }
+                _ => drop(files.insert(path, text.to_owned())),
+            }
             session.bump(&mut lock(&session.state));
         }
         Ok(session.status())
     }
-    pub async fn rescan(
-        &self,
-        root: &Path,
-        token: &str,
-        path_env: &str,
-    ) -> Result<Status, CoreError> {
+    pub async fn rescan(&self, root: &Path, token: &str) -> Result<Status, CoreError> {
         let _request = self.requests.lock().await;
         let root = fs::canonicalize(root)?;
         let session = self.owned(&root, token)?;
-        let status = self.status(&root, Some(token), path_env)?;
-        if status.running {
+        if session.renew(&root) {
             session.send(&[json!(["rescan"])]).await;
-            return Ok(session.status());
         }
-        Ok(status)
+        Ok(session.status())
     }
 }
 
@@ -561,17 +565,8 @@ pub(crate) fn discover(path_env: &str) -> Option<PathBuf> {
         .find(|p| executable_file(p))
         .and_then(|p| fs::canonicalize(p).ok())
 }
-fn canonical_file(root: &Path, path: &str) -> Result<PathBuf, CoreError> {
-    let path = paths::safe_write_path(root, path)?;
-    if path.exists() {
-        return Ok(fs::canonicalize(path)?);
-    }
-    let mut parent = path.as_path();
-    while !parent.exists() {
-        parent = parent.parent().unwrap();
-    }
-    Ok(fs::canonicalize(parent)?.join(path.strip_prefix(parent).unwrap()))
-}
+/// A buffer's path as TeXpresso opens it: through any link, from the
+/// resolved `root`.
 fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreError> {
     if text.len() > MAX_FILE {
         return Err(CoreError::bad_request(
@@ -583,7 +578,7 @@ fn validate_buffer(root: &Path, path: &str, text: &str) -> Result<PathBuf, CoreE
             "A file sent to TeXpresso has an invalid path or text.",
         ));
     }
-    let path = canonical_file(root, path)?;
+    let path = root.join(paths::physical_write_path(root, path)?);
     if path.is_dir() {
         return Err(CoreError::bad_request(
             "TeXpresso opens files, not folders.",
@@ -835,7 +830,7 @@ mod tests {
         );
         assert_eq!(opened[2], original);
         let second = manager
-            .update(&root, "main.tex", updated, token, &path_env)
+            .update(&root, "main.tex", updated, token)
             .await
             .unwrap();
         assert!(second.running && second.revision > first.revision);
@@ -858,24 +853,18 @@ mod tests {
             "disk text"
         );
         assert!(manager
-            .update(&root, "../escape.tex", "bad", token, &path_env)
+            .update(&root, "../escape.tex", "bad", token)
             .await
             .is_err());
         assert!(manager
-            .update(&root, "build/out.tex", "bad", token, &path_env)
+            .update(&root, "build/out.tex", "bad", token)
             .await
             .is_err());
         assert!(manager
-            .update(
-                &root,
-                "main.tex",
-                &"x".repeat(MAX_FILE + 1),
-                token,
-                &path_env
-            )
+            .update(&root, "main.tex", &"x".repeat(MAX_FILE + 1), token,)
             .await
             .is_err());
-        manager.rescan(&root, token, &path_env).await.unwrap();
+        manager.rescan(&root, token).await.unwrap();
         until(|| commands(&tmp).iter().any(|c| c[0] == "rescan")).await;
         assert!(
             !manager
@@ -903,7 +892,6 @@ mod tests {
                 "main.tex",
                 "EXIT_CLEAN",
                 restarted.session.as_deref().unwrap(),
-                &path_env,
             )
             .await
             .unwrap();
@@ -931,13 +919,64 @@ mod tests {
         until(|| manager.status(&root, None, &path_env).unwrap().pdf_version == 1).await;
         let pdf = PathBuf::from(manager.status(&root, None, &path_env).unwrap().pdf.unwrap());
         let folder = pdf.parent().unwrap().to_owned();
-        assert!(folder.is_dir());
+        // In a shared temporary folder, for its owner alone.
+        let mode = fs::metadata(&folder).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
         manager
             .stop_request(&root, live.session.as_deref(), &path_env)
             .await
             .unwrap();
         assert!(!folder.exists());
     }
+    #[tokio::test]
+    async fn edits_follow_one_another_and_a_new_main_file_stops_the_session() {
+        let (tmp, root, path_env) = setup();
+        let manager = Manager::default();
+        let buffer = |text: &str| {
+            vec![FileBuffer {
+                path: "main.tex".into(),
+                text: text.into(),
+            }]
+        };
+        let started = manager
+            .start(&root, &buffer("abc"), None, &path_env, false)
+            .await
+            .unwrap();
+        let token = started.session.as_deref().unwrap();
+        let changes = || -> Vec<Value> {
+            let sent = commands(&tmp).into_iter();
+            sent.filter(|c| c[0] == "change").collect()
+        };
+        // TeXpresso's copy, rebuilt from the changes it is sent; the same
+        // text again sends none.
+        let mut text = String::from("abc");
+        for edit in ["abXc", "aXc", "aXc", "aXcd"] {
+            let sent = changes().len();
+            manager
+                .update(&root, "main.tex", edit, token)
+                .await
+                .unwrap();
+            if text != edit {
+                until(|| changes().len() > sent).await;
+                let change = changes().pop().unwrap();
+                let start = change[2].as_u64().unwrap() as usize;
+                let end = start + change[3].as_u64().unwrap() as usize;
+                text.replace_range(start..end, change[4].as_str().unwrap());
+            }
+            assert_eq!(text, edit);
+        }
+        assert_eq!(changes().len(), 3);
+
+        fs::write(root.join("other.tex"), "").unwrap();
+        crate::settings::write_settings(&root, &json!({ "mainFile": "other.tex" })).unwrap();
+        let status = manager
+            .update(&root, "main.tex", "abc", token)
+            .await
+            .unwrap();
+        assert!(!status.running);
+        assert!(status.error.unwrap().contains("main file changed"));
+    }
+
     #[tokio::test]
     async fn unexpected_exit_retains_output_and_stops_engine_group() {
         let (tmp, root, path_env) = setup();
@@ -962,7 +1001,6 @@ mod tests {
                 "main.tex",
                 "EXIT_STUB",
                 owner.session.as_deref().unwrap(),
-                &path_env,
             )
             .await
             .unwrap();
@@ -1063,17 +1101,8 @@ mod tests {
         });
         tokio::task::yield_now().await;
         let stale_edit = tokio::spawn({
-            let (manager, root, path_env, old) = (
-                Arc::clone(&manager),
-                root.clone(),
-                path_env.clone(),
-                old.clone(),
-            );
-            async move {
-                manager
-                    .update(&root, "main.tex", "stale A", &old, &path_env)
-                    .await
-            }
+            let (manager, root, old) = (Arc::clone(&manager), root.clone(), old.clone());
+            async move { manager.update(&root, "main.tex", "stale A", &old).await }
         });
         drop(blocked);
         let current = replacement.await.unwrap().session.unwrap();
@@ -1091,14 +1120,7 @@ mod tests {
                 .status,
             409
         );
-        assert_eq!(
-            manager
-                .rescan(&root, &old, &path_env)
-                .await
-                .unwrap_err()
-                .status,
-            409
-        );
+        assert_eq!(manager.rescan(&root, &old).await.unwrap_err().status, 409);
         assert_eq!(
             manager
                 .stop_request(&root, Some(&old), &path_env)
