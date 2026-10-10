@@ -57,11 +57,31 @@ async fn main() -> std::io::Result<()> {
     println!("TeXLocal is serving {}", data_dir.display());
     println!("Open http://127.0.0.1:{port}/?token={token}");
 
-    serve(app.clone(), listener, MAX_BODY, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await;
+    serve(app.clone(), listener, MAX_BODY, stopped()).await;
     // Compiles run in their own process groups, so nothing else stops them.
     app.service.compile.kill_all();
     Ok(())
+}
+
+/// Ctrl-C, or on Unix the SIGTERM a `kill` or a process supervisor sends:
+/// either ends the server the same way, so the compiles' process groups are
+/// stopped rather than left running. (SIGHUP keeps its default, so `nohup`
+/// still works.)
+async fn stopped() {
+    #[cfg(unix)]
+    let terminated = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminated = std::future::pending::<()>();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        () = terminated => {}
+    }
 }
