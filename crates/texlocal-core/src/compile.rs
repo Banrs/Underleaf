@@ -74,15 +74,19 @@ pub fn tex_path(chosen: Option<&Path>) -> String {
     if let Some(dir) = chosen {
         parts.push(dir.to_string_lossy().into_owned());
     }
-    if let Ok(cur) = std::env::var("PATH") {
-        if !cur.is_empty() {
-            parts.push(cur);
-        }
-    }
+    parts.extend(absolute_dirs(&std::env::var_os("PATH").unwrap_or_default()));
     parts
         .extend(["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"].map(str::to_string));
     parts.extend(texlive_bins().map(|p| p.to_string_lossy().into_owned()));
     parts.join(":")
+}
+
+/// A PATH's absolute folders: an empty or relative entry would be looked up
+/// from the project, where a latexmk of its own could stand.
+fn absolute_dirs(path: &std::ffi::OsStr) -> impl Iterator<Item = String> + '_ {
+    std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.to_string_lossy().into_owned())
 }
 
 pub fn has_latexmk(dir: &Path) -> bool {
@@ -359,10 +363,12 @@ enum End {
     Exited(i32),
     TimedOut,
     Stopped,
+    /// latexmk couldn't be started, for this reason.
+    Unstarted(String),
 }
 
-struct CompileRun<'a> {
-    main_rel: &'a str,
+struct CompileRun {
+    main_rel: String,
     base: String,
     outdir: PathBuf,
     /// The modification times of the outputs finish() reads, before the run.
@@ -377,7 +383,7 @@ fn modified(path: &Path) -> Option<SystemTime> {
         .ok()
 }
 
-impl CompileRun<'_> {
+impl CompileRun {
     fn output(&self, ext: &str) -> PathBuf {
         self.outdir.join(format!("{}.{ext}", self.base))
     }
@@ -559,8 +565,8 @@ impl CompileManager {
         // Capture output times after the predecessor has stopped, otherwise
         // its final writes can be mistaken for output from this generation.
         let mut run = CompileRun {
-            main_rel: &main_rel,
             base: main_base_name(&main_rel),
+            main_rel,
             outdir,
             before: HashMap::new(),
             started_at: SystemTime::now(),
@@ -591,38 +597,44 @@ impl CompileManager {
             }
         };
 
-        let child = match spawned {
+        let (end, output) = match spawned {
             None => return Ok(Self::stopped_early(request_started)),
-            Some(Err(err)) => {
-                let mut result = finish(&run, End::Exited(-1), err.to_string());
-                result.errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
-                return Ok(result);
+            Some(Err(err)) => (End::Unstarted(err.to_string()), err.to_string()),
+            Some(Ok(child)) => {
+                let child = registration.child.insert(child);
+                let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
+                let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
+                registration.child = None;
+                output.push_str(&stderr);
+                let mut running = self.running();
+                // Reaped: a Stop from here on must not signal its pid, which
+                // may already be another process's.
+                running.get_mut(root).expect("registered project").pid = None;
+                let end = if registration.stopped(&running) {
+                    End::Stopped
+                } else if timed_out {
+                    End::TimedOut
+                } else {
+                    End::Exited(code)
+                };
+                (end, output)
             }
-            Some(Ok(child)) => registration.child.insert(child),
         };
-        let timeout = self.timeout.unwrap_or(COMPILE_TIMEOUT);
-        let (code, mut output, stderr, timed_out) = drive(child, timeout).await;
-        registration.child = None;
-        output.push_str(&stderr);
-        let end = if registration.stopped(&self.running()) {
-            End::Stopped
-        } else if timed_out {
-            End::TimedOut
-        } else {
-            End::Exited(code)
-        };
-        Ok(finish(&run, end, output))
+        // Reading and parsing the logs blocks, so not on a runtime worker.
+        tokio::task::spawn_blocking(move || finish(run, end, output))
+            .await
+            .map_err(|err| CoreError::internal(err.to_string()))
     }
 }
 
-fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
+fn finish(run: CompileRun, end: End, output: String) -> CompileResult {
     let ok = end == End::Exited(0) && run.output("pdf").exists();
     // With incremental latexmk, a clean no-op keeps both the PDF and its log.
     // Keep the warnings from that log; after a newly written PDF, an old log
     // still belongs to the previous build and must not be shown.
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
-    let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), run.main_rel);
+    let mut items = parse_log(engine_log.as_deref().unwrap_or(&output), &run.main_rel);
     if let Some(blg) = run.read("blg", unchanged) {
         items.extend(parse_blg(&blg));
     }
@@ -631,14 +643,17 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
 
     // Not from a build cut short, which may have left it half-written.
     let wrote_pdf = matches!(end, End::Exited(_)) && run.wrote("pdf");
-    match end {
+    match &end {
         End::TimedOut => errors.push(LogItem::error(format!(
             "The build was stopped after {} minutes. Something in the document may be repeating forever.",
             COMPILE_TIMEOUT.as_secs() / 60
         ))),
+        End::Unstarted(err) => {
+            errors = vec![LogItem::error(format!("Couldn't start latexmk: {err}"))];
+        }
         // A failure always names a cause: latexmk's own summary of the step
         // that failed (bibtex, biber, makeindex), else how it ended.
-        End::Exited(code) if !ok && errors.is_empty() => {
+        &End::Exited(code) if !ok && errors.is_empty() => {
             errors = latexmk_errors(&output);
             if errors.is_empty() {
                 errors.push(LogItem::error(match code {
@@ -658,11 +673,7 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
         let _ = std::fs::remove_file(run.output("fdb_latexmk"));
     }
 
-    // The engine's log, then latexmk's account of the passes it ran.
-    let log = match engine_log {
-        Some(engine_log) => format!("{engine_log}\n\n{output}"),
-        None => output,
-    };
+    let log = joined_log(engine_log.as_deref(), output);
     CompileResult {
         ok,
         stopped: end == End::Stopped,
@@ -672,7 +683,21 @@ fn finish(run: &CompileRun, end: End, output: String) -> CompileResult {
         pdf_changed: wrote_pdf,
         errors,
         warnings,
-        log: tail(log, LOG_TAIL),
+        log,
+    }
+}
+
+/// The end of the engine's log, then latexmk's account of the passes it ran,
+/// that the result shows: the log is cut to its part before it is copied.
+fn joined_log(engine_log: Option<&str>, output: String) -> String {
+    let log = match engine_log {
+        Some(engine_log) => format!("{}\n\n{output}", crate::tail(engine_log, LOG_TAIL)),
+        None => output,
+    };
+    if log.len() > LOG_TAIL {
+        crate::tail(&log, LOG_TAIL).to_owned()
+    } else {
+        log
     }
 }
 
@@ -695,18 +720,10 @@ fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The last `max` bytes of `s`, moved forward to a char boundary. A log
-/// that fits, the usual case, is returned without a copy.
-fn tail(s: String, max: usize) -> String {
-    if s.len() <= max {
-        return s;
-    }
-    s[s.ceil_char_boundary(s.len() - max)..].to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{read_tail, tail, user_latexmkrc, version_line};
+    use super::{absolute_dirs, joined_log, read_tail, user_latexmkrc, version_line, LOG_TAIL};
+    use crate::tail;
     use std::ffi::OsString;
     use std::path::Path;
 
@@ -727,9 +744,34 @@ mod tests {
 
     #[test]
     fn a_long_log_keeps_its_last_whole_characters() {
-        assert_eq!(tail("short".into(), 10), "short");
-        assert_eq!(tail("aébc".into(), 3), "bc");
-        assert_eq!(tail("aébc".into(), 4), "ébc");
+        assert_eq!(tail("short", 10), "short");
+        assert_eq!(tail("aébc", 3), "bc");
+        assert_eq!(tail("aébc", 4), "ébc");
+    }
+
+    #[test]
+    fn the_shown_log_is_the_end_of_both_logs_joined() {
+        let long = "é".repeat(LOG_TAIL);
+        for (engine, output) in [
+            (None, "latexmk".to_string()),
+            (Some("short"), "latexmk".to_string()),
+            (Some(long.as_str()), "latexmk".to_string()),
+            (Some(long.as_str()), "x".repeat(LOG_TAIL - 1)),
+            (Some("engine"), long.clone()),
+        ] {
+            let whole = match engine {
+                Some(engine) => format!("{engine}\n\n{output}"),
+                None => output.clone(),
+            };
+            assert_eq!(joined_log(engine, output), tail(&whole, LOG_TAIL));
+        }
+    }
+
+    #[test]
+    fn tools_are_found_only_in_absolute_folders_of_the_path() {
+        let path = std::ffi::OsStr::new("/usr/bin::.:bin:/opt/tex/bin");
+        let dirs: Vec<_> = absolute_dirs(path).collect();
+        assert_eq!(dirs, ["/usr/bin", "/opt/tex/bin"]);
     }
 
     #[test]

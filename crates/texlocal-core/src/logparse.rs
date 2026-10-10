@@ -136,8 +136,10 @@ pub fn parse_log(log: &str, main_file: &str) -> Vec<LogItem> {
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        // Skip the warning regex for most lines of a long log.
-        let diagnostic = ERROR.captures(line).or_else(|| {
+        // Skip both regexes for most lines of a long log: an error starts
+        // "! " or names its file and line with colons.
+        let may_err = line.starts_with("! ") || line.contains(':');
+        let diagnostic = may_err.then(|| ERROR.captures(line)).flatten().or_else(|| {
             line.contains(" Warning:")
                 .then(|| WARNING.captures(line))
                 .flatten()

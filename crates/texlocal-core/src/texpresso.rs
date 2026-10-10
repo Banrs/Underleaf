@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::ChildStdin;
 
-use crate::{paths, settings, CoreError, BUILD_DIR};
+use crate::{paths, settings, tail, CoreError, BUILD_DIR};
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FILES: usize = 256;
@@ -594,14 +594,6 @@ fn check_limits(files: usize, bytes: usize) -> Result<(), CoreError> {
 }
 fn unsent(err: std::io::Error) -> String {
     format!("Couldn't send changes to TeXpresso: {err}. Start TeXpresso again.")
-}
-/// The end of `text`, at most `max` bytes, from a character boundary.
-fn tail(text: &str, max: usize) -> &str {
-    let mut start = text.len().saturating_sub(max);
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    &text[start..]
 }
 // Both boundaries must be UTF-8 boundaries even when differing codepoints
 // share leading or trailing bytes.
