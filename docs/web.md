@@ -19,6 +19,12 @@ abstractions that only add lines.
   elsewhere. Chords the browser keeps (new window, tab, incognito) aren't
   advertised; off the Mac, Go to PDF Position has no chord (it would be
   Compile's Ctrl+Enter).
+- **Chords reach a command only from where it applies**
+  (`chordApplies` in `web/src/commands.js`): none while a modal dialog is
+  open; editing commands (Bold, Italic, Inline Math, Go to Line) not from
+  another text field; PDF zoom and fit (Ctrl/⌘ with +, −, 0) only with focus
+  in the PDF pane, so elsewhere the browser keeps its page zoom. AltGr typing
+  (Ctrl+Alt off the Mac) is never a chord.
 - **Text contrast meets WCAG AA:** primary buttons fill with `--accent-fill`;
   status text uses `--red-text`, `--orange-text` and `--green-text`.
 - **The menu bar works as a web menu does:** ARIA state, arrow keys and Tab, a
@@ -52,19 +58,16 @@ observations remain listed alongside them; reproduce UI issues before changing b
 - **The owner finds the web over-spaced and has deferred web UI work.** A
   spacing pass should start from PR #15's 36 px section headers, 28 px action
   buttons and paddings.
-- Dead CSS rules: `.sidebar.collapsed + .divider` and
-  `.workspace.pdf-collapsed > .divider-sync` (PR #15 hides those dividers with
-  `hidden`).
-- `texfolder.js` marks `.folder-root.selected` with a class and no ARIA state.
 - Esc or Cancel on a dialog opened from a menu item sends focus to body.
 - The sidebar divider's grab zone right of its line is covered by the editor
   pane.
-- Switching to Preview at 390 px lands on the last PDF page.
-- `workspace.js` passes a dead `onOpenFileGone` to `buildSidebar`.
 - `prefs.js` `migratePrefs` still migrates pre-1.0 keys.
 - The outline has no per-section folding.
 - Profile before changing: long-document text-layer rendering, re-renders
-  while resizing, and whole-body CSS zoom for the interface scale.
+  while resizing, and whole-body CSS zoom for the interface scale. Also each
+  rebuilt PDF fetching every page proxy up front and building all page
+  shells (`PdfViewer.load`, `#renderPass`), and the find cache keeping every
+  searched page's text.
 - A light variant of One Dark for Syntax Colors.
 - The editor turns the browser's spellcheck on (`web/src/editor.js`), and in
   WebKit that also lets the system's smart dashes and quotes rewrite LaTeX
