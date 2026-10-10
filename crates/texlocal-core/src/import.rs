@@ -33,22 +33,20 @@ pub struct Imported {
     pub existing: Vec<Clash>,
 }
 
-/// How much one import may bring.
+/// What an import may still bring: files, entries looked at (what a folder
+/// holds, hidden or not, or a zip's entries) and bytes. Bytes are taken as
+/// declared while the files are found, and again as read, since a zip's
+/// sizes can lie and a file can grow while it is read.
 #[derive(Debug, Clone, Copy)]
-struct Limits {
-    /// Files brought.
+struct Allowance {
     files: usize,
-    /// Entries looked at: what a folder holds, hidden or not, or a zip's
-    /// entries, folders included.
     entries: usize,
-    /// Bytes, both as declared and as actually read: a zip's sizes can lie,
-    /// and a file can grow while it is read.
     bytes: u64,
 }
 
 /// Far past any real project, so only a dropped home folder or a zip bomb
-/// meets them, before it has filled the disk.
-const IMPORT_LIMITS: Limits = Limits {
+/// meets it, before it has filled the disk.
+const IMPORT: Allowance = Allowance {
     files: 50_000,
     entries: 500_000,
     bytes: 4 << 30,
@@ -56,124 +54,41 @@ const IMPORT_LIMITS: Limits = Limits {
 
 /// A .tex brings its folder only while that is no larger than a project:
 /// Overleaf's limit on a project's files, and one upload's bytes.
-const TEX_FOLDER_LIMITS: Limits = Limits {
+const TEX_FOLDER: Allowance = Allowance {
     files: 2000,
     entries: 20_000,
     bytes: UPLOAD_MAX_BYTES as u64,
 };
 
-/// The limit an import met.
-#[derive(Debug, Clone, Copy)]
-enum Over {
-    /// Too many files, or entries.
-    Files,
-    /// Too many bytes in all.
-    Bytes,
-    /// One file past the upload limit.
-    File,
+fn too_many() -> CoreError {
+    CoreError::bad_request("There are too many files to import.")
 }
 
-impl Over {
-    fn error(self, limits: &Limits) -> CoreError {
-        match self {
-            Over::Files => CoreError::bad_request(format!(
-                "There are too many files to import (the limit is {}).",
-                limits.files
-            )),
-            Over::Bytes => CoreError::bad_request(format!(
-                "The files to import come to more than the {} GB limit.",
-                limits.bytes >> 30
-            )),
-            Over::File => too_large(),
-        }
-    }
+fn too_big() -> CoreError {
+    CoreError::bad_request("The files to import are too large.")
 }
 
-/// Files found for an import, with project-relative names and where to read
-/// each, until a limit stopped the search.
-struct Found<S> {
-    files: Vec<(UploadSpec, S)>,
-    entries: usize,
-    bytes: u64,
-    over: Option<Over>,
-}
-
-impl<S> Found<S> {
-    fn new() -> Self {
-        Self {
-            files: Vec::new(),
-            entries: 0,
-            bytes: 0,
-            over: None,
-        }
+impl Allowance {
+    fn entry(&mut self) -> Result<(), CoreError> {
+        self.entries = self.entries.checked_sub(1).ok_or_else(too_many)?;
+        Ok(())
     }
 
-    /// Count one entry looked at; false once a limit is met.
-    fn visit(&mut self, limits: &Limits) -> bool {
-        self.entries += 1;
-        if self.over.is_none() && self.entries > limits.entries {
-            self.over = Some(Over::Files);
-        }
-        self.over.is_none()
+    fn file(&mut self, size: u64) -> Result<(), CoreError> {
+        self.files = self.files.checked_sub(1).ok_or_else(too_many)?;
+        self.bytes = self.bytes.checked_sub(size).ok_or_else(too_big)?;
+        Ok(())
     }
 
-    fn add(&mut self, spec: UploadSpec, source: S, limits: &Limits) {
-        if self.over.is_some() {
-            return;
-        }
-        // Saturating, so a size past u64 still fails the limits.
-        self.bytes = self
-            .bytes
-            .saturating_add(u64::try_from(spec.size).unwrap_or(u64::MAX));
-        self.over = if spec.size > UPLOAD_MAX_BYTES {
-            Some(Over::File)
-        } else if self.files.len() >= limits.files {
-            Some(Over::Files)
-        } else if self.bytes > limits.bytes {
-            Some(Over::Bytes)
-        } else {
-            self.files.push((spec, source));
-            None
-        };
-    }
-
-    /// The files, unless a limit stopped the search.
-    fn within(self, limits: &Limits) -> Result<Vec<(UploadSpec, S)>, CoreError> {
-        match self.over {
-            Some(over) => Err(over.error(limits)),
-            None => Ok(self.files),
-        }
-    }
-}
-
-/// What an import may still read, counting the bytes actually read.
-struct Budget {
-    left: u64,
-    limits: Limits,
-}
-
-impl Budget {
-    fn new(limits: &Limits) -> Self {
-        Self {
-            left: limits.bytes,
-            limits: *limits,
-        }
-    }
-
-    /// Copy `source` to `sink`, refusing a file past the upload limit or the
-    /// import past its budget, whatever their sizes were declared as.
+    /// Copy `source` to `sink`, taking the bytes actually read, and never
+    /// more than one upload's.
     fn copy(&mut self, source: impl Read, sink: &mut impl Write) -> Result<(), CoreError> {
-        let cap = (UPLOAD_MAX_BYTES as u64).min(self.left);
+        let cap = self.bytes.min(UPLOAD_MAX_BYTES as u64);
         let copied = io::copy(&mut source.take(cap + 1), sink)?;
-        if copied > cap {
-            let over = if copied > UPLOAD_MAX_BYTES as u64 {
-                Over::File
-            } else {
-                Over::Bytes
-            };
-            return Err(over.error(&self.limits));
+        if copied > UPLOAD_MAX_BYTES as u64 {
+            return Err(too_large());
         }
-        self.left -= copied;
+        self.bytes = self.bytes.checked_sub(copied).ok_or_else(too_big)?;
         Ok(())
     }
 }
@@ -187,28 +102,26 @@ fn hidden(name: &str) -> bool {
 
 /// Files under a dropped path, with project-relative names that keep a
 /// dropped folder's own name (none for an empty `rel`), and where to read
-/// each, until a limit is met. Inside a folder, hidden entries stay behind
-/// and symlinks are skipped, not followed: a drop imports what was dropped,
-/// never what a link inside it points at.
+/// each, failing once `allowance` runs out. Inside a folder, hidden entries
+/// stay behind and symlinks are skipped, not followed: a drop imports what
+/// was dropped, never what a link inside it points at.
 fn collect(
     abs: &Path,
     rel: String,
     meta: fs::Metadata,
-    found: &mut Found<PathBuf>,
-    limits: &Limits,
+    files: &mut Vec<(UploadSpec, PathBuf)>,
+    allowance: &mut Allowance,
 ) -> Result<(), CoreError> {
     if meta.is_file() {
+        allowance.file(meta.len())?;
         let spec = UploadSpec {
             path: rel,
-            // Saturating, so a size past usize still fails the upload limit.
-            size: usize::try_from(meta.len()).unwrap_or(usize::MAX),
+            size: meta.len() as usize,
         };
-        found.add(spec, abs.to_path_buf(), limits);
+        files.push((spec, abs.to_path_buf()));
     } else if meta.is_dir() {
         for entry in fs::read_dir(abs)? {
-            if !found.visit(limits) {
-                break;
-            }
+            allowance.entry()?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if !hidden(&name) && !(rel.is_empty() && name.eq_ignore_ascii_case(BUILD_DIR)) {
@@ -219,7 +132,7 @@ fn collect(
                 } else {
                     format!("{rel}/{name}")
                 };
-                collect(&entry.path(), rel, meta, found, limits)?;
+                collect(&entry.path(), rel, meta, files, allowance)?;
             }
         }
     }
@@ -238,7 +151,7 @@ pub fn import_files(
     paths: &[PathBuf],
     conflict: Option<Conflict>,
 ) -> Result<Imported, CoreError> {
-    import_files_within(service, id, dir, paths, conflict, &IMPORT_LIMITS)
+    import_files_within(service, id, dir, paths, conflict, IMPORT)
 }
 
 fn import_files_within(
@@ -247,16 +160,17 @@ fn import_files_within(
     dir: &str,
     paths: &[PathBuf],
     conflict: Option<Conflict>,
-    limits: &Limits,
+    mut allowance: Allowance,
 ) -> Result<Imported, CoreError> {
-    let mut found = Found::new();
+    let mut files = Vec::new();
+    let mut found = allowance;
     for abs in paths {
         let name = abs.file_name().unwrap_or_default().to_string_lossy();
         // A dropped link is followed: dropping it names what it points at.
         let meta = fs::metadata(abs)?;
-        collect(abs, name.into_owned(), meta, &mut found, limits)?;
+        collect(abs, name.into_owned(), meta, &mut files, &mut found)?;
     }
-    let (specs, sources): (Vec<_>, Vec<_>) = found.within(limits)?.into_iter().unzip();
+    let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
     let existing = service.validate_uploads(id, dir, &specs)?.existing;
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported {
@@ -265,7 +179,6 @@ fn import_files_within(
         });
     }
     let replace = conflict == Some(Conflict::Replace);
-    let mut budget = Budget::new(limits);
     let mut saved = Vec::new();
     for (spec, abs) in specs.into_iter().zip(sources) {
         let path = if conflict == Some(Conflict::KeepBoth) {
@@ -274,7 +187,7 @@ fn import_files_within(
             spec.path
         };
         let mut bytes = Vec::new();
-        budget.copy(File::open(abs)?, &mut bytes)?;
+        allowance.copy(File::open(abs)?, &mut bytes)?;
         saved.push(service.upload_file(id, dir, &path, &bytes, replace)?);
     }
     Ok(Imported { saved, existing })
@@ -312,12 +225,12 @@ fn zip_segments(name: &str) -> Option<Vec<&str>> {
 /// as a zipped project folder unpacks.
 fn zip_files(
     archive: &mut ZipArchive<File>,
-    limits: &Limits,
+    mut allowance: Allowance,
 ) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
-    if archive.len() > limits.entries {
-        return Err(Over::Files.error(limits));
+    if archive.len() > allowance.entries {
+        return Err(too_many());
     }
-    let mut found = Found::new();
+    let mut files = Vec::new();
     for i in 0..archive.len() {
         // Its name and size only: nothing is decompressed yet.
         let entry = archive.by_index_raw(i)?;
@@ -326,14 +239,14 @@ fn zip_files(
             continue;
         };
         if !segments.iter().any(|s| hidden(s)) {
+            allowance.file(entry.size())?;
             let spec = UploadSpec {
                 path: segments.join("/"),
-                size: usize::try_from(entry.size()).unwrap_or(usize::MAX),
+                size: entry.size() as usize,
             };
-            found.add(spec, Source::Zip(i), limits);
+            files.push((spec, Source::Zip(i)));
         }
     }
-    let mut files = found.within(limits)?;
     let top = files
         .first()
         .and_then(|(spec, _)| Some(format!("{}/", spec.path.split_once('/')?.0)));
@@ -345,12 +258,20 @@ fn zip_files(
     Ok(files)
 }
 
-/// A folder's files, unless it passes `limits`.
-fn folder_files(dir: &Path, limits: &Limits) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
-    let mut found = Found::new();
-    collect(dir, String::new(), fs::metadata(dir)?, &mut found, limits)?;
+/// A folder's files, unless they are more than `allowance`.
+fn folder_files(
+    dir: &Path,
+    mut allowance: Allowance,
+) -> Result<Vec<(UploadSpec, Source)>, CoreError> {
+    let mut found = Vec::new();
+    collect(
+        dir,
+        String::new(),
+        fs::metadata(dir)?,
+        &mut found,
+        &mut allowance,
+    )?;
     Ok(found
-        .within(limits)?
         .into_iter()
         .map(|(s, p)| (s, Source::File(p)))
         .collect())
@@ -381,13 +302,13 @@ fn create_new(root: &Path, rel: &str) -> Result<BufWriter<File>, CoreError> {
 /// .tex, else the likeliest top-level one; with no TeX at all, the blank
 /// template's main.tex.
 pub fn import_project(service: &Service, src: &Path) -> Result<ProjectInfo, CoreError> {
-    import_project_within(service, src, &IMPORT_LIMITS)
+    import_project_within(service, src, IMPORT)
 }
 
 fn import_project_within(
     service: &Service,
     src: &Path,
-    limits: &Limits,
+    mut allowance: Allowance,
 ) -> Result<ProjectInfo, CoreError> {
     let meta = fs::metadata(src)?;
     let is_dir = meta.is_dir();
@@ -396,10 +317,10 @@ fn import_project_within(
     let ext = named(src.extension()).to_lowercase();
     let tex = (!is_dir && ext == "tex").then(|| named(src.file_name()));
     let folder = if is_dir {
-        Some((src, folder_files(src, limits)?))
+        Some((src, folder_files(src, allowance)?))
     } else {
         src.parent().zip(tex.as_ref()).and_then(|(dir, tex)| {
-            let files = folder_files(dir, &TEX_FOLDER_LIMITS).ok()?;
+            let files = folder_files(dir, TEX_FOLDER).ok()?;
             (files.iter().any(|(s, _)| &s.path == tex)
                 && sanitize_name(&named(dir.file_name())).is_ok())
             .then_some((dir, files))
@@ -409,7 +330,7 @@ fn import_project_within(
         (named(dir.file_name()), None, found)
     } else if ext == "zip" {
         let mut archive = ZipArchive::new(File::open(src)?)?;
-        let found = zip_files(&mut archive, limits)?;
+        let found = zip_files(&mut archive, allowance)?;
         (named(src.file_stem()), Some(archive), found)
     } else {
         let spec = UploadSpec {
@@ -431,14 +352,13 @@ fn import_project_within(
     let result = (|| {
         let (specs, sources): (Vec<_>, Vec<_>) = files.into_iter().unzip();
         service.validate_uploads(&id, "", &specs)?;
-        let mut budget = Budget::new(limits);
         for (spec, source) in specs.iter().zip(sources) {
             let mut dest = create_new(&root, &spec.path)?;
             match source {
-                Source::File(path) => budget.copy(File::open(path)?, &mut dest)?,
+                Source::File(path) => allowance.copy(File::open(path)?, &mut dest)?,
                 Source::Zip(i) => {
                     let entry = zip.as_mut().expect("a zip source").by_index(i)?;
-                    budget.copy(entry, &mut dest)?;
+                    allowance.copy(entry, &mut dest)?;
                 }
             }
             dest.into_inner().map_err(io::IntoInnerError::into_error)?;
@@ -486,7 +406,7 @@ mod tests {
         fs::read_dir(&service.data_dir).unwrap().count()
     }
 
-    const SMALL: Limits = Limits {
+    const SMALL: Allowance = Allowance {
         files: 3,
         entries: 8,
         bytes: 25,
@@ -503,21 +423,19 @@ mod tests {
             ("d.tex", "d"),
         ];
         zip_of(&many, &files);
-        let err = import_project_within(&service, &many, &SMALL).unwrap_err();
-        assert_eq!(err.status, 400);
-        assert!(err.message.contains("too many files"), "{}", err.message);
+        let err = import_project_within(&service, &many, SMALL).unwrap_err();
+        assert_eq!(err.message, too_many().message);
 
         let large = dir.path().join("large.zip");
         let text = "0123456789";
         zip_of(&large, &[("a.tex", text), ("b.tex", text), ("c.tex", text)]);
-        let err = import_project_within(&service, &large, &SMALL).unwrap_err();
-        assert_eq!(err.status, 400);
-        assert!(err.message.contains("GB limit"), "{}", err.message);
+        let err = import_project_within(&service, &large, SMALL).unwrap_err();
+        assert_eq!(err.message, too_big().message);
         assert_eq!(projects(&service), 0);
 
         // Within the limits, it imports.
         zip_of(&large, &[("a.tex", text), ("b.tex", text)]);
-        import_project_within(&service, &large, &SMALL).unwrap();
+        import_project_within(&service, &large, SMALL).unwrap();
         assert_eq!(projects(&service), 1);
     }
 
@@ -529,19 +447,15 @@ mod tests {
         for name in ["a.tex", "b.tex", "c.tex", "d.tex"] {
             fs::write(src.join(name), "x").unwrap();
         }
-        assert_eq!(
-            import_project_within(&service, &src, &SMALL)
-                .unwrap_err()
-                .status,
-            400
-        );
+        let err = import_project_within(&service, &src, SMALL).unwrap_err();
+        assert_eq!(err.status, 400);
         // Empty folders cost a walk too.
         let src = dir.path().join("Hollow");
         for i in 0..10 {
             fs::create_dir_all(src.join(format!("d{i}"))).unwrap();
         }
         fs::write(src.join("main.tex"), "x").unwrap();
-        assert!(import_project_within(&service, &src, &SMALL).is_err());
+        assert!(import_project_within(&service, &src, SMALL).is_err());
         assert_eq!(projects(&service), 0);
     }
 
@@ -555,19 +469,19 @@ mod tests {
             fs::write(src.join(name), "x").unwrap();
         }
         let drop = [src];
-        assert!(import_files_within(&service, "P", "", &drop, None, &SMALL).is_err());
+        assert!(import_files_within(&service, "P", "", &drop, None, SMALL).is_err());
         assert!(!service.data_dir.join("P/Many").exists());
     }
 
     #[test]
     fn the_budget_counts_the_bytes_read_not_those_declared() {
-        let mut budget = Budget::new(&SMALL);
+        let mut budget = SMALL;
         let mut sink = Vec::new();
         budget.copy(&[1u8; 20][..], &mut sink).unwrap();
         // A file that says it is small, or a zip entry that lies, still
         // stops at the budget.
         let err = budget.copy(&[1u8; 6][..], &mut sink).unwrap_err();
-        assert_eq!(err.status, 400);
+        assert_eq!(err.message, too_big().message);
         budget.copy(&[1u8; 5][..], &mut sink).unwrap();
         assert!(budget.copy(&[1u8; 1][..], &mut sink).is_err());
     }

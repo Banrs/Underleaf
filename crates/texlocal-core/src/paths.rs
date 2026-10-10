@@ -74,17 +74,20 @@ fn ensure_existing_ancestor_within(
 /// nested id would let the project commands rename, trash or compile a folder
 /// inside another project, past delete_entry's main-file guard.
 pub fn project_root(data_dir: &Path, id: &str) -> Result<PathBuf, CoreError> {
-    let segments = normalize_segments(id, "Bad project id")?;
-    if segments.len() != 1 {
-        return Err(CoreError::bad_request("Bad project id"));
-    }
-    let mut root = data_dir.to_path_buf();
-    root.extend(&segments);
+    let root = data_dir.join(project_name(id)?);
     if !root.is_dir() {
         return Err(CoreError::not_found(format!("No such project: {id}")));
     }
     ensure_existing_ancestor_within(data_dir, &root, "Bad project id")?;
     Ok(root)
+}
+
+/// A project id's one folder name, read without the disk.
+pub(crate) fn project_name(id: &str) -> Result<&str, CoreError> {
+    match normalize_segments(id, "Bad project id")?[..] {
+        [name] => Ok(name),
+        _ => Err(CoreError::bad_request("Bad project id")),
+    }
 }
 
 /// Normalized project-relative segments for a user-supplied path, with the

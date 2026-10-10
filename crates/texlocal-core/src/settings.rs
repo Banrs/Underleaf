@@ -37,8 +37,9 @@ impl Default for Settings {
     }
 }
 
-fn read_raw(root: &Path) -> Map<String, Value> {
-    fs::read(root.join(SETTINGS_FILE))
+/// A JSON object from a file; empty if the file is missing or not one.
+pub(crate) fn read_object(path: &Path) -> Map<String, Value> {
+    fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
         .unwrap_or_default()
@@ -48,7 +49,7 @@ fn read_raw(root: &Path) -> Map<String, Value> {
 /// the values happens where they are used (compile re-checks both mainFile and
 /// engine), because the file on disk is user-editable.
 pub fn read_settings(root: &Path) -> Settings {
-    lenient(&read_raw(root))
+    lenient(&read_object(&root.join(SETTINGS_FILE)))
 }
 
 fn lenient(raw: &Map<String, Value>) -> Settings {
@@ -72,7 +73,7 @@ pub fn write_settings(root: &Path, patch: &Value) -> Result<Settings, CoreError>
     let Value::Object(mut merged) = serde_json::to_value(Settings::default()).unwrap() else {
         unreachable!("Settings serializes as an object");
     };
-    merged.extend(read_raw(root));
+    merged.extend(read_object(&root.join(SETTINGS_FILE)));
     match obj.get("engine") {
         None => {}
         Some(Value::String(e)) if engine_flags(e).is_some() => {

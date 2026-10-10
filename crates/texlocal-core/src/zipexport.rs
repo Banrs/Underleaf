@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -17,7 +18,7 @@ use crate::{BUILD_DIR, SETTINGS_FILE};
 
 pub fn export_zip(root: &Path, dest: &Path) -> Result<(), CoreError> {
     let root_canonical = fs::canonicalize(root)?;
-    let (temp_path, file) = create_temp(dest)?;
+    let (temp_path, file) = create_temp(dest, None)?;
 
     // Resolve the archive folder as the walk resolves the project, so a
     // destination spelled through a link is still recognised there.
@@ -97,7 +98,7 @@ impl Export<'_> {
                 if !canonical.starts_with(self.root_canonical) {
                     continue;
                 }
-                let options = dated(self.options, &path);
+                let options = dated(self.options, entry.metadata().and_then(|m| m.modified()));
                 self.writer.add_directory(format!("{rel}/"), options)?;
                 self.add_dir(&path, &canonical, &rel)?;
             } else if entry_type.is_file() {
@@ -109,14 +110,9 @@ impl Export<'_> {
 
     fn add_file(&mut self, rel: &str, path: &Path) -> Result<(), CoreError> {
         let mut file = File::open(path)?;
-        let len = file.metadata()?.len();
-        let mut options = dated(self.options, path)
-            // Past 4 GiB (a video, a data set), sizes need ZIP64's fields.
-            .large_file(len >= u64::from(u32::MAX));
-        if compressed(rel) {
-            // Deflate would spend its time for nothing.
-            options = options.compression_method(CompressionMethod::Stored);
-        }
+        let meta = file.metadata()?;
+        // Past 4 GiB (a video, a data set), sizes need ZIP64's fields.
+        let options = dated(self.options, meta.modified()).large_file(meta.len() >= 1 << 32);
         self.writer.start_file(rel, options)?;
         // No flush per file: on a deflated entry that forces a sync block
         // into the stream, and the next start_file or finish ends it anyway.
@@ -125,22 +121,10 @@ impl Export<'_> {
     }
 }
 
-/// Whether a file's name says its contents are compressed already.
-fn compressed(name: &str) -> bool {
-    const COMPRESSED: &[&str] = &[
-        "png", "jpg", "jpeg", "gif", "webp", "heic", "zip", "gz", "tgz", "bz2", "xz", "7z", "zst",
-        "mp3", "m4a", "mp4", "m4v", "mov",
-    ];
-    Path::new(name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|ext| COMPRESSED.iter().any(|c| ext.eq_ignore_ascii_case(c)))
-}
-
-/// `options` with the entry dated as `path` is. ZIP stores local time, as
+/// `options` with the entry dated as `modified`. ZIP stores local time, as
 /// unzipping tools show it; undated, every entry would say 1 January 1980.
-fn dated(options: SimpleFileOptions, path: &Path) -> SimpleFileOptions {
-    let Ok(modified) = fs::metadata(path).and_then(|meta| meta.modified()) else {
+fn dated(options: SimpleFileOptions, modified: io::Result<SystemTime>) -> SimpleFileOptions {
+    let Ok(modified) = modified else {
         return options;
     };
     let local = chrono::DateTime::<chrono::Local>::from(modified).naive_local();

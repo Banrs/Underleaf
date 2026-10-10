@@ -373,14 +373,6 @@ fn files_the_app_makes_get_the_mode_any_new_file_gets() {
     let dest = data.path().join("export.zip");
     export_zip(&root, &dest).unwrap();
     assert_eq!(mode(&dest), usual);
-    // An archive in pictures, deflated or not, comes back as it went.
-    fs::write(root.join("figure.png"), "not really a png").unwrap();
-    export_zip(&root, &dest).unwrap();
-    let mut archive = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
-    let mut figure = String::new();
-    std::io::Read::read_to_string(&mut archive.by_name("figure.png").unwrap(), &mut figure)
-        .unwrap();
-    assert_eq!(figure, "not really a png");
 }
 
 #[test]

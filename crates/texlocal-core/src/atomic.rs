@@ -10,15 +10,14 @@ use std::path::Path;
 use tempfile::TempPath;
 
 /// A new, empty temporary file beside `path`, removed if it is not persisted,
-/// with the mode `path` should have once it takes its place: the file's own
-/// if it exists, else a new file's (0666 less the umask), as any other way of
-/// making a file gives it. tempfile's own 0600 would leave every file the app
-/// made unreadable to the other accounts and tools a project is shared with.
-pub(crate) fn create_temp(path: &Path) -> io::Result<(TempPath, File)> {
-    create_temp_with(path, fs::metadata(path).ok().map(|meta| meta.permissions()))
-}
-
-fn create_temp_with(path: &Path, existing: Option<Permissions>) -> io::Result<(TempPath, File)> {
+/// with the mode it should have once it takes `path`'s place: `existing`, a
+/// replaced file's own, else a new file's (0666 less the umask), as any other
+/// way of making a file gives it. tempfile's own 0600 would leave every file
+/// the app made unreadable to the accounts and tools a project is shared with.
+pub(crate) fn create_temp(
+    path: &Path,
+    existing: Option<Permissions>,
+) -> io::Result<(TempPath, File)> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let mut builder = tempfile::Builder::new();
     builder.prefix(".texlocal-");
@@ -47,7 +46,7 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let (temp, mut file) = create_temp_with(&target, permissions)?;
+    let (temp, mut file) = create_temp(&target, permissions)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     temp.persist(&target).map_err(|err| err.error)
